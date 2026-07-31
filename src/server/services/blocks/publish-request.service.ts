@@ -4716,8 +4716,9 @@ async function getPreviousApprovedFiles(
  * Re-fetches the pending bundle (MinIO ZIP path or Forgejo push path, mirroring
  * getPublishRequestScreenshots) + the previous approved bundle's bytes, then
  * runs the pure, bounded computeBundleLineDiff. Binary / oversized / huge-diff
- * files are explicitly marked elided (never inlined) so the UI shows the Forgejo
- * fallback. First version ⇒ every file is a whole-file add.
+ * files are explicitly marked elided (never inlined) so the UI labels them with
+ * the reason instead of rendering them. First version ⇒ every file is a
+ * whole-file add.
  *
  * Mod-only at the router layer.
  */
