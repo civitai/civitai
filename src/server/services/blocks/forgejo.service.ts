@@ -597,14 +597,24 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
   // immediately push to `main` (Forgejo refuses to push to a missing
   // branch). 409 / 422 = already exists.
   //
-  // `private: false` is deliberate: the security boundary on
-  // forgejo.civitai.com is oauth2-proxy (GH `oauth` team gate), which
-  // sits in front of every Forgejo request. Inside that boundary,
-  // making review repos public lets mods anonymously browse the file
-  // tree from /apps/review's deep-link without needing a separate
-  // Forgejo login session (Forgejo's own login form is currently
-  // throwing CSRF errors for moderator browsing flows — orthogonal
-  // issue, tracked separately).
+  // 🔴 `private: true` is load-bearing, NOT a default. These snapshots hold the
+  // FULL SOURCE of a third-party submission that has NOT been approved yet —
+  // unreviewed code belonging to someone else, keyed by a guessable app slug.
+  // Nothing needs anonymous read to make the product work: the review build
+  // authenticates to the review source host with its own credential, and mods
+  // read the submission through the in-app diff in the review modal rather than
+  // by browsing the raw repo. So `private` costs us nothing and is the only
+  // control that holds no matter how the request reaches the host.
+  //
+  // This was `private: false` until #3495. That flag leaned on an
+  // authentication layer sitting in front of every request to the review source
+  // host — true when it was written, no longer true after that host's routing
+  // was later changed for an unrelated reason. Two individually-reasonable
+  // changes composed into anonymous public read of unapproved third-party
+  // source. DO NOT flip this back to `false` for browsing convenience: the repo
+  // itself must be the boundary, so that no future routing/auth change upstream
+  // can silently re-open it.
+  //
   // auto_init:true makes Forgejo materialise a real git repo on disk, which on
   // first submit is the slow part of the review-repo path (it shares the same
   // worst-case as the bundle commit). Use the generous commit timeout so a
@@ -616,7 +626,7 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
       body: JSON.stringify({
         name: slug,
         description: `Pending publish-request bundle for ${slug}.`,
-        private: false,
+        private: true,
         auto_init: true,
         default_branch: 'main',
       }),
@@ -627,6 +637,84 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
     const body = await repoRes.text().catch(() => '');
     throw new Error(`Forgejo review repo create ${repoRes.status}: ${body.slice(0, 240)}`);
   }
+}
+
+/**
+ * Page through every repo in the in-review org. Used by the one-off privacy
+ * backfill to enumerate snapshots created BEFORE `ensureReviewRepo` started
+ * setting `private: true` — the create call is idempotent on an existing repo,
+ * so a re-submit does NOT retroactively flip an old repo's visibility.
+ *
+ * Bounded: stops at `maxPages` so a runaway/looping pager can never spin
+ * forever against the API.
+ */
+export async function listReviewRepos(
+  opts: { perPage?: number; maxPages?: number } = {}
+): Promise<Array<{ name: string; private: boolean }>> {
+  const perPage = opts.perPage ?? 50;
+  const maxPages = opts.maxPages ?? 100;
+  const out: Array<{ name: string; private: boolean }> = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await fjFetch(
+      `/api/v1/orgs/${FORGEJO_REVIEW_ORG}/repos?page=${page}&limit=${perPage}`
+    );
+    // 404 = the org has never been created (no submissions yet) — an empty
+    // result, not an error. Anything else non-2xx is a real failure.
+    if (res.status === 404) return out;
+    const rows = await unwrap<Array<{ name: string; private: boolean }>>(res);
+    if (!rows || rows.length === 0) return out;
+    for (const r of rows) out.push({ name: r.name, private: !!r.private });
+    if (rows.length < perPage) return out;
+  }
+  return out;
+}
+
+/**
+ * Flip an in-review snapshot repo to private. Idempotent — Forgejo accepts a
+ * PATCH that sets `private: true` on an already-private repo, and a 404 (repo
+ * gone) is reported as `missing` rather than thrown, so the backfill can be
+ * re-run safely at any time.
+ *
+ * Scoped to the in-review org on purpose: nothing here should ever be able to
+ * mutate the visibility of a canonical `civitai-apps/<slug>` repo.
+ */
+export async function setReviewRepoPrivate(
+  slug: string
+): Promise<'updated' | 'missing'> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_REVIEW_ORG}/${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ private: true }),
+  });
+  if (res.status === 404) return 'missing';
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo review repo patch ${res.status}: ${body.slice(0, 240)}`);
+  }
+  return 'updated';
+}
+
+/**
+ * Delete an in-review snapshot repo. Idempotent: a 404 (already gone) is
+ * SUCCESS, reported as `already-gone` so a caller can distinguish "I reclaimed
+ * something" from "there was nothing to reclaim" without either being an error.
+ *
+ * Deliberately scoped to the in-review org — this function cannot be pointed at
+ * `civitai-apps/<slug>`, which is the system of record for a pushed app. The
+ * in-review repo is a DERIVED CACHE: a ZIP submission's bundle lives in object
+ * storage under `bundleKey`, and a push submission's source lives in the
+ * canonical repo at the pinned `forgejoCommitSha`. Purging a snapshot therefore
+ * loses nothing that cannot be rebuilt.
+ */
+export async function deleteReviewRepo(slug: string): Promise<'deleted' | 'already-gone'> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_REVIEW_ORG}/${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+  });
+  if (res.status === 404) return 'already-gone';
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo review repo delete ${res.status}: ${body.slice(0, 240)}`);
+  }
+  return 'deleted';
 }
 
 /**
