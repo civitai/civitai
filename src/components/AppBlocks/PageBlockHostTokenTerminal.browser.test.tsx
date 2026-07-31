@@ -456,18 +456,24 @@ describe('app → app soft navigation (the host is NOT remounted)', () => {
     );
     await new Promise((r) => setTimeout(r, 9_000));
 
-    // No `token_lost_midsession` may be attributed to app B.
+    // THE assertion: no `token_lost_midsession` may be attributed to app B.
     const midSession = beaconBodies().filter((b) => b.errorClass === 'token_lost_midsession');
     expect(midSession).toEqual([]);
-    // And nothing may be attributed to app B's id at all via this path.
-    const forAppB = beaconCalls().filter((c: unknown[]) => {
-      const init = c[1] as RequestInit | undefined;
-      return String(init?.body ?? '').includes('apb_other');
-    });
-    expect(forAppB.map((c: unknown[]) => {
-      const init = c[1] as RequestInit | undefined;
-      return (JSON.parse(String(init?.body ?? '{}')) as { errorClass?: string }).errorClass;
-    })).not.toContain('token_lost_midsession');
+
+    // And pin the FULL beacon set, which documents the pre-existing host-reuse
+    // state this PR deliberately does NOT fix: app B emits NOTHING AT ALL — not
+    // even its own launch-failure `error` — because `blockRenderEmittedRef` is
+    // per-mount and was already spent by app A's impression. So the whole
+    // soft-nav session is under-reported, which is exactly why the real fix is
+    // `key={blockInstanceId}` on the run page (its own PR — it changes
+    // impression COUNTS).
+    //
+    // 🔴 Asserting the whole set matters: an earlier version of this test added a
+    // second "nothing attributed to app B's id" filter that looked like an extra
+    // guard but was VACUOUS — the filtered list is empty, so the assertion held
+    // trivially and would have held with the fix deleted. This line pins the real
+    // observable state instead.
+    expect(beaconStatuses()).toEqual(['ok']);
   }, 20_000);
 });
 

@@ -382,9 +382,27 @@ export function PageBlockHost({
   // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
   // from `status`, because under host reuse `status` is itself STALE (it is still
   // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
-  // The cost is that if app B does reach ready and then loses its credential
-  // WITHOUT `status` ever changing value, its beacon is missed — under-reporting,
-  // never mis-reporting. That is the right side to err on for an alerting signal.
+  //
+  // Be precise about the cost, because it is NOT an edge case: under host reuse
+  // `status` is structurally frozen at app A's 'ready' — every `setStatus` here is
+  // gated on the current value, and the only unconditional reset to 'loading' is
+  // `performRetry`. So after a soft nav the latch re-arms only via a manual or
+  // automatic Retry, and until then app B can emit no mid-session beacon at all.
+  //
+  // That costs nothing real TODAY, because on the same path app B never gets a
+  // working session to lose: `shouldStartInit` returns false for any non-'loading'
+  // status, so BLOCK_INIT is never sent and app B cannot reach a genuine ready
+  // state. The missed beacon is therefore unreachable — it describes a state the
+  // pre-existing host-reuse bug already prevents. Net vs. before this reset:
+  // strictly better (we traded a FALSE POSITIVE on app B's launch failure for a
+  // beacon that could not have fired anyway). Under-reporting, never
+  // mis-reporting — the right side to err on for an alerting signal.
+  //
+  // 🔴 The DECLARATION ORDER below is load-bearing: this effect must be declared
+  // BEFORE the status-sync effect that sets `reachedReadyRef`, so that a commit
+  // changing both `blockInstanceId` and `status` resets first and latches second.
+  // No current test detects a swap (no reachable case distinguishes them today) —
+  // so if you reorder these, reason it through rather than trusting the suite.
   //
   // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
   // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
