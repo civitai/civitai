@@ -68,6 +68,10 @@ import { deleteBidsForModel } from '~/server/services/auction.service';
 import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import {
+  disarmAccountDeletionImagePurge,
+  unblockAccountDeletionImages,
+} from '~/server/services/account-deletion-images';
 import { deleteImageById } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
@@ -1093,9 +1097,14 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
  * the user's Models to userId = -1.
  * We can only restore what survives the deletion: the User row's scrubbed fields (caller
- * supplies them) and the orphaned Model ownership (via ClickHouse audit). Images and Posts are
- * hard-deleted by the remove-deleted-user-images job, S3 objects included, and are never
- * recoverable — restoring an account brings back its models but not its images.
+ * supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ *
+ * Images depend on the removal the user chose (`meta.imageRemoval`):
+ * - `immediate` — remove-deleted-user-images hard-deletes them, S3 objects included, as it
+ *   reaches the account. Whatever it already took is gone; the rest survive from here on.
+ * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
+ *   so restoring inside the window brings the images back.
+ * Posts are hard-deleted on the immediate path only and are not recoverable.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
@@ -1103,7 +1112,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 export const restoreUser = async ({ id, username, email, restoreModels }: RestoreUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { id },
-    select: { id: true, deletedAt: true },
+    select: { id: true, deletedAt: true, meta: true },
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
@@ -1162,10 +1171,18 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  await dbWrite.user.update({
-    where: { id },
-    data: { deletedAt: null, username, email },
-  });
+  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+
+  await dbWrite.$transaction([
+    dbWrite.user.update({
+      where: { id },
+      data: { deletedAt: null, username, email, meta },
+    }),
+    disarmAccountDeletionImagePurge(id),
+  ]);
+
+  // After the deletedAt clear, so the drain job's gates can no longer re-hide what this unblocks.
+  const imagesRestored = await unblockAccountDeletionImages(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -1174,7 +1191,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // stale "deleted" values until the cache expires.
   await deleteBasicDataForUser(id);
 
-  return { id, username, email, modelsRestored, modelIds: restoredModelIds };
+  return {
+    id,
+    username,
+    email,
+    modelsRestored,
+    modelIds: restoredModelIds,
+    imagesRestored: imagesRestored.unblocked,
+  };
 };
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
