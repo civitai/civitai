@@ -294,13 +294,31 @@ export const appListingsRouter = router({
       return getAssetScanStatuses(input.imageIds, ctx.user);
     }),
 
+  // -------------------------------------------------------------------------
+  // OWNER ASSET MUTATIONS.
+  //
+  // 🔴 ALL SIX MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
+  // of these calls `resolveOwnerAssetEditTarget` → `beginListingRevision`, which
+  // throws a typed `OffsiteRequestError` (a plain `Error` subclass, NOT a
+  // `TRPCError`) — e.g. `INVALID_REVISION` when a moderator delists the listing
+  // between the client's read and this write, or the 'failed to open a revision
+  // draft' race. Unwrapped, those surfaced as an opaque 500 with a generic message
+  // instead of the typed, actionable one; the escape only exists because the mint
+  // moved onto this path. `TRPCError`s the service already shaped (the asset
+  // validators, the fail-closed row-id re-map) pass straight through.
+  // -------------------------------------------------------------------------
+
   setIcon: protectedProcedure
     .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingIconSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingIcon } = await import('~/server/services/blocks/app-listing-assets.service');
-      return setListingIcon(input, ctx.user);
+      try {
+        return await setListingIcon(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   setCover: protectedProcedure
@@ -309,7 +327,11 @@ export const appListingsRouter = router({
     .input(setListingCoverSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingCover } = await import('~/server/services/blocks/app-listing-assets.service');
-      return setListingCover(input, ctx.user);
+      try {
+        return await setListingCover(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   addScreenshot: protectedProcedure
@@ -320,7 +342,11 @@ export const appListingsRouter = router({
       const { addListingScreenshot } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return addListingScreenshot(input, ctx.user);
+      try {
+        return await addListingScreenshot(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   reorderScreenshots: protectedProcedure
@@ -331,9 +357,20 @@ export const appListingsRouter = router({
       const { reorderListingScreenshots } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return reorderListingScreenshots(input, ctx.user);
+      try {
+        return await reorderListingScreenshots(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
+  /**
+   * 🔴 Returns `{ id }` = the row that was WRITTEN, which differs from the
+   * `screenshotId` passed in when this call minted the shadow revision (the parent row
+   * id is re-keyed onto the clone). Treat it as the new id, not an echo. Input schema
+   * unchanged — released `civitai` CLI versions calling this under `AppBlocksSubmit`
+   * keep working.
+   */
   updateScreenshotCaption: protectedProcedure
     .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
@@ -342,9 +379,18 @@ export const appListingsRouter = router({
       const { updateListingScreenshotCaption } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return updateListingScreenshotCaption(input, ctx.user);
+      try {
+        return await updateListingScreenshotCaption(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
+  /**
+   * 🔴 Returns `{ removed }` = the row actually DELETED, which differs from the
+   * `screenshotId` passed in when this call minted the shadow revision (the clone is
+   * deleted, never the live parent's row). Treat it as the new id, not an echo.
+   */
   removeScreenshot: protectedProcedure
     .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
@@ -353,7 +399,11 @@ export const appListingsRouter = router({
       const { removeListingScreenshot } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return removeListingScreenshot(input, ctx.user);
+      try {
+        return await removeListingScreenshot(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   /**

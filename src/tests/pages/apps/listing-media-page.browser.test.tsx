@@ -10,14 +10,20 @@ import { useRouter } from 'next/router';
  * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
- * (`getMyListingForApp`), begins the editable shadow revision
- * (`beginListingRevision`), re-hosts the reused `ListingAssetStep` against the
- * SHADOW id + the listing's content rating, prefills it from the SHADOW's assets,
- * re-pulls the projection after an asset mutation, surfaces the honest live-app
- * framing copy (+ the pending-revision notice when applicable), and fires
- * `submitListingRevision({ shadowId })` from the Submit-for-review button. The
+ * (`getMyListingForApp`), re-hosts the reused `ListingAssetStep` against the
+ * server-resolved `editTargetId` + the listing's content rating, prefills it from that
+ * target's assets, re-pulls the projection after an asset mutation, surfaces the
+ * honest live-app framing copy (+ the pending-revision notice when applicable), and
+ * fires `submitListingRevision({ shadowId })` from the Submit-for-review button. The
  * asset step itself is stubbed — its real behaviour is covered by
  * `ListingAssetStep.browser.test.tsx`.
+ *
+ * 🔴 NO `beginListingRevision` ON MOUNT. Firing it here made merely OPENING the tab
+ * create a `draft` AppListing (78% of approved onsite parents on prod carried a
+ * never-edited shadow, self-refilling on every view). The shadow is minted by the
+ * first asset MUTATION, server-side. `editTargetId` is the shadow when one exists and
+ * the listing itself otherwise; `editBlockedReason` carries the "this can't be edited"
+ * verdict the on-mount call used to deliver as INVALID_REVISION.
  *
  * 🔴 This file used to import the default export of `~/pages/apps/[appBlockId]/listing`.
  * That route is now a getServerSideProps REDIRECT stub whose default export renders
@@ -33,8 +39,6 @@ const state = vi.hoisted(() => ({
     isLoading: false,
     error: null as unknown,
   },
-  // beginListingRevision — resolves to a shadow id via onSuccess.
-  begin: { shadowId: 'apl_shadow' as string | null, error: null as string | null, pending: false },
   // submitListingRevision — captured args.
   submit: { calls: [] as unknown[], pending: false },
   // Props the stubbed ListingAssetStep received.
@@ -105,23 +109,14 @@ vi.mock('~/utils/trpc', () => ({
     }),
     appListings: {
       getMyListingForApp: { useQuery: () => state.query },
-      beginListingRevision: {
-        useMutation: () => ({
-          mutate: (
-            _vars: unknown,
-            opts?: { onSuccess?: (r: { shadowId: string }) => void; onError?: (e: { message: string }) => void }
-          ) => {
-            if (state.begin.error) opts?.onError?.({ message: state.begin.error });
-            else if (state.begin.shadowId) opts?.onSuccess?.({ shadowId: state.begin.shadowId });
-          },
-          isPending: state.begin.pending,
-        }),
-      },
+      // 🔴 `beginListingRevision` is deliberately ABSENT from this mock. If the editor
+      // ever re-adds an on-mount call to it, these tests crash rather than silently
+      // re-introducing the write-on-view that this change removed.
       submitListingRevision: {
         useMutation: () => ({
           mutateAsync: async (vars: unknown) => {
             state.submit.calls.push(vars);
-            return { publishRequestId: 'alpr_1', shadowId: state.begin.shadowId, slug: 'my-app' };
+            return { publishRequestId: 'alpr_1', shadowId: 'apl_shadow', slug: 'my-app' };
           },
           isPending: state.submit.pending,
         }),
@@ -167,6 +162,8 @@ beforeEach(() => {
       contentRating: 'pg13',
       hasPendingRevision: false,
       shadowId: 'apl_shadow',
+      editTargetId: 'apl_shadow',
+      editBlockedReason: null,
       // The SHADOW's assets — what the proc now projects so the step can prefill.
       assets: {
         icon: { imageId: 137918008, url: 'edge:icon' },
@@ -177,7 +174,6 @@ beforeEach(() => {
     isLoading: false,
     error: null,
   };
-  state.begin = { shadowId: 'apl_shadow', error: null, pending: false };
   state.submit = { calls: [], pending: false };
   state.floor = { meetsFloor: true, complete: false };
   state.assetProps.last = null;
@@ -191,14 +187,79 @@ beforeEach(() => {
 });
 
 describe('ListingMediaPage — owner listing-media route shell', () => {
-  test('resolves the listing, begins the shadow revision, and renders the asset step against the SHADOW id + rating', async () => {
+  test('resolves the listing and renders the asset step against the server-resolved edit target + rating', async () => {
     renderWithProviders(<ListingMediaPage />);
 
-    // The reused asset step is hosted against the shadow id + the listing's rating.
+    // The reused asset step is hosted against the edit target + the listing's rating.
     await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
     await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_shadow:pg13');
     expect(state.assetProps.last).toMatchObject({ listingId: 'apl_shadow', contentRating: 'pg13' });
     expect(page.getByTestId('not-found').elements()).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 LAZY CREATION — no shadow yet.
+  // -------------------------------------------------------------------------
+
+  test('🔴 with NO shadow yet, the editor mounts against the PARENT id and never opens a revision', async () => {
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    // It renders (no "Preparing your revision…" gate — there is nothing to prepare),
+    // hosted against the LIVE listing id. The first mutation mints the shadow
+    // server-side and applies there.
+    await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_onsite:pg13');
+  });
+
+  test('🔴 Submit is DISABLED until a shadow exists — no edits means no revision to submit', async () => {
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+    };
+    state.floor = { meetsFloor: true, complete: false };
+    renderWithProviders(<ListingMediaPage />);
+
+    const submit = page.getByTestId('apps-listing-media-submit');
+    await expect.element(submit).toBeDisabled();
+    await expect.element(page.getByTestId('apps-listing-media-no-changes')).toBeInTheDocument();
+  });
+
+  test('🔴 editBlockedReason renders the inline alert and keeps the editor unmounted', async () => {
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      status: 'removed',
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+      editBlockedReason: 'this listing has been removed by a moderator and can no longer be edited',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    const alert = page.getByTestId('apps-listing-media-begin-error');
+    await expect.element(alert).toHaveTextContent(/removed by a moderator/i);
+    // No editor over a dead listing, and no contradictory "this app is live" notice.
+    expect(page.getByTestId('asset-step').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('not-found').elements()).toHaveLength(0);
+  });
+
+  test('a DRAFT listing is edited in place — no live notice, no revision Submit button', async () => {
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      status: 'draft',
+      shadowId: null,
+      editTargetId: 'apl_draft',
+      editBlockedReason: null,
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_draft:pg13');
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-media-submit').elements()).toHaveLength(0);
   });
 
   test('prefills the asset step with the SHADOW revision assets the proc projects', async () => {
@@ -247,7 +308,15 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
 
   test('shows the pending-revision notice when a revision is already under review', async () => {
     state.query = {
-      data: { appListingId: 'apl_onsite', status: 'approved', contentRating: 'g', hasPendingRevision: true },
+      data: {
+        appListingId: 'apl_onsite',
+        status: 'approved',
+        contentRating: 'g',
+        hasPendingRevision: true,
+        shadowId: 'apl_shadow',
+        editTargetId: 'apl_shadow',
+        editBlockedReason: null,
+      },
       isLoading: false,
       error: null,
     };
@@ -275,10 +344,9 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
   });
 
   test('a NON-owner-gating error surfaces the inline alert instead of collapsing to NotFound', async () => {
-    // `getMyListingForApp` now resolves the shadow server-side, so an INVALID_REVISION
-    // ("cannot edit a listing in status …") arrives here as BAD_REQUEST. Blanket-
-    // NotFound'ing it hid the one surface that explains it and told the owner their
-    // LIVE app did not exist.
+    // Anything that isn't FORBIDDEN/NOT_FOUND arrives here as a settled query error.
+    // Blanket-NotFound'ing it hid the one surface that explains it and told the owner
+    // their LIVE app did not exist.
     state.query = {
       data: undefined,
       isLoading: false,
@@ -319,6 +387,8 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
         contentRating: 'pg13',
         hasPendingRevision: false,
         shadowId: 'apl_shadow',
+        editTargetId: 'apl_shadow',
+        editBlockedReason: null,
         assets: before,
       },
       isLoading: false,
