@@ -102,6 +102,11 @@ export type ReviewConsentNotice = {
  * `isKnownBlockScope`, so only the fixed platform vocabulary can ever reach a
  * moderator-facing string — an attacker can't smuggle arbitrary display text into
  * a toast aimed at the reviewer. (Callers must still render it as React text.)
+ * That claim depends on `isKnownBlockScope` being an OWN-property test: it used
+ * to use `in`, which walks the prototype chain and let 12 inherited
+ * `Object.prototype` keys (`constructor`, `__proto__`, `toString`, …) through as
+ * "known scopes". Fixed at the predicate; the unit tests below pin it here too,
+ * because THIS is the caller that feeds untrusted runtime input to it.
  */
 export function resolveReviewConsentNotice(
   rawScopesHint: unknown,
@@ -118,6 +123,119 @@ export function resolveReviewConsentNotice(
   if (ungranted.length === 0) return { notify: false, scopes: [] };
 
   return { notify: true, scopes: ungranted.filter((s) => isKnownBlockScope(s)) };
+}
+
+/**
+ * Emit latch for the review consent notice — the ANTI-SPAM bound.
+ *
+ * `shown` — any notice has been emitted this mount.
+ * `named` — the emitted notice NAMED at least one scope (the informative one).
+ */
+export type ReviewConsentLatch = { shown: boolean; named: boolean };
+
+export const INITIAL_REVIEW_CONSENT_LATCH: ReviewConsentLatch = { shown: false, named: false };
+
+/**
+ * 🔴 ANTI-SPAM, and the reason it is not a plain boolean.
+ *
+ * The reviewed app is UNTRUSTED code that can post `REQUEST_CONSENT` in a loop,
+ * so the notice MUST be bounded per host mount. A plain "already notified"
+ * boolean bounded it to one — but at the cost of first-notice-wins: the SDK's
+ * `useRequestConsent()` takes an OPTIONAL `scopes` hint, so a hint-less request
+ * on load is an ordinary path, not an edge case. That first request produced the
+ * generic "requested a permission it doesn't have here" copy, set the latch, and
+ * then permanently suppressed the app's LATER, specific `['buzz:read:self']`
+ * request. The moderator never learned WHICH permission — defeating the point of
+ * naming scopes at all.
+ *
+ * So the latch tracks whether a scope-NAMED notice has been shown, and allows
+ * exactly ONE upgrade generic → named.
+ *
+ * BOUND (this is the security property, and it is why the transitions are
+ * written as an explicit state machine): at most TWO notices per host mount.
+ *   - `named` set        ⇒ never show again (the best notice is already up);
+ *   - `shown && !isNamed` ⇒ never show again (a repeat generic adds nothing).
+ * Every accepted transition sets `shown`, and only a `!named → named` step can
+ * follow an accepted generic — so the accept sequence is at most
+ * `generic, named`. A flood of any mix is capped at 2, not 2-per-distinct-scope.
+ */
+export function advanceReviewConsentLatch(
+  latch: ReviewConsentLatch,
+  isNamed: boolean
+): { show: boolean; next: ReviewConsentLatch } {
+  // The informative notice is already up — nothing left to tell the reviewer.
+  if (latch.named) return { show: false, next: latch };
+  // A generic notice is already up and this request names nothing new.
+  if (latch.shown && !isNamed) return { show: false, next: latch };
+  return { show: true, next: { shown: true, named: isNamed } };
+}
+
+/** A ready-to-render review consent notification. */
+export type ReviewConsentNotification = {
+  id: string;
+  /**
+   * The id this notice REPLACES (the generic one), or null. Non-null only on
+   * the generic → named upgrade.
+   */
+  supersedesId: string | null;
+  title: string;
+  message: string;
+};
+
+/**
+ * Build the moderator-facing review-consent notification.
+ *
+ * 🔴 THE `id` IS LOAD-BEARING, TWICE.
+ *
+ * (1) MODE-SPECIFIC. Mantine's `showNotification` is a NO-OP when a notification
+ * with the same id is already displayed or queued (default autoClose 4000ms). A
+ * single `review-consent-<appBlockId>` id was therefore identical across
+ * render-only and run-for-real — so the realistic sequence "notice fires in
+ * render-only → mod clicks Run for real… → host remounts → latch resets by
+ * design → app re-requests within 4s" SILENTLY SWALLOWED the run-for-real
+ * notice, re-creating the original silent-drop bug in the other mode. The mode
+ * is part of the id.
+ *
+ * (2) NAMED vs GENERIC. The generic → named upgrade must not be swallowed the
+ * same way, and it cannot use `updateNotification` either: that only maps over
+ * notifications that are still live, so once the generic has auto-closed the
+ * upgrade would vanish. The named notice therefore carries its OWN id and
+ * reports the generic id as `supersedesId`, which the caller passes to
+ * `hideNotification` first — a harmless no-op if the generic already closed.
+ * Net effect: exactly one visible notice, in BOTH timing cases.
+ *
+ * `scopes` must already be filtered by `resolveReviewConsentNotice` (known
+ * vocabulary only); callers must render `message` as React text, never HTML.
+ */
+export function buildReviewConsentNotification(opts: {
+  appBlockId: string;
+  runForReal: boolean;
+  scopes: string[];
+}): ReviewConsentNotification {
+  const { appBlockId, runForReal, scopes } = opts;
+  const baseId = `review-consent-${appBlockId}-${runForReal ? 'real' : 'render'}`;
+  const named = scopes.length > 0;
+
+  const what = named
+    ? `This app requested ${scopes.join(', ')}.`
+    : 'This app requested a permission it doesn’t have here.';
+  // 🔴 The opt-in is NOT free: "Run for real…" re-mints the token against the
+  // MODERATOR'S OWN account and spends the MODERATOR'S OWN Buzz (it grants
+  // `ai:write:budgeted` under a per-session cap). Untrusted code can emit this
+  // toast unprompted right after BLOCK_READY, so the one surface that points a
+  // reviewer at that opt-in must say what it costs them — pointing at a
+  // spend-your-own-money button without saying so is how a hostile app gets a
+  // mod to click it.
+  const how = runForReal
+    ? 'Review previews always run with reduced permissions.'
+    : 'Review previews run with reduced permissions — use “Run for real…” (runs against your own account and Buzz) to grant the app its real permissions.';
+
+  return {
+    id: named ? `${baseId}-scoped` : baseId,
+    supersedesId: named ? baseId : null,
+    title: 'Permission unavailable in review',
+    message: `${what} ${how}`,
+  };
 }
 
 // ── OPEN_RESOURCE_PICKER (Design 1 host-chrome resource picker) ──────────────

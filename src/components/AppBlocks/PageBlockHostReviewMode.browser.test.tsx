@@ -43,9 +43,17 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Spy on the toast so the reviewMode consent-feedback path is assertable without
 // mounting the full Notifications provider. Preserve the module's other exports.
 const showNotificationSpy = vi.fn();
+// `hideNotification` is the generic→named UPGRADE path: the named notice carries
+// its OWN id (Mantine no-ops a duplicate id, and `updateNotification` would drop
+// the upgrade once the generic auto-closed), so it retires the generic explicitly.
+const hideNotificationSpy = vi.fn();
 vi.mock('@mantine/notifications', async (importOriginal) => {
   const actual = await importOriginal<typeof MantineNotifications>();
-  return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
+  return {
+    ...actual,
+    showNotification: (args: unknown) => showNotificationSpy(args),
+    hideNotification: (id: unknown) => hideNotificationSpy(id),
+  };
 });
 
 vi.mock('~/utils/trpc', () => ({
@@ -183,6 +191,7 @@ beforeEach(() => {
   mocks.sharedAppend.mockClear();
   mocks.wildcard.mockClear();
   showNotificationSpy.mockClear();
+  hideNotificationSpy.mockClear();
 });
 
 describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, never reach the mutation', () => {
@@ -330,8 +339,13 @@ describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, n
     const notice = lastNotification();
     // Names the specific requested scope (useful to a reviewer) …
     expect(notice?.message).toContain('buzz:read:self');
-    // … and points at the existing opt-in escape hatch.
+    // … and points at the existing opt-in escape hatch …
     expect(notice?.message).toContain('Run for real');
+    // … while saying what that opt-in COSTS the mod. Untrusted code can emit this
+    // toast unprompted, and "Run for real…" re-mints against the moderator's OWN
+    // account and spends the moderator's OWN Buzz (`ai:write:budgeted`, session-
+    // capped) — so it must not read as a free "make it work" button.
+    expect(notice?.message).toContain('your own account and Buzz');
     // 🔴 The security invariant: untrusted review code still cannot pop a
     // permission modal at the moderator.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
@@ -352,13 +366,15 @@ describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, n
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
-  test('🔴 ANTI-SPAM: a REQUEST_CONSENT flood produces exactly ONE notice', async () => {
+  test('🔴 ANTI-SPAM: a flood AFTER the scope-named notice produces no further notices', async () => {
     // The reviewed app is UNTRUSTED code and can post in a loop; one toast per
     // message would let a hostile submission carpet-bomb the reviewing mod's
     // screen and bury the review chrome. The transport's generic 30-msg/s limiter
     // is NOT sufficient on its own — 30 toasts a second is still a carpet bomb —
-    // so the host latches the notice to one per mount. The flood below is
-    // deliberately kept UNDER that transport budget so this asserts the LATCH.
+    // so the host latches. Once the NAMED (most informative) notice is out there
+    // is nothing left to say, so the latch is closed for the rest of the mount.
+    // The flood below is deliberately kept UNDER the transport budget so this
+    // asserts the LATCH, not the rate limiter.
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
 
@@ -370,10 +386,97 @@ describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, n
     for (let i = 0; i < 4; i++) {
       postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
       postFromBlock('REQUEST_CONSENT', {});
+      postFromBlock('REQUEST_CONSENT', { scopes: ['social:tip:self'] });
     }
     await new Promise((r) => setTimeout(r, 150));
     expect(showNotificationSpy).toHaveBeenCalledTimes(1);
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 a hint-less request first does NOT bury the later scope-NAMED one (one upgrade allowed)', async () => {
+    // THE FIRST-NOTICE-WINS BUG. `useRequestConsent()`'s `scopes` hint is
+    // OPTIONAL, so a hint-less REQUEST_CONSENT on load is an ordinary path. With
+    // a plain "already notified" latch it won, the mod got only the generic copy,
+    // and the app's later specific request was suppressed for the whole mount —
+    // the reviewer never learned WHICH permission was blocked.
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {});
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+    const generic = lastNotification();
+    expect(generic?.message).not.toContain('buzz:read:self');
+
+    postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+    await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(2));
+
+    const named = lastNotification();
+    expect(named?.message).toContain('buzz:read:self');
+    // Distinct id, or Mantine would silently dedupe the upgrade away …
+    expect(named?.id).not.toBe(generic?.id);
+    // … and the superseded generic is retired so the mod sees ONE notice.
+    expect(hideNotificationSpy).toHaveBeenCalledWith(generic?.id);
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 ANTI-SPAM BOUND: generic-then-flood is capped at TWO notices for the whole mount', async () => {
+    // The upgrade must not reopen an unbounded path: after the named notice the
+    // latch is closed again, so a hostile loop mixing hint-less and hinted (and
+    // differently-hinted) requests still tops out at two toasts per mount.
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {});
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    for (let i = 0; i < 4; i++) {
+      postFromBlock('REQUEST_CONSENT', {});
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      postFromBlock('REQUEST_CONSENT', { scopes: ['social:tip:self'] });
+      postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:read:self'] });
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    expect(showNotificationSpy).toHaveBeenCalledTimes(2);
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 the notice id is MODE-SPECIFIC (render-only and run-for-real cannot dedupe each other)', async () => {
+    // Mantine no-ops showNotification for an id already displayed or queued
+    // (default autoClose 4000ms). With one shared id the realistic sequence
+    // "notice fires in render-only → mod clicks Run for real… → the chrome
+    // REMOUNTS the host → the latch resets by design → the app re-requests within
+    // 4s" silently swallowed the run-for-real notice — the original bug, in the
+    // other mode. The ids must differ per mode.
+    // `render` is async in vitest-browser-react v2 — await it to get `unmount`.
+    const first = await renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+    const renderOnlyId = lastNotification()?.id;
+    expect(renderOnlyId).toBeTruthy();
+    await first.unmount();
+
+    // The run-for-real flip: same appBlockId, fresh mount.
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(2);
+    });
+    const runForRealId = lastNotification()?.id;
+
+    expect(runForRealId).toBeTruthy();
+    expect(runForRealId).not.toBe(renderOnlyId);
   });
 
   test('🔴 the mod-facing copy can only contain KNOWN scope strings (untrusted manifest text is dropped)', async () => {

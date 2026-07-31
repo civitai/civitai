@@ -50,6 +50,46 @@ describe('block-scope.constants', () => {
     expect(isKnownBlockScope('not:a:scope')).toBe(false);
   });
 
+  // 🔴 `in` walks the prototype chain, so with `scope in BLOCK_SCOPE_TO_OAUTH_BIT`
+  // every inherited Object.prototype key answered "known scope". Callers treat a
+  // `true` here as "part of the fixed platform vocabulary" and several then read
+  // BLOCK_SCOPE_TO_OAUTH_BIT[scope] expecting a number — for these keys that read
+  // returns a FUNCTION. The predicate is an OWN-property test; this pins it.
+  const PROTOTYPE_KEYS = [
+    '__proto__',
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    '__defineGetter__',
+    '__defineSetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+  ];
+
+  it('isKnownBlockScope rejects inherited Object.prototype keys (no prototype-chain bypass)', () => {
+    for (const key of PROTOTYPE_KEYS) {
+      expect(isKnownBlockScope(key), `${key} must not be a known scope`).toBe(false);
+    }
+    // The bypass this guards against: `in` says yes to every one of them.
+    expect(PROTOTYPE_KEYS.filter((k) => k in BLOCK_SCOPE_TO_OAUTH_BIT)).toHaveLength(
+      PROTOTYPE_KEYS.length
+    );
+  });
+
+  it('prototype keys contribute nothing downstream of the predicate', () => {
+    // deriveOauthBitmaskFromBlockScopes and validateBlockScopesAgainstOauthClient
+    // both index the map right after the predicate; a prototype key must never
+    // reach that indexing.
+    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0);
+    const check = validateBlockScopesAgainstOauthClient(PROTOTYPE_KEYS, TokenScope.Full);
+    expect(check.valid).toBe(false);
+    expect(check.rejectedScopes.sort()).toEqual([...PROTOTYPE_KEYS].sort());
+  });
+
   describe('SENSITIVE_BLOCK_SCOPES / isSensitiveBlockScope', () => {
     const EXPECTED_SENSITIVE = [
       'ai:write:budgeted',

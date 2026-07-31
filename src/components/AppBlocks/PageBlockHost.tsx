@@ -11,7 +11,10 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   decideAutoRetry,
+  advanceReviewConsentLatch,
+  buildReviewConsentNotification,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
@@ -50,7 +53,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -695,10 +698,12 @@ export function PageBlockHost({
     });
   }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
-  // MOD REVIEW SANDBOX — emit-once latch for the reduced-permissions notice in
-  // the consent handler below. ONE per host MOUNT (the review chrome remounts the
-  // host on a render-only ↔ run-for-real flip, so each mode gets its own notice).
-  const reviewConsentNoticeShownRef = useRef<boolean>(false);
+  // MOD REVIEW SANDBOX — anti-spam latch for the reduced-permissions notice in
+  // the consent handler below. Bounded to at most TWO per host MOUNT (one generic
+  // + one scope-named upgrade — see `advanceReviewConsentLatch`). The review
+  // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
+  // gets its own budget, and the notification ids are mode-specific to match.
+  const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -744,26 +749,33 @@ export function PageBlockHost({
         // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
         // code and can post REQUEST_CONSENT in a loop, so one toast per message
         // would let a hostile submission carpet-bomb the reviewing mod's screen
-        // (and bury the review chrome). Latch it to ONE notice per host mount.
-        // The stable `id` is a second, independent guard — Mantine dedupes a
-        // notification that is already displayed even if the latch is bypassed.
-        if (reviewConsentNoticeShownRef.current) return;
-        reviewConsentNoticeShownRef.current = true;
+        // (and bury the review chrome). The latch caps this at TWO notices per
+        // host mount — one generic, plus at most one upgrade to the scope-NAMED
+        // copy. It is NOT a plain "already notified" boolean: the SDK's `scopes`
+        // hint is optional, so a hint-less request on load would otherwise win
+        // the latch and permanently suppress the later, informative one.
+        const { show, next } = advanceReviewConsentLatch(
+          reviewConsentLatchRef.current,
+          notice.scopes.length > 0
+        );
+        reviewConsentLatchRef.current = next;
+        if (!show) return;
         // `notice.scopes` is filtered to the known block-scope vocabulary, so no
         // attacker-controlled text can reach this string; Mantine renders
         // `message` as React text (escaped) — never as HTML.
-        const what =
-          notice.scopes.length > 0
-            ? `This app requested ${notice.scopes.join(', ')}.`
-            : 'This app requested a permission it doesn’t have here.';
-        const how = reviewRunForReal
-          ? 'Review previews always run with reduced permissions.'
-          : 'Review previews run with reduced permissions — use “Run for real…” to grant the app its real permissions.';
+        const notification = buildReviewConsentNotification({
+          appBlockId,
+          runForReal: reviewRunForReal,
+          scopes: notice.scopes,
+        });
+        // Upgrade path only: retire the generic notice this one replaces, so the
+        // reviewer sees ONE notice, not a stack. A no-op when it already closed.
+        if (notification.supersedesId) hideNotification(notification.supersedesId);
         showNotification({
-          id: `review-consent-${appBlockId}`,
+          id: notification.id,
           color: 'yellow',
-          title: 'Permission unavailable in review',
-          message: `${what} ${how}`,
+          title: notification.title,
+          message: notification.message,
         });
         return;
       }
