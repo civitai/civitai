@@ -1037,3 +1037,32 @@ describe('MySubmissionsList — P4 Open-live run-page branching (graceful, no de
     await expect.element(page.getByText('Runs on model pages', { exact: false })).toBeInTheDocument();
   });
 });
+
+/**
+ * S3 — the row actions must SCROLL, not be clipped.
+ *
+ * Measured defect: the table sits in `<Card withBorder p={0}>`, whose
+ * `.mantine-Card-root` is `overflow: hidden`, and the action cell is a
+ * `wrap="nowrap"` group of up to six buttons — so 138 px of actions were cut off
+ * with no scrollbar (card `clientWidth 1286` vs `scrollWidth 1424` at 1497 px).
+ *
+ * 🔴 This asserts DOM STRUCTURE only — that the table's nearest scroll wrapper IS
+ * the `Table.ScrollContainer`. It does NOT (and cannot) assert the computed
+ * `overflow-x` or that nothing is clipped: this env has no Mantine theme CSS and
+ * no real viewport. The clipping itself is verified by manual re-measurement.
+ */
+describe('MySubmissionsList — row actions scroll rather than clip (S3)', () => {
+  test('the table renders inside the Table.ScrollContainer wrapper', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live({})]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    const scroll = page.getByTestId('apps-submissions-table-scroll');
+    await expect.element(scroll).toBeInTheDocument();
+    const scrollEl = scroll.element();
+    const table = scrollEl.querySelector('table');
+    expect(table).not.toBeNull();
+    // The wrapper is the table's nearest scroll ancestor — i.e. the overflow is
+    // handled BEFORE the clipping Card, not by it.
+    expect(table?.closest('[data-testid="apps-submissions-table-scroll"]')).toBe(scrollEl);
+  });
+});

@@ -12,6 +12,41 @@
  * concrete `Submission` / `OffsiteSubmission` types.
  */
 
+// ── layout ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The horizontal floor (px) for BOTH /apps/my-submissions tables, handed to
+ * Mantine's `Table.ScrollContainer` as `minWidth`.
+ *
+ * Why it exists: both lists render `<Table>` inside `<Card withBorder p={0}>`, and
+ * Mantine's `.mantine-Card-root` sets `overflow: hidden`. The onsite row's action
+ * cell is a `<Group wrap="nowrap">` of up to six buttons (Open live · Unpublish /
+ * Republish · Edit · Listing images · Revenue · History), so the row has a hard
+ * min-content width that the card SILENTLY CLIPPED — measured at 1497 px viewport:
+ * card `clientWidth 1286` vs `scrollWidth 1424`, i.e. 138 px of row actions cut off
+ * with no scrollbar and no other affordance. Wrapping the table in a scroll
+ * container converts that silent clip into a real horizontal scroll.
+ *
+ * The value is seeded from that measurement: 1424 px is the onsite table's measured
+ * natural width with the full action set, so at container widths >= 1424 nothing
+ * scrolls at all and below it every action stays reachable.
+ *
+ * 🔴 SHARED BY BOTH LISTS ON PURPOSE. The offsite table (6 columns) is narrower
+ * today and would not need this large a floor on its own, but:
+ *   - the two tables are stacked sections of the SAME page, and a shared floor keeps
+ *     them the same width instead of stepping against each other;
+ *   - the offsite action cell is converging on the onsite one (Edit · Unpublish /
+ *     Republish · Withdraw · History · problems indicator · revision badge), so a
+ *     shared floor stops it silently re-acquiring the same clip as it grows;
+ *   - any separate offsite number would be invented — nobody has measured that
+ *     table's natural width.
+ * Accepted cost: on the offsite table this introduces horizontal scrolling at
+ * container widths between its own natural width and 1424 where there is none today.
+ * If someone measures the offsite table and wants its own floor, split this into two
+ * constants HERE — do not hardcode a literal at a call site.
+ */
+export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
+
 /** Sortable columns shared by both tables. */
 export type SortColumn = 'app' | 'status' | 'submitted' | 'reviewed';
 export type SortDirection = 'asc' | 'desc';
@@ -345,10 +380,7 @@ export const MOD_STATUS_BUCKETS: StatusBucketConfig<ModStatusBucket> = {
  * key `B` so the owner view yields exactly `{live,pending,rejected,withdrawn}` and
  * the mod view yields its own set.
  */
-export type BucketedGroups<T, B extends string = StatusBucket> = Record<
-  B,
-  SubmissionGroup<T>[]
->;
+export type BucketedGroups<T, B extends string = StatusBucket> = Record<B, SubmissionGroup<T>[]>;
 
 /**
  * Partition already-grouped submissions into a consumer's status sections

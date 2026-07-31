@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { isModRemovedListing } from '~/components/Apps/offsiteOwnerControls';
 import {
@@ -16,6 +18,7 @@ import {
   statusBucket,
   statusRank,
   STATUS_SECTION_ORDER,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SortState,
   type SubmissionAccessors,
@@ -178,7 +181,9 @@ describe('groupSubmissionsByApp — version collapse', () => {
     const block = groups.find((g: SubmissionGroup<Row>) => g.identity === 'block-123');
     expect(block?.versionCount).toBe(2);
     expect(block?.latest.id).toBe('onsite-2');
-    expect(groups.find((g: SubmissionGroup<Row>) => g.identity === 'my-slug')?.versionCount).toBe(1);
+    expect(groups.find((g: SubmissionGroup<Row>) => g.identity === 'my-slug')?.versionCount).toBe(
+      1
+    );
   });
 
   it('does not mutate the input array', () => {
@@ -207,7 +212,9 @@ describe('filterGroups — matches if ANY version matches', () => {
   });
 
   it('filters out a group when no version matches', () => {
-    expect(filterGroups(groups, 'Other', A).map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['other']);
+    expect(filterGroups(groups, 'Other', A).map((g: SubmissionGroup<Row>) => g.identity)).toEqual([
+      'other',
+    ]);
   });
 
   it('an empty query returns all groups', () => {
@@ -239,7 +246,8 @@ describe('sortGroups — by the latest version of each group', () => {
     A.submittedAt
   );
 
-  const ids = (s: SortState) => sortGroups(groups, s, A).map((g: SubmissionGroup<Row>) => g.identity);
+  const ids = (s: SortState) =>
+    sortGroups(groups, s, A).map((g: SubmissionGroup<Row>) => g.identity);
 
   it('sorts by App text asc/desc', () => {
     expect(ids({ column: 'app', direction: 'asc' })).toEqual(['alpha', 'bravo']);
@@ -427,7 +435,10 @@ describe('statusBucket / bucketGroupsByStatus — status sections', () => {
     expect(buckets.pending.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['pending-app']);
     expect(buckets.rejected.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['rejected-app']);
     // Unknown status ('archived') falls back into the closed Withdrawn section.
-    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['withdrawn-app', 'weird-app']);
+    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual([
+      'withdrawn-app',
+      'weird-app',
+    ]);
   });
 
   it('preserves the incoming group order within a bucket (a pre-applied sort is kept)', () => {
@@ -533,7 +544,9 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
     const buckets = bucketize(rows);
     expect(buckets.pending.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['pending-app']);
     expect(buckets.rejected.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['rejected-app']);
-    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['withdrawn-app']);
+    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual([
+      'withdrawn-app',
+    ]);
     expect(buckets['mod-removed']).toEqual([]);
     expect(buckets.live).toEqual([]);
   });
@@ -611,4 +624,73 @@ describe('toDate', () => {
     expect(toDate(undefined)).toBeNull();
     expect(toDate('not-a-date')).toBeNull();
   });
+});
+
+/**
+ * S3 — /apps/my-submissions horizontal-overflow guard.
+ *
+ * Measured defect (1497 x 1152 CSS px, dark, logged-in): the onsite submissions
+ * `.mantine-Card-root` computed `clientWidth 1286` / `scrollWidth 1424` with
+ * `overflow-x: hidden` — 138 px of row actions clipped with NO scroll affordance.
+ * Six `Revenue` buttons computed `right: 1499` against `innerWidth: 1497`.
+ *
+ * 🔴 HONESTY NOTE — what these tests do and do not prove.
+ *   - They CANNOT prove "the buttons are no longer clipped". That is a computed
+ *     layout property of a real browser at a real viewport with the real Mantine
+ *     stylesheet loaded; no node test can observe it, and the browser-mode project
+ *     has no page CSS. The correctness gate for the clipping itself is the manual
+ *     re-measurement recorded in the PR body.
+ *   - The `SUBMISSIONS_TABLE_MIN_WIDTH` value assertion is a VALUE PIN (a
+ *     change-detector), same class as `appListingGrid.test.ts`. Its worth is that
+ *     "the floor was not silently narrowed below the measured need" becomes a real
+ *     assertion instead of a code-review promise.
+ *   - The structural assertions below ARE a real regression gate for the fix's
+ *     mechanism: they fail if either list loses its `Table.ScrollContainer`, or
+ *     hardcodes a width literal instead of importing the shared constant, or lets
+ *     the two lists diverge onto different floors. That is exactly how this defect
+ *     would come back.
+ */
+describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
+  it('is at least the onsite table’s measured natural width (1424 px)', () => {
+    // Below this, the full six-button action row cannot be laid out without the
+    // columns collapsing — the state the measurement was taken in.
+    expect(SUBMISSIONS_TABLE_MIN_WIDTH).toBeGreaterThanOrEqual(1424);
+  });
+
+  it('is a finite positive pixel count (a scroll floor, not a sentinel)', () => {
+    expect(Number.isFinite(SUBMISSIONS_TABLE_MIN_WIDTH)).toBe(true);
+    expect(SUBMISSIONS_TABLE_MIN_WIDTH).toBeGreaterThan(0);
+  });
+});
+
+describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
+  const APPS_DIR = path.resolve(__dirname, '..');
+  const read = (file: string) => readFileSync(path.join(APPS_DIR, file), 'utf8');
+  const LISTS = ['MySubmissionsList.tsx', 'OffsiteSubmissionsList.tsx'] as const;
+
+  for (const file of LISTS) {
+    describe(file, () => {
+      it('wraps its Table in a Table.ScrollContainer', () => {
+        expect(read(file)).toMatch(/<Table\.ScrollContainer\b/);
+      });
+
+      it('feeds that container the SHARED constant, not a width literal', () => {
+        const src = read(file);
+        // The import must come from the shared pure module…
+        expect(src).toMatch(/SUBMISSIONS_TABLE_MIN_WIDTH/);
+        expect(src).toMatch(/from '~\/components\/Apps\/submissionsTable'/);
+        // …and the container must consume it rather than a hardcoded number, which
+        // is how the two lists would silently diverge.
+        expect(src).toMatch(/minWidth=\{SUBMISSIONS_TABLE_MIN_WIDTH\}/);
+        expect(src).not.toMatch(/minWidth=\{\s*\d/);
+      });
+
+      it('uses the native scroll box, so the scrollbar is not hover-hidden', () => {
+        // Mantine's ScrollArea (Table.ScrollContainer's default) defaults to
+        // `type="hover"` — scrollbars appear only on hover. The measured defect IS a
+        // missing affordance, so the native overflow box is deliberate.
+        expect(read(file)).toMatch(/type="native"/);
+      });
+    });
+  }
 });
