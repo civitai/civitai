@@ -380,12 +380,17 @@ export function recordChallengeWinnerConflictUnresolved() {
  * to 1: that caller is not supplying a number at all, it is saying "one drop", which is the only
  * case where 1 is the honest answer.
  *
- * NOT AN ALERT TRIGGER TODAY — no rule, no dashboard panel and no recording rule consumes this
- * counter or `challenge_winner_place_divergence_total`; both are scrape-only signals, and that
- * wiring is tracked separately from this repo. The INTENT is that any non-zero value is actionable
- * and worth paging on, which is why the emit sites are this careful about what a unit means. Read
- * "expected to stay at zero" as a contract on the emitters, not as a promise that somebody is
- * notified when it doesn't.
+ * Alerting for this counter and for `challenge_winner_place_divergence_total` lives in the infra
+ * repo, not here, so treat any claim in this file about whether something is wired as unverifiable
+ * from inside this codebase and liable to rot. What this file CAN promise is the emitter contract:
+ * "expected to stay at zero" is a statement about what the emit sites do, not a promise that
+ * anybody is notified when it doesn't hold. The intent is that any non-zero value is actionable —
+ * which is why the emit sites are this careful about what one unit means.
+ *
+ * Note for whoever wires or re-checks it: an un-deployed build and a genuinely quiet counter are
+ * the SAME empty vector in Prometheus. A rule that reads "expected to stay at zero" over a series
+ * that never existed is indistinguishable from a healthy one, so confirm the series exists before
+ * trusting a quiet alert.
  */
 export function recordChallengeWinnerDuplicatePick(args: {
   source?: string | null;
@@ -395,10 +400,7 @@ export function recordChallengeWinnerDuplicatePick(args: {
   try {
     if (args.count !== undefined && !isPositiveFinite(args.count)) return;
     const count = isPositiveFinite(args.count) ? args.count : 1;
-    winnerDuplicatePickCounter.inc(
-      { source: normSource(args.source), origin: args.origin },
-      count
-    );
+    winnerDuplicatePickCounter.inc({ source: normSource(args.source), origin: args.origin }, count);
   } catch {
     /* never throw from telemetry */
   }
