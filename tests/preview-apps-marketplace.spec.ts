@@ -190,8 +190,45 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
       landedOn,
       `the retired /apps/${first.id} should land on the unified store detail, not render itself`
     ).toMatch(/^\/apps\/store-preview\/.+/);
-    expect(landedOn, 'the retirement must not leave the viewer on the legacy route').not.toBe(
-      `/apps/${first.id}`
-    );
+
+    // 🔴 The two assertions below replace an earlier `.not.toBe('/apps/<id>')`, which
+    // COULD NOT FAIL: given the `toMatch` above has passed, `landedOn` already starts
+    // `/apps/store-preview/`, and `/apps/<appBlockId>` never can — so the inequality
+    // held by construction. It wore the name of a guard while guarding nothing. Both
+    // replacements pin a property the `toMatch` genuinely leaves open.
+
+    // (a) The slug occupies EXACTLY ONE path segment. `/^\/apps\/store-preview\/.+/`
+    //     happily accepts `/apps/store-preview/a/b` — i.e. a destination that climbed
+    //     out of the detail route into some other page. This is the browser-level
+    //     twin of the containment property the unit test pins on the built string.
+    const slugSegment = landedOn.slice('/apps/store-preview/'.length);
+    expect(
+      slugSegment.split('/').filter(Boolean),
+      `the store slug must be one path segment, got "${slugSegment}"`
+    ).toHaveLength(1);
+
+    // (b) The retirement happened at the HTTP layer — a real server redirect out of
+    //     the legacy route — not a client-side bounce rendered by the page. Walk the
+    //     redirect chain of the response we landed on and require the legacy path in
+    //     it. This fails if anyone reimplements the retirement as a `router.replace`
+    //     in the component (which would reintroduce exactly the render-then-race this
+    //     leg was rewritten to avoid), and it fails if a future `/apps/*` middleware
+    //     or rewrite starts serving the store detail directly without the 302.
+    const redirectChain: string[] = [];
+    for (
+      let req = detailResp?.request().redirectedFrom();
+      req && redirectChain.length < 10;
+      req = req.redirectedFrom()
+    ) {
+      redirectChain.push(new URL(req.url()).pathname);
+    }
+    expect(
+      redirectChain.map((p) => decodeURIComponent(p)),
+      `GET /apps/${
+        first.id
+      } must reach the store detail via a SERVER redirect out of the legacy route (chain: ${
+        redirectChain.join(' -> ') || '<none>'
+      })`
+    ).toContain(`/apps/${first.id}`);
   });
 });

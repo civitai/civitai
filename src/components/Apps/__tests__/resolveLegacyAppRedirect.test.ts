@@ -13,15 +13,29 @@ import {
  * decision that a future "helpful" edit would otherwise silently invert into a
  * redirect to `/apps` with nothing failing.
  *
- * Break-it checks these are written to survive — each was run against the source
- * and confirmed to fail before being reverted:
+ * Break-it checks these are written to survive. Each mutation was applied to the
+ * source, the suite run, the named failures confirmed, and the source reverted —
+ * the counts below are MEASURED, not estimated:
  *   - turn the no-listing branch into `{ redirect: { destination: '/apps' } }`
- *     → 5 FAIL (the `notFound` cases).
- *   - drop `encodeURIComponent` → 3 FAIL (the encoding/containment cases).
- *   - flip `permanent` to true → 2 FAIL.
+ *     → 6 FAIL (the `notFound` cases).
+ *   - drop `encodeURIComponent` → 4 FAIL (the encoding/containment cases).
+ *   - flip `permanent` to true → 5 FAIL.
+ *   - drop the `.trim()` on the slug → 3 FAIL.
  *   - move the store-visibility gate AFTER the lookup → 2 FAIL (the ordering
  *     cases in `resolveLegacyAppRoute`).
  *   - drop `status: 'approved'` from the query → 1 FAIL (the query-shape pin).
+ *   - pass the UNTRIMMED `args.appBlockId` to the lookup while still guarding the
+ *     trimmed value → 1 FAIL (the trim case). 🔴 This one previously survived the
+ *     WHOLE suite; see that test for why.
+ *   - rewrite a dot-only slug in the destination → 1 FAIL (the narrowed
+ *     traversal-claim pin).
+ *
+ * 🔴 Two assertions in this file were REMOVED rather than kept, because they could
+ * not fail: an `includes('/')` sub-assertion following a literal-equality assertion
+ * over the same string, twice. They were themselves added by an earlier audit
+ * looking for exactly that defect. The property they claimed to guard now lives in
+ * its own `it` over inputs no literal in this file constrains. A no-op wearing the
+ * name of a guard is worse than no guard — it reads as coverage.
  */
 
 describe('resolveLegacyAppRedirect — approved listing → store-preview redirect', () => {
@@ -47,11 +61,35 @@ describe('resolveLegacyAppRedirect — approved listing → store-preview redire
     // the destination is built by concatenating that same exported constant, so it
     // cannot fail. What CAN fail, and is the property worth pinning, is that the
     // slug never introduces a second segment.
+    //
+    // 🔴 This `it` used to carry a trailing `expect(slugSegment.includes('/'))
+    // .toBe(false)`. It was DEAD: the literal equality on the same string one line
+    // above already fails for any mutation that admits a `/`, so the sub-assertion
+    // could never be the thing that failed. Proven, not assumed — the killed-test
+    // set was byte-identical across all 8 mutations with it deleted. The real
+    // no-second-segment property is now pinned below over inputs that NO literal
+    // in this file constrains, which is what makes it able to fail on its own.
     const result = resolveLegacyAppRedirect({ slug: 'some-app' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
     const slugSegment = result.redirect.destination.slice(STORE_PREVIEW_PATH_PREFIX.length);
     expect(slugSegment).toBe('some-app');
-    expect(slugSegment.includes('/')).toBe(false);
+  });
+
+  it('NO slug value can introduce a second path segment', () => {
+    // The containment property on its own terms: a set of separator-bearing slugs,
+    // none of which is pinned by a literal-equality assertion anywhere in this file,
+    // asserted structurally. Drop `encodeURIComponent` and every case here fails —
+    // which is the point: this `it` can be the sole reason a mutation is caught.
+    for (const slug of ['a/b', '/', '//', '%2F', 'x/../y', 'a//b/c', '/leading', 'trailing/']) {
+      const result = resolveLegacyAppRedirect({ slug });
+      if (!('redirect' in result))
+        throw new Error(`expected a redirect for ${JSON.stringify(slug)}`);
+      const segments = result.redirect.destination
+        .slice(STORE_PREVIEW_PATH_PREFIX.length)
+        .split('/')
+        .filter(Boolean);
+      expect(segments, `slug ${JSON.stringify(slug)} must stay one path segment`).toHaveLength(1);
+    }
   });
 });
 
@@ -110,20 +148,52 @@ describe('resolveLegacyAppRedirect — slug encoding / open-redirect containment
   it('a protocol-relative slug cannot escape to another origin', () => {
     // `//evil.example` un-encoded would be a protocol-relative URL — an open
     // redirect off civitai.com. Encoded, it stays a path segment.
+    //
+    // 🔴 A trailing `...includes('/')).toBe(false)` used to sit here and was DEAD
+    // for the same reason as the one removed above: the literal equality on the
+    // whole destination already fails for any mutation that lets a `/` through.
+    // The separator property now lives in its own `it` over un-pinned inputs.
     const result = resolveLegacyAppRedirect({ slug: '//evil.example' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
     expect(result.redirect.destination).toBe('/apps/store-preview/%2F%2Fevil.example');
-    // The property that actually matters: no slash survives into the slug segment,
-    // so the destination can never resolve as `//host` or climb a directory.
-    expect(result.redirect.destination.slice(STORE_PREVIEW_PATH_PREFIX.length).includes('/')).toBe(
-      false
-    );
   });
 
-  it('path traversal in a slug cannot climb out of /apps/store-preview/', () => {
+  it('a SEPARATOR-BEARING traversal slug cannot climb out of /apps/store-preview/', () => {
     const result = resolveLegacyAppRedirect({ slug: '../../login' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
     expect(result.redirect.destination).toBe('/apps/store-preview/..%2F..%2Flogin');
+  });
+
+  it('a DOT-ONLY slug stays on-origin, but does NOT stay under the prefix', () => {
+    // 🔴 Narrowing an overstated claim. `encodeURIComponent('..') === '..'` — the
+    // encode does nothing to a slug with no separator in it, so a slug of exactly
+    // `..` yields `/apps/store-preview/..`, and dot-segment removal (RFC 3986 §5.2.4,
+    // which every browser and Next's router apply) resolves that to `/apps/`. The
+    // previous docstring said traversal "cannot climb out of /apps/store-preview/";
+    // it was pinned only by the slash-bearing `../../login` case above, and for the
+    // dot-only input the claim is false.
+    //
+    // What DOES hold, and is all that was ever security-relevant: the destination
+    // never leaves the origin and never reaches an arbitrary path — one level up
+    // from the detail route is the apps index, which is where the redirect's own
+    // rejected-alternative branch would have sent people anyway.
+    //
+    // Unreachable in practice: a stored slug must match SLUG_REGEX
+    // (`/^[a-z][a-z0-9-]*[a-z0-9]$/`, publish-request.schema.ts), which admits no
+    // `.` at all. Pinned so the claim in the docstring matches the code's actual
+    // guarantee rather than a stronger one.
+    for (const slug of ['..', '.']) {
+      const result = resolveLegacyAppRedirect({ slug });
+      if (!('redirect' in result)) throw new Error(`expected a redirect for ${slug}`);
+      expect(result.redirect.destination).toBe(`/apps/store-preview/${slug}`);
+      // Still a relative, same-origin path — the only property claimed.
+      expect(new URL(result.redirect.destination, 'https://civitai.com').origin).toBe(
+        'https://civitai.com'
+      );
+    }
+    // And the resolved form, stated explicitly rather than implied: `..` lands on
+    // the apps index, NOT anywhere a viewer could not already reach.
+    expect(new URL('/apps/store-preview/..', 'https://civitai.com').pathname).toBe('/apps/');
   });
 
   it('an ordinary hyphenated slug is passed through unchanged (no over-escaping)', () => {
@@ -201,6 +271,28 @@ describe('resolveLegacyAppRoute — route param handling', () => {
       ).toEqual({ notFound: true });
       expect(findApprovedListingSlug).not.toHaveBeenCalled();
     }
+  });
+
+  it('the route param is TRIMMED before it reaches the lookup', async () => {
+    // 🔴 The guard and the lookup must read the SAME value. `resolveLegacyAppRoute`
+    // trims the param, rejects the trimmed empty, and must then query the TRIMMED
+    // string. Passing `args.appBlockId` (untrimmed) to `findApprovedListingSlug`
+    // while still guarding the trimmed value is a one-word mutation that left the
+    // suite fully green before this case existed — every other fixture id in this
+    // file is whitespace-free, and the only `toHaveBeenCalledWith` used a clean
+    // `'apb_x'`, so nothing could see the difference. In production that mutation
+    // sends `'  apb_x  '` to a Prisma equality filter on a ULID column: it matches
+    // nothing, and an approved app 404s instead of redirecting.
+    const findApprovedListingSlug = vi.fn(async () => 'vitrine');
+    expect(
+      await resolveLegacyAppRoute({
+        features: granted,
+        appBlockId: '  apb_x  ',
+        findApprovedListingSlug,
+      })
+    ).toEqual({ redirect: { destination: '/apps/store-preview/vitrine', permanent: false } });
+    expect(findApprovedListingSlug).toHaveBeenCalledWith('apb_x');
+    expect(findApprovedListingSlug).toHaveBeenCalledTimes(1);
   });
 
   it('a granted viewer + an app WITH an approved listing → the store-preview redirect', async () => {

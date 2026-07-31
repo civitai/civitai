@@ -69,14 +69,36 @@ import { trpc } from '~/utils/trpc';
  *
  * REDIRECT, NOT DELETE — deliberately. The page BODY below is retained for at
  * least one release so a stale bookmark or an external link resolves through the
- * hop. FOUR in-repo callsites point here and are all left untouched:
- * `AppBlockCard.tsx`, `ManifestEditForm.tsx` (post-save "Cancel"),
- * `appListingDetailView.ts`'s `liveAppDetailHref`, and `[appBlockId]/edit.tsx`'s
- * "Back". Deleting the body and cleaning those up is a tracked follow-up; keeping
- * it out of this change is what makes this a one-file change that cannot collide
- * with the parallel work on `appListingDetailView.ts`. The component is
- * unreachable in the meantime (both SSR and client-side `/_next/data` navigations
- * honour the redirect) — do not "fix" anything in it.
+ * hop. FOUR in-repo FILES link here and are all left untouched — five link sites,
+ * because `AppBlockCard.tsx` links twice (its title at ~:204 and its description
+ * at ~:257): `AppBlockCard.tsx` (×2), `ManifestEditForm.tsx` (post-save
+ * "Cancel"), `appListingDetailView.ts`'s `liveAppDetailHref`, and
+ * `[appBlockId]/edit.tsx`'s "Back". Deleting the body and cleaning those up is a
+ * tracked follow-up; keeping it out of this change is what makes this a one-file
+ * change that cannot collide with the parallel work on `appListingDetailView.ts`.
+ * The component is unreachable in the meantime (both SSR and client-side
+ * `/_next/data` navigations honour the redirect) — do not "fix" anything in it.
+ *
+ * ⚠️ The hop DROPS THE QUERY STRING. `getServerSideProps` returns a destination
+ * built from the slug alone, and this page only ever read `router.query.appBlockId`
+ * (a route param, preserved in the destination path), so nothing in-product breaks
+ * — but an external link carrying tracking params (`?utm_*`, `?ref=`) loses them
+ * at the hop. Named so it is a decision, not a surprise; forwarding them is a
+ * one-line change if anyone wants it.
+ *
+ * 🔴 SOMETHING **IS** ORPHANED — an earlier draft of this change claimed nothing
+ * was, and that was wrong. The legacy 5-star `AppBlockReview` WRITE form
+ * (`<AppBlockReviews>` below) has exactly two hosts: this page, and
+ * `AppDetailsModal`. `AppDetailsModal` is opened only from `AppBlockCard`;
+ * `AppBlockCard` renders only from `MarketplaceBody` and `RecentlyOpenedApps`
+ * (whose `RecentlyOpenedAppsView` itself renders only inside `MarketplaceBody`);
+ * and `MarketplaceBody` has had NO importer in app code since `/apps` swapped to
+ * `AppListingsMarketplaceBody` — it is retained purely as a documented one-line
+ * rollback. So after this redirect the whole 5-star review surface has no
+ * reachable entry point. Harmless today — `app_block_reviews` is empty in
+ * production, and the store detail carries the listing review surface — but the
+ * follow-up that deletes this body must decide the legacy review form's fate
+ * explicitly rather than inherit a "still reachable" assumption that is false.
  *
  * ⚠️ Two consequences of leaving those callsites alone, known and accepted:
  *   - An owner backing out of the editor on a PENDING app now lands on a real
@@ -517,9 +539,7 @@ export default function AppDetailPage() {
                         }
                       >
                         {scopes.map((scope) => (
-                          <List.Item key={scope}>
-                            {SCOPE_DESCRIPTIONS[scope] ?? scope}
-                          </List.Item>
+                          <List.Item key={scope}>{SCOPE_DESCRIPTIONS[scope] ?? scope}</List.Item>
                         ))}
                       </List>
                     )}

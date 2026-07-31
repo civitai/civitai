@@ -125,13 +125,40 @@ export function approvedListingSlugQuery(appBlockId: string) {
  * no `Location` header, no query. It does NOT mean the route discloses nothing to
  * a viewer WITH store visibility. For them 302-vs-404 is a new HTTP-level signal
  * that the old page did not emit (it answered 200 either way), and it is not
- * filtered by the two further gates the destination applies — a maturity gate and
- * an on-site "never deployed" gate. So an app caught by either would have its
- * slug disclosed one hop before the destination refuses to serve it. Those
- * viewers can already enumerate approved listings from the store grid, and no
- * live app is in either state, so this is a disclosed residual rather than a
- * hole — but replicating those two gates here is the fix if we want it airtight
- * before the store widens past its current audience.
+ * filtered by the further gates the destination applies.
+ *
+ * 🔴 THERE ARE **THREE** SUCH GATES, not two. `getListingDetail`
+ * (`app-listing.service.ts`) rejects a row on any of:
+ *
+ *   1. STORE-SCOPE KIND — `scope === 'public-external' && row.kind !== 'offsite'`.
+ *   2. DEPLOY — `row.kind === 'onsite' && appBlock.currentVersionDeployedAt == null`.
+ *   3. MATURITY — `!redCapable && isMatureContentRating(row.contentRating)`.
+ *
+ * (2) and (3) are 0-instance today and would each affect a handful of apps at
+ * most. (1) is categorically different and is the reason this disclosure is worth
+ * reading twice: this route's param is an `AppBlock.id`, and EVERY listing that
+ * carries an `appBlockId` is `kind='onsite'` — so **every** listing this route can
+ * resolve is exactly the set `public-external` exists to hide. Under that scope
+ * the coverage gap is 100%, not a corner.
+ *
+ * It is UNREACHABLE TODAY, and only by an accident of flag alignment: the page
+ * gate (`resolveAppsPageAccess`) grants on `features.appListings || appBlocks`,
+ * and `features.appListings` reads the same `app-listings` Flipt key that
+ * `resolveStoreVisibilityScope`'s axis 1 uses to return `full`. So any viewer who
+ * gets past the page gate resolves `full`, where the kind gate is a no-op, and any
+ * viewer who would resolve `public-external` is already 404'd by the page gate. If
+ * `app-listings-public-external` is switched on and the PAGE gate is widened
+ * alongside it, that alignment breaks and every `/apps/<appBlockId>` becomes a 302
+ * disclosing an on-site app's slug to a viewer whose store scope excludes on-site
+ * entirely.
+ *
+ * So: replicating gates here needs all THREE — a store-scope check (which for this
+ * route reduces to "`public-external` → `notFound`", since the resolvable set is
+ * wholly on-site), a `currentVersionDeployedAt` filter, and a `contentRating`
+ * filter keyed on the request's red-capability. NOT DONE IN THIS CHANGE and still
+ * owed: it needs the resolved store scope and red-capability threaded into this
+ * SSR resolver, neither of which it takes today. Doing it before the store widens
+ * past its current audience is the fix.
  */
 export async function resolveLegacyAppRoute(args: {
   features?: { appBlocks?: boolean; appListings?: boolean } | null;
