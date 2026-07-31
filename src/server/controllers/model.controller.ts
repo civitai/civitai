@@ -2,8 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
-  getCachedCapTier,
-  getPaidAccess,
+  getViewerMonetization,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
@@ -265,10 +264,15 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
-    const paidAccessByVersion = await getPaidAccess(
-      'ModelVersion',
-      filteredVersions.map((x) => x.id)
-    );
+    const monetizationByVersion = await getViewerMonetization({
+      versions: filteredVersions.map((x) => ({
+        id: x.id,
+        ownerId: model.user.id,
+        licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
+        modelType: model.type,
+      })),
+      viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+    });
     // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
     // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
     const donationGoalsByVersion = isOwner
@@ -344,13 +348,6 @@ export const getModelHandler = async ({
       if (ownerHidesAnything)
         ownerHasMembership = await hasValidCreatorMembershipCached(model.user.id);
     }
-    // Buyers see the capped price (what they'll be charged); the OWNER must see the stored one, because
-    // this DTO is what the edit form initializes from. One lookup covers the whole list — every version of
-    // a model shares its owner.
-    const ownerCapTier =
-      !isOwner && Object.values(paidAccessByVersion).some(Boolean)
-        ? await getCachedCapTier(model.user.id)
-        : undefined;
     const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
       resolveModelHiddenMetrics({
         modelMeta: model.meta,
@@ -362,7 +359,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const paidAccess = paidAccessByVersion[version.id];
+      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -427,7 +424,7 @@ export const getModelHandler = async ({
 
       return {
         ...version,
-        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+        licensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {
@@ -443,7 +440,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess, ownerCapTier),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,

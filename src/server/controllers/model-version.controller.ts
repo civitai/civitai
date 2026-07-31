@@ -2,8 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
 import {
   assertPaidAccessCaps,
-  getCachedCapTier,
-  getPaidAccess,
+  getViewerMonetization,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
@@ -285,7 +284,19 @@ const loadModelVersion = async ({
     // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
     // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
     // modelVersion.donationGoal instead.
-    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const { paidAccess, licensingFee } = (
+      await getViewerMonetization({
+        versions: [
+          {
+            id,
+            ownerId: version.model.user.id,
+            licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+            modelType: version.model.type,
+          },
+        ],
+        viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+      })
+    )[id];
     const isOwnerOrMod =
       !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
     const eaDonationGoal =
@@ -295,16 +306,10 @@ const loadModelVersion = async ({
 
     return {
       ...version,
-      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+      licensingFee,
       canGenerate,
       wildcardSetId,
-      // Buyers see the capped price (what they'll be charged); the OWNER must see the stored one, because
-      // this DTO is what the edit form initializes from — capping it would have them save the lowered value
-      // back and permanently lose the original.
-      paidAccess: toModelVersionPaidAccessDto(
-        paidAccess,
-        paidAccess && !isOwnerOrMod ? await getCachedCapTier(version.model.user.id) : undefined
-      ),
+      paidAccess: toModelVersionPaidAccessDto(paidAccess),
       donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,

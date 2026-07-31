@@ -68,8 +68,8 @@ import type {
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import { effectivePaidAccessPrice, type ModelVersionTerms } from '@civitai/buzz';
-import { getCachedCapTier, getPaidAccess } from '~/server/services/paid-access.service';
+import { type ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -798,22 +798,20 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
   if (!gatedIds.length) return prices;
 
-  // Priced at the owner's current cap, matching what earlyAccessPurchase charges and what the model page
-  // shows. Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever
-  // owns it now.
+  // Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever owns
+  // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
   const owners = await dbRead.modelVersion.findMany({
     where: { id: { in: gatedIds } },
     select: { id: true, model: { select: { userId: true } } },
   });
-  const capTierByVersion = Object.fromEntries(
-    await Promise.all(
-      owners.map(async (v) => [v.id, await getCachedCapTier(v.model.userId)] as const)
-    )
-  );
+  const monetization = await getViewerMonetization({
+    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId })),
+    viewer: {},
+  });
 
   for (const id of gatedIds) {
-    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
-    const price = effectivePaidAccessPrice(terms?.download?.price, capTierByVersion[id]);
+    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
+    const price = terms?.download?.price ?? 0;
     if (price > 0) prices[id] = price;
   }
   return prices;
