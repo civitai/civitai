@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
   selectRelatedListings,
@@ -97,7 +98,9 @@ describe('selectRelatedListings', () => {
   });
 
   it('limit 0 → empty (no accidental unbounded rail)', () => {
-    expect(selectRelatedListings({ selfId: 'me', sameCategory: [card('a')], limit: 0 })).toEqual([]);
+    expect(selectRelatedListings({ selfId: 'me', sameCategory: [card('a')], limit: 0 })).toEqual(
+      []
+    );
   });
 });
 
@@ -115,10 +118,72 @@ describe('needsPopularTopUp', () => {
   });
 
   it('false while the category query is still loading (do not fire on an empty in-flight list)', () => {
-    expect(needsPopularTopUp({ selfId: 'me', sameCategory: [], categoryLoading: true })).toBe(false);
+    expect(needsPopularTopUp({ selfId: 'me', sameCategory: [], categoryLoading: true })).toBe(
+      false
+    );
   });
 
   it('true for an empty settled category list', () => {
     expect(needsPopularTopUp({ selfId: 'me', sameCategory: [] })).toBe(true);
+  });
+});
+
+describe('isRelatedRailLoading — no "2 cards → loader → 6 cards" flash', () => {
+  it('🔴 the frame where the top-up is newly enabled counts as LOADING', () => {
+    // The react-query v5 trap: on the render where `wantTopUp` flips true the
+    // top-up query is pending but has not started fetching, so `isLoading`
+    // (= isPending && isFetching) is FALSE for one frame. Feeding `isPending`
+    // keeps the loader continuous instead of flashing the thin category result.
+    expect(
+      isRelatedRailLoading({
+        hasCategoryFilter: true,
+        categoryPending: false, // category settled with a thin result
+        wantTopUp: true, // …which is what just enabled the top-up
+        popularPending: true,
+      })
+    ).toBe(true);
+  });
+
+  it('a DISABLED query never pins the rail in a loader (disabled === permanently pending)', () => {
+    // Category query disabled (no category) — its pending state must be ignored.
+    expect(
+      isRelatedRailLoading({
+        hasCategoryFilter: false,
+        categoryPending: true,
+        wantTopUp: true,
+        popularPending: false,
+      })
+    ).toBe(false);
+    // Top-up disabled (category filled the rail) — same.
+    expect(
+      isRelatedRailLoading({
+        hasCategoryFilter: true,
+        categoryPending: false,
+        wantTopUp: false,
+        popularPending: true,
+      })
+    ).toBe(false);
+  });
+
+  it('loading while the category query itself is in flight', () => {
+    expect(
+      isRelatedRailLoading({
+        hasCategoryFilter: true,
+        categoryPending: true,
+        wantTopUp: false,
+        popularPending: true,
+      })
+    ).toBe(true);
+  });
+
+  it('not loading once every enabled query has settled', () => {
+    expect(
+      isRelatedRailLoading({
+        hasCategoryFilter: true,
+        categoryPending: false,
+        wantTopUp: true,
+        popularPending: false,
+      })
+    ).toBe(false);
   });
 });

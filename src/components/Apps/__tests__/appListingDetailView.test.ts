@@ -75,50 +75,93 @@ describe('getDetailPrimaryAction — on-site', () => {
       external: false,
     });
   });
-  it('hasPage + !canOpenPage → points at the IN-PAGE preview; the "Open live" button is GONE', () => {
+  it('🔴 hasPage + !canOpenPage → the raw-origin "Open live" ESCAPE HATCH is KEPT', () => {
     const action = getDetailPrimaryAction(
       onsiteDetail({ hasPage: true, liveUrl: 'https://my-app.civit.ai' }),
       { canOpenPage: false }
     );
-    // The redundant off-site "Open live" button was removed now that the detail
-    // renders the app in-page (poster → click to activate).
-    expect(action.label).not.toBe('Open live');
-    expect(action.mode).not.toBe('visit');
-    // No external nav at all from this branch.
-    expect(action.external).toBe(false);
-    expect(action.href).toBeUndefined();
-    // …and it is not a dead end: it explicitly points at the preview.
-    expect(action.mode).toBe('info');
-    expect(action.note).toBeTruthy();
+    // With appBlocksPages dark the in-page preview is the only in-store route,
+    // and it is a sandboxed frame WITHOUT allow-forms / allow-popups /
+    // allow-downloads — so a block that needs any of those is unusable through
+    // it. The legacy /apps/[appBlockId] page kept an unsandboxed escape hatch;
+    // the canonical page must not be strictly less capable.
+    expect(action).toEqual({
+      label: 'Open live',
+      mode: 'visit',
+      href: 'https://my-app.civit.ai',
+      external: true,
+      note: 'Opens the app at its own address. You can also run it in the live preview below.',
+    });
   });
 
-  it('🔴 removing "Open live" does NOT strand the viewer — the pointer and the preview agree', () => {
-    // This is the invariant the removal hinges on: whenever the header claims a
-    // preview exists, `getListingPreview` must actually produce one (both derive
-    // from kindData.liveUrl through the same https guard). Exercised over the
-    // full on-site matrix so a future change to either side fails here.
-    for (const canOpenPage of [true, false]) {
-      for (const liveUrl of ['https://my-app.civit.ai', 'http://insecure.example']) {
-        const detail = onsiteDetail({ hasPage: true, liveUrl });
-        const action = getDetailPrimaryAction(detail, { canOpenPage });
-        const preview = getListingPreview(detail);
-        const pointsAtPreview = action.label === 'Live preview below';
-        if (pointsAtPreview) {
-          expect(preview, `claimed a preview for liveUrl=${liveUrl}`).not.toBeNull();
+  it('hasPage + canOpenPage → the escape hatch is HIDDEN (the app opens in-page)', () => {
+    // The redundancy the removal was actually about: when /apps/run works, a
+    // second button shipping the viewer to the raw origin is noise.
+    const action = getDetailPrimaryAction(onsiteDetail({ hasPage: true }), { canOpenPage: true });
+    expect(action.mode).toBe('open');
+    expect(action.label).not.toBe('Open live');
+    expect(action.external).toBe(false);
+    expect(action.href).toBe('/apps/run/my-app');
+  });
+
+  it('🔴 no on-site state strands the viewer (full matrix, no note-shaped escape)', () => {
+    // The invariant the whole action matrix rests on: for every combination of
+    // hasPage × canOpenPage × liveUrl-validity × appBlockId-presence, the page
+    // offers either a REAL navigable route or a renderable in-page preview.
+    //
+    // "usable" deliberately does NOT count `action.note`. Every branch of
+    // getDetailPrimaryAction sets an href OR a note, so allowing a note to
+    // satisfy this made the assertion true by construction — it could not fail.
+    // A note is prose; it is not a way to use the app.
+    const stranded: string[] = [];
+    for (const hasPage of [true, false]) {
+      for (const canOpenPage of [true, false]) {
+        for (const liveUrl of ['https://my-app.civit.ai', 'http://insecure.example']) {
+          for (const appBlockId of ['blk-1', null]) {
+            const key = `hasPage=${hasPage} canOpenPage=${canOpenPage} liveUrl=${
+              liveUrl.startsWith('https') ? 'https' : 'http'
+            } appBlockId=${appBlockId ?? 'null'}`;
+            const detail = onsiteDetail({ hasPage, liveUrl, appBlockId });
+            const action = getDetailPrimaryAction(detail, { canOpenPage });
+            const preview = getListingPreview(detail);
+
+            // Integrity of the action itself, asserted for EVERY combination.
+            if (action.href !== undefined) expect(action.href, key).not.toBe('');
+            // `visit` is the only external mode, and it may only ever carry an
+            // https target (the safeExternalHref guard).
+            expect(action.external, key).toBe(action.mode === 'visit');
+            if (action.mode === 'visit') expect(action.href, key).toMatch(/^https:\/\//);
+            // If the copy promises a preview, one must actually render.
+            if (action.note?.includes('live preview')) {
+              expect(preview, `${key}: promised a preview that does not render`).not.toBeNull();
+            }
+
+            const usable =
+              (action.mode === 'open' && !!action.href) ||
+              (action.mode === 'visit' && !!action.href) ||
+              (action.mode === 'info' && !!action.href) ||
+              preview !== null;
+            if (!usable) stranded.push(key);
+          }
         }
-        // And there is ALWAYS some way to use the app: an Open link, a preview,
-        // or (worst case) an informational affordance with a learn-more href.
-        const usable =
-          (action.mode === 'open' && !!action.href) || !!preview || !!action.href || !!action.note;
-        expect(usable, `stranded at canOpenPage=${canOpenPage} liveUrl=${liveUrl}`).toBe(true);
       }
     }
-  });
 
-  it('hasPage + canOpenPage still wins over the preview pointer (Open is the direct action)', () => {
-    expect(
-      getDetailPrimaryAction(onsiteDetail({ hasPage: true }), { canOpenPage: true }).mode
-    ).toBe('open');
+    // The dead-end set, pinned EXACTLY. Any behaviour change either keeps this
+    // set identical or fails here — that is the point of enumerating it instead
+    // of hiding it behind an `|| !!action.note`.
+    //
+    // All three share one degenerate shape: a non-https liveUrl (so the https
+    // guard drops BOTH the escape hatch and the in-page preview) AND no
+    // appBlockId (so there is no "learn more" target either). Unreachable with
+    // real data — liveUrl is server-computed as `https://<slug>.<APPS_DOMAIN>`,
+    // and an on-site listing always has its backing AppBlock — which is exactly
+    // why it is pinned rather than fixed with invented UI.
+    expect(stranded).toEqual([
+      'hasPage=true canOpenPage=false liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=true liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=false liveUrl=http appBlockId=null',
+    ]);
   });
   it('hasPage + !canOpenPage + non-https liveUrl → info fallback (guard drops it)', () => {
     const action = getDetailPrimaryAction(

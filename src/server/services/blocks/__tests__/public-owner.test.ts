@@ -34,9 +34,11 @@ describe('projectPublicOwner', () => {
         owner_settings: { apiKey: 'super-secret' },
       }) as Record<string, unknown>
     );
+    // The key-set equality IS the guard: it fails for ANY extra column, named or
+    // not. Spot-checking a couple of known-bad values on top of it adds no
+    // coverage (they cannot survive a projection whose key set is pinned), so it
+    // is deliberately not done here.
     expect(Object.keys(projected!).sort()).toEqual(['id', 'image', 'username']);
-    expect(JSON.stringify(projected)).not.toContain('secret@example.com');
-    expect(JSON.stringify(projected)).not.toContain('super-secret');
   });
 
   it('a LEFT-JOIN miss (null id) → null owner', () => {

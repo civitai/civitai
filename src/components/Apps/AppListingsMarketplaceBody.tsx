@@ -107,7 +107,9 @@ export function AppListingsMarketplaceBody() {
   // localStorage during render would be a hydration mismatch — and the real
   // list loads in a post-mount effect. A viewer with no recents therefore sees
   // the page exactly as before: `RecentlyOpenedListingsView` renders null for an
-  // empty list, so nothing (not even a spacer) is added above the search box.
+  // empty list, so nothing (not even a spacer) is added. The rail is rendered
+  // BELOW the search/sort/filter controls precisely because of this one-frame
+  // late hydration — see the comment at its render site.
   const [recents, setRecents] = useState<RecentApp[]>([]);
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
@@ -188,17 +190,6 @@ export function AppListingsMarketplaceBody() {
 
   return (
     <Stack gap="md">
-      {/* RECENTLY OPENED — at the very top, ABOVE the search input: it is a
-          "jump back in" shortcut for a returning viewer, so burying it under the
-          filters (where the legacy body put it, at the BOTTOM) defeats it.
-          Renders null when empty, so a first-time viewer's layout is unchanged
-          and nothing shifts when the post-mount localStorage read lands. */}
-      <RecentlyOpenedListingsView
-        entries={recentEntries}
-        canOpenPage={!!features.appBlocksPages}
-        onOpenRecent={handleOpenRecent}
-      />
-
       <Group gap="md" align="end">
         <TextInput
           label="Search"
@@ -223,6 +214,26 @@ export function AppListingsMarketplaceBody() {
 
       {/* Category icon toggles — reuses the live marketplace component + taxonomy. */}
       <CategoryFilterButtons value={category} onChange={setCategory} />
+
+      {/* RECENTLY OPENED — BELOW the search/sort/filter controls and ABOVE the
+          grid.
+          🔴 Deliberately not at the very top. The rail is seeded EMPTY for SSR +
+          the first client render (reading localStorage during render is a
+          hydration mismatch) and hydrates in a post-mount effect, so for a
+          viewer WITH recents it appears one frame late. Above the search input
+          that insertion pushes the whole page down by ~90px after paint — a pure
+          CLS hit on the primary controls, and one we would actually see, since
+          Faro RUM reports web-vitals for this page. Below the controls, the late
+          insertion only moves the grid, which the viewer has not yet aimed at.
+          The rail is still above the fold and above every result card, so the
+          "jump back in" shortcut keeps its priority over browsing.
+          Renders null when empty → a first-time viewer's layout is byte-identical
+          to before, and nothing shifts at all. */}
+      <RecentlyOpenedListingsView
+        entries={recentEntries}
+        canOpenPage={!!features.appBlocksPages}
+        onOpenRecent={handleOpenRecent}
+      />
 
       {isLoading ? (
         <Center py="xl">

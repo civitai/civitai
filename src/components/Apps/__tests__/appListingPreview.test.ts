@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   getListingPreview,
@@ -57,7 +59,12 @@ describe('getListingPreview', () => {
     expect(
       getListingPreview(
         detail({
-          kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'http://x.example' },
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'ab_1',
+            hasPage: true,
+            liveUrl: 'http://x.example',
+          },
         })
       )
     ).toBeNull();
@@ -68,7 +75,12 @@ describe('getListingPreview', () => {
       getListingPreview(
         detail({
           // eslint-disable-next-line no-script-url
-          kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'javascript:alert(1)' },
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'ab_1',
+            hasPage: true,
+            liveUrl: 'javascript:alert(1)',
+          },
         })
       )
     ).toBeNull();
@@ -93,9 +105,18 @@ describe('getListingPreview', () => {
   it('a model-slot on-site app is STILL previewable (its standalone origin is live)', () => {
     // hasPage governs the /apps/run route, not whether <slug>.civit.ai exists —
     // the deploy-gate already guarantees the origin for any listed on-site app.
-    expect(getListingPreview(detail({
-      kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: false, liveUrl: 'https://my-app.civit.ai' },
-    }))).not.toBeNull();
+    expect(
+      getListingPreview(
+        detail({
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'ab_1',
+            hasPage: false,
+            liveUrl: 'https://my-app.civit.ai',
+          },
+        })
+      )
+    ).not.toBeNull();
   });
 });
 
@@ -162,5 +183,66 @@ describe('sandbox parity with the legacy preview', () => {
       'allow-same-origin',
       'allow-scripts',
     ]);
+  });
+
+  /**
+   * 🔴 THE CONSTANT BEING RIGHT IS NOT THE SAME AS THE FRAME BEING SANDBOXED.
+   *
+   * The assertion above compares a string to a literal; it stays green if
+   * somebody deletes `sandbox={LISTING_PREVIEW_SANDBOX}` from the `<iframe>`
+   * altogether — which would hand a third-party block an UNSANDBOXED frame. The
+   * only test that caught that lived in the browser (`component`) project, which
+   * is REPORT-ONLY / non-blocking.
+   *
+   * So the blocking gate reads the JSX itself. Structural, not behavioural, and
+   * deliberately so: rendering `AppListingDetailBody` in the node project would
+   * mean booting Mantine + next/link + tRPC for one attribute. The repo already
+   * uses source-level unit gates for exactly this shape of invariant (see
+   * `no-io-in-transaction` / `no-wholesale-module-mock`).
+   */
+  describe('the preview <iframe> actually CARRIES the hardening props', () => {
+    const SOURCE = path.resolve(__dirname, '../AppListingDetailBody.tsx');
+    // Comments are stripped first: the file's own prose discusses `<iframe>`
+    // several times, and matching those would scope every assertion below to a
+    // doc-comment instead of the element.
+    const source = fs
+      .readFileSync(SOURCE, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+
+    /** The one `<iframe …>` JSX element in the detail body, attributes only. */
+    function iframeJsx(): string {
+      const starts = [...source.matchAll(/<iframe\b/g)].map((m) => m.index as number);
+      // More than one frame means this helper is reading the wrong element and
+      // every assertion below is silently scoped to the first — fail loudly.
+      expect(starts, 'expected exactly one <iframe> in AppListingDetailBody.tsx').toHaveLength(1);
+      const end = source.indexOf('/>', starts[0]);
+      expect(end, 'unterminated <iframe> JSX').toBeGreaterThan(starts[0]);
+      return source.slice(starts[0], end);
+    }
+
+    it('🔴 sandbox={LISTING_PREVIEW_SANDBOX} is on the element (deleting it fails HERE)', () => {
+      expect(iframeJsx()).toMatch(/\bsandbox=\{LISTING_PREVIEW_SANDBOX\}/);
+    });
+
+    it('the sandbox value comes from the shared constant, never an inline literal', () => {
+      // An inline `sandbox="allow-scripts allow-same-origin …"` would drift from
+      // the constant the test above pins, so the two would stop agreeing.
+      expect(iframeJsx()).not.toMatch(/\bsandbox="/);
+    });
+
+    it('referrerPolicy="no-referrer" is on the element', () => {
+      expect(iframeJsx()).toMatch(/\breferrerPolicy="no-referrer"/);
+    });
+
+    it('the src is the https-guarded preview url, not the raw kindData value', () => {
+      expect(iframeJsx()).toMatch(/\bsrc=\{preview\.liveUrl\}/);
+      expect(iframeJsx()).not.toMatch(/\bsrc=\{[^}]*kindData/);
+    });
+
+    it('the frame is lazily loaded and titled for assistive tech', () => {
+      expect(iframeJsx()).toMatch(/\bloading="lazy"/);
+      expect(iframeJsx()).toMatch(/\btitle=\{preview\.frameTitle\}/);
+    });
   });
 });

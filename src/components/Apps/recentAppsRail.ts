@@ -18,9 +18,20 @@
  *    `block_id` — single-sourced server-side in
  *    `~/server/services/blocks/app-listing-mapper.ts` (`slug: ab.blockId`) and
  *    already relied on by `getListingCta`, which routes `/apps/run/<card.slug>`
- *    at a route that resolves by `block_id`. An entry we CANNOT resolve to a
- *    working target returns `null` and is dropped — never rendered as a dead
- *    link.
+ *    at a route that resolves by `block_id`. An entry with no usable handle at
+ *    all returns `null` and is dropped.
+ *
+ *    🔴 WHAT THIS DOES AND DOES NOT GUARANTEE. Resolution guarantees a
+ *    WELL-FORMED target, NOT a resolving one. `/apps/store-preview/<slug>` is an
+ *    APPROVED-`AppListing`-only route, so a legacy `{id, blockId}` entry for an
+ *    app that has no approved listing row (the listing backfills have not run on
+ *    prod) yields a well-formed URL that still 404s. There is deliberately no
+ *    cheap fix: proving the target resolves would need a per-entry existence
+ *    query (a new server round-trip on every `/apps` render, for a rail that is
+ *    pure personalisation), and the alternative — dropping every entry whose
+ *    listing we cannot confirm — is exactly the "silently empty a returning
+ *    viewer's rail" failure this resolution exists to avoid. So: possible 404 on
+ *    a stale legacy entry, accepted, stated here rather than papered over.
  *
  * 2. TARGET selection (`getRecentRailTarget`). Same "no dead nav" discipline the
  *    card/detail view-models use:
@@ -163,18 +174,33 @@ export function getRecentRailTarget(
 export function toRecentAppFromListing(
   card: Pick<ListingCard, 'id' | 'slug' | 'name' | 'iconUrl' | 'kindData'>
 ): RecentApp {
-  const base: RecentApp = {
-    id: card.id,
+  const base = {
     slug: card.slug,
     kind: card.kindData.kind,
     name: card.name,
     ...(card.iconUrl ? { iconUrl: card.iconUrl } : {}),
   };
   if (card.kindData.kind === 'onsite') {
+    // 🔴 DE-DUP KEY. The store's `id` is the de-dup key, and the OTHER on-site
+    // writer — the run page (`/apps/run/<slug>`) — keys on the **AppBlock id**
+    // (`recordRecentlyOpenedApp({ id: appBlockId, … })`). Keying on the
+    // AppListing id here would make the same app persist as TWO entries (one per
+    // writer), so it would appear twice in the rail and its "move to front on
+    // re-open" would only ever move one of them. Fall back to the listing id
+    // only when the listing has no backing AppBlock, which is also the only case
+    // where the run page can never have written the app.
+    //
     // On-site: the listing slug IS the AppBlock `block_id` (app-listing-mapper
     // `slug: ab.blockId`), which is exactly what `/apps/run/<slug>` relies on.
-    return { ...base, blockId: card.slug, hasPage: card.kindData.hasPage };
+    return {
+      ...base,
+      id: card.kindData.appBlockId ?? card.id,
+      blockId: card.slug,
+      hasPage: card.kindData.hasPage,
+    };
   }
+  // Off-site listings have no AppBlock, so the AppListing id IS the only key —
+  // and it is the same key the off-site writers use everywhere.
   const externalUrl = safeExternalHref(card.kindData.externalUrl);
-  return { ...base, ...(externalUrl ? { externalUrl } : {}) };
+  return { ...base, id: card.id, ...(externalUrl ? { externalUrl } : {}) };
 }

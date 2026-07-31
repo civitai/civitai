@@ -3,6 +3,7 @@ import { IconLayoutGrid } from '@tabler/icons-react';
 import Link from 'next/link';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import {
+  isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
   selectRelatedListings,
@@ -71,7 +72,9 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     needsPopularTopUp({
       selfId: listingId,
       sameCategory,
-      categoryLoading: categoryQuery.isLoading,
+      // `isPending` (not `isLoading`) — see `isRelatedRailLoading`. A disabled
+      // query is permanently pending, hence the `!!categoryFilter` guard.
+      categoryLoading: !!categoryFilter && categoryQuery.isPending,
     });
 
   const popularQuery = trpc.appListings.listAvailable.useQuery(
@@ -87,8 +90,12 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
 
   const label = categoryLabel(category);
   const heading = label ? `More in ${label}` : 'More apps';
-  const loading =
-    (!!categoryFilter && categoryQuery.isLoading) || (wantTopUp && popularQuery.isLoading);
+  const loading = isRelatedRailLoading({
+    hasCategoryFilter: !!categoryFilter,
+    categoryPending: categoryQuery.isPending,
+    wantTopUp,
+    popularPending: popularQuery.isPending,
+  });
 
   return (
     <Stack gap="xs" component="section" aria-label={heading} data-testid="apps-related-rail">

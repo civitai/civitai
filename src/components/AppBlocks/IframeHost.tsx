@@ -89,8 +89,9 @@ const HARD_HEIGHT_CEILING = 8_000;
 
 // Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
 // Kept short so the compact menu doesn't grow unbounded (the store itself caps
-// at MAX_RECENTS; this is the additional display cap after excluding the
-// current app).
+// at MAX_RECENTS PER KIND; this is the additional display cap after excluding
+// the current app). The per-kind store budget is what guarantees this menu is
+// never starved by off-site traffic it can't render.
 const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
@@ -220,11 +221,14 @@ export function AppBlockChrome({
   // `blockId` became OPTIONAL when the recents store widened to also carry
   // OFF-SITE listings (which have no AppBlock at all — see
   // `recentlyOpenedAppsStore`). This menu links to `/apps/run/<blockId>`, so it
-  // must show only entries that HAVE one; an off-site entry here would render a
-  // `/apps/run/undefined` dead link. Behaviour for every pre-existing (on-site)
-  // entry is unchanged.
+  // must show only ON-SITE entries that HAVE one; an off-site entry here would
+  // render a `/apps/run/undefined` dead link, and an off-site entry that happens
+  // to carry a stray `blockId` (hand-edited localStorage) would link to the
+  // wrong app. Both are excluded. Behaviour for every pre-existing (on-site)
+  // entry is unchanged, and the store's PER-KIND cap is what stops off-site
+  // entries from evicting the on-site ones this menu needs.
   const recentApps = recents
-    .filter((r) => r.id !== appBlockId && !!r.blockId)
+    .filter((r) => r.id !== appBlockId && r.kind !== 'offsite' && !!r.blockId)
     .slice(0, RECENTLY_RUN_LIMIT);
 
   // Controlled-Menu change handler: mirror the open state AND re-read the recents

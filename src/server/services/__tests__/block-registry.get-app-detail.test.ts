@@ -328,9 +328,15 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     expect(sql).toMatch(/u\.id AS owner_user_id/);
     expect(sql).toMatch(/u\.username AS owner_username/);
     expect(sql).toMatch(/u\.image AS owner_image/);
-    // No other user column is pulled — a widened SELECT would show up here.
-    expect(sql).not.toMatch(/u\.email/);
-    expect(sql).not.toMatch(/u\.\*/);
+    // 🔴 The SELECT list carries EXACTLY those three user columns and nothing
+    // else. Enumerating them (rather than a handful of `not.toMatch(/u\.email/)`
+    // spot-checks, which `u."email"` and every column nobody thought of walk
+    // straight past) is what makes this a real widened-SELECT guard.
+    const selectList = sql.slice(sql.indexOf('SELECT'), sql.indexOf('FROM app_blocks'));
+    const userColumns = [...selectList.matchAll(/\bu\.(?:"([^"]+)"|([\w*]+))/g)].map(
+      (m) => m[1] ?? m[2]
+    );
+    expect([...new Set(userColumns)].sort()).toEqual(['id', 'image', 'username']);
   });
 
   it('an unresolvable owner yields owner:null (no crash, no fallback to appName)', async () => {

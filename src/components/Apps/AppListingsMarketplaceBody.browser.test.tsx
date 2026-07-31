@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -58,7 +59,12 @@ const mocks = vi.hoisted(() => ({
 // CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
-vi.mock('~/utils/trpc', () => ({
+// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
+// module-mock): a hand-written replacement silently breaks every importer the
+// day '~/utils/trpc' grows an export this factory omits — the whole FILE then
+// fails to load with 0 tests collected and no failing assertion.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
     appListings: {
       listAvailable: {
@@ -156,8 +162,9 @@ describe('AppListingsMarketplaceBody', () => {
   // ── "Recently opened" rail ──────────────────────────────────────────────────
   // Selection/target logic is pinned in the blocking unit suite
   // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
-  // page really reads the store after mount, really renders the rail ABOVE the
-  // search box, and really renders NOTHING for a viewer with no recents.
+  // page really reads the store after mount, really renders the rail BELOW the
+  // search/filter controls but ABOVE the result grid, and really renders NOTHING
+  // for a viewer with no recents.
 
   test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
@@ -166,7 +173,7 @@ describe('AppListingsMarketplaceBody', () => {
     expect(page.getByText('Recently opened').elements()).toHaveLength(0);
   });
 
-  test('a viewer WITH recents sees the rail, above the search input', async () => {
+  test('🔴 a viewer WITH recents sees the rail BELOW the controls and ABOVE the grid (CLS)', async () => {
     recordRecentlyOpenedApp({
       id: 'ab_1',
       blockId: 'gen-matrix',
@@ -181,12 +188,24 @@ describe('AppListingsMarketplaceBody', () => {
     await expect.element(rail).toBeInTheDocument();
     await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
 
-    // Document order: the rail precedes the search field. `compareDocumentPosition`
-    // is the direct encoding of "at the top" — a visual-only check would pass
-    // even if the rail were appended at the bottom like the legacy body did.
+    // Document order, asserted on BOTH sides — `compareDocumentPosition` is the
+    // direct encoding of position, where a visual-only check would pass with the
+    // rail appended at the bottom like the legacy body did.
     const railEl = rail.element();
     const search = page.getByLabelText('Search').element();
-    expect(railEl.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const firstCard = page.getByTestId('apps-listing-grid-col').elements()[0];
+
+    // 1. The rail comes AFTER the search input. The rail hydrates one frame late
+    //    (localStorage is client-only), so placing it above the primary controls
+    //    shifted them down by ~90px after paint — a CLS regression Faro RUM
+    //    reports for this page. Below the controls, the late insertion only moves
+    //    the grid.
+    expect(search.compareDocumentPosition(railEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 2. …but still BEFORE the first result card, so "jump back in" outranks
+    //    browsing and stays above the fold.
+    expect(
+      railEl.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {

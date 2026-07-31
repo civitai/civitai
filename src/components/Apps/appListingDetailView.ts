@@ -13,16 +13,24 @@
  *
  * PRIMARY-ACTION policy (kind × hasPage × subKind), all with NO dead 404 nav:
  *   - on-site + hasPage + canOpenPage → **Open** (`/apps/run/<slug>`, the LIVE
- *     W10 in-host page route; flag-gated on `appBlocksPages`).
- *   - on-site + hasPage + !canOpenPage + a previewable liveUrl → **informational
- *     pointer to the IN-PAGE live preview**. This REPLACED an "Open live" button
- *     that sent the viewer off to the raw `<slug>.civit.ai` origin. 🔴 That
- *     action was the PRIMARY one whenever `appBlocksPages` is dark, so removing
- *     it would have stranded the viewer with no way to use the app — the in-page
- *     preview section (`getListingPreview` → `AppListingDetailBody`) IS the
- *     replacement path, and it is derived from the SAME `kindData.liveUrl` +
- *     `safeExternalHref` guard, so "the pointer says there is a preview" and
- *     "the preview renders" cannot disagree. Pinned by tests in
+ *     W10 in-host page route; flag-gated on `appBlocksPages`). The raw-origin
+ *     "Open live" action is HIDDEN here: the app opens properly in-page, so a
+ *     second button shipping the viewer to `<slug>.civit.ai` is pure redundancy.
+ *   - on-site + hasPage + !canOpenPage + a previewable liveUrl → **Open live ↗**
+ *     to the raw `<slug>.civit.ai` origin, PLUS a note pointing at the in-page
+ *     preview. 🔴 This escape hatch is deliberately RETAINED for exactly this
+ *     state. With `appBlocksPages` dark (today's live posture) the in-page
+ *     preview is the ONLY route to the app, and that preview is a 420px iframe
+ *     with `sandbox="allow-scripts allow-same-origin"` — no `allow-forms`, no
+ *     `allow-popups`, no `allow-downloads`. Any block that uses a form, a popup
+ *     or a download is UNUSABLE inside it. The legacy `/apps/[appBlockId]` page
+ *     wrapped the same iframe in an unsandboxed "Open live" escape hatch, so
+ *     dropping it here would make the canonical page strictly LESS capable than
+ *     the page it replaces. (Widening the iframe sandbox is a separate security
+ *     decision and explicitly NOT made here.) Both the action href and the
+ *     preview derive from the SAME `kindData.liveUrl` + `safeExternalHref`
+ *     guard, so "the note says there is a preview" and "the preview renders"
+ *     cannot disagree. Pinned by tests in
  *     `__tests__/appListingDetailView.test.ts`.
  *   - on-site + !hasPage (model-slot app) → **informational** ("Runs on model
  *     pages"): install happens on a model page, so there is no standalone
@@ -99,25 +107,28 @@ export function getDetailPrimaryAction(
     }
     if (kd.hasPage) {
       // Page app, but this viewer can't launch the in-host page (appBlocksPages
-      // dark). We used to ship them off-site with an "Open live" button to the
-      // raw standalone origin. That is now REDUNDANT — the detail body renders
-      // the app in-page (poster → click to activate) — so the action becomes a
-      // pointer to it rather than a second, off-site copy of the same thing.
+      // dark). The in-page preview below IS the in-store way to run it — but it
+      // is a SANDBOXED 420px frame (`allow-scripts allow-same-origin` only), so
+      // a block that needs a form / popup / download cannot be used through it.
+      // The raw-origin "Open live" escape hatch therefore STAYS in this state,
+      // exactly as the legacy `/apps/[appBlockId]` page offered it; it is hidden
+      // only in the `canOpenPage` branch above, where the app opens properly
+      // in-page.
       //
-      // 🔴 This is the ONLY affordance in the header for this case, so it must
-      // only claim a preview exists when one really will render. Both sides
-      // derive from `kindData.liveUrl` through the SAME https guard
-      // (`safeExternalHref`, also used by `getListingPreview`), so they agree by
-      // construction. If the guard drops the URL there is no preview to point at
-      // and we fall through to the informational branch below (unchanged
-      // behaviour for that edge case) rather than promising one.
+      // 🔴 The note must only claim a preview exists when one really will
+      // render. The href and the preview both derive from `kindData.liveUrl`
+      // through the SAME https guard (`safeExternalHref`, also used by
+      // `getListingPreview`), so they agree by construction. If the guard drops
+      // the URL there is neither an escape hatch nor a preview, and we fall
+      // through to the informational branch below rather than promising one.
       const live = safeExternalHref(kd.liveUrl);
       if (live) {
         return {
-          label: 'Live preview below',
-          mode: 'info',
-          external: false,
-          note: 'Run this app right here — scroll down to the live preview.',
+          label: 'Open live',
+          mode: 'visit',
+          href: live,
+          external: true,
+          note: 'Opens the app at its own address. You can also run it in the live preview below.',
         };
       }
     }

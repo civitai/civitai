@@ -161,16 +161,22 @@ describe('AppListingDetailBody', () => {
       .toHaveAttribute('href', '/apps/submit?edit=l1');
   });
 
+  // 🔴 The two absence tests below RENDER-BARRIER first, then assert with
+  // `.elements()`. `await expect.element(x).not.toBeInTheDocument()` polls until
+  // the assertion passes — with `.not`, the still-empty pre-commit DOM satisfies
+  // it on poll #0, so the test passed even when the Edit button was rendered.
   test('non-owner does NOT see the Edit deep-link', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
   });
 
   test('signed-out viewer does NOT see the Edit deep-link', async () => {
     mocks.currentUser = null;
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
   });
 
   test('preview mode renders presentational parts and OMITS comments/reviews/report/review-button/primary-action', async () => {
@@ -199,7 +205,7 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('mock-review-button').elements().length).toBe(0);
     expect(page.getByTestId('apps-listing-owner-edit').elements().length).toBe(0);
     // The primary action is gone too.
-    expect(page.getByText('Live preview below', { exact: true }).elements().length).toBe(0);
+    expect(page.getByTestId('apps-listing-open-live').elements().length).toBe(0);
     // …as is the in-page preview and the discovery rail (both live surfaces).
     expect(page.getByTestId('apps-listing-preview').elements().length).toBe(0);
     expect(page.getByTestId('apps-related-rail').elements().length).toBe(0);
@@ -214,10 +220,16 @@ describe('AppListingDetailBody', () => {
     await expect.element(page.getByTestId('mock-reviews')).toBeInTheDocument();
     await expect.element(page.getByTestId('mock-report-button')).toBeInTheDocument();
     await expect.element(page.getByTestId('mock-review-button')).toBeInTheDocument();
-    // Primary action present. base() is an on-site page app whose viewer can't
-    // open the page route, which USED to render an "Open live" button out to
-    // the raw standalone origin; it now points at the in-page preview instead.
-    await expect.element(page.getByText('Live preview below', { exact: true })).toBeInTheDocument();
+    // Primary action present. base() is an on-site page app whose viewer CAN'T
+    // open the in-host page route (appBlocksPages is false in the mocked flags),
+    // so the raw-origin "Open live" escape hatch is the primary action — the
+    // sandboxed in-page preview alone can't run a block that needs a form /
+    // popup / download.
+    const openLive = page.getByTestId('apps-listing-open-live');
+    await expect.element(openLive).toBeInTheDocument();
+    await expect.element(openLive).toHaveAttribute('href', 'https://my-app.civit.ai');
+    await expect.element(openLive).toHaveAttribute('target', '_blank');
+    await expect.element(openLive).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   // ── In-page live preview (poster → click to activate) ───────────────────────
@@ -268,14 +280,24 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('apps-listing-preview').elements()).toHaveLength(0);
   });
 
-  test('the legacy preview COPY is absent, and there is no "Open live" button', async () => {
+  test('canOpenPage → the in-host Open button, and the raw-origin escape hatch is HIDDEN', async () => {
+    // The redundancy the removal was actually about: once /apps/run works there
+    // is no reason to also ship the viewer to <slug>.civit.ai.
+    renderWithProviders(<AppListingDetailBody detail={base({})} canOpenPage />);
+    await expect.element(page.getByText('Open', { exact: true })).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(0);
+  });
+
+  test('the VERBOSE legacy preview copy is gone (the escape-hatch button is not)', async () => {
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
     await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();
     const text = document.body.textContent ?? '';
     expect(text).not.toContain('Preview of the standalone block at');
     expect(text).not.toContain('The live block on a model page runs with your granted permissions');
     expect(text).not.toContain('this standalone preview does not');
-    expect(page.getByText('Open live', { exact: true }).elements()).toHaveLength(0);
+    // The button itself STAYS in this state — it is the only route for a block
+    // the sandboxed frame can't run. Only the wall of caveat text was removed.
+    expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(1);
   });
 
   // ── Discovery rail ─────────────────────────────────────────────────────────

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
 
 /**
- * Legacy `/apps/<appBlockId>` AUTHOR attribution — node `unit` project (the
- * BLOCKING gate).
+ * `AppDetailsModal` AUTHOR attribution — node `unit` project (the BLOCKING
+ * gate).
  *
- * The regression this guards is specific and was live in prod: the page showed
+ * The regression this guards is specific and was live in prod: the modal showed
  * `by {appName}`, and `OauthClient.name` equals the APP's own title for every
  * approved block — so the author slot displayed the app's title, with an opaque
  * `appId` as the fallback. The rule is now "owner username or nothing".
@@ -49,6 +49,8 @@ describe('getAppDetailAuthor', () => {
   });
 
   it('a null image is carried through as null (avatar falls back to the initial)', () => {
-    expect(getAppDetailAuthor({ owner: { id: 7, username: 'bob', image: null } })?.image).toBeNull();
+    expect(
+      getAppDetailAuthor({ owner: { id: 7, username: 'bob', image: null } })?.image
+    ).toBeNull();
   });
 });

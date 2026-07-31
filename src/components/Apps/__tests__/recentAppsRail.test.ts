@@ -67,7 +67,9 @@ describe('resolveRecentApp — legacy-shape tolerance', () => {
   });
 
   it('an OFF-SITE entry with no slug is DROPPED (blockId can never stand in)', () => {
-    expect(resolveRecentApp({ id: 'x', blockId: 'not-a-listing-slug', kind: 'offsite' })).toBeNull();
+    expect(
+      resolveRecentApp({ id: 'x', blockId: 'not-a-listing-slug', kind: 'offsite' })
+    ).toBeNull();
   });
 
   it('an entry with neither slug nor blockId is DROPPED (no dead link)', () => {
@@ -75,13 +77,35 @@ describe('resolveRecentApp — legacy-shape tolerance', () => {
   });
 
   it('a slug-only on-site entry resolves and back-fills blockId', () => {
-    const resolved = resolveRecentApp({ id: 'x', slug: 'only-slug', kind: 'onsite', hasPage: true });
+    const resolved = resolveRecentApp({
+      id: 'x',
+      slug: 'only-slug',
+      kind: 'onsite',
+      hasPage: true,
+    });
     expect(resolved).toMatchObject({ slug: 'only-slug', blockId: 'only-slug', hasPage: true });
   });
 
   it('a non-https off-site externalUrl is dropped by the https guard', () => {
     const resolved = resolveRecentApp(offsite({ externalUrl: 'http://insecure.example' }))!;
     expect(resolved.externalUrl).toBeUndefined();
+  });
+
+  it('🔴 hasPage is accepted ONLY as the literal boolean true, never as a truthy value', () => {
+    // `hasPage: entry.hasPage === true` — not `!!entry.hasPage`. This blob is
+    // user-writable localStorage, so a hand-edited `"true"` (string) or `1`
+    // must NOT be read as "this app has a launch page": that would route the
+    // rail at `/apps/run/<blockId>`, which 404s for a model-slot app.
+    for (const truthy of ['true', 1, {}, []] as unknown[]) {
+      const resolved = resolveRecentApp({
+        ...onsite(),
+        hasPage: truthy as boolean,
+      })!;
+      expect(resolved.hasPage, `hasPage=${JSON.stringify(truthy)}`).toBe(false);
+      expect(getRecentRailTarget(resolved, { canOpenPage: true }).href).toBe(
+        '/apps/store-preview/gen-matrix'
+      );
+    }
   });
 });
 
@@ -190,9 +214,16 @@ describe('toRecentAppFromListing', () => {
       ...over,
     } as ListingCard);
 
-  it('on-site → carries slug, blockId (= slug), kind + hasPage', () => {
-    expect(toRecentAppFromListing(card())).toEqual({
-      id: 'lst_1',
+  it('🔴 on-site KEYS ON THE APPBLOCK ID — the same key the run page writes', () => {
+    // The de-dup key must match the OTHER on-site writer, `/apps/run/<slug>`
+    // (`recordRecentlyOpenedApp({ id: appBlockId, … })` in
+    // src/pages/apps/run/[slug]/[[...path]].tsx). Keying on the AppListing id
+    // here would persist ONE app as TWO entries — two rail tiles, and a
+    // "move to front on re-open" that only ever moves one of them.
+    const entry = toRecentAppFromListing(card());
+    expect(entry.id).toBe('ab_1'); // kindData.appBlockId, NOT card.id ('lst_1')
+    expect(entry).toEqual({
+      id: 'ab_1',
       slug: 'my-app',
       blockId: 'my-app',
       kind: 'onsite',
@@ -200,6 +231,30 @@ describe('toRecentAppFromListing', () => {
       name: 'My App',
       iconUrl: 'https://cdn.example/icon.png',
     });
+  });
+
+  it('on-site with NO backing appBlockId falls back to the listing id', () => {
+    // The only on-site case the run page can never have written (no AppBlock →
+    // no /apps/run route), so there is no other key to collide with.
+    const entry = toRecentAppFromListing(
+      card({
+        kindData: {
+          kind: 'onsite',
+          appBlockId: null,
+          hasPage: false,
+          liveUrl: 'https://my-app.civit.ai',
+        },
+      })
+    );
+    expect(entry.id).toBe('lst_1');
+  });
+
+  it('the two on-site writers agree on the de-dup key (one app → one entry)', () => {
+    // The run page writes `{ id: appBlockId, blockId, slug: blockId, … }`; this
+    // builder must produce the SAME id for the same app, or the store's
+    // de-dup-by-id does nothing.
+    const fromRunPage = { id: 'ab_1', blockId: 'my-app', slug: 'my-app' };
+    expect(toRecentAppFromListing(card()).id).toBe(fromRunPage.id);
   });
 
   it('off-site → carries the https external url and NO blockId', () => {

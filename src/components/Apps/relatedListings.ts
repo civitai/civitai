@@ -82,3 +82,32 @@ export function needsPopularTopUp(opts: {
   const usable = (opts.sameCategory ?? []).filter((c) => c && c.id !== opts.selfId).length;
   return usable < limit;
 }
+
+/**
+ * Is the rail still loading?
+ *
+ * 🔴 Feed this `isPending`, NOT react-query v5's `isLoading`. `isLoading` is
+ * `isPending && isFetching`, and on the exact render where `wantTopUp` flips
+ * true the top-up query has only just been enabled — it is pending but not yet
+ * fetching, so `isLoading` reads FALSE for one frame. The rail then renders the
+ * thin category result, swaps to a loader, and swaps back to the topped-up list:
+ * a visible `2 cards → spinner → 6 cards` flash on every thin-category detail
+ * page. `isPending` is true from the moment the query exists with no data, so
+ * the loader is continuous.
+ *
+ * Each query's pending state only counts while that query is actually ENABLED —
+ * a disabled react-query query is permanently `pending`, so counting it
+ * unconditionally would pin the rail in a loader forever.
+ */
+export function isRelatedRailLoading(opts: {
+  /** True when the category query is enabled (the listing has a known category). */
+  hasCategoryFilter: boolean;
+  categoryPending: boolean;
+  /** True when the popular top-up query is enabled. */
+  wantTopUp: boolean;
+  popularPending: boolean;
+}): boolean {
+  return (
+    (opts.hasCategoryFilter && opts.categoryPending) || (opts.wantTopUp && opts.popularPending)
+  );
+}

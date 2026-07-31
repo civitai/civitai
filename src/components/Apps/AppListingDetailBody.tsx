@@ -370,20 +370,30 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
 
   if (action.mode === 'visit' && action.href) {
     return (
-      <Button
-        component="a"
-        href={action.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        leftSection={<IconExternalLink size={16} />}
-        // Only OFF-SITE listings reach `visit` now (the on-site "Open live"
-        // button was removed in favour of the in-page preview). Following this
-        // link IS the moment the app is opened, and it leaves the SPA — so it is
-        // the only chance to record the open. A detail-page VIEW never records.
-        onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
-      >
-        {action.label}
-      </Button>
+      <Stack gap={4} align="flex-end">
+        <Button
+          component="a"
+          href={action.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          leftSection={<IconExternalLink size={16} />}
+          data-testid="apps-listing-open-live"
+          // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
+          // whose viewer can't open the in-host route ("Open live" — the
+          // raw-origin escape hatch, see `getDetailPrimaryAction`). Either way,
+          // following this link IS the moment the app is opened, and it leaves
+          // the SPA — so it is the only chance to record the open. A detail-page
+          // VIEW never records.
+          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
+        >
+          {action.label}
+        </Button>
+        {action.note && (
+          <Text size="xs" c="dimmed" ta="right" maw={260}>
+            {action.note}
+          </Text>
+        )}
+      </Stack>
     );
   }
 
