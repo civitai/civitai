@@ -190,6 +190,28 @@ vi.mock('~/server/services/blocks/custom-comfy-settle.service', () => ({
   persistCustomComfySettle: (...a: unknown[]) => mockPersistCustomComfySettle(...(a as [])),
   settleCustomComfySpend: (...a: unknown[]) => mockSettleCustomComfySpend(...(a as [])),
 }));
+// audit 🔴-1 — submitWorkflow (both the txt2img + customComfy branches) now claims a
+// civitai-side GEN idempotency guard BEFORE reserving/submitting. Mock claim/finalize/
+// release with a STATEFUL in-memory store so the router's USE of the guard (in-flight
+// 409, replay cached snapshot, release-on-reject, finalize-on-success, no double
+// cap-INCR) is tested end-to-end; the helper's OWN redis logic is unit-tested in
+// block-gen-idempotency.test.ts. `composeBlockExternalId` + BLOCK_IDEMPOTENCY_KEY_REGEX
+// stay REAL (importActual) so the externalId namespacing + zod charset still apply.
+const { mockClaimGen, mockFinalizeGen, mockReleaseGen, genIdemStore } = vi.hoisted(() => ({
+  genIdemStore: new Map<string, unknown>(),
+  mockClaimGen: vi.fn(),
+  mockFinalizeGen: vi.fn(),
+  mockReleaseGen: vi.fn(),
+}));
+vi.mock('~/server/utils/block-gen-idempotency', async (importActual) => {
+  const actual = await importActual<typeof import('~/server/utils/block-gen-idempotency')>();
+  return {
+    ...actual,
+    claimGenIdempotency: (...a: unknown[]) => mockClaimGen(...(a as [])),
+    finalizeGenIdempotency: (...a: unknown[]) => mockFinalizeGen(...(a as [])),
+    releaseGenIdempotency: (...a: unknown[]) => mockReleaseGen(...(a as [])),
+  };
+});
 // submitWorkflow fires recordScopeInvocation (detached) which dynamic-imports the
 // REAL, heavy user-app-surface.service. That first-time real import serializes the
 // module runner and starves the sibling detached fire-and-forget writes (G6 queue),
@@ -496,6 +518,32 @@ beforeEach(() => {
   mockPersistCustomComfySettle.mockResolvedValue(undefined);
   mockSettleCustomComfySpend.mockReset();
   mockSettleCustomComfySpend.mockResolvedValue(undefined);
+  // GEN idempotency (audit 🔴-1): a STATEFUL in-memory model of the SET-NX claim so
+  // the router integration tests exercise acquire → in_progress/replay end-to-end.
+  // `key` here is the composed `${userId}:${appBlockId}:${idempotencyKey}` — the
+  // helper's real redis-key prefix is irrelevant to the router's use of the guard.
+  genIdemStore.clear();
+  mockClaimGen.mockReset();
+  mockFinalizeGen.mockReset();
+  mockReleaseGen.mockReset();
+  mockClaimGen.mockImplementation(async (userId: number, appBlockId: string, key: string) => {
+    const k = `${userId}:${appBlockId}:${key}`;
+    const existing = genIdemStore.get(k);
+    if (existing === undefined) {
+      genIdemStore.set(k, '__in_progress__'); // sentinel — not yet finalized
+      return { state: 'acquired', key: k };
+    }
+    if (existing && typeof existing === 'object' && 'result' in (existing as object)) {
+      return { state: 'replay', result: (existing as { result: unknown }).result };
+    }
+    return { state: 'in_progress' };
+  });
+  mockFinalizeGen.mockImplementation(async (key: string, result: unknown) => {
+    genIdemStore.set(key, { result });
+  });
+  mockReleaseGen.mockImplementation(async (key: string) => {
+    genIdemStore.delete(key);
+  });
   // F4 defaults: no active dev tunnel (getActiveDevTunnel → null) so the dev
   // spend backstop is inert for every non-dev test. The F4 tests override these.
   mockGetActiveDevTunnel.mockResolvedValue(null);
@@ -895,6 +943,377 @@ describe('blocks.submitWorkflow', () => {
     expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
       scope: 'ai:write:budgeted',
       detail: { action: 'workflow.submit', amount: -25, outcome: 'ok' },
+    });
+  });
+
+  // ---- Item 2 (gen half): idempotency key → orchestrator externalId dedupe ----
+  //
+  // STEP-1 GATE TEST. Verifies the load-bearing property: a same-key RETRY collapses
+  // to ONE Buzz charge. The orchestrator dedupes on `(userId, externalId)` (see the
+  // `submitWorkflowWithRetry` docstring in `~/server/services/orchestrator/workflows`)
+  // and, on a replay, returns the EXISTING workflow with its ORIGINAL transactions
+  // (no second debit). Here the orchestrator submit is mocked to model that dedupe,
+  // and we assert the client key threads to `body.externalId` and that a replay mints
+  // NO second charge.
+  describe('idempotency key → externalId dedupe (item 2, gen half)', () => {
+    // A stateful orchestrator mock: whatIf calls return a cost preview; a REAL submit
+    // dedupes on `body.externalId` — a cache HIT returns the original workflow +
+    // original transactions and mints NO new charge (mirrors the orchestrator).
+    function installDedupingOrchestrator() {
+      let chargeCount = 0;
+      const byExternalId = new Map<string, unknown>();
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        const isWhatif = arg?.query?.whatif === true;
+        if (isWhatif) return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        // REAL submit.
+        const extId: string | undefined = arg?.body?.externalId;
+        if (extId && byExternalId.has(extId)) {
+          return byExternalId.get(extId); // replay → original workflow, NO new charge
+        }
+        chargeCount += 1;
+        const wf = {
+          id: `wf_${chargeCount}`,
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+          // The realized per-account Buzz DEBIT — one set per distinct charge.
+          transactions: [{ id: `txn_${chargeCount}`, type: 'debit', amount: -25 }],
+        };
+        if (extId) byExternalId.set(extId, wf);
+        return wf;
+      });
+      // Real-submit calls only (drop the interleaved whatIf calls).
+      const realSubmitBodies = () =>
+        mockSubmitWorkflow.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((a: any) => a?.query?.whatif !== true)
+          .map((a: any) => a.body);
+      return { chargeCount: () => chargeCount, realSubmitBodies };
+    }
+
+    it('FORCED RETRY: two submits with the SAME key → ONE charge; the 2nd REPLAYS the cached snapshot (audit 🔴-1)', async () => {
+      // UPDATED for the civitai-side gen idempotency claim (audit 🔴-1). Previously
+      // both submits reached the orchestrator and its (userId, externalId) dedupe
+      // collapsed the 2nd. NOW the civitai-side claim is the PRIMARY guard: the 2nd
+      // same-key submit REPLAYS the first's cached snapshot and NEVER reserves or
+      // re-submits (no 2nd cap-INCR, no 2nd orchestrator round-trip). The externalId
+      // dedupe remains threaded on the (single) real submit as the 2nd defense layer.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const first = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'gate-key',
+      });
+      // happyVersionLookup/happyUser are consumed per-call in some setups; re-arm so
+      // a hypothetical SECOND real submit would resolve — it must NOT be reached.
+      happyVersionLookup();
+      happyUser();
+      const second = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'gate-key',
+      });
+
+      // 🔴 THE load-bearing assertion: exactly ONE Buzz charge across both submits.
+      expect(orch.chargeCount()).toBe(1);
+      // The civitai claim short-circuited the 2nd BEFORE the orchestrator — only ONE
+      // real submit ever happened, carrying the namespaced externalId.
+      const bodies = orch.realSubmitBodies();
+      expect(bodies).toHaveLength(1);
+      // Shape is `blk<NN><appBlockId><key>` — NO colon. The orchestrator validates
+      // `^[A-Za-z0-9_-]+$` behind [ApiController], so a colon-delimited id is a 400.
+      expect(bodies[0].externalId).toBe('blk08apb_gategate-key');
+      // The first submit's snapshot was cached (finalize) and REPLAYED verbatim.
+      expect(first.snapshot.workflowId).toBe('wf_1');
+      expect(second.snapshot.workflowId).toBe('wf_1');
+      expect(mockFinalizeGen).toHaveBeenCalledTimes(1);
+      // 🟡-2: NO second cap reservation on the replay (the per-app + per-user cap
+      // counters can't double-INCR because the claim short-circuits before reserve).
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      // buzz-cap reserve (reserveBlockBuzzSpend → sysRedis.incrBy) ran exactly once.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+    });
+
+    it('CONTROL: two DIFFERENT keys → two externalIds → TWO charges (distinct gens are not deduped)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'key-A' });
+      happyVersionLookup();
+      happyUser();
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'key-B' });
+
+      expect(orch.chargeCount()).toBe(2);
+      const bodies = orch.realSubmitBodies();
+      expect(bodies[0].externalId).toBe('blk08apb_gatekey-A');
+      expect(bodies[1].externalId).toBe('blk08apb_gatekey-B');
+    });
+
+    // ── audit 🔴-1: the UNKEYED path is where the live double-charge lived ──────
+    //
+    // Threading `externalId` only when the CLIENT sends `idempotencyKey` closed
+    // NOTHING on real traffic: no shipped client sends one (the SDK has zero
+    // occurrences; the live tipping block hand-rolls its POST). Meanwhile the actual
+    // double-charge is server-side and unconditional — `submitWorkflow` calls
+    // `submitWorkflowWithRetry` with maxAttempts=3 and no per-attempt timeout on the
+    // real submit, and that wrapper's own doc says it adds NO idempotency key: "the
+    // CALLER must set `body.externalId`". So the server now MINTS one when the client
+    // sends none.
+    it('🔴 UNKEYED submit MINTS a server-side externalId (a client key is NOT the gate)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      const bodies = orch.realSubmitBodies();
+      expect(bodies).toHaveLength(1);
+      // 🔴 The load-bearing assertion: an externalId IS present without a client key.
+      const extId: string = bodies[0].externalId;
+      expect(typeof extId).toBe('string');
+      // SERVER namespace (`bls`), structurally DISJOINT from the client `blk`
+      // namespace — a minted id can never collide with a client-supplied one.
+      expect(extId.startsWith('bls')).toBe(true);
+      expect(extId.startsWith('blk')).toBe(false);
+      // Satisfies the orchestrator contract (`^[A-Za-z0-9_-]+$`, <=128, enforced by
+      // [ApiController] as a hard 400 — not a truncation).
+      expect(extId).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(extId.length).toBeLessThanOrEqual(128);
+      // Absent key -> the civitai redis claim is still NEVER taken (a minted id is
+      // unique per request, so claiming on it could not dedupe anything). Keyed
+      // clients are therefore byte-identical to before.
+      expect(mockClaimGen).not.toHaveBeenCalled();
+    });
+
+    it('🔴 UNKEYED: two DISTINCT submits get DISTINCT minted ids -> two charges (no over-dedupe)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      happyVersionLookup();
+      happyUser();
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      const bodies = orch.realSubmitBodies();
+      expect(bodies).toHaveLength(2);
+      // Unique per LOGICAL request — a minted id must never fuse two genuinely
+      // different generations onto one orchestrator dedupe slot.
+      expect(bodies[0].externalId).not.toBe(bodies[1].externalId);
+      expect(orch.chargeCount()).toBe(2);
+    });
+
+    // A backend that CREATES + CHARGES the workflow and only THEN loses the response
+    // (502/504/dropped socket) — exactly the window `submitWorkflowWithRetry` retries
+    // into. All 3 attempts present the SAME body object (the wrapper reuses it), so an
+    // externalId minted ONCE before the loop collapses them; no externalId means a
+    // fresh workflow + a fresh charge on every attempt.
+    function installLossyRetryingOrchestrator({ lostResponses = 2 } = {}) {
+      let chargeCount = 0;
+      let lost = 0;
+      const byExternalId = new Map<string, any>();
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        if (arg?.query?.whatif === true)
+          return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const extId: string | undefined = arg?.body?.externalId;
+          let wf: any;
+          if (extId && byExternalId.has(extId)) {
+            wf = byExternalId.get(extId); // deduped — original workflow, NO new charge
+          } else {
+            chargeCount += 1;
+            wf = {
+              id: `wf_${chargeCount}`,
+              status: 'unassigned',
+              cost: { total: 25 },
+              steps: [],
+              transactions: [{ id: `txn_${chargeCount}`, type: 'debit', amount: -25 }],
+            };
+            if (extId) byExternalId.set(extId, wf);
+          }
+          if (lost < lostResponses) {
+            lost += 1;
+            continue; // the charge happened; the RESPONSE was lost -> the wrapper retries
+          }
+          return wf;
+        }
+        throw new Error('orchestrator unavailable after 3 attempts');
+      });
+      return { chargeCount: () => chargeCount };
+    }
+
+    it('🔴 UNKEYED + 2 LOST RESPONSES: ONE charge, not three (the double-spend this closes)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installLossyRetryingOrchestrator({ lostResponses: 2 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      // 🔴 THE assertion the PR previously claimed but did not deliver: one user
+      // action, one workflow, one Buzz charge — with NO client idempotency key.
+      // Without the server-side mint this is 3.
+      expect(orch.chargeCount()).toBe(1);
+      expect(result.snapshot.workflowId).toBe('wf_1');
+    });
+
+    // ---- audit 🔴-1: civitai-side in-flight / replay guard ----
+    it('CONCURRENT same-key: a 2nd submit while the 1st is IN-FLIGHT → 409, NO 2nd reserve/submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+
+      // Gate the FIRST real orchestrator submit so it stays in-flight (claim acquired,
+      // NOT finalized) while the second same-key submit races in.
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((r) => (releaseFirst = r));
+      let real = 0;
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        if (arg?.query?.whatif === true)
+          return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        real += 1;
+        await firstGate; // hang the first real submit
+        return {
+          id: 'wf_1',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+          transactions: [{ id: 'txn_1', type: 'debit', amount: -25 }],
+        };
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const firstPromise = caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'race-key',
+      });
+      // Wait until the first has CLAIMED + RESERVED and is parked at the orchestrator.
+      await vi.waitFor(() => {
+        expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+        expect(real).toBe(1);
+      });
+
+      happyVersionLookup();
+      happyUser();
+      // The second same-key submit finds the in-progress sentinel → 409 CONFLICT.
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'race-key' })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+      // 🔴 The second did NOT reserve again and did NOT submit again — exactly ONE of
+      // each across the race (no double cap-INCR, no double orchestrator submit).
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      expect(real).toBe(1);
+
+      releaseFirst();
+      const firstResult = await firstPromise;
+      expect(firstResult.snapshot.workflowId).toBe('wf_1');
+    });
+
+    it('🔴 RELEASE on the submit-THROW catch: a genuine retry with the same key can RE-RUN', async () => {
+      // The MOST important release site — this IS the retry scenario. A real submit
+      // that THROWS moved no money and left no reservation standing, so the claim
+      // must be dropped; otherwise the sentinel 409s every retry with the same key
+      // for its full 10-minute TTL and the generation becomes unlandable.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        if (arg?.query?.whatif === true)
+          return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        throw new Error('orchestrator exploded');
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'throw-key' })
+      ).rejects.toThrow('orchestrator exploded');
+
+      // \U0001f534 The load-bearing assertion: the claim was RELEASED (not finalized).
+      expect(mockReleaseGen).toHaveBeenCalledTimes(1);
+      expect(mockFinalizeGen).not.toHaveBeenCalled();
+
+      // ...and prove it end-to-end: the SAME key now ACQUIRES again and succeeds,
+      // rather than 409-ing on a stranded sentinel.
+      happyVersionLookup();
+      happyUser();
+      let charge = 0;
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        if (arg?.query?.whatif === true)
+          return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        charge += 1;
+        return { id: `wf_retry_${charge}`, status: 'unassigned', cost: { total: 25 }, steps: [] };
+      });
+      const retry = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'throw-key',
+      });
+      expect(retry.snapshot.workflowId).toBe('wf_retry_1');
+    });
+
+    it('CHARSET (audit 🟢): an idempotencyKey with a space/control char is REJECTED at the input (no claim, no submit)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'bad key\n' })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Rejected by zod before any handler work — no claim, no orchestrator call.
+      expect(mockClaimGen).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('FAIL-CLOSED: a redis error at claim time → INTERNAL_SERVER_ERROR, NO reserve, NO real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      installDedupingOrchestrator();
+      mockClaimGen.mockRejectedValueOnce(new Error('redis down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'k' })
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+      // Claim failed closed BEFORE the reservation + real submit.
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('RELEASE on a pre-money cap reject → a genuine retry can re-run (claim not stranded)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      installDedupingOrchestrator();
+      // Per-user daily cap RESERVE pushes over the ceiling (incrBy returns > cap) so
+      // the submit is rejected pre-money with a failed snapshot.
+      mockSysRedis.incrBy.mockResolvedValue(1_000_000);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'cap-key',
+      });
+      expect(result.snapshot.status).toBe('failed');
+      // No money moved → the claim was RELEASED (so a genuine retry can re-run), and
+      // it was NOT finalized (a cap-reject is not a cached terminal success).
+      expect(mockReleaseGen).toHaveBeenCalledTimes(1);
+      expect(mockFinalizeGen).not.toHaveBeenCalled();
     });
   });
 
@@ -4700,6 +5119,73 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         recipe: 'seamless-pano-360',
         submittedAt: expect.any(Number),
       });
+    });
+
+    it('IDEMPOTENCY (audit 🔴-1): a same-key retry REPLAYS the cached snapshot — NO 2nd reserve/submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      const first = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      expect(first.snapshot.workflowId).toBe('wf_cc_1');
+      happyCcResources();
+      const second = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      expect(second.snapshot.workflowId).toBe('wf_cc_1');
+      // customComfy has NO whatIf — exactly ONE orchestrator submit + ONE reservation
+      // across both calls (the 2nd replayed the cached snapshot before reserving).
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      expect(mockFinalizeGen).toHaveBeenCalledTimes(1);
+      // The (single) real submit carried the namespaced externalId (2nd defense layer).
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.externalId).toBe('blk08apb_testcc-key');
+    });
+
+    it('🔴 a client key whose composed externalId the ORCHESTRATOR would reject FAILS CLOSED (no reserve, no submit)', async () => {
+      // composeBlockExternalId throws BEFORE any cap reservation, so a violation can
+      // never be silently truncated into a BROKEN (userId, externalId) dedupe — and
+      // no money moves. The orchestrator validates `^[A-Za-z0-9_-]+$` behind
+      // [ApiController]: an out-of-charset id is a hard 400, not a truncation.
+      // (The txt2img branch composes at the same point; this covers the customComfy
+      // branch's own call site, which had no coverage.)
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ appBlockId: 'apb:bad' }));
+      happyCcResources();
+      happySubmit();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
+      ).rejects.toThrow(/characters the orchestrator/);
+      expect(mockClaimGen).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('an appBlockId too long to length-encode also FAILS CLOSED', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ appBlockId: 'a'.repeat(100) }));
+      happyCcResources();
+      happySubmit();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
+      ).rejects.toThrow(/outside 1\.\.99/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('IDEMPOTENCY (audit 🔴-1): a concurrent claim in-progress → 409 CONFLICT, NO reserve, NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      mockClaimGen.mockResolvedValue({ state: 'in_progress' });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
     it('tags reflect the recipe id + customComfy (never txt2img), preserving app-block provenance', async () => {

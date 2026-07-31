@@ -1065,16 +1065,26 @@ export function IframeHost({
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
 
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+    const off = onMessage<
+      { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
+    >(
       'SUBMIT_WORKFLOW',
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
+        // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
+        // lost-response retry collapses to one Buzz charge. Host-first: accept it
+        // defensively (only a non-empty string) — older SDKs never send it.
+        const idempotencyKey =
+          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+            ? raw.idempotencyKey
+            : undefined;
         try {
           const { snapshot } = await submitWorkflowMutation.mutateAsync({
             blockToken: token,
             // Schema-validated server-side; the host never trusts this shape.
             body: raw.body as never,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
           });
           send('WORKFLOW_SUBMITTED', { requestId, snapshot });
         } catch (err) {

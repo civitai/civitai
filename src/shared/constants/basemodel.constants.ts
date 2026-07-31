@@ -1059,6 +1059,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // MiniMax (Hailuo) - checkpoint only
+  { ecosystemId: ECO.MiniMax, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1480,6 +1483,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.MiniMax,
     defaults: {
+      model: { id: 3183239 },
       modelLocked: true,
     },
   },
@@ -3278,7 +3282,7 @@ export const baseModelRecords: BaseModelRecord[] = [
   // Hailuo by MiniMax
   {
     id: BM.MiniMax,
-    name: 'Hailuo by MiniMax',
+    name: 'MiniMax',
     description: "MiniMax's video generation model with cinematic quality",
     type: 'video',
     ecosystemId: ECO.MiniMax,
