@@ -198,8 +198,25 @@ export interface PageBlockHostProps {
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
   /** #3/#6: the token mint errored. Surface an error state instead of hanging at
-   *  `no_token`. */
+   *  `no_token`. Only escalates a host still in `loading` — see `tokenTerminal`
+   *  for the mid-session case. */
   tokenError?: boolean;
+  /**
+   * The mint has PERMANENTLY failed: no usable token remains AND the upstream
+   * hook's bounded automatic re-mints are exhausted (`useBlockToken.terminal`).
+   *
+   * 🔴 THIS IS THE ONLY THING THAT MAY TEAR DOWN A `ready` PAGE. Before it, the
+   * `tokenError` effect below transitioned out of `loading` ONLY — so a token
+   * that died mid-session left the host sitting at `ready` on a dead credential
+   * with `TOKEN_REFRESH` early-returning on `!token`, and the block just silently
+   * 401'd forever with no signal to the user or the platform. Gating on the
+   * SETTLED signal (rather than a bare `tokenError`) is what keeps a merely
+   * TRANSIENT refresh blip from ripping a working app out from under the user
+   * while it is still being recovered.
+   *
+   * Optional + default false → every existing caller is byte-identical.
+   */
+  tokenTerminal?: boolean;
   /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
@@ -260,6 +277,7 @@ export function PageBlockHost({
   missingScopes,
   needsConsent,
   tokenError,
+  tokenTerminal = false,
   domain,
   maxBrowsingLevel,
   viewer,
@@ -509,6 +527,29 @@ export function PageBlockHost({
     if (!tokenError || token) return;
     setStatus((current) => (current === 'loading' ? 'error' : current));
   }, [tokenError, token]);
+
+  // MID-SESSION credential loss. The effect above only escalates a host still in
+  // `loading`, so a token that died AFTER the block went `ready` left the host
+  // parked on `ready` holding nothing: the `TOKEN_REFRESH` push early-returns on
+  // `!token`, so the block kept its now-dead credential and silently 401'd every
+  // call — no signal to the user, none to the platform.
+  //
+  // 🔴 GATED ON `tokenTerminal`, NOT `tokenError`. The upstream hook now retries a
+  // failed refresh on a bounded backoff and KEEPS a still-valid token while it
+  // does, so a transient blip never reaches here at all. Only once recovery has
+  // provably settled with nothing usable left do we replace the running app with
+  // the real terminal state — which also re-arms the bounded auto-retry below
+  // (an `error` status is an AUTH terminal, so its one automatic attempt spends a
+  // re-mint) and surfaces the prominent manual Retry once that settles too.
+  //
+  // 🔴 NO SECOND BEACON. A host that reached `ready` already fired its ONE `ok`
+  // impression, and `blockRenderEmittedRef` is per-mount — so the failure beacon
+  // below is inert here by construction. The episode stays one beacon, reporting
+  // that the page load itself succeeded (which it did).
+  useEffect(() => {
+    if (!tokenTerminal || token) return;
+    setStatus((current) => (current === 'ready' ? 'error' : current));
+  }, [tokenTerminal, token]);
 
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.

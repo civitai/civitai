@@ -1,4 +1,5 @@
 import { Alert, Button, Group, Loader, Skeleton, Stack, Text } from '@mantine/core';
+import { useReducedMotion } from '@mantine/hooks';
 import { IconRefresh } from '@tabler/icons-react';
 
 type FallbackReason = 'loading' | 'token_error' | 'timeout' | 'fatal_block_error';
@@ -84,8 +85,27 @@ export function BlockFallback({
   autoRetriesSpent = 0,
   prominentRetry = false,
 }: BlockFallbackProps) {
+  // `true` = fail SAFE (assume reduced motion) until the media query resolves —
+  // the same default PageBlockHost passes.
+  const reduceMotion = useReducedMotion(true);
+
   if (reason === 'loading') {
-    return <Skeleton h={minHeight} radius="md" data-block-fallback="loading" />;
+    // The loading skeleton used to be a sub-second flash on first mount, so its
+    // shimmer was unremarkable. It now also covers the model slot's bounded
+    // token-refresh RETRY window (`BlockHost` keeps the slot alive instead of
+    // collapsing), where it can persist for tens of seconds — long enough that an
+    // indefinitely looping animation is exactly what
+    // `prefers-reduced-motion: reduce` exists to suppress. Mantine's `animate`
+    // prop drops the shimmer and keeps the (static) placeholder box, so the
+    // layout reservation is unchanged.
+    //
+    // 🔴 The test asserts Mantine's OWN `data-animate` attribute (rendered from
+    // this prop: present when true, absent when false). A separate mirror
+    // attribute derived from `reduceMotion` was tried first and REJECTED — it
+    // stayed correct even with `animate` hardcoded to true, so the test passed
+    // while the shimmer kept running. Mutation testing caught it; assert the
+    // prop's real rendered effect, never a restatement of the intent.
+    return <Skeleton h={minHeight} radius="md" animate={!reduceMotion} data-block-fallback="loading" />;
   }
 
   const copy = REASON_COPY[reason];
