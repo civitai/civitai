@@ -281,7 +281,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                   onChange={(v) =>
                     form.setSellerShare(typeof v === 'number' ? Math.min(70, Math.max(0, v)) : 0)
                   }
-                  description="The % of each resale the seller keeps (they set their own price)."
+                  description="The % of each resale the seller earns. Resales use your price and inventory."
                 />
                 <Paper withBorder radius="md" p="sm">
                   <Text size="xs" c="dimmed" mb={4}>
