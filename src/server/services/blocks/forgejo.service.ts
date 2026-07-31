@@ -631,10 +631,16 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
 
 /**
  * MOD REVIEW SANDBOX (#2831) — current HEAD commit sha of the in-review repo
- * `civitai-apps-review/<slug>` on `main`. submitVersion pushes the pending
- * bundle to this repo (replaceAllFiles=true) and only one pending request exists
- * per slug, so HEAD is exactly the pending version's source — the sha the review
- * build clones + tags. Full 40-hex sha (the build pipeline requires it).
+ * `civitai-apps-review/<slug>` on `main`. Full 40-hex sha (the build pipeline
+ * requires it).
+ *
+ * 🔴 HEAD is the pending version's source ONLY for a ZIP-originated request:
+ * submitVersion pushes that bundle here (replaceAllFiles=true) and at most one
+ * request is pending per slug. A request that arrived by `git push` never wrote
+ * here — for those, HEAD is an OLDER submission's tree (or missing entirely), so
+ * calling this for one previews the wrong code. `previewRequest` discriminates
+ * on the request's origin before it gets here (resolveReviewSourceSha); do not
+ * call this without doing the same.
  */
 export async function getReviewRepoHeadSha(slug: string): Promise<string> {
   const res = await fjFetch(

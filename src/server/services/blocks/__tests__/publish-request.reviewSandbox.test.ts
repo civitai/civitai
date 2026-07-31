@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - previewRequest reads the in-review repo HEAD, triggers the review build
  *     with SERVER-derived sha/host/url + the modUserId, and stamps building.
  *   - previewRequest refuses a non-pending request.
+ *   - previewRequest resolves the source tree by ORIGIN: a git-push-originated
+ *     request mirrors the reviewed commit into the in-review repo and builds
+ *     THAT sha; a ZIP submission is unchanged; a request with neither pointer
+ *     throws instead of silently building an unrelated tree.
  *   - a trigger failure flips state to preview-failed and re-throws.
  *   - getReviewStatus surfaces only preview-* states.
  *   - teardownReviewForRequest deletes review resources by the publish request,
@@ -23,6 +27,10 @@ const {
   mockDeleteAgentReviewResources,
   mockDeleteStagedBundle,
   mockDeprovisionReviewPreview,
+  mockListRepoTreeAtRef,
+  mockGetBlobContent,
+  mockEnsureReviewRepo,
+  mockCommitFiles,
 } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
@@ -48,6 +56,20 @@ const {
     },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
+  // Push-originated preview path: reconstruct the reviewed commit's tree from
+  // the developer's repo, then mirror it into the in-review repo.
+  mockListRepoTreeAtRef: vi.fn(
+    async () =>
+      new Map<string, string>([
+        ['block.manifest.json', 'blob-manifest'],
+        ['index.html', 'blob-index'],
+      ])
+  ),
+  mockGetBlobContent: vi.fn(async (_slug: string, blobSha: string) =>
+    Buffer.from(blobSha === 'blob-manifest' ? '{"id":"my-app"}' : '<html></html>', 'utf8')
+  ),
+  mockEnsureReviewRepo: vi.fn(async () => undefined),
+  mockCommitFiles: vi.fn(async () => ({ sha: 'b'.repeat(40) })),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
   mockDeleteReviewResources: vi.fn(async () => undefined),
   mockDeleteAgentReviewResources: vi.fn(async () => undefined),
@@ -61,6 +83,10 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite 
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   getReviewRepoHeadSha: mockGetReviewHead,
+  listRepoTreeAtRef: mockListRepoTreeAtRef,
+  getBlobContent: mockGetBlobContent,
+  ensureReviewRepo: mockEnsureReviewRepo,
+  commitFiles: mockCommitFiles,
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   getReviewRepoHeadSha: mockGetReviewHead,
@@ -99,6 +125,13 @@ import {
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const SHA = 'a'.repeat(40);
+/** In-review repo HEAD (what a ZIP submission's preview builds). */
+const ZIP_BUNDLE_KEY = 'app-block-bundles/deadbeef.zip';
+/** The commit a git push parked for review, and the sha the mirror commit
+ *  returns — deliberately DIFFERENT from the in-review HEAD (`SHA`) so a test
+ *  can tell which tree was actually built. */
+const PUSH_SHA = 'c'.repeat(40);
+const MIRRORED_SHA = 'b'.repeat(40);
 
 describe('previewRequest', () => {
   beforeEach(() => {
@@ -116,6 +149,8 @@ describe('previewRequest', () => {
       id: PUBREQ,
       status: 'pending',
       slug: 'my-app',
+      bundleKey: ZIP_BUNDLE_KEY,
+      forgejoCommitSha: null,
     });
     const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 99 });
 
@@ -157,6 +192,8 @@ describe('previewRequest', () => {
       id: PUBREQ,
       status: 'pending',
       slug: 'my-app',
+      bundleKey: ZIP_BUNDLE_KEY,
+      forgejoCommitSha: null,
     });
     mockTriggerReviewBuild.mockRejectedValue(new Error('receiver 500'));
     await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
@@ -166,6 +203,124 @@ describe('previewRequest', () => {
       ([arg]: any[]) => arg.data.deployState === 'preview-failed'
     );
     expect(failedCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// previewRequest source-tree resolution by ORIGIN.
+//
+// A pending request reaches review one of two ways and they do NOT share a
+// source: a ZIP submission pushed its files into the in-review repo at submit
+// time, a git push did not (its own repo at the pushed commit is the artifact).
+// Reading the in-review HEAD for a push-originated request silently previews an
+// OLDER ZIP submission's tree on any slug that ever had one.
+// ---------------------------------------------------------------------------
+describe('previewRequest source tree by origin', () => {
+  beforeEach(() => {
+    process.env.NEXTAUTH_URL = 'https://civitai.com';
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    mockDbRead.appBlockPublishRequest.findMany.mockReset();
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    mockGetReviewHead.mockClear();
+    mockListRepoTreeAtRef.mockClear();
+    mockGetBlobContent.mockClear();
+    mockEnsureReviewRepo.mockClear();
+    mockCommitFiles.mockClear();
+    mockCommitFiles.mockResolvedValue({ sha: MIRRORED_SHA });
+    mockTriggerReviewBuild.mockReset();
+    mockTriggerReviewBuild.mockResolvedValue({ name: 'review-pr-1' });
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('push-originated (empty bundleKey + a commit): mirrors THAT commit into the in-review repo and builds the mirrored sha', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'my-app',
+      bundleKey: '',
+      forgejoCommitSha: PUSH_SHA,
+    });
+
+    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+
+    // The reviewed commit — not a branch HEAD — is what gets reconstructed.
+    expect(mockListRepoTreeAtRef).toHaveBeenCalledWith('my-app', PUSH_SHA);
+    expect(mockEnsureReviewRepo).toHaveBeenCalledWith('my-app');
+    const commitArg = mockCommitFiles.mock.calls[0][0] as {
+      org: string;
+      slug: string;
+      replaceAllFiles?: boolean;
+      files: Array<{ path: string }>;
+    };
+    expect(commitArg.org).toBe('civitai-apps-review');
+    expect(commitArg.slug).toBe('my-app');
+    // replaceAllFiles is what stops an older submission's files surviving.
+    expect(commitArg.replaceAllFiles).toBe(true);
+    expect(commitArg.files.map((f) => f.path).sort()).toEqual([
+      'block.manifest.json',
+      'index.html',
+    ]);
+
+    // The stale in-review HEAD is never consulted for this origin.
+    expect(mockGetReviewHead).not.toHaveBeenCalled();
+    expect(result.sha).toBe(MIRRORED_SHA);
+    expect(result.host).toBe(`review-${MIRRORED_SHA.slice(0, 16)}.civit.ai`);
+    expect(mockTriggerReviewBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'my-app', sha: MIRRORED_SHA })
+    );
+  });
+
+  it('ZIP-originated (real bundleKey): unchanged — reads the in-review HEAD, writes nothing', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'my-app',
+      bundleKey: ZIP_BUNDLE_KEY,
+      forgejoCommitSha: null,
+    });
+
+    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+
+    expect(mockGetReviewHead).toHaveBeenCalledWith('my-app');
+    expect(result.sha).toBe(SHA);
+    expect(mockListRepoTreeAtRef).not.toHaveBeenCalled();
+    expect(mockEnsureReviewRepo).not.toHaveBeenCalled();
+    expect(mockCommitFiles).not.toHaveBeenCalled();
+    expect(mockTriggerReviewBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'my-app', sha: SHA })
+    );
+  });
+
+  it('a ZIP row that ALSO carries a commit sha still builds the in-review HEAD (bundleKey wins)', async () => {
+    // Approved-then-resubmitted slugs can carry both pointers; the bundle is the
+    // origin discriminator, exactly as in approveRequest.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'my-app',
+      bundleKey: ZIP_BUNDLE_KEY,
+      forgejoCommitSha: PUSH_SHA,
+    });
+
+    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    expect(result.sha).toBe(SHA);
+    expect(mockCommitFiles).not.toHaveBeenCalled();
+  });
+
+  it('neither pointer: throws instead of building an unattributable tree', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'my-app',
+      bundleKey: '',
+      forgejoCommitSha: null,
+    });
+
+    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 7 })).rejects.toThrow(
+      /neither a bundle nor a commit/
+    );
+    expect(mockGetReviewHead).not.toHaveBeenCalled();
+    expect(mockTriggerReviewBuild).not.toHaveBeenCalled();
   });
 });
 
@@ -525,6 +680,8 @@ describe('previewRequest concurrency cap', () => {
       id: PUBREQ,
       status: 'pending',
       slug: 'my-app',
+      bundleKey: ZIP_BUNDLE_KEY,
+      forgejoCommitSha: null,
     });
     mockDbRead.appBlockPublishRequest.findMany.mockReset();
     mockDbWrite.appBlockPublishRequest.updateMany.mockClear();

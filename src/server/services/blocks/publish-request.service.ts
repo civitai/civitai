@@ -120,6 +120,11 @@ export type SubmitVersionResult = {
 
 const MANIFEST_PATH = 'block.manifest.json';
 
+/** Org holding the per-slug in-review snapshot repos a review preview builds
+ *  from. Deliberately separate from the canonical build org so commits here
+ *  never fire the production build webhook. */
+const REVIEW_REPO_ORG = 'civitai-apps-review';
+
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
 // scannable in the mod-review UI.
@@ -1204,7 +1209,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: 'civitai-apps-review',
+      org: REVIEW_REPO_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -3776,11 +3781,65 @@ export type PreviewRequestResult = {
 };
 
 /**
- * Start a review preview for a PENDING publish request. Reads the in-review repo
- * HEAD (the pending bundle's source), triggers a REVIEW build (separate image +
- * host from production), stamps state `preview-building`, and returns the review
- * URL the UI polls toward. The build-callback (review-build-callback) advances
- * deploying → live, or flips to failed.
+ * Resolve the sha the review build should clone + tag for a PENDING publish
+ * request, and make sure the in-review repo actually holds that tree first.
+ *
+ * A pending request has exactly one of two origins, and they do NOT share a
+ * review source:
+ *
+ *   - ZIP submission (`submitVersion`): a real `bundleKey`. That call already
+ *     pushed the submitted files into the in-review repo (replaceAllFiles), so
+ *     its HEAD *is* this version's source. Unchanged behaviour.
+ *   - git push (`recordPendingFromPush`): empty `bundleKey` + the pushed
+ *     `forgejoCommitSha`. Nothing was ever written to the in-review repo for
+ *     this version — the developer's own repo at the pushed commit is the
+ *     reviewable artifact. Reading the in-review HEAD here would build whatever
+ *     an OLDER ZIP submission left behind (a silently WRONG preview), or 404 on
+ *     a slug that has only ever been pushed to. So mirror the reviewed commit's
+ *     tree into the in-review repo first, using the same reconstruct → extract
+ *     pipeline `approveRequest` uses for this origin, and build the sha that
+ *     mirror produced.
+ *
+ * INVARIANT: neither pointer set means the request cannot be attributed to a
+ * source tree at all — throw rather than fall through to the in-review HEAD and
+ * preview an unrelated version. (Mirrors `approveRequest`'s two-origin split;
+ * what actually SHIPS is still driven by the pinned commit there, untouched.)
+ */
+async function resolveReviewSourceSha(request: {
+  id: string;
+  slug: string;
+  bundleKey: string;
+  forgejoCommitSha: string | null;
+}): Promise<string> {
+  const { getReviewRepoHeadSha, ensureReviewRepo, commitFiles } = await import('./forgejo.service');
+
+  if (request.bundleKey) return getReviewRepoHeadSha(request.slug);
+
+  if (!request.forgejoCommitSha) {
+    throw new Error(`publish request ${request.id} has neither a bundle nor a commit to preview`);
+  }
+
+  const bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+  const files = await extractBundleFilesFromBuffer(bundleBuffer);
+  await ensureReviewRepo(request.slug);
+  const { sha } = await commitFiles({
+    org: REVIEW_REPO_ORG,
+    slug: request.slug,
+    files,
+    message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
+    replaceAllFiles: true,
+  });
+  return sha;
+}
+
+/**
+ * Start a review preview for a PENDING publish request. Resolves the pending
+ * version's source tree (see {@link resolveReviewSourceSha} — the in-review repo
+ * HEAD for a ZIP submission, the mirrored push commit for a git-push one),
+ * triggers a REVIEW build (separate image + host from production), stamps state
+ * `preview-building`, and returns the review URL the UI polls toward. The
+ * build-callback (review-build-callback) advances deploying → live, or flips to
+ * failed.
  *
  * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
  * fails — the router maps it. The whole feature is dark behind the mod-only
@@ -3794,12 +3853,14 @@ export async function previewRequest(
     import('~/server/db/client'),
     import('~/env/server'),
   ]);
-  const { getReviewRepoHeadSha } = await import('./forgejo.service');
   const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
 
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    select: { id: true, status: true, slug: true },
+    // bundleKey + forgejoCommitSha are the ORIGIN discriminator (ZIP upload vs
+    // git push). Without them this cannot tell which repo holds the pending
+    // version's source — see resolveReviewSourceSha.
+    select: { id: true, status: true, slug: true, bundleKey: true, forgejoCommitSha: true },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
@@ -3826,9 +3887,11 @@ export async function previewRequest(
     );
   }
 
-  // The in-review repo HEAD is the pending bundle's source (submitVersion pushed
-  // it there; one pending per slug). Build clones + tags at this sha.
-  const sha = await getReviewRepoHeadSha(request.slug);
+  // Resolve the pending version's source tree. ZIP submissions read the
+  // in-review repo HEAD (submitVersion pushed it there; one pending per slug);
+  // git-push submissions mirror the reviewed commit in first. Build clones +
+  // tags at this sha.
+  const sha = await resolveReviewSourceSha(request);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
