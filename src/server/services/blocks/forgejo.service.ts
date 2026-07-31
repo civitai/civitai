@@ -305,15 +305,34 @@ export async function listRepoTree(
 const TREE_PAGE_SIZE = 1000;
 
 /**
- * Runaway guard for the tree pager — the most entries we are willing to read
+ * Size bound for the tree pager — the most entries we are willing to read
  * before giving up, derived from the submit-time file cap rather than a magic
  * number. A tree listing returns a directory entry per folder on top of one
  * entry per file, so allow headroom over MAX_FILES_IN_BUNDLE; a well-formed
- * app stops long before this. Exists purely so a pathological or misbehaving
- * repo can never spin the loop forever.
+ * app stops long before this.
+ *
+ * This bounds TREE SIZE. It is not the anti-infinite-loop backstop (that is
+ * MAX_TREE_REQUESTS below), and it is not the file limit the caller cares
+ * about (that is MAX_FILES_IN_BUNDLE, applied to blobs at the end) — the three
+ * bounds are deliberately distinct.
  */
 const MAX_TREE_ENTRIES = MAX_FILES_IN_BUNDLE * 4;
-const MAX_TREE_PAGES = Math.ceil(MAX_TREE_ENTRIES / TREE_PAGE_SIZE);
+
+/**
+ * Anti-infinite-loop backstop on the number of REQUESTS, which is a separate
+ * bound from MAX_TREE_ENTRIES (the bound on entries actually read).
+ *
+ * 🔴 They must stay separate. Deriving this from MAX_TREE_ENTRIES /
+ * TREE_PAGE_SIZE would assume the host honours the `per_page` we ask for —
+ * precisely the assumption the stop condition below deliberately refuses to
+ * make. A host that clamped `per_page` to 100 would exhaust an 8-request
+ * budget after only 800 entries and then reject a perfectly legal 1500-entry
+ * tree for "exceeding 8000 entries": a false ceiling an order of magnitude
+ * below the real one. Sizing the request budget well above
+ * MAX_TREE_ENTRIES / TREE_PAGE_SIZE keeps a full-size tree readable even when
+ * the host serves it in much smaller pages, while still bounding the walk.
+ */
+const MAX_TREE_REQUESTS = 64;
 
 /**
  * Recursively list every blob in the repo at an arbitrary git ref —
@@ -335,11 +354,31 @@ const MAX_TREE_PAGES = Math.ceil(MAX_TREE_ENTRIES / TREE_PAGE_SIZE);
  * Stop condition, in priority order — deliberately NOT "a short page means the
  * last page", because the server is free to clamp `per_page` below what we ask
  * for, which would make the very first page look short and end the walk early:
- *   1. an empty page  → nothing left;
- *   2. `total_count`  → authoritative entry total; stop once we have seen it
- *                       all (saves the trailing empty-page round-trip);
- *   3. `truncated`    → fallback for a response without `total_count`: keep
+ *   1. an empty page      → nothing left;
+ *   2. an exactly-FULL page → always probe once more. A page that filled to the
+ *                       requested size is the one case where "there is more"
+ *                       needs no corroboration from the host's own metadata,
+ *                       so this costs nothing and removes the only branch that
+ *                       could silently under-read (a `total_count` that
+ *                       under-reports, or a response carrying neither
+ *                       `total_count` nor `truncated`);
+ *   3. `total_count`      → authoritative entry total; stop once we have seen it
+ *                       all (saves the trailing empty-page round-trip — but only
+ *                       when the final page came back PARTIAL, which is the
+ *                       normal case; a tree whose size is an exact multiple of
+ *                       the page size still pays one confirming probe, per (2));
+ *   4. `truncated`        → fallback for a response without `total_count`: keep
  *                       paging while the flag says the tree overflows a page.
+ *
+ * 🔴 An empty response BODY is not a stop condition — it is an error. `unwrap`
+ * returns null for one, which is a different thing from an envelope carrying a
+ * null `tree` (the host's legitimate past-the-end marker). Collapsing the two
+ * would let a 204, a truncated body or a gateway artifact mid-walk return a
+ * SILENTLY PARTIAL tree, and every caller treats what it gets back as the
+ * complete tree: `reconstructBundleFromForgejo` would make an incomplete bundle
+ * the approved artifact (with a bundleSha256 over the partial set), and
+ * `commitFiles(replaceAllFiles: true)` would emit deletes only for the paths it
+ * managed to read, silently leaving stale files behind.
  */
 export async function listRepoTreeAtRef(
   slug: string,
@@ -348,8 +387,9 @@ export async function listRepoTreeAtRef(
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   let seen = 0;
+  let complete = false;
 
-  for (let page = 1; page <= MAX_TREE_PAGES; page++) {
+  for (let page = 1; seen < MAX_TREE_ENTRIES && page <= MAX_TREE_REQUESTS; page++) {
     const treeRes = await fjFetch(
       `/api/v1/repos/${org}/${slug}/git/trees/${encodeURIComponent(
         ref
@@ -361,27 +401,79 @@ export async function listRepoTreeAtRef(
       tree?: Array<{ path: string; type: string; sha: string }> | null;
       truncated?: boolean;
       total_count?: number;
-    }>(treeRes);
+    } | null>(treeRes);
 
-    const entries = tree?.tree ?? [];
+    // No envelope at all — an empty body, not a past-the-end marker. Refuse to
+    // pass off however much we happened to read as the complete tree.
+    if (tree == null)
+      throw new Error(
+        `Forgejo tree for ${slug}@${ref}: empty response body on page ${page} after ` +
+          `${seen} entries — refusing to treat a partial tree as complete`
+      );
+
+    const entries = tree.tree ?? [];
     for (const item of entries) {
       if (item.type === 'blob') result.set(item.path, item.sha);
     }
     seen += entries.length;
 
-    if (entries.length === 0) return result;
-    const total = typeof tree?.total_count === 'number' ? tree.total_count : undefined;
+    if (entries.length === 0) {
+      complete = true;
+      break;
+    }
+    // An exactly-full page always warrants one more probe, whatever the host's
+    // metadata claims. This cannot resurrect the short-page bug guarded against
+    // above (it only ever continues, never stops), and stays inside the loop
+    // bounds.
+    if (entries.length >= TREE_PAGE_SIZE) continue;
+
+    const total = typeof tree.total_count === 'number' ? tree.total_count : undefined;
     if (total !== undefined && total > 0) {
-      if (seen >= total) return result;
-    } else if (tree?.truncated !== true) {
-      return result;
+      if (seen >= total) {
+        complete = true;
+        break;
+      }
+    } else if (tree.truncated !== true) {
+      complete = true;
+      break;
     }
   }
 
-  throw new Error(
-    `Forgejo tree for ${slug}@${ref} exceeds ${MAX_TREE_ENTRIES} entries; an app may contain at ` +
-      `most ${MAX_FILES_IN_BUNDLE} files — reduce the file count and re-submit`
-  );
+  // Name the bound that actually tripped: "too big" and "the host is paginating
+  // in unexpectedly small pages" are different operator problems.
+  if (!complete) {
+    if (seen >= MAX_TREE_ENTRIES)
+      throw new Error(
+        `Forgejo tree for ${slug}@${ref} exceeds ${MAX_TREE_ENTRIES} entries; an app may contain ` +
+          `at most ${MAX_FILES_IN_BUNDLE} files — reduce the file count and re-submit`
+      );
+    throw new Error(
+      `Forgejo tree for ${slug}@${ref} did not finish within ${MAX_TREE_REQUESTS} requests ` +
+        `(${seen} entries read); the source host is paginating in unexpectedly small pages`
+    );
+  }
+
+  // 🔴 Bound the quantity the caller actually cares about. MAX_TREE_ENTRIES
+  // bounds tree ENTRIES (blobs + directories) as a loop guard; nothing above
+  // bounds BLOBS, so without this a repo could hand back several thousand files
+  // from a function whose limit error promises at most MAX_FILES_IN_BUNDLE.
+  //
+  // This is a real gate, not just an honest message. On the git-push path
+  // MAX_FILES_IN_BUNDLE is otherwise unenforced: `enrichPushRequestRow` wraps
+  // the cap-applying diff computation in a catch that only logs (the row still
+  // parks as pending), and the approve path's bundle extraction caps total
+  // bytes but not file count. Before this function paged, its `truncated` throw
+  // was incidentally enforcing a ceiling here; keeping an explicit one means
+  // paging did not quietly raise it. Every caller is app-repo-scoped — the
+  // canonical `civitai-apps/<slug>` or its review mirror, whose contents ARE
+  // the bundle — so none legitimately needs more than this.
+  if (result.size > MAX_FILES_IN_BUNDLE)
+    throw new Error(
+      `Forgejo tree for ${slug}@${ref} holds ${result.size} files; an app may contain at most ` +
+        `${MAX_FILES_IN_BUNDLE} — reduce the file count and re-submit`
+    );
+
+  return result;
 }
 
 /**
