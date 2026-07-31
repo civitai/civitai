@@ -78,6 +78,7 @@ const {
   mockClaim,
   mockFinalize,
   mockRelease,
+  mockFingerprint,
 } = vi.hoisted(() => ({
   mockTip: vi.fn(),
   mockHydrate: vi.fn(),
@@ -89,6 +90,7 @@ const {
   mockClaim: vi.fn(),
   mockFinalize: vi.fn(),
   mockRelease: vi.fn(),
+  mockFingerprint: vi.fn(),
 }));
 
 vi.mock('~/server/controllers/buzz.controller', () => ({
@@ -107,6 +109,10 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   claimTipIdempotency: mockClaim,
   finalizeTipIdempotency: mockFinalize,
   releaseTipIdempotency: mockRelease,
+  // Deterministic stub — the REAL fingerprint derivation is unit-tested in
+  // block-tip-rate-limit.test.ts; here we only need a stable value to assert the
+  // endpoint THREADS it into claim + finalize.
+  computeTipFingerprint: (...a: unknown[]) => mockFingerprint(...(a as [])),
   BLOCK_TIP_MAX_PER_TIP: 5_000,
   BLOCK_TIP_CAP_PER_DAY: 25_000,
 }));
@@ -131,12 +137,22 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   } as BlockTokenClaims;
 }
 
+/** Stable stub fingerprint (see the module mock). */
+const FP = 'fp-deadbeef';
+
 beforeEach(() => {
   vi.clearAllMocks();
   claimsBox.claims = fakeClaims();
   mockRate.mockResolvedValue({ allowed: true });
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', bannedAt: null, muted: false });
-  mockTip.mockResolvedValue([{ transactionId: 't1' }]);
+  // The controller returns the ledger result plus the audit-🔴-2 dedupe report.
+  // `dedupedAmount: 0` = every transaction actually moved (the normal case).
+  mockTip.mockResolvedValue({
+    transactions: ['t1'],
+    conflicts: [],
+    deduped: false,
+    dedupedAmount: 0,
+  });
   // Default: reservation well under the daily cap.
   mockReserve.mockResolvedValue({ total: 25, key: 'system:blocks:tip-cap:42:2026-07-13' });
   mockRefund.mockResolvedValue(undefined);
@@ -146,6 +162,7 @@ beforeEach(() => {
   mockClaim.mockResolvedValue({ state: 'acquired', key: 'system:blocks:tip-idem:42:k1' });
   mockFinalize.mockResolvedValue(undefined);
   mockRelease.mockResolvedValue(undefined);
+  mockFingerprint.mockReturnValue(FP);
 });
 
 describe('POST /api/v1/blocks/tip', () => {
@@ -362,13 +379,16 @@ describe('POST /api/v1/blocks/tip', () => {
       });
       await handler(req as never, res as never);
       expect(res._status()).toBe(200);
-      expect(mockClaim).toHaveBeenCalledWith(42, 'idem-abc');
+      // (userId, appBlockId, key, fingerprint) — the app segment is audit 🟡-2,
+      // the fingerprint is the 🟡-1 residual.
+      expect(mockClaim).toHaveBeenCalledWith(42, 'apb', 'idem-abc', FP);
       expect(mockTip).toHaveBeenCalledTimes(1);
       // The terminal 200 (status+body) is cached under the key so a replay repeats it.
       expect(mockFinalize).toHaveBeenCalledWith(
         'system:blocks:tip-idem:42:k1',
         200,
-        expect.objectContaining({ ok: true })
+        expect.objectContaining({ ok: true }),
+        FP
       );
       expect(mockRelease).not.toHaveBeenCalled();
     });
@@ -449,7 +469,8 @@ describe('POST /api/v1/blocks/tip', () => {
       expect(mockFinalize).toHaveBeenCalledWith(
         'system:blocks:tip-idem:42:k1',
         400,
-        expect.objectContaining({ ok: false })
+        expect.objectContaining({ ok: false }),
+        FP
       );
       expect(mockRelease).not.toHaveBeenCalled();
     });
@@ -466,6 +487,71 @@ describe('POST /api/v1/blocks/tip', () => {
       expect(mockTip).toHaveBeenCalledWith(
         expect.objectContaining({ idempotencyKey: 'idem-abc' })
       );
+    });
+
+    it('MISMATCH (audit 🟡-1 residual): the same key with a DIFFERENT payload → 422, no charge', async () => {
+      // The claim layer reports that this key is already bound to a different
+      // request. Replaying the first tip's result would tell the app a tip it never
+      // made succeeded; executing would break the key's one-request contract.
+      mockClaim.mockResolvedValueOnce({ state: 'mismatch' });
+      const { req, res } = createMocks({
+        body: { toUserId: 9, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(422);
+      expect(mockTip).not.toHaveBeenCalled();
+      expect(mockReserve).not.toHaveBeenCalled();
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
+
+    it('🔴 STRANDED CLAIM (audit 🟡-3): a throw that ESCAPES the money attempt RELEASES the claim', async () => {
+      // `hydrateBlockSubject` sits OUTSIDE attemptTip's inner try, so a transient DB
+      // blip there escapes past both finalize and release. Without the fix the
+      // sentinel survives its full 10-minute TTL and 409s every same-key retry with
+      // "already in progress" when NOTHING is in progress — making the tip
+      // unlandable exactly when retrying with the same key is the entire point.
+      mockHydrate.mockRejectedValueOnce(new Error('db blip'));
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await expect(handler(req as never, res as never)).rejects.toThrow('db blip');
+      // 🔴 The load-bearing assertion: the claim is released, so a retry re-runs.
+      expect(mockRelease).toHaveBeenCalledWith('system:blocks:tip-idem:42:k1');
+      // No terminal result exists — nothing may be cached for replay.
+      expect(mockFinalize).not.toHaveBeenCalled();
+      // No money moved.
+      expect(mockTip).not.toHaveBeenCalled();
+    });
+
+    it('🔴 LEDGER-DEDUPED TIP (audit 🔴-2): the burned cap reservation is REFUNDED', async () => {
+      // The Redis sentinel expired, so the attempt runs and reserves against the
+      // daily tip cap — but the ledger rejects the deterministic
+      // externalTransactionId as a duplicate: ZERO Buzz moves on this call. Keeping
+      // the reservation would debit the viewer's daily ALLOWANCE twice for a
+      // transfer that happened once.
+      mockTip.mockResolvedValueOnce({
+        transactions: [],
+        conflicts: ['block-tip:42:idem-abc-5'],
+        deduped: true,
+        dedupedAmount: 25,
+      });
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      // The tip still SUCCEEDED from the caller's perspective — money moved once.
+      expect(res._status()).toBe(200);
+      // 🔴 The load-bearing assertion: exactly the deduped amount is refunded.
+      expect(mockRefund).toHaveBeenCalledWith('system:blocks:tip-cap:42:2026-07-13', 25);
+    });
+
+    it('a normally-settled tip does NOT refund the cap (dedupedAmount 0 → inert)', async () => {
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockRefund).not.toHaveBeenCalled();
     });
 
     it('CHARSET (audit 🟢): a key with a space/control char is REJECTED (400), no claim, no charge', async () => {

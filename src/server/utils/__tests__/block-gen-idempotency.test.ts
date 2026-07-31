@@ -43,6 +43,7 @@ import {
   claimGenIdempotency,
   composeBlockExternalId,
   finalizeGenIdempotency,
+  mintServerBlockExternalId,
   releaseGenIdempotency,
 } from '../block-gen-idempotency';
 
@@ -172,10 +173,22 @@ describe('charset + externalId guards (audit 🟢)', () => {
     expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(realistic)).toBe(true);
     expect(realistic.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
 
-    // Worst realistic case: an `ephemeral-<40-char slug>` dev id + a max-length key.
-    const worst = composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64));
+    // 🔴 TRUE worst case (audit 🟢). The LONGEST appBlockId shape is
+    // `page_local_<slug>` = 11 + a slug bounded at 40 by dev-token.ts's
+    // `z.string().min(3).max(40)` = 51 chars — NOT `ephemeral-<slug>` (50), which is
+    // what this test used to exercise. With a max-length 64-char key that is
+    // 3 + 2 + 51 + 64 = 120, headroom 8 (the doc previously claimed 119).
+    const worstAppBlockId = `page_local_${'s'.repeat(40)}`;
+    expect(worstAppBlockId).toHaveLength(51);
+    const worst = composeBlockExternalId(worstAppBlockId, 'k'.repeat(64));
+    expect(worst).toHaveLength(120);
     expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(worst)).toBe(true);
     expect(worst.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+    // The other two synthetic shapes are strictly shorter, so they cannot beat it.
+    expect(composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64))).toHaveLength(
+      119
+    );
+    expect(composeBlockExternalId(`pubreq_${'0'.repeat(26)}`, 'k'.repeat(64))).toHaveLength(102);
   });
 
   it('composeBlockExternalId is INJECTIVE across (app, key) even when both contain - and _', () => {
@@ -206,5 +219,47 @@ describe('charset + externalId guards (audit 🟢)', () => {
     expect(() => composeBlockExternalId('a'.repeat(99), 'k'.repeat(64))).toThrow(/too long/);
     // An appBlockId straying outside the orchestrator alphabet is caught too.
     expect(() => composeBlockExternalId('apb:bad', 'k')).toThrow(/characters the orchestrator/);
+  });
+
+  it('composeBlockExternalId is typeof-SAFE (audit 🟢) — a non-string can never slip past', () => {
+    // 🔴 Without the typeof guard, `undefined.length` makes BOTH `undefined < 1` and
+    // `undefined > 99` false, so the length check passes and
+    // `String(undefined).padStart(2,'0')` emits a NINE-char pseudo-`NN`
+    // (`undefined`), silently destroying the length-prefix injectivity the whole
+    // scheme rests on. Assert it THROWS rather than emitting such an id.
+    expect(() => composeBlockExternalId(undefined as never, 'k')).toThrow(/must be strings/);
+    expect(() => composeBlockExternalId(null as never, 'k')).toThrow(/must be strings/);
+    expect(() => composeBlockExternalId(123 as never, 'k')).toThrow(/must be strings/);
+    expect(() => composeBlockExternalId('apb_x', undefined as never)).toThrow(/must be strings/);
+  });
+});
+
+describe('mintServerBlockExternalId (audit 🔴-1)', () => {
+  it('emits an id the ORCHESTRATOR accepts, in the SERVER namespace', () => {
+    const id = mintServerBlockExternalId();
+    // `bls` (server) vs `blk` (client) — the two namespaces differ at index 2, so
+    // they are DISJOINT by construction and a minted id can never collide with a
+    // client-supplied one.
+    expect(id.startsWith('bls')).toBe(true);
+    expect(id.startsWith('blk')).toBe(false);
+    expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(id)).toBe(true);
+    expect(id.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+    // Fixed shape: 3-char tag + a 36-char UUID. Nothing caller-supplied contributes
+    // to the length, so the guard can never trip on this UNCONDITIONAL path.
+    expect(id).toHaveLength(39);
+  });
+
+  it('is UNIQUE per call (a minted id must never fuse two distinct submits)', () => {
+    const ids = new Set(Array.from({ length: 200 }, () => mintServerBlockExternalId()));
+    expect(ids.size).toBe(200);
+  });
+
+  it('can never collide with a CLIENT-composed id, even for a hostile key', () => {
+    // A block cannot craft an idempotencyKey that makes composeBlockExternalId emit
+    // something in the `bls` namespace — the `blk` tag is fixed and comes first.
+    const client = composeBlockExternalId('apb_x', 'bls00000000-0000-0000-0000-000000000000');
+    expect(client.startsWith('blk')).toBe(true);
+    const minted = new Set(Array.from({ length: 50 }, () => mintServerBlockExternalId()));
+    expect(minted.has(client)).toBe(false);
   });
 });

@@ -67,9 +67,17 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockReadAllowance } = vi.hoisted(() => ({ mockReadAllowance: vi.fn() }));
+const { mockReadAllowance, mockRateLimit } = vi.hoisted(() => ({
+  mockReadAllowance: vi.fn(),
+  mockRateLimit: vi.fn(),
+}));
 vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   readBlockTipAllowance: mockReadAllowance,
+}));
+// audit 🟡-4 — this endpoint now rate-limits like its siblings (models.ts /
+// images.ts). Mocked here; the limiter's own logic is unit-tested separately.
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockRateLimit,
 }));
 
 import handlerDefault from '~/pages/api/v1/blocks/tip-allowance';
@@ -96,6 +104,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   claimsBox.claims = fakeClaims();
   mockReadAllowance.mockResolvedValue({ cap: 25_000, spent: 4_000, remaining: 21_000 });
+  mockRateLimit.mockResolvedValue({ allowed: true });
 });
 
 describe('GET /api/v1/blocks/tip-allowance', () => {
@@ -142,5 +151,26 @@ describe('GET /api/v1/blocks/tip-allowance', () => {
     const { req, res } = createMocks();
     await handlerDefault(req as never, res as never);
     expect(res._status()).toBe(503);
+  });
+
+  // ── audit 🟡-4: rate limited like every sibling blocks REST read ──────────────
+  describe('rate limit (audit 🟡-4)', () => {
+    it('limits per blockInstanceId, consistent with models.ts / images.ts', async () => {
+      const { req, res } = createMocks();
+      await handlerDefault(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockRateLimit).toHaveBeenCalledWith('bki');
+    });
+
+    it('429 + Retry-After once the ceiling trips — and the redis read is NOT issued', async () => {
+      mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 7 });
+      const { req, res } = createMocks();
+      await handlerDefault(req as never, res as never);
+      expect(res._status()).toBe(429);
+      expect(res._headers()['Retry-After']).toBe('7');
+      // 🔴 The point of the limit: a hammering poll never reaches the sysRedis GET
+      // on the instance that backs the money caps.
+      expect(mockReadAllowance).not.toHaveBeenCalled();
+    });
   });
 });

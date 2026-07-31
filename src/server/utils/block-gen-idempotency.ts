@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
@@ -52,8 +53,9 @@ const GEN_IDEM_IN_PROGRESS = ' in-progress';
 
 /**
  * Compose the per-(user, app, key) redis key. INJECTIVE because: `userId` is
- * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or a synthetic
- * `ephemeral-<slug>` dev id (both colon-free), and `idempotencyKey` is charset-
+ * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or one of the three
+ * synthetic pre-approval ids `ephemeral-<slug>` / `page_local_<slug>` /
+ * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is charset-
  * restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free). So no two
  * distinct (user, app, key) triples can ever collide on the delimiter. (A colon
  * IS a safe delimiter here — this is an internal redis key, not the orchestrator
@@ -98,33 +100,24 @@ export const ORCHESTRATOR_EXTERNAL_ID_REGEX = /^[A-Za-z0-9_-]+$/;
 const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
 
 /**
- * Compose the namespaced orchestrator `externalId` for a block generation submit.
- *
- * Shape: `blk<NN><appBlockId><key>`, where `NN` is the zero-padded 2-digit length
- * of `appBlockId`. A DELIMITER cannot be used — the orchestrator charset is
- * `[A-Za-z0-9_-]` and BOTH components may legitimately contain `_` and `-`
- * (`apb_<ULID>`, `ephemeral-<slug>`, `local-<slug>`, `pending-<pubreq>`; keys are
- * UUIDs). The length prefix pins the split point instead, which is INJECTIVE: two
- * inputs colliding would need the same `NN` (⇒ same appBlockId length ⇒ same
- * appBlockId prefix ⇒ same key).
- *
- * Worst case is well inside the ceiling: 3 + 2 + 50 (`ephemeral-<40-slug>`) + 64
- * = 119 ≤ 128. Typical is 3 + 2 + 30 (`apb_<26-ULID>`) + 36 (UUID) = 71.
- *
- * Fails CLOSED (throws before any cap reservation → no money moves) on anything
- * the orchestrator would reject, so a violation can never be silently truncated
- * into a BROKEN `(userId, externalId)` dedupe.
+ * ORIGIN NAMESPACE PREFIXES. Every block externalId starts with exactly one of
+ * these 3-char tags, and they differ at index 2 — so the CLIENT-key namespace and
+ * the SERVER-MINTED namespace are DISJOINT BY CONSTRUCTION. That is what makes it
+ * impossible for a server-minted id to collide with a client-supplied one (which
+ * would otherwise silently fuse two logically-distinct generations onto one
+ * orchestrator `(userId, externalId)` dedupe slot).
  */
-export function composeBlockExternalId(appBlockId: string, idempotencyKey: string): string {
-  if (appBlockId.length < 1 || appBlockId.length > APP_BLOCK_ID_MAX_FOR_ENCODING) {
-    throw new Error(
-      `block externalId: appBlockId length ${appBlockId.length} outside 1..${APP_BLOCK_ID_MAX_FOR_ENCODING}`
-    );
-  }
-  const externalId = `blk${String(appBlockId.length).padStart(
-    2,
-    '0'
-  )}${appBlockId}${idempotencyKey}`;
+const BLOCK_EXTERNAL_ID_PREFIX_CLIENT = 'blk';
+const BLOCK_EXTERNAL_ID_PREFIX_SERVER = 'bls';
+
+/**
+ * The SINGLE gate every emitted externalId passes. Shared by the client-key
+ * composer and the server minter so neither can drift from the orchestrator
+ * contract (`^[A-Za-z0-9_-]+$`, ≤128, enforced by `[ApiController]` as a hard 400
+ * BEFORE the action body runs — a violation is a rejected submit, not a
+ * truncation).
+ */
+function assertOrchestratorExternalId(externalId: string): string {
   if (externalId.length > ORCHESTRATOR_EXTERNAL_ID_MAX) {
     throw new Error(
       `block externalId too long (${externalId.length} > ${ORCHESTRATOR_EXTERNAL_ID_MAX})`
@@ -136,6 +129,89 @@ export function composeBlockExternalId(appBlockId: string, idempotencyKey: strin
     throw new Error('block externalId contains characters the orchestrator rejects');
   }
   return externalId;
+}
+
+/**
+ * Compose the namespaced orchestrator `externalId` for a block generation submit
+ * from a CLIENT-supplied idempotency key.
+ *
+ * Shape: `blk<NN><appBlockId><key>`, where `NN` is the zero-padded 2-digit length
+ * of `appBlockId`. A DELIMITER cannot be used — the orchestrator charset is
+ * `[A-Za-z0-9_-]` and BOTH components may legitimately contain `_` and `-`
+ * (`apb_<26-ULID>`, and the three SYNTHETIC pre-approval shapes
+ * `ephemeral-<slug>`, `page_local_<slug>`, `pubreq_<ULID>` — see
+ * SYNTHETIC_APP_BLOCK_ID_PREFIXES in user-app-surface.service; keys are UUIDs).
+ * The length prefix pins the split point instead, which is INJECTIVE: two inputs
+ * colliding would need the same `NN` (⇒ same appBlockId length ⇒ same appBlockId
+ * prefix ⇒ same key).
+ *
+ * LENGTH. The longest appBlockId shape is `page_local_<slug>` — 11 + a slug bounded
+ * at 40 by dev-token.ts's `z.string().min(3).max(40)` = 51 chars (NOT
+ * `ephemeral-<slug>`, which is 50). So the true worst case is
+ * 3 + 2 + 51 + 64 (max key) = **120** ≤ 128 — headroom 8, not the 119 an earlier
+ * revision of this comment claimed. Typical is 3 + 2 + 30 (`apb_<26-ULID>`) + 36
+ * (UUID) = 71.
+ *
+ * Fails CLOSED (throws before any cap reservation → no money moves) on anything
+ * the orchestrator would reject, so a violation can never be silently truncated
+ * into a BROKEN `(userId, externalId)` dedupe.
+ */
+export function composeBlockExternalId(appBlockId: string, idempotencyKey: string): string {
+  // 🔴 `typeof` FIRST. Without it a non-string (an absent claim typed as `string`
+  // by an upstream cast) reaches `undefined.length` → `undefined < 1` and
+  // `undefined > 99` are BOTH false, so the guard passes and `padStart` on
+  // `String(undefined)` yields a 9-char pseudo-`NN` (`undefined`) — silently
+  // breaking the length-prefix injectivity this whole scheme rests on.
+  if (typeof appBlockId !== 'string' || typeof idempotencyKey !== 'string') {
+    throw new Error('block externalId: appBlockId and idempotencyKey must be strings');
+  }
+  if (appBlockId.length < 1 || appBlockId.length > APP_BLOCK_ID_MAX_FOR_ENCODING) {
+    throw new Error(
+      `block externalId: appBlockId length ${appBlockId.length} outside 1..${APP_BLOCK_ID_MAX_FOR_ENCODING}`
+    );
+  }
+  return assertOrchestratorExternalId(
+    `${BLOCK_EXTERNAL_ID_PREFIX_CLIENT}${String(appBlockId.length).padStart(
+      2,
+      '0'
+    )}${appBlockId}${idempotencyKey}`
+  );
+}
+
+/**
+ * Mint a SERVER-SIDE orchestrator `externalId` for a block generation submit that
+ * carries NO client idempotency key (audit 🔴-1).
+ *
+ * WHY THIS EXISTS. `submitWorkflow` (services/orchestrator/workflows.ts) calls
+ * `submitWorkflowWithRetry` with `maxAttempts = 3` and NO per-attempt timeout on
+ * the real submit, and that wrapper's own doc is explicit that it adds no
+ * idempotency key — "the CALLER must set `body.externalId`". So a 502/504 or a
+ * dropped socket AFTER the orchestrator already created the workflow and charged
+ * makes attempts 2 and 3 create a SECOND and THIRD workflow: up to 3 charges for
+ * one user action. Threading `externalId` only when the CLIENT sends a key left
+ * that wide open, because no shipped client sends one (the SDK has zero
+ * occurrences; the live tipping block hand-rolls its POST). Minting one
+ * server-side closes it for ALL block traffic regardless of client version.
+ *
+ * STABLE-ACROSS-ATTEMPTS / UNIQUE-PER-REQUEST. This is called ONCE per logical
+ * submit, in the router, before the body is built — and `submitWorkflowWithRetry`
+ * reuses that same body object on every attempt. So all 3 attempts present the
+ * SAME id (⇒ the orchestrator's `(userId, externalId)` dedupe collapses them to
+ * one workflow + one charge), while two genuinely different submits get different
+ * UUIDs. NEVER call this per attempt — that reintroduces the exact bug.
+ *
+ * SHAPE: `bls<uuid>` — a FIXED 3 + 36 = 39 chars, entirely inside `[A-Za-z0-9_-]`.
+ * Deliberately carries NO appBlockId: uniqueness comes wholly from the UUID, so
+ * there is nothing to length-encode and the guard below can never trip (unlike the
+ * client-key path, whose length depends on caller-supplied components). That
+ * matters because this path is UNCONDITIONAL — a throw here would reject a
+ * generation that works today.
+ *
+ * The `bls` tag makes this namespace disjoint from the client `blk` namespace, so
+ * a server-minted id can never collide with a client-supplied one.
+ */
+export function mintServerBlockExternalId(): string {
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_SERVER}${randomUUID()}`);
 }
 
 export type BlockGenIdempotencyClaim<T> =

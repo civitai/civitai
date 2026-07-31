@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
@@ -206,53 +207,118 @@ export async function readBlockTipAllowance(userId: number): Promise<BlockTipAll
 // Covers realistic lost-response / user-reload retry windows without pinning a
 // stuck in-progress marker for long if `finalize` is ever lost on a redis blip.
 const BLOCK_TIP_IDEM_TTL_SECONDS = 10 * 60;
-const TIP_IDEM_IN_PROGRESS = ' in-progress';
 
+/**
+ * Per-(user, APP, key) redis key (audit 🟡-2).
+ *
+ * 🔴 `appBlockId` is load-bearing, not decoration. Without it the key is
+ * `<userId>:<key>`, and the REST endpoint accepts ANY `[A-Za-z0-9_-]{1,64}` value
+ * — so two apps the SAME user has installed that happen to pick the same literal
+ * key (an app hardcoding `"tip1"`) share ONE idempotency slot. App B would then
+ * REPLAY app A's cached response body verbatim, LEARNING A's tip recipient and
+ * amount, while B's own tip silently never happens. Mirrors the gen key shape in
+ * `block-gen-idempotency.ts`, which already carried the app segment.
+ *
+ * INJECTIVE on `:` because `userId` is numeric, `appBlockId` is an `apb_<ULID>` or
+ * a synthetic `ephemeral-` / `page_local_` / `pubreq_` id, and `idempotencyKey` is
+ * charset-restricted to `^[A-Za-z0-9_-]{1,64}$` at the endpoint — none can contain
+ * a colon, so no two distinct triples collide.
+ */
 function tipIdemRedisKey(
   userId: number,
+  appBlockId: string,
   idempotencyKey: string
-): `${typeof REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${number}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${userId}:${idempotencyKey}`;
+): `${typeof REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${number}:${string}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${userId}:${appBlockId}:${idempotencyKey}`;
+}
+
+/**
+ * REQUEST FINGERPRINT (audit 🟡-1 residual). An idempotency key identifies ONE
+ * logical request; reusing it for a DIFFERENT payload is a client bug, and
+ * replaying the first result for it is actively misleading — the app is told "your
+ * tip of B Buzz to Y succeeded" when what actually happened was a tip of A Buzz to
+ * X. Stripe rejects that rather than replaying; so do we (the caller 422s).
+ *
+ * Covers exactly the fields that define the tip. `userId` + `appBlockId` are
+ * already pinned by the redis key, so they are deliberately not repeated here.
+ * Truncated to 32 hex chars — collision-irrelevant at this cardinality, and it
+ * keeps the stored record small.
+ */
+export function computeTipFingerprint(input: {
+  toUserId: number;
+  amount: number;
+  entityType?: string;
+  entityId?: number;
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        input.toUserId,
+        input.amount,
+        input.entityType ?? null,
+        input.entityId ?? null,
+      ])
+    )
+    .digest('hex')
+    .slice(0, 32);
 }
 
 export type BlockTipIdempotencyClaim =
   | { state: 'acquired'; key: ReturnType<typeof tipIdemRedisKey> }
   | { state: 'replay'; status: number; body: unknown }
-  | { state: 'in_progress' };
+  | { state: 'in_progress' }
+  | { state: 'mismatch' };
 
 /**
  * Atomically CLAIM the idempotency key for a tip attempt. Fail-CLOSED (throws) on
  * a redis error so the caller returns a retryable 503 — a money endpoint must not
  * dedupe blind. See the block comment above for the state machine.
+ *
+ * The stored record is ALWAYS JSON: `{ fp }` while in progress, `{ fp, status, body }`
+ * once terminal (a numeric `status` is what distinguishes them). A record whose `fp`
+ * differs from THIS request's → `mismatch` (the caller 422s): the same key is being
+ * reused for a different payload, so neither replaying the old result nor executing
+ * the new tip is correct.
  */
 export async function claimTipIdempotency(
   userId: number,
-  idempotencyKey: string
+  appBlockId: string,
+  idempotencyKey: string,
+  fingerprint: string
 ): Promise<BlockTipIdempotencyClaim> {
-  const key = tipIdemRedisKey(userId, idempotencyKey);
+  const key = tipIdemRedisKey(userId, appBlockId, idempotencyKey);
   // SET NX EX — first writer wins the in-progress sentinel. node-redis returns
   // 'OK' on set, null when the key already exists.
-  const claimed = await sysRedis.set(key, TIP_IDEM_IN_PROGRESS, {
+  const claimed = await sysRedis.set(key, JSON.stringify({ fp: fingerprint }), {
     NX: true,
     EX: BLOCK_TIP_IDEM_TTL_SECONDS,
   });
   if (claimed) return { state: 'acquired', key };
 
-  // Key already exists — read it to decide replay vs still-in-progress.
+  // Key already exists — read it to decide mismatch vs replay vs still-in-progress.
   const existing = await sysRedis.get(key);
-  if (existing == null || existing === TIP_IDEM_IN_PROGRESS) {
-    // Still running (or a set→get race where the winner hasn't finalized yet).
-    // 409 rather than proceed — never race a live first attempt into a 2nd charge.
+  if (existing == null) {
+    // SET→GET race (the winner released or expired the key in between). Treat as
+    // in-progress: 409 rather than risk racing a live first attempt into a 2nd charge.
     return { state: 'in_progress' };
   }
+  let parsed: { fp?: unknown; status?: unknown; body?: unknown };
   try {
-    const parsed = JSON.parse(existing) as { status?: unknown; body?: unknown };
-    if (typeof parsed.status === 'number') {
-      return { state: 'replay', status: parsed.status, body: parsed.body };
-    }
+    parsed = JSON.parse(existing) as typeof parsed;
   } catch {
-    /* fall through — a malformed value is treated as in-progress (do NOT re-run) */
+    // A malformed / partially-written record is treated as in-progress — never
+    // re-run a money path on a value we cannot read.
+    return { state: 'in_progress' };
   }
+  if (parsed?.fp !== fingerprint) {
+    // Same key, DIFFERENT request. Never replay someone else's outcome, and never
+    // execute a second charge under a key that is already spoken for.
+    return { state: 'mismatch' };
+  }
+  if (typeof parsed.status === 'number') {
+    return { state: 'replay', status: parsed.status, body: parsed.body };
+  }
+  // Fingerprint matches but there is no terminal result yet — the first attempt is live.
   return { state: 'in_progress' };
 }
 
@@ -261,14 +327,19 @@ export async function claimTipIdempotency(
  * lost-response retry replays it. Best-effort: if the record can't be written,
  * the in-progress sentinel simply expires and a post-TTL retry may re-run
  * (a redis-down edge) — it never throws into an already-successful response.
+ *
+ * Carries the `fingerprint` forward so the mismatch check still applies to the
+ * TERMINAL record (a replay under the same key with a DIFFERENT payload must 422,
+ * not receive the old body).
  */
 export async function finalizeTipIdempotency(
   key: ReturnType<typeof tipIdemRedisKey>,
   status: number,
-  body: unknown
+  body: unknown,
+  fingerprint: string
 ): Promise<void> {
   try {
-    await sysRedis.set(key, JSON.stringify({ status, body }), {
+    await sysRedis.set(key, JSON.stringify({ fp: fingerprint, status, body }), {
       EX: BLOCK_TIP_IDEM_TTL_SECONDS,
     });
   } catch {

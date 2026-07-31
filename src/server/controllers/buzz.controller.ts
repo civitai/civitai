@@ -235,7 +235,7 @@ export async function createBuzzTipTransactionHandler({
     // The base of every transaction's `externalTransactionId` (`${sharedId}-${toAccountId}`).
     // With a client idempotency key, DERIVE it deterministically so a retry collides
     // on the ledger's unique constraint (money moves once — see the param doc). The
-    // key is charset-restricted (`^[A-Za-z0-9_-]{1,200}$`) at the endpoint, and both
+    // key is charset-restricted (`^[A-Za-z0-9_-]{1,64}$`) at the endpoint, and both
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
     // Absent key → the original per-call `uuid()` (no dedup), byte-identical to today.
@@ -262,50 +262,92 @@ export async function createBuzzTipTransactionHandler({
     // Now, create all transactions
     const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
 
-    if (entityType && entityId) {
-      // TODO: We might wanna notify contributors, but hardly a priority right now imho.
-      await upsertBuzzTip({
-        ...transactions[0],
-        amount: finalAmount, // This is a total amount that was sent to all users.
-        entityType: entityType as string,
-        entityId: entityId as number,
-      });
-    } else {
-      const toAccountId = transactions[0].toAccountId;
-      const description = transactions[0].description;
-      if (toAccountId !== 0) {
-        const fromUser = await dbWrite.user.findUnique({
-          where: { id: fromAccountId },
-          select: { username: true },
-        });
+    // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
+    // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
+    // `conflict` is the ledger REJECTING a duplicate `externalTransactionId`: that
+    // transaction debited NOTHING on this call because an earlier call already moved
+    // the money. The three side effects below (`upsertBuzzTip`, the `tip-received`
+    // notification — keyed by a fresh uuid so it has no dedup of its own — and the
+    // Image Buzz metric) are all NON-idempotent, so firing them for a conflicted
+    // transaction credits a SECOND tip for money that moved ONCE: a phantom tip.
+    //
+    // 🔴 This state is only REACHABLE because of the deterministic
+    // `externalTransactionId` introduced alongside `idempotencyKey` — with the
+    // legacy per-call `uuid()` id `conflicts` was always empty here, which is why
+    // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
+    // image A with key K → wait past the 10-min Redis sentinel → same K, same
+    // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
+    // → byte-identical ledger id → conflict, zero Buzz moves, yet image B would get
+    // +N Buzz, a BuzzTip row, and a 200.
+    //
+    // Matching is by `externalTransactionId` (what the batch endpoint reports as a
+    // conflict), with a COUNT belt: if the ledger reported ZERO successes then
+    // nothing moved on this call regardless of how the conflict identifiers are
+    // shaped on the wire. Both signals agree on the full-replay case above; the belt
+    // is what keeps the fail direction safe (never fire a side effect for money that
+    // did not move) if the identifier shape ever changes.
+    const conflictedIds = new Set(data.conflicts);
+    const settled =
+      data.transactions.length === 0
+        ? []
+        : transactions.filter((t) => !conflictedIds.has(t.externalTransactionId));
+    // Buzz that did NOT move on this call because the ledger deduped it. 0 on every
+    // non-conflicting tip → this whole block is inert for today's traffic.
+    const dedupedAmount = (transactions.length - settled.length) * amount;
+    const deduped = settled.length === 0 && dedupedAmount > 0;
 
-        await createNotification({
-          type: 'tip-received',
-          userId: toAccountId,
-          category: NotificationCategory.Buzz,
-          key: `tip-received:${uuid()}`,
-          details: {
-            amount: amount,
-            user: fromUser?.username,
-            fromUserId: fromAccountId,
-            message: description,
-            toAccountType: input.toAccountType,
-          },
+    if (settled.length > 0) {
+      if (entityType && entityId) {
+        // TODO: We might wanna notify contributors, but hardly a priority right now imho.
+        await upsertBuzzTip({
+          ...settled[0],
+          // The total that ACTUALLY moved on this call (a partially-deduped batch
+          // must not record the conflicted legs again).
+          amount: settled.length * amount,
+          entityType: entityType as string,
+          entityId: entityId as number,
+        });
+      } else {
+        const toAccountId = settled[0].toAccountId;
+        const description = settled[0].description;
+        if (toAccountId !== 0) {
+          const fromUser = await dbWrite.user.findUnique({
+            where: { id: fromAccountId },
+            select: { username: true },
+          });
+
+          await createNotification({
+            type: 'tip-received',
+            userId: toAccountId,
+            category: NotificationCategory.Buzz,
+            key: `tip-received:${uuid()}`,
+            details: {
+              amount: amount,
+              user: fromUser?.username,
+              fromUserId: fromAccountId,
+              message: description,
+              toAccountType: input.toAccountType,
+            },
+          });
+        }
+      }
+
+      if (entityType === 'Image' && !!entityId) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Image',
+          entityId,
+          metricType: 'Buzz',
+          // Only the Buzz that actually moved on this call.
+          amount: settled.length * amount,
         });
       }
     }
 
-    if (entityType === 'Image' && !!entityId) {
-      await updateEntityMetric({
-        ctx,
-        entityType: 'Image',
-        entityId,
-        metricType: 'Buzz',
-        amount: finalAmount,
-      });
-    }
-
-    return data;
+    // `deduped` / `dedupedAmount` are ADDITIVE (the on-site tRPC caller ignores
+    // them). The App Blocks tip endpoint reads `dedupedAmount` to refund the daily
+    // tip-cap reservation it burned for Buzz that never moved — see tip.ts.
+    return { ...data, deduped, dedupedAmount };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

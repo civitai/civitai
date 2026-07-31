@@ -20,6 +20,7 @@ import {
   BLOCK_TIP_MAX_PER_TIP,
   checkBlockTipRateLimit,
   claimTipIdempotency,
+  computeTipFingerprint,
   finalizeTipIdempotency,
   refundBlockTipSpend,
   releaseTipIdempotency,
@@ -56,6 +57,18 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  * retry) collapses a replay to the FIRST terminal result — no second reserve, no
  * second charge. Absent key → today's behavior (no dedupe). The claim is fail-
  * CLOSED (a redis error at claim time → 503), consistent with the tip-cap posture.
+ * The claim is scoped per (user, APP, key) and pinned to a PAYLOAD FINGERPRINT:
+ *   - same key, same payload, first attempt live  → 409 (retry shortly)
+ *   - same key, same payload, terminal result     → replay it verbatim
+ *   - same key, DIFFERENT payload                 → 422 (mint a fresh key)
+ * and a throw that escapes the money attempt RELEASES the claim rather than
+ * stranding a 10-minute "already in progress" sentinel over nothing.
+ *
+ * Two layers back the dedupe. (1) The Redis sentinel above — fast path, 10-min TTL.
+ * (2) The LEDGER: the key derives the tip's `externalTransactionId`, so a retry
+ * after the sentinel expires collides on the Buzz ledger's unique constraint. That
+ * second layer reports a CONFLICT, which this endpoint uses to refund the daily-cap
+ * reservation it burned for Buzz that never moved (see `dedupedAmount` below).
  */
 
 export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
@@ -204,7 +217,7 @@ export const baseHandler = withAxiom(async function handler(
     } as unknown as ProtectedContext;
 
     try {
-      await createBuzzTipTransactionHandler({
+      const result = await createBuzzTipTransactionHandler({
         input: {
           toAccountId: toUserId,
           amount,
@@ -221,6 +234,23 @@ export const baseHandler = withAxiom(async function handler(
         // above stays the fast-path; this is the authoritative second layer.
         idempotencyKey,
       });
+
+      // ── LEDGER-DEDUPED TIP → REFUND THE CAP RESERVATION (audit 🔴-2) ──────────
+      // `dedupedAmount` is the Buzz the ledger REFUSED to move because the
+      // deterministic `externalTransactionId` already existed — i.e. this call
+      // debited that much less than we reserved above. Keeping the reservation would
+      // charge the viewer's daily tip ALLOWANCE a second time for a transfer that
+      // happened exactly once, which is not the "stricter is safer" case the refund
+      // policy in the catch below is about: there we don't know whether money moved,
+      // here the ledger has affirmatively told us it did not. Refund exactly the
+      // deduped amount (0 on every normal tip → byte-identical to today).
+      //
+      // Replay ABUSE is not what the money cap holds: a replay is already bounded by
+      // the per-instance 10-tips/60s limiter and the Redis idempotency sentinel, and
+      // it moves no Buzz.
+      if (result.dedupedAmount > 0) {
+        await refundBlockTipSpend(capKey, result.dedupedAmount);
+      }
 
       // W13 richer audit detail — stash a structured ref so the middleware
       // finish-writer records "Tipped N Buzz to @recipient" (the view resolves
@@ -287,9 +317,16 @@ export const baseHandler = withAxiom(async function handler(
   //    behavior. Present key → claim-or-replay; finalize a terminal outcome so a
   //    lost-response retry replays it, release a transient one so it can re-run.
   if (idempotencyKey) {
+    // Payload fingerprint (audit 🟡-1 residual) — pins the key to THIS request's
+    // (recipient, amount, entity) so the same key reused for a DIFFERENT tip is
+    // rejected rather than silently replaying the first tip's result.
+    const fingerprint = computeTipFingerprint({ toUserId, amount, entityType, entityId });
     let claim: Awaited<ReturnType<typeof claimTipIdempotency>>;
     try {
-      claim = await claimTipIdempotency(subjectId, idempotencyKey);
+      // Keyed per (user, APP, key) — audit 🟡-2. Without `claims.appBlockId`, two
+      // apps the same user installed that pick the same literal key value share one
+      // slot, and app B replays app A's body (learning A's recipient + amount).
+      claim = await claimTipIdempotency(subjectId, claims.appBlockId, idempotencyKey, fingerprint);
     } catch {
       // Fail-CLOSED: a redis error at claim time → 503 (money endpoint must not
       // dedupe blind), consistent with the reserve path.
@@ -297,6 +334,15 @@ export const baseHandler = withAxiom(async function handler(
       return;
     }
 
+    if (claim.state === 'mismatch') {
+      // Same key, DIFFERENT payload. Replaying the first result would tell the app a
+      // tip it never made succeeded; executing it would break the key's one-request
+      // contract. Reject (non-retryable) — the client must mint a fresh key.
+      res.status(422).json({
+        error: 'This idempotency key was already used for a different tip',
+      });
+      return;
+    }
     if (claim.state === 'replay') {
       // A prior attempt already produced a terminal result — replay it VERBATIM.
       // No second reserve, no second charge.
@@ -312,11 +358,27 @@ export const baseHandler = withAxiom(async function handler(
     }
 
     // state === 'acquired' — we own the first attempt.
-    const outcome = await attemptTip();
+    //
+    // 🔴 RELEASE ON A THROW (audit 🟡-3). `attemptTip` returns a terminal outcome for
+    // every failure it OWNS, but `hydrateBlockSubject(subjectId)` and
+    // `new Tracker(req, res)` sit outside its inner try — a throw there ESCAPES past
+    // both finalize and release. The sentinel would then survive its full 10-minute
+    // TTL and 409 every retry with "already in progress" when NOTHING is in progress,
+    // making the tip unlandable after a transient DB blip — precisely when retrying
+    // with the same key is the entire point. No money moved (the throw is upstream of
+    // the charge), so releasing is safe. The gen path already does this on its submit
+    // catch; this makes the tip path consistent.
+    let outcome: TipOutcome;
+    try {
+      outcome = await attemptTip();
+    } catch (e) {
+      await releaseTipIdempotency(claim.key);
+      throw e;
+    }
     if (outcome.transient) {
       await releaseTipIdempotency(claim.key);
     } else {
-      await finalizeTipIdempotency(claim.key, outcome.status, outcome.body);
+      await finalizeTipIdempotency(claim.key, outcome.status, outcome.body, fingerprint);
     }
     res.status(outcome.status).json(outcome.body);
     return;

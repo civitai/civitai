@@ -34,6 +34,7 @@ import {
   claimGenIdempotency,
   composeBlockExternalId,
   finalizeGenIdempotency,
+  mintServerBlockExternalId,
   releaseGenIdempotency,
   type BlockGenIdempotencyClaim,
 } from '~/server/utils/block-gen-idempotency';
@@ -3674,8 +3675,11 @@ export const blocksRouter = router({
         // lost-response / timeout RETRY that re-submits with the SAME key collapses
         // to the existing workflow instead of a second orchestrator submit — the
         // orchestrator dedupes on `(userId, externalId)` and returns the ORIGINAL
-        // transactions (no second Buzz charge). Absent → no externalId → today's
-        // behavior (additive/backward-compatible). NOTE: the civitai-side Redis
+        // transactions (no second Buzz charge). Absent → the server MINTS a
+        // per-request `bls<uuid>` externalId instead (audit 🔴-1), which dedupes
+        // `submitWorkflow`'s own 3× internal retry of THIS call but — being unique
+        // per request — does NOT dedupe a CLIENT-level retry; that still needs a
+        // client key. NOTE: the civitai-side Redis
         // spend-CAP counters (per-user daily / per-app) still INCR on a replay —
         // they are keyed on `(userId, day)`, not externalId — which over-counts the
         // ABUSE cap (stricter direction), never a real double-debit.
@@ -3708,11 +3712,27 @@ export const blocksRouter = router({
       }
       // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
       // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
-      // `userId-`), so a key can never collide across apps or users. Undefined when
-      // the block sends no key → no externalId → today's non-deduped behavior.
+      // `userId-`), so a key can never collide across apps or users.
+      //
+      // 🔴 ALWAYS SET (audit 🔴-1). When the block sends no key we MINT one
+      // server-side instead of leaving `externalId` undefined. The double-charge
+      // this closes is server-side and unconditional: `submitWorkflow` retries the
+      // real submit up to 3× with no per-attempt timeout, and a 502/504 AFTER the
+      // orchestrator created + charged the workflow makes each retry create another
+      // one. Gating `externalId` on a client key closed nothing in practice — NO
+      // shipped client sends one. Minted ONCE here (not per attempt): the body built
+      // below is the same object `submitWorkflowWithRetry` reuses on every attempt,
+      // so all attempts of THIS request present the same id while a genuinely
+      // different submit gets a different UUID. The `bls` origin tag keeps the
+      // minted namespace disjoint from the client-key `blk` namespace.
+      //
+      // NOTE the civitai-side redis SET-NX claim below stays gated on the CLIENT key
+      // — a server-minted id is unique per request, so claiming on it could never
+      // dedupe anything (it would only add two redis round-trips and a stuck-sentinel
+      // failure mode). Keyed clients therefore behave EXACTLY as before.
       const blockExternalId = input.idempotencyKey
         ? composeBlockExternalId(claims.appBlockId, input.idempotencyKey)
-        : undefined;
+        : mintServerBlockExternalId();
       // `input.body` is now the textToImage member. Capture it so the narrowing
       // survives into the fire-and-forget spend-attribution CLOSURE below (TS
       // drops discriminated-union property narrowing at nested-function
@@ -4156,11 +4176,13 @@ export const blocksRouter = router({
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
-            // Idempotency (item 2, gen half): a same-key retry collapses to the
-            // existing workflow on the orchestrator (dedupe on (userId, externalId))
-            // → no second Buzz charge. Only set on the REAL submit — the whatIf
-            // preflight stays keyless (it never creates a workflow).
-            ...(blockExternalId ? { externalId: blockExternalId } : {}),
+            // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
+            // OWN internal 3× retry of THIS call — collapses to the existing
+            // workflow on the orchestrator (dedupe on (userId, externalId)) → no
+            // second Buzz charge. Always present (client-keyed or server-minted).
+            // Only set on the REAL submit — the whatIf preflight stays keyless (it
+            // never creates a workflow, and must never occupy a dedupe slot).
+            externalId: blockExternalId,
           },
         });
         snapshot = snapshotFromWorkflow(submitted);
@@ -5709,11 +5731,15 @@ async function submitCustomComfyWorkflow(opts: {
   idempotencyKey?: string;
 }) {
   const { ctx, claims, body, idempotencyKey } = opts;
-  // Namespaced idempotency externalId (item 2, gen half) — same shape as the
-  // txt2img branch. Undefined when no key is sent → today's non-deduped behavior.
+  // Namespaced idempotency externalId — same shape as the txt2img branch, and like
+  // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
+  // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
+  // charge for) a second workflow after a 502/504. Minted ONCE here — the body built
+  // below is the object the retry wrapper reuses across attempts. See the txt2img
+  // branch for the full rationale + the client-vs-server namespace split.
   const blockExternalId = idempotencyKey
     ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
-    : undefined;
+    : mintServerBlockExternalId();
 
   // ── Page-only guard (mirror the model-token sourceImage rejection ~:3294).
   if (!isPageToken(claims)) {
@@ -5998,9 +6024,10 @@ async function submitCustomComfyWorkflow(opts: {
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
-        // Idempotency (item 2, gen half): a same-key retry collapses to the
-        // existing workflow on the orchestrator → no second Buzz charge.
-        ...(blockExternalId ? { externalId: blockExternalId } : {}),
+        // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
+        // internal 3× retry of THIS call — collapses to the existing workflow on the
+        // orchestrator → no second Buzz charge. Always present.
+        externalId: blockExternalId,
       },
     });
     snapshot = snapshotFromWorkflow(submitted);

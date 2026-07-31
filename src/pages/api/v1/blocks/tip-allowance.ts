@@ -7,6 +7,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 
 /**
  * GET /api/v1/blocks/tip-allowance — scope `social:tip:self`.
@@ -30,6 +31,9 @@ import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
  *
  * CORS: withBlockScope + allowOpaqueOrigin (an unverified block direct-fetches
  * this from `Origin: null`; the Bearer block-JWT is the sole authz gate).
+ *
+ * RATE LIMITED per blockInstanceId, consistent with the sibling blocks REST reads
+ * (`models.ts` / `images.ts`) — see the call site below.
  */
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -55,6 +59,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
   if (subjectUserId == null) {
     res.status(403).json({ error: 'Anonymous block tokens have no tip allowance' });
+    return;
+  }
+
+  // Per-instance rate limit (audit 🟡-4). Every sibling blocks REST read limits
+  // itself (`models.ts`, `images.ts`) and this one did not — yet it is DESIGNED to
+  // be live-polled (a block refreshing its remaining allowance), and each call is a
+  // `sysRedis` GET on the same instance that backs the money caps. Uses the SAME
+  // `checkBlockCatalogRateLimit` bucket + posture as the siblings (120/10s per
+  // blockInstanceId, fail-OPEN) rather than inventing a bucket: the ceiling is far
+  // above any legitimate poll rate, and a 429 here is benign (the block falls back
+  // to a stale allowance; the ENFORCING reserve on the tip path is unaffected).
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 

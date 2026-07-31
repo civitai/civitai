@@ -54,11 +54,18 @@ vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
+
+// Hoisted so the 🔴-2 tests can assert these NON-idempotent side effects do not fire
+// for a transaction the ledger deduped.
+const { mockCreateNotification, mockUpdateEntityMetric } = vi.hoisted(() => ({
+  mockCreateNotification: vi.fn(),
+  mockUpdateEntityMetric: vi.fn(),
+}));
 vi.mock('~/server/services/notification.service', () => ({
-  createNotification: vi.fn(async () => undefined),
+  createNotification: (...a: unknown[]) => mockCreateNotification(...(a as [])),
 }));
 vi.mock('~/server/utils/metric-helpers', () => ({
-  updateEntityMetric: vi.fn(async () => undefined),
+  updateEntityMetric: (...a: unknown[]) => mockUpdateEntityMetric(...(a as [])),
 }));
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn() },
@@ -105,6 +112,8 @@ beforeEach(() => {
   mockUserFindMany.mockResolvedValue([]); // no banned targets
   mockUserFindUnique.mockResolvedValue({ username: 'sender' });
   mockUpsertBuzzTip.mockResolvedValue(undefined);
+  mockCreateNotification.mockResolvedValue(undefined);
+  mockUpdateEntityMetric.mockResolvedValue(undefined);
 });
 
 describe('createBuzzTipTransactionHandler — ledger-backed idempotency (audit 🟡-1)', () => {
@@ -160,5 +169,109 @@ describe('createBuzzTipTransactionHandler — ledger-backed idempotency (audit �
     expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toBe(
       'block-tip:42:idem-xyz-5'
     );
+  });
+});
+
+/**
+ * 🔴-2 — a ledger CONFLICT means the money already moved on an EARLIER call, so this
+ * call debited NOTHING. The three side effects (`upsertBuzzTip`, the `tip-received`
+ * notification, the Image Buzz metric) are all NON-idempotent, so firing them anyway
+ * credits a SECOND tip for money that moved once: a phantom tip.
+ *
+ * This state is ONLY reachable because of the deterministic `externalTransactionId`
+ * this PR introduced — with the legacy per-call `uuid()` id `conflicts` was always
+ * empty here. The prior test suite only asserted `debits() === 1`, which is exactly
+ * why the phantom side effects slipped through.
+ */
+describe('createBuzzTipTransactionHandler — ledger CONFLICT side effects (audit 🔴-2)', () => {
+  it('🔴 a deduped tip produces ZERO additional side effects (no BuzzTip row, no notification, no metric)', async () => {
+    const ledger = installLedger();
+    const input = { ...baseInput, entityType: 'Image' as const, entityId: 99 };
+
+    // First tip: money moves, side effects fire.
+    await createBuzzTipTransactionHandler({
+      input,
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-dup',
+    });
+    expect(ledger.debits()).toBe(1);
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
+    expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    mockUserFindMany.mockResolvedValue([]);
+    mockUserFindUnique.mockResolvedValue({ username: 'sender' });
+
+    // The reachable scenario from the audit: same key, same recipient, a DIFFERENT
+    // entityId (the derivation deliberately ignores the entity — see the test above),
+    // after the 10-min Redis sentinel expired. The ledger id is byte-identical → a
+    // conflict → ZERO Buzz moves. Without the fix, image 100 gets +100 Buzz, a
+    // BuzzTip row, and a 200.
+    const result = await createBuzzTipTransactionHandler({
+      input: { ...input, entityId: 100 },
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-dup',
+    });
+
+    // 🔴 The load-bearing assertions: still exactly ONE debit, and NOTHING else fired.
+    expect(ledger.debits()).toBe(1);
+    expect(mockUpsertBuzzTip).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockUpdateEntityMetric).not.toHaveBeenCalled();
+    // Reported up so the App Blocks tip endpoint can refund the daily-cap
+    // reservation it burned for Buzz that never moved.
+    expect(result.deduped).toBe(true);
+    expect(result.dedupedAmount).toBe(100);
+  });
+
+  it('🔴 a deduped ENTITY-LESS tip fires no `tip-received` notification (uuid key gives it no dedup)', async () => {
+    const ledger = installLedger();
+    // No entityType/entityId → the notification branch.
+    await createBuzzTipTransactionHandler({
+      input: baseInput,
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-note',
+    });
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    mockUserFindMany.mockResolvedValue([]);
+    mockUserFindUnique.mockResolvedValue({ username: 'sender' });
+
+    await createBuzzTipTransactionHandler({
+      input: baseInput,
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-note',
+    });
+    expect(ledger.debits()).toBe(1);
+    // The notification key is `tip-received:${uuid()}` — it has NO dedup of its own,
+    // so nothing else would have stopped a second "you received a tip".
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a normally-settled tip still fires every side effect and reports no dedupe', async () => {
+    installLedger();
+    const result = await createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Image' as const, entityId: 99 },
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-fresh',
+    });
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
+    expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
+    expect(result.deduped).toBe(false);
+    expect(result.dedupedAmount).toBe(0);
+  });
+
+  it('the metric + BuzzTip amount tracks only what SETTLED, not what was attempted', async () => {
+    installLedger();
+    await createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Image' as const, entityId: 99 },
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-amt',
+    });
+    expect(mockUpdateEntityMetric).toHaveBeenCalledWith(
+      expect.objectContaining({ metricType: 'Buzz', amount: 100 })
+    );
+    expect(mockUpsertBuzzTip).toHaveBeenCalledWith(expect.objectContaining({ amount: 100 }));
   });
 });
