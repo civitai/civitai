@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -38,10 +39,11 @@ export async function getImagePurgeBudget(): Promise<number> {
   return Math.floor(parsed);
 }
 
-type Candidate = { id: number; deletedAt: Date };
+type Candidate = { id: number; deletedAt: Date; mode: 'grace' | 'immediate' };
 
 type UserDrain = {
   deletedImages: number;
+  blockedImages: number;
   budgetUsed: number;
   drained: boolean;
   canceled: boolean;
@@ -80,11 +82,12 @@ async function drainUser(
       images.map((i) => i.id),
       DELETE_BATCH_SIZE
     )) {
-      if (isCanceled()) return { deletedImages, budgetUsed, drained: false, canceled: true };
+      if (isCanceled())
+        return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       // The id list is only as fresh as the fetch above, and the delete below is by id: without
       // a re-read a restore landing mid-drain still costs the account every id already fetched.
       if (!(await isStillDeleted(userId)))
-        return { deletedImages, budgetUsed, drained: false, canceled: false };
+        return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
       const deleted = await deleteImages(batch);
       deletedImages += deleted.length;
@@ -97,7 +100,7 @@ async function drainUser(
         EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
     `;
     if (!state.stillDeleted || state.hasImages)
-      return { deletedImages, budgetUsed, drained: false, canceled: false };
+      return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Post" WHERE "userId" = ${userId}
@@ -107,7 +110,8 @@ async function drainUser(
       posts.map((p) => p.id),
       DELETE_BATCH_SIZE
     )) {
-      if (isCanceled()) return { deletedImages, budgetUsed, drained: false, canceled: true };
+      if (isCanceled())
+        return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       deletedPosts += await dbWrite.$executeRaw`
         DELETE FROM "Post"
         WHERE id IN (${Prisma.join(batch)})
@@ -117,9 +121,74 @@ async function drainUser(
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
-    return { deletedImages, budgetUsed, drained: deletedPosts === posts.length, canceled: false };
+    return {
+      deletedImages,
+      blockedImages: 0,
+      budgetUsed,
+      drained: deletedPosts === posts.length,
+      canceled: false,
+    };
   } catch (error) {
-    return { deletedImages, budgetUsed, drained: false, canceled: false, error };
+    return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false, error };
+  }
+}
+
+async function blockUserImages(
+  userId: number,
+  budget: number,
+  isCanceled: () => boolean
+): Promise<UserDrain> {
+  let blockedImages = 0;
+  let budgetUsed = 0;
+
+  try {
+    const images = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT i.id
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId" AND u."deletedAt" IS NOT NULL
+      WHERE i."userId" = ${userId}
+        AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      LIMIT ${budget}
+    `;
+
+    for (const batch of chunk(
+      images.map((i) => i.id),
+      DELETE_BATCH_SIZE
+    )) {
+      if (isCanceled())
+        return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: true };
+
+      // Re-blocking an already-blocked image refires the trigger and restarts its 7-day clock,
+      // so the predicate has to survive into the UPDATE and not just the fetch above.
+      blockedImages += await dbWrite.$executeRaw`
+        UPDATE "Image"
+        SET ingestion = 'Blocked'::"ImageIngestionStatus",
+            "nsfwLevel" = ${NsfwLevel.Blocked},
+            "blockedFor" = ${BlockedReason.Moderated}
+        WHERE id IN (${Prisma.join(batch)})
+          AND "userId" = ${userId}
+          AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+          AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+      `;
+      budgetUsed += batch.length;
+    }
+
+    const [state] = await dbWrite.$queryRaw<{ hasUnblocked: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE i."userId" = ${userId} AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      ) AS "hasUnblocked"
+    `;
+
+    return {
+      deletedImages: 0,
+      blockedImages,
+      budgetUsed,
+      drained: !state.hasUnblocked,
+      canceled: false,
+    };
+  } catch (error) {
+    return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
   }
 }
 
@@ -129,6 +198,7 @@ async function drainPage(
   isCanceled: () => boolean
 ): Promise<{
   deletedImages: number;
+  blockedImages: number;
   deletedUsers: number;
   remaining: number;
   canceled: boolean;
@@ -136,6 +206,7 @@ async function drainPage(
 }> {
   let remaining = budget;
   let deletedImages = 0;
+  let blockedImages = 0;
   let deletedUsers = 0;
   let canceled = false;
   let drainedThrough: Date | undefined;
@@ -151,9 +222,13 @@ async function drainPage(
       break;
     }
 
-    const result = await drainUser(user.id, remaining, isCanceled);
+    const result =
+      user.mode === 'grace'
+        ? await blockUserImages(user.id, remaining, isCanceled)
+        : await drainUser(user.id, remaining, isCanceled);
     remaining -= result.budgetUsed;
     deletedImages += result.deletedImages;
+    blockedImages += result.blockedImages;
     canceled = result.canceled;
 
     if (result.error)
@@ -173,7 +248,7 @@ async function drainPage(
     if (canceled) break;
   }
 
-  return { deletedImages, deletedUsers, remaining, canceled, drainedThrough };
+  return { deletedImages, blockedImages, deletedUsers, remaining, canceled, drainedThrough };
 }
 
 export const removeDeletedUserImages = createJob(
@@ -181,7 +256,7 @@ export const removeDeletedUserImages = createJob(
   '15 * * * *',
   async (ctx) => {
     const budget = await getImagePurgeBudget();
-    if (budget <= 0) return { paused: true, deletedImages: 0, deletedUsers: 0 };
+    if (budget <= 0) return { paused: true, deletedImages: 0, blockedImages: 0, deletedUsers: 0 };
 
     // A cancel is a clean stop, not a failure; converting the throw keeps it out of both the
     // per-user error log and the job runner's error counter.
@@ -200,14 +275,24 @@ export const removeDeletedUserImages = createJob(
     // Both bounds are inclusive of their own timestamp: a bulk or admin delete stamps one
     // `now()` across many accounts, and the worklist already drops accounts that no longer own
     // anything, so re-reading the tie costs nothing and is the only way not to skip the rest.
+
+    // A grace user has outstanding work only while they still own an unblocked image: their
+    // posts leave with the images at day 7, via CleanIfEmpty, not from here.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
-      SELECT u.id, u."deletedAt"
+      SELECT u.id, u."deletedAt",
+             COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode
       FROM "User" u
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
         AND (
-          EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = u.id)
-          OR EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+          EXISTS (
+            SELECT 1 FROM "Image" i
+            WHERE i."userId" = u.id AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+          )
+          OR (
+            COALESCE(u.meta->>'imageRemoval', 'immediate') <> 'grace'
+            AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+          )
         )
       ORDER BY u."deletedAt" ASC
       LIMIT ${USERS_PER_RUN}
@@ -220,20 +305,28 @@ export const removeDeletedUserImages = createJob(
     await setFreshMark(freshRun.drainedThrough ?? freshMark);
 
     let deletedImages = freshRun.deletedImages;
+    let blockedImages = freshRun.blockedImages;
     let deletedUsers = freshRun.deletedUsers;
     let candidates = fresh.length;
     let wrapped = false;
 
     if (freshRun.remaining > 0 && !freshRun.canceled) {
       const backlog = await dbRead.$queryRaw<Candidate[]>`
-        SELECT u.id, u."deletedAt"
+        SELECT u.id, u."deletedAt",
+               COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode
         FROM "User" u
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
           AND (
-            EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = u.id)
-            OR EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+            EXISTS (
+              SELECT 1 FROM "Image" i
+              WHERE i."userId" = u.id AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+            )
+            OR (
+              COALESCE(u.meta->>'imageRemoval', 'immediate') <> 'grace'
+              AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+            )
           )
         ORDER BY u."deletedAt" DESC
         LIMIT ${USERS_PER_RUN}
@@ -245,6 +338,7 @@ export const removeDeletedUserImages = createJob(
       } else {
         const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled);
         deletedImages += backlogRun.deletedImages;
+        blockedImages += backlogRun.blockedImages;
         deletedUsers += backlogRun.deletedUsers;
         candidates += backlog.length;
         if (backlogRun.drainedThrough) await setBacklogCursor(backlogRun.drainedThrough);
@@ -255,6 +349,7 @@ export const removeDeletedUserImages = createJob(
       type: 'info',
       name: 'remove-deleted-user-images',
       deletedImages,
+      blockedImages,
       deletedUsers,
       freshDeletedImages: freshRun.deletedImages,
       freshDeletedUsers: freshRun.deletedUsers,
@@ -262,7 +357,7 @@ export const removeDeletedUserImages = createJob(
       budget,
     }).catch(() => undefined);
 
-    return { deletedImages, deletedUsers, wrapped };
+    return { deletedImages, blockedImages, deletedUsers, wrapped };
   },
   { lockExpiration: 30 * 60, dedicated: true }
 );

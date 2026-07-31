@@ -53,6 +53,12 @@ import {
 type Fixture = {
   deletedAt: Date;
   images: number[];
+  /** `User.meta`; only `imageRemoval` reaches the job. */
+  meta?: { imageRemoval?: 'grace' | 'immediate' };
+  /** Per-image `ingestion`; an id absent from here holds anything other than `Blocked`. */
+  ingestion?: Record<number, string>;
+  /** Blocked by another writer in the window between the job's image read and its write. */
+  blockAfterRead?: number[];
   posts?: number[];
   /** Still in the (replica-read) worklist, but the primary now says `deletedAt IS NULL`. */
   restored?: boolean;
@@ -67,7 +73,32 @@ let cursorStore: Record<string, Date> = {};
 let cursorSets: Record<string, Date[]> = {};
 let imageLimits: number[] = [];
 let deletedPostIds: number[] = [];
+let blockedUpdates: Record<string, unknown>[] = [];
 let batchChecks: Record<number, number> = {};
+
+/** The substring both the worklist and the block path use to exclude already-blocked rows. */
+const SKIPS_BLOCKED = `ingestion <> 'Blocked'`;
+
+const mode = (fixture: Fixture) => fixture.meta?.imageRemoval ?? 'immediate';
+const unblocked = (fixture: Fixture) =>
+  fixture.images.filter((id) => fixture.ingestion?.[id] !== 'Blocked');
+
+/**
+ * Reads the `SET` assignments back out of the statement — a literal off the SQL text, a `?` off
+ * the parameter list — so the recorded row is what the job actually wrote rather than what the
+ * test expects it to write.
+ */
+function parseSetClause(sql: string, params: unknown[]) {
+  const body = sql.slice(sql.indexOf('SET ') + 4, sql.indexOf('WHERE'));
+  const queue = [...params];
+  const row: Record<string, unknown> = {};
+  for (const assignment of body.split(',')) {
+    const [column, value] = assignment.split('=').map((part) => part.trim());
+    row[column.replace(/"/g, '')] =
+      value === '?' ? queue.shift() : value.replace(/::.*$/, '').replace(/'/g, '');
+  }
+  return row;
+}
 
 function seed(next: Record<number, Fixture>) {
   fixtures = next;
@@ -94,20 +125,31 @@ function seed(next: Record<number, Fixture>) {
       // The backlog page carries the high-water mark as a second, always-strict bound.
       return withinBound && (mark === undefined || d < mark);
     };
-    const selectsImageOwners = sql.includes('FROM "Image" i WHERE i."userId" = u.id');
+    const selectsImageOwners = /FROM "Image" i\s+WHERE i\."userId" = u\.id/.test(sql);
     const selectsPostOwners = sql.includes('FROM "Post" p WHERE p."userId" = u.id');
+    // Like the bound comparisons, the mode predicates are read out of the SQL: dropping one in
+    // the job makes the fixture hand back a row the job then mishandles, rather than hiding it.
+    const skipsBlockedImages = sql.includes(SKIPS_BLOCKED);
+    const skipsGracePosts = sql.includes(`'imageRemoval', 'immediate') <> 'grace'`);
+    const selectsMode = sql.includes(`COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode`);
     const order = ascending ? [...newestFirst].reverse() : newestFirst;
 
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
-        .filter(
-          (id) =>
-            (selectsImageOwners && fixtures[id].images.length > 0) ||
-            (selectsPostOwners && (fixtures[id].posts ?? []).length > 0)
-        )
+        .filter((id) => {
+          const fixture = fixtures[id];
+          const images = skipsBlockedImages ? unblocked(fixture) : fixture.images;
+          const postsCount =
+            skipsGracePosts && mode(fixture) === 'grace' ? 0 : (fixture.posts ?? []).length;
+          return (selectsImageOwners && images.length > 0) || (selectsPostOwners && postsCount > 0);
+        })
         .slice(0, limit)
-        .map((id) => ({ id, deletedAt: fixtures[id].deletedAt }))
+        .map((id) => ({
+          id,
+          deletedAt: fixtures[id].deletedAt,
+          ...(selectsMode ? { mode: mode(fixtures[id]) } : {}),
+        }))
     );
   });
 
@@ -123,6 +165,10 @@ function seed(next: Record<number, Fixture>) {
         if (fixture.restoredAfterCheck) fixture.restored = true;
         return Promise.resolve([state]);
       }
+      if (sql.includes('"hasUnblocked"')) {
+        const images = sql.includes(SKIPS_BLOCKED) ? unblocked(fixture) : fixture.images;
+        return Promise.resolve([{ hasUnblocked: images.length > 0 }]);
+      }
       if (sql.includes('"stillDeleted"')) {
         const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
         if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
@@ -133,7 +179,10 @@ function seed(next: Record<number, Fixture>) {
         const limit = values[1] as number;
         imageLimits.push(limit);
         if (gated && fixture.restored) return Promise.resolve([]);
-        return Promise.resolve(fixture.images.slice(0, limit).map((id) => ({ id })));
+        const images = sql.includes(SKIPS_BLOCKED) ? unblocked(fixture) : fixture.images;
+        const page = images.slice(0, limit).map((id) => ({ id }));
+        for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
+        return Promise.resolve(page);
       }
       if (sql.includes('FROM "Post"'))
         return Promise.resolve((fixture.posts ?? []).map((id) => ({ id })));
@@ -145,10 +194,26 @@ function seed(next: Record<number, Fixture>) {
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = strings.join('?');
-      const ids = ((values[0] as { values?: number[] })?.values ?? []) as number[];
-      const userId = values[1] as number;
+      // The id list is the only `Prisma.join` in either statement, and the owner check follows it.
+      const joined = values.findIndex((v) => Array.isArray((v as { values?: number[] })?.values));
+      const ids = ((values[joined] as { values?: number[] })?.values ?? []) as number[];
+      const userId = values[joined + 1] as number;
       const fixture = fixtures[userId];
       if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
+
+      if (sql.includes('UPDATE "Image"')) {
+        const row = parseSetClause(sql, values);
+        const targets = ids.filter(
+          (id) =>
+            fixture.images.includes(id) &&
+            (!sql.includes(SKIPS_BLOCKED) || fixture.ingestion?.[id] !== 'Blocked')
+        );
+        for (const id of targets) {
+          (fixture.ingestion ??= {})[id] = String(row.ingestion);
+          blockedUpdates.push({ id, ...row });
+        }
+        return Promise.resolve(targets.length);
+      }
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -164,6 +229,39 @@ function seed(next: Record<number, Fixture>) {
 }
 
 const ids = (count: number, offset = 0) => Array.from({ length: count }, (_, i) => offset + i + 1);
+
+function seedUser({
+  id,
+  imageRemoval,
+  images,
+  posts = 0,
+  alreadyBlocked = 0,
+  blockedAfterRead = 0,
+  deletedAt = NEWER,
+}: {
+  id: number;
+  imageRemoval?: 'grace' | 'immediate';
+  images: number;
+  posts?: number;
+  alreadyBlocked?: number;
+  blockedAfterRead?: number;
+  deletedAt?: Date;
+}) {
+  seed({
+    [id]: {
+      deletedAt,
+      meta: imageRemoval ? { imageRemoval } : undefined,
+      images: ids(images),
+      ingestion: Object.fromEntries(ids(alreadyBlocked).map((imageId) => [imageId, 'Blocked'])),
+      blockAfterRead: ids(blockedAfterRead, alreadyBlocked),
+      posts: ids(posts, 900),
+    },
+  });
+}
+
+const blockedRows = () => blockedUpdates;
+const blockedImageIds = () => blockedUpdates.map((row) => row.id);
+const remainingPosts = (userId: number) => fixtures[userId].posts ?? [];
 
 const run = (checkIfCanceled: () => void = () => undefined) =>
   (removeDeletedUserImages as unknown as (ctx: { checkIfCanceled: () => void }) => Promise<any>)({
@@ -187,6 +285,7 @@ beforeEach(() => {
   cursorSets = {};
   imageLimits = [];
   deletedPostIds = [];
+  blockedUpdates = [];
   batchChecks = {};
   mockSysRedis.get.mockResolvedValue(null);
   mockGetJobDate.mockImplementation(async (key: string, defaultValue: Date) => [
@@ -581,5 +680,94 @@ describe('removeDeletedUserImages budget', () => {
     // gate pause it instead of running with the default.
     expect(result.deletedImages).toBe(150);
     expect(result.paused).toBeUndefined();
+  });
+});
+
+describe('grace mode', () => {
+  it('blocks a grace user images instead of deleting them', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 150 });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(blockedImageIds()).toHaveLength(150);
+    expect(blockedRows()[0]).toMatchObject({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+    });
+    expect(result.blockedImages).toBe(150);
+  });
+
+  it('leaves a grace user posts alone', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, posts: 5 });
+
+    await run();
+
+    // Posts follow the images out via CleanIfEmpty once remove-blocked-images
+    // purges them at day 7; deleting them now would strand the grace window.
+    expect(remainingPosts(7)).toHaveLength(5);
+  });
+
+  it('does not reselect a grace user whose images are all blocked', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, posts: 5 });
+
+    await run();
+    mockDeleteImages.mockClear();
+    mockLogToAxiom.mockClear();
+    const second = await run();
+
+    expect(second.blockedImages).toBe(0);
+    expect(second.deletedImages).toBe(0);
+    // Posts they keep for the grace window must not pull them back into the worklist, where
+    // every wrap would re-count them as drained for no work.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
+  });
+
+  it('skips images that are already blocked so their 7-day clock is not restarted', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, alreadyBlocked: 4 });
+
+    const result = await run();
+
+    expect(result.blockedImages).toBe(6);
+  });
+
+  it('spends the budget only on images that still need blocking', async () => {
+    mockSysRedis.get.mockResolvedValue('6');
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, alreadyBlocked: 4 });
+
+    const result = await run();
+
+    // Reading already-blocked rows back would spend the whole budget on no-op updates and
+    // never reach the images that still need one.
+    expect(result.blockedImages).toBe(6);
+  });
+
+  it('skips an image blocked between the read and the write', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, blockedAfterRead: 2 });
+
+    const result = await run();
+
+    // The id list is as stale as the read that produced it, so only carrying the predicate into
+    // the UPDATE keeps a concurrently-blocked image off a fresh 7-day clock.
+    expect(result.blockedImages).toBe(8);
+    expect(blockedImageIds()).not.toContain(1);
+  });
+
+  it('hard-deletes a user with no recorded choice', async () => {
+    seedUser({ id: 7, images: 10 });
+
+    const result = await run();
+
+    expect(result.deletedImages).toBe(10);
+    expect(result.blockedImages).toBe(0);
+  });
+
+  it('charges blocked images against the budget', async () => {
+    mockSysRedis.get.mockResolvedValue('100');
+    seedUser({ id: 7, imageRemoval: 'grace', images: 250 });
+
+    const result = await run();
+
+    expect(result.blockedImages).toBe(100);
   });
 });
