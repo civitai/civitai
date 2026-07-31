@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Namespace type-imports (erased at compile time, so they are safe above the hoisted vi.mock calls)
+// — the repo forbids inline `typeof import(...)` annotations.
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
 
 // The MODERATOR completion path — `endChallengeAndPickWinners`, reached from the tRPC router when a
 // mod ends a challenge by hand. It has its own `createChallengeWinner` +
@@ -50,7 +54,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };
 });
 
@@ -110,9 +114,7 @@ vi.mock('~/server/jobs/daily-challenge-processing', () => ({
 // `buildWinnerPayoutTransactions` is deliberately left REAL (it is pure) so the assertions below run
 // against the genuine externalTransactionId strings — the actual money keys.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/server/games/daily-challenge/challenge-funding')
-  >();
+  const actual = await importOriginal<typeof ChallengeFunding>();
   return {
     ...actual,
     chargeInitialPrize: vi.fn(),

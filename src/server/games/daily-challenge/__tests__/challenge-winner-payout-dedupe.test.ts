@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
+// Namespace type-imports (erased at compile time, so they are safe above the hoisted vi.mock calls)
+// — the repo forbids inline `typeof import(...)` annotations.
+import type * as FliptClient from '~/server/flipt/client';
+import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
 // PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createBuzzTransactionMany`
@@ -84,7 +88,7 @@ vi.mock('~/server/logging/client', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };
 });
 
@@ -153,9 +157,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 // NOTE: `buildWinnerPayoutTransactions` is deliberately left REAL (it is a pure function) so the
 // assertions below run against the genuine externalTransactionId strings.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/server/games/daily-challenge/challenge-funding')
-  >();
+  const actual = await importOriginal<typeof ChallengeFunding>();
   return {
     ...actual,
     refundUserChallengeFunds: mockRefundUserChallengeFunds,

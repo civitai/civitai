@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Namespace type-import (erased at compile time, so it is safe above the hoisted vi.mock calls) —
+// the repo forbids inline `typeof import(...)` annotations.
+import type * as ChallengeMetrics from '~/server/prom/challenge.metrics';
 
 // Covers the two DB-facing halves of the duplicate-payout guard:
 //
@@ -40,7 +43,7 @@ vi.mock('~/server/logging/client', () => ({
   safeError: vi.fn((e: unknown) => e),
 }));
 vi.mock('~/server/prom/challenge.metrics', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/prom/challenge.metrics')>();
+  const actual = await importOriginal<typeof ChallengeMetrics>();
   return { ...actual, recordChallengeWinnerPlaceDivergence: mockRecordDivergence };
 });
 
