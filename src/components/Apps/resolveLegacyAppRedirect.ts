@@ -2,14 +2,27 @@
  * S8 / PR-2 — the redirect decision for the RETIRED legacy per-app detail route
  * `/apps/[appBlockId]`.
  *
- * That page is superseded by the unified store detail `/apps/store-preview/<slug>`,
- * which covers its whole action set (Open app → the `open` branch, Open live → the
- * `visit` fallback, Edit manifest → the untouched sibling `/apps/[appBlockId]/edit*`
- * routes, independently reachable from my-submissions and the store card's owner
- * Edit). The legacy route is kept alive as a REDIRECT — not deleted — so a stale
- * bookmark, an external link, or one of the four in-repo callsites
- * (`AppBlockCard`, `ManifestEditForm`, `liveAppDetailHref`, and the editor's own
- * "Back") simply hops.
+ * That page is superseded by the unified store detail `/apps/store-preview/<slug>`:
+ * Open app → the `open` branch, Open live → the `visit` fallback, Edit manifest →
+ * the untouched sibling `/apps/[appBlockId]/edit*` routes (independently reachable
+ * from my-submissions and the store card's owner Edit). The legacy route is kept
+ * alive as a REDIRECT — not deleted — so a stale bookmark, an external link, or one
+ * of the four in-repo callsites (`AppBlockCard`, `ManifestEditForm`,
+ * `liveAppDetailHref`, and the editor's own "Back") simply hops.
+ *
+ * ⚠️ ONE affordance is NOT carried over: the legacy page's Install / Manage CTA.
+ * `AppListingDetailBody` has no install surface at all, so a MODEL-SLOT app (one
+ * that installs into a slot rather than opening a page) has nowhere on the store
+ * detail to install from. That is vacuous today — every approved on-site listing
+ * declares a page, so none takes that branch — but it is the real gap to close
+ * before a model-slot app is approved, and it is the reason the follow-up should
+ * RETARGET the `info`-mode CTA rather than simply delete this route.
+ *
+ * Sibling precedent: `listingEditNav.ts`'s `legacyEditRedirect` does the same
+ * "legacy route → 302, missing id → notFound" job for the owner-edit routes. It
+ * unwraps a `string[]` param where this module fails closed on any non-string;
+ * for a non-catch-all `[appBlockId]` segment Next always yields a string, so the
+ * two agree in practice and the stricter form is kept deliberately.
  *
  * Pure + React-free + I/O-free on purpose: the branch is the whole point of the
  * change, so it must be assertable in the node-env `unit` project without booting

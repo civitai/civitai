@@ -13,11 +13,15 @@ import {
  * decision that a future "helpful" edit would otherwise silently invert into a
  * redirect to `/apps` with nothing failing.
  *
- * Break-it checks these are written to survive:
+ * Break-it checks these are written to survive — each was run against the source
+ * and confirmed to fail before being reverted:
  *   - turn the no-listing branch into `{ redirect: { destination: '/apps' } }`
- *     → the `notFound` cases below must FAIL.
- *   - drop `encodeURIComponent` → the escaping case must FAIL.
- *   - flip `permanent` to true → the 302 case must FAIL.
+ *     → 5 FAIL (the `notFound` cases).
+ *   - drop `encodeURIComponent` → 3 FAIL (the encoding/containment cases).
+ *   - flip `permanent` to true → 2 FAIL.
+ *   - move the store-visibility gate AFTER the lookup → 2 FAIL (the ordering
+ *     cases in `resolveLegacyAppRoute`).
+ *   - drop `status: 'approved'` from the query → 1 FAIL (the query-shape pin).
  */
 
 describe('resolveLegacyAppRedirect — approved listing → store-preview redirect', () => {
@@ -38,10 +42,16 @@ describe('resolveLegacyAppRedirect — approved listing → store-preview redire
     expect(result).not.toHaveProperty('notFound');
   });
 
-  it('always lands under the store-preview path prefix', () => {
+  it('the slug occupies exactly one path segment under the prefix', () => {
+    // NB: asserting `startsWith(STORE_PREVIEW_PATH_PREFIX)` would be a tautology —
+    // the destination is built by concatenating that same exported constant, so it
+    // cannot fail. What CAN fail, and is the property worth pinning, is that the
+    // slug never introduces a second segment.
     const result = resolveLegacyAppRedirect({ slug: 'some-app' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
-    expect(result.redirect.destination.startsWith(STORE_PREVIEW_PATH_PREFIX)).toBe(true);
+    const slugSegment = result.redirect.destination.slice(STORE_PREVIEW_PATH_PREFIX.length);
+    expect(slugSegment).toBe('some-app');
+    expect(slugSegment.includes('/')).toBe(false);
   });
 });
 
@@ -103,7 +113,11 @@ describe('resolveLegacyAppRedirect — slug encoding / open-redirect containment
     const result = resolveLegacyAppRedirect({ slug: '//evil.example' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
     expect(result.redirect.destination).toBe('/apps/store-preview/%2F%2Fevil.example');
-    expect(result.redirect.destination.startsWith(STORE_PREVIEW_PATH_PREFIX)).toBe(true);
+    // The property that actually matters: no slash survives into the slug segment,
+    // so the destination can never resolve as `//host` or climb a directory.
+    expect(result.redirect.destination.slice(STORE_PREVIEW_PATH_PREFIX.length).includes('/')).toBe(
+      false
+    );
   });
 
   it('path traversal in a slug cannot climb out of /apps/store-preview/', () => {

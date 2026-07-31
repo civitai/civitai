@@ -190,11 +190,8 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
       landedOn,
       `the retired /apps/${first.id} should land on the unified store detail, not render itself`
     ).toMatch(/^\/apps\/store-preview\/.+/);
-    // The display name resolved above still has to exist — it is what the store
-    // detail is keyed on — but it is no longer this page's rendering assertion.
-    expect(
-      detailName.length,
-      'the discovered app should still expose a display name'
-    ).toBeGreaterThan(0);
+    expect(landedOn, 'the retirement must not leave the viewer on the legacy route').not.toBe(
+      `/apps/${first.id}`
+    );
   });
 });
