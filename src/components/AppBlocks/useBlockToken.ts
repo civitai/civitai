@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  decideRefreshRetry,
+  msUntilExpiry,
+  shouldRetainTokenOnFailure,
+} from './blockTokenRetry';
 import type { BlockInstall, SlotContext } from './types';
 
 interface UseBlockTokenResult {
@@ -20,6 +25,21 @@ interface UseBlockTokenResult {
   /** Advisory: the bitwise browsing-level ceiling for the domain (SFW on
    *  green/blue, all on red). undefined on legacy responses → fail closed. */
   maxBrowsingLevel: number | undefined;
+  /**
+   * A bounded automatic re-mint is scheduled after a refresh failure — i.e. the
+   * hook has NOT settled. Consumers must not take a destructive action (collapse
+   * the slot, tear down a ready page) while this is true: the failure is still
+   * being recovered from.
+   */
+  retrying: boolean;
+  /**
+   * 🔴 THE FLAG DESTRUCTIVE UI MUST KEY ON. True only when the mint has failed,
+   * NO usable token remains, AND no automatic recovery is pending. Derived here
+   * rather than left to each consumer so the model slot and the page host cannot
+   * disagree about what "the token is gone for good" means (they did: the slot
+   * collapsed on any `error`, the page ignored the error entirely once ready).
+   */
+  terminal: boolean;
   refresh: () => Promise<void>;
 }
 
@@ -70,11 +90,42 @@ export function useBlockToken(
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
+  // A bounded automatic re-mint is scheduled. State (not a ref) because it is
+  // part of the returned contract — it drives whether a consumer may take a
+  // destructive action — so it has to re-render.
+  const [retrying, setRetrying] = useState<boolean>(false);
   // M4 (audit-10): peek the current token via a ref instead of running a
   // side-effect inside a state-updater. React 18 strict-mode calls updaters
   // twice in dev; a counter/increment side-effect there would silently
   // double. Keeping the ref synchronized via the same setter avoids the trap.
   const tokenRef = useRef<string | null>(null);
+  // Mirror of `expiresAt` for the failure branch, which runs inside the
+  // `requestToken` callback and must not close over stale state to decide
+  // whether the held token is still live.
+  const expiresAtRef = useRef<string | null>(null);
+  // Automatic re-mints already spent in the CURRENT failure episode. Reset to 0
+  // on every success, so a token that refreshes cleanly for hours always gets a
+  // full budget the next time something breaks.
+  const retryAttemptsRef = useRef<number>(0);
+  // A request (INCLUDING the 60s jittered 429 pause inside fetchOnce) is in
+  // flight. 🔴 The AUTOMATIC callers gate on this so they never abort a live
+  // request: `requestToken` begins by aborting the previous controller, and
+  // aborting mid-429-pause would immediately re-hit an endpoint that JUST told
+  // us to back off — turning a platform-wide rate-limit event into a storm.
+  // Manual `refresh()` deliberately keeps abort-and-restart semantics (a
+  // consent grant must re-mint NOW, with the new scopes).
+  const inFlightRef = useRef<boolean>(false);
+  // Timers armed INSIDE `requestToken` need the idle-guarded entry point, which
+  // is defined after it. Reading it through a ref (assigned during render, like
+  // `contextRef`/`buildInitPayloadRef` below and PageBlockHost's
+  // `performRetryRef`) avoids the forward reference AND keeps every automatic
+  // path on ONE guarded entry point — three inline copies of the in-flight rule
+  // is how they drift.
+  const requestTokenIfIdleRef = useRef<() => void>(() => undefined);
+  // ONE timer ref for every scheduled follow-up: the success refresh, the
+  // failure backoff retry, and the settled-token expiry sweep. They are mutually
+  // exclusive by construction, so a single ref means at most one pending timer
+  // and the unmount cleanup below provably cannot leak one.
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Absolute Unix-ms moment we should refresh by. Source of truth for the
   // visibility-resume logic — refreshTimeoutRef alone was a poor proxy
@@ -105,6 +156,11 @@ export function useBlockToken(
     // strict-mode dev).
     if (tokenRef.current == null) setPending(true);
     setError(null);
+    // A new attempt is under way, so no timer is pending any more. Clearing this
+    // here (rather than only in the failure branch) keeps `retrying` honest for
+    // the manual/visibility entry points too.
+    setRetrying(false);
+    inFlightRef.current = true;
 
     const instanceId = install.blockInstanceId;
     const fetchOnce = async (signal: AbortSignal): Promise<TokenResponse> => {
@@ -136,7 +192,10 @@ export function useBlockToken(
     try {
       const data = await fetchOnce(controller.signal);
       if (controller.signal.aborted || !mountedRef.current) return;
+      // Recovered — hand the next failure episode a full retry budget.
+      retryAttemptsRef.current = 0;
       tokenRef.current = data.token;
+      expiresAtRef.current = data.expiresAt;
       setToken(data.token);
       setExpiresAt(data.expiresAt);
       setNeedsConsent(data.needsConsent === true);
@@ -168,18 +227,111 @@ export function useBlockToken(
         refreshTimeoutRef.current = null;
         // Pause refresh while tab is hidden — visibilitychange picks it up.
         if (typeof document !== 'undefined' && document.hidden) return;
-        void requestToken();
+        requestTokenIfIdleRef.current();
       }, refreshDelay);
     } catch (err) {
       if (controller.signal.aborted || !mountedRef.current) return;
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e);
-      tokenRef.current = null;
-      setToken(null);
-      setExpiresAt(null);
       setPending(false);
+
+      // ── REFRESH-FAILURE RECOVERY ────────────────────────────────────────────
+      // 🔴 Before this, the failure branch set `error`, nulled the token and
+      // scheduled NOTHING — the success path was the only place a timer was ever
+      // armed, so the only route back was the user hiding and re-showing the tab.
+      //
+      // (1) KEEP a still-live token. A failed REFRESH says nothing about the
+      //     credential already in hand (refresh runs at T-2min, so it normally
+      //     has ~2 minutes left). Retaining it keeps the iframe MOUNTED — no lost
+      //     in-progress state, and no remount, which is what used to emit a
+      //     second impression beacon for one logical view.
+      const now = Date.now();
+      const retained = shouldRetainTokenOnFailure({
+        token: tokenRef.current,
+        expiresAt: expiresAtRef.current,
+        now,
+      });
+      if (!retained) {
+        tokenRef.current = null;
+        expiresAtRef.current = null;
+        setToken(null);
+        setExpiresAt(null);
+      }
+
+      // (2) Schedule a BOUNDED automatic re-mint, or settle. Never unbounded:
+      //     /api/v1/block-tokens is rate-limited 60/min per (user, instance).
+      const decision = decideRefreshRetry({ attempts: retryAttemptsRef.current });
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = null;
+
+      if (decision.kind === 'retry') {
+        retryAttemptsRef.current += 1;
+        // refreshAtRef is the SINGLE source of truth for "when should we next
+        // try". Pointing it at the backoff moment is what stops `visibilitychange`
+        // from double-firing alongside this timer: the visibility handler skips
+        // while we are still inside the backoff window.
+        refreshAtRef.current = now + decision.delayMs;
+        setRetrying(true);
+        refreshTimeoutRef.current = setTimeout(() => {
+          refreshTimeoutRef.current = null;
+          // Same hidden-tab pause as the success refresh; visibilitychange resumes.
+          if (typeof document !== 'undefined' && document.hidden) return;
+          // Through the ref, like the success timer above — `requestTokenIfIdle`
+          // is declared below, and one indirection for both timers keeps them
+          // from drifting apart.
+          requestTokenIfIdleRef.current();
+        }, decision.delayMs);
+        return;
+      }
+
+      // SETTLED — the automatic budget is spent. Leave refreshAtRef in the past
+      // so the USER-driven escape hatches still work unchanged (`visibilitychange`
+      // and an explicit `refresh()`); we simply stop trying on our own.
+      refreshAtRef.current = now;
+      setRetrying(false);
+
+      // 🔴 One loose end the settle would otherwise leave: a token RETAINED at the
+      // moment we stopped retrying is never re-evaluated (no further failure will
+      // run the check above), so the host would hold it past its expiry and the
+      // block would quietly 401 — exactly the page-host half of the defect. Arm a
+      // one-shot sweep at the expiry so the terminal state becomes visible then.
+      if (retained) {
+        const ttl = msUntilExpiry(expiresAtRef.current, now);
+        if (ttl !== null) {
+          refreshTimeoutRef.current = setTimeout(() => {
+            refreshTimeoutRef.current = null;
+            if (!mountedRef.current) return;
+            tokenRef.current = null;
+            expiresAtRef.current = null;
+            setToken(null);
+            setExpiresAt(null);
+          }, ttl);
+        }
+      }
+    } finally {
+      // Only the CURRENT request may clear the flag — a newer request that
+      // aborted this one has already set it for itself.
+      if (abortRef.current === controller) inFlightRef.current = false;
     }
   }, [install.blockInstanceId]);
+
+  /**
+   * The entry point every AUTOMATIC caller uses (scheduled refresh, failure
+   * backoff, visibility resume).
+   *
+   * 🔴 It refuses to start while a request is in flight. `requestToken` opens by
+   * aborting the previous controller, and `fetchOnce` handles HTTP 429 by
+   * sleeping ~60s (jittered) before its single in-band retry. Without this guard
+   * an automatic caller firing during that pause would abort it and immediately
+   * re-hit the endpoint that had just asked us to back off. Skipping is safe and
+   * self-healing: the in-flight request either succeeds (rescheduling the normal
+   * refresh) or fails (scheduling the next bounded backoff).
+   */
+  const requestTokenIfIdle = useCallback(() => {
+    if (inFlightRef.current) return;
+    void requestToken();
+  }, [requestToken]);
+  requestTokenIfIdleRef.current = requestTokenIfIdle;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -206,13 +358,19 @@ export function useBlockToken(
     if (typeof document === 'undefined') return;
     const onVisible = () => {
       if (document.hidden || !mountedRef.current) return;
+      // 🔴 NO DOUBLE-FIRE WITH THE FAILURE BACKOFF. `refreshAtRef` now also
+      // carries the pending retry moment, so while we are inside a backoff
+      // window this is a no-op and the armed timer remains the single attempt.
+      // Past the moment (including the settled case, where refreshAtRef is left
+      // in the past) this stays the user-driven escape hatch it has always been.
       if (refreshAtRef.current === 0 || Date.now() >= refreshAtRef.current) {
-        void requestToken();
+        // Guarded: must never abort an in-flight 429 backoff. See requestTokenIfIdle.
+        requestTokenIfIdle();
       }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [requestToken]);
+  }, [requestTokenIfIdle]);
 
   const refresh = useCallback(async () => {
     await requestToken();
@@ -227,6 +385,11 @@ export function useBlockToken(
     missingScopes,
     domain,
     maxBrowsingLevel,
+    retrying,
+    // The mint failed, nothing usable is left, and no automatic attempt is
+    // coming. This — NOT a bare `error` — is what a consumer may act
+    // destructively on.
+    terminal: error != null && token == null && !retrying,
     refresh,
   };
 }
