@@ -3781,6 +3781,63 @@ export type PreviewRequestResult = {
 };
 
 /**
+ * Git's object id for a file's BYTES: `sha1("blob " + <byteLength> + "\0" + bytes)`.
+ *
+ * This is the same id Forgejo reports as a tree entry's `sha`, so computing it
+ * locally lets us compare a reconstructed file set against a repo's tree listing
+ * WITHOUT fetching a single blob back. Verified against `git hash-object` for
+ * text, empty and binary (NUL + high-byte) inputs.
+ *
+ * `byteLength` — not `.length` — is deliberate: a Buffer's `length` happens to be
+ * its byte count today, but the git header is defined in bytes and the explicit
+ * property makes that non-accidental.
+ */
+function gitBlobSha(content: Buffer): string {
+  return createHash('sha1')
+    .update(`blob ${content.byteLength}\0`)
+    .update(content)
+    .digest('hex');
+}
+
+/**
+ * True ONLY when the in-review repo's `main` already holds EXACTLY `files` —
+ * the same set of paths in BOTH directions, and identical bytes at every path.
+ *
+ * Why both directions: the mirror commits with `replaceAllFiles: true`, so a
+ * path that exists in the repo but NOT in `files` would be DELETED by mirroring.
+ * Treating that as "unchanged" would leave a stale file served in the preview,
+ * which is the exact class of bug this whole change exists to remove. The
+ * size-equality check plus a per-path hit for every reconstructed file (with a
+ * duplicate-path guard) is what makes the comparison symmetric.
+ *
+ * FAILS TOWARD CORRECTNESS: any error — the repo or branch not existing yet, a
+ * truncated tree, a transport failure — returns false, i.e. mirror anyway. A
+ * needless mirror costs one commit; a wrong `true` serves a stale preview.
+ */
+async function reviewRepoAlreadyHoldsTree(
+  slug: string,
+  files: Array<{ path: string; content: Buffer }>
+): Promise<boolean> {
+  try {
+    const { listRepoTree } = await import('./forgejo.service');
+    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    if (tree.size !== files.length) return false;
+    const seen = new Set<string>();
+    for (const file of files) {
+      // A duplicate path makes the count argument unsound — refuse to reason.
+      if (seen.has(file.path)) return false;
+      seen.add(file.path);
+      const existing = tree.get(file.path);
+      if (!existing) return false;
+      if (existing !== gitBlobSha(file.content)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve the sha the review build should clone + tag for a PENDING publish
  * request, and make sure the in-review repo actually holds that tree first.
  *
@@ -3799,6 +3856,17 @@ export type PreviewRequestResult = {
  *     tree into the in-review repo first, using the same reconstruct → extract
  *     pipeline `approveRequest` uses for this origin, and build the sha that
  *     mirror produced.
+ *
+ * REPEAT-PREVIEW SHORT-CIRCUIT: on the push path, mirror only when the tree
+ * actually differs. `commitFiles` does NOT compare content — for an existing
+ * path it always emits an `update` op — so without this guard every "Rebuild
+ * preview" click would mint a NEW commit, hence a new sha, a new preview host
+ * and a new resource set for an unchanged tree. Three downstream guards are
+ * keyed on the sha being stable across rebuilds (the replay-dedup key, the
+ * concurrent-preview cap that excludes the current request, and the
+ * deploying-state callback write), so a churning sha silently weakens all
+ * three. Comparing first also means a byte-identical rebuild never has to rely
+ * on the remote accepting a batch of no-op update ops.
  *
  * INVARIANT: neither pointer set means the request cannot be attributed to a
  * source tree at all — throw rather than fall through to the in-review HEAD and
@@ -3822,6 +3890,16 @@ async function resolveReviewSourceSha(request: {
   const bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
   const files = await extractBundleFilesFromBuffer(bundleBuffer);
   await ensureReviewRepo(request.slug);
+
+  // Unchanged tree (a repeat "Rebuild preview" on the same commit) → reuse the
+  // commit that already holds it, so the preview sha/host stay stable. Compares
+  // what would ACTUALLY be committed — the reconstructed file set — rather than
+  // the source tree listing, so a divergence introduced by the reconstruct →
+  // extract pipeline can never be mistaken for "nothing changed".
+  if (await reviewRepoAlreadyHoldsTree(request.slug, files)) {
+    return getReviewRepoHeadSha(request.slug);
+  }
+
   const { sha } = await commitFiles({
     org: REVIEW_REPO_ORG,
     slug: request.slug,

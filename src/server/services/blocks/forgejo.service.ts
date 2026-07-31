@@ -360,6 +360,14 @@ export async function getBlobContent(slug: string, sha: string): Promise<Buffer>
  *
  * `files[].content` must be a Buffer (text or binary); function
  * base64-encodes for the Forgejo API.
+ *
+ * 🔴 NOT content-comparing, and therefore NOT idempotent. An existing
+ * path always gets an `update` op regardless of whether its bytes
+ * changed, so calling this twice with an IDENTICAL file set still
+ * produces a second commit with a new sha. A caller that needs a stable
+ * sha across repeat calls (e.g. the review-preview mirror) must compare
+ * the tree itself and skip the call — see `reviewRepoAlreadyHoldsTree`
+ * in publish-request.service.
  */
 export async function commitFiles(opts: {
   slug: string;
@@ -411,8 +419,9 @@ export async function commitFiles(opts: {
   }
 
   if (operations.length === 0) {
-    // Nothing to commit (bundle identical to repo state). Caller can
-    // treat this as a no-op approve. Return current HEAD SHA so the
+    // Reached ONLY when `files` is empty and there is nothing to delete —
+    // NOT when the bundle merely matches the repo state (an unchanged path
+    // still emits an `update` op above). Return the current HEAD SHA so the
     // publish_request still gets a forgejo_commit_sha pointer.
     const branchRes = await fjFetch(
       `/api/v1/repos/${org}/${opts.slug}/branches/${encodeURIComponent(branch)}`
