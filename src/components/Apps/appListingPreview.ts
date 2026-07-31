@@ -16,7 +16,7 @@
  * layer so CSP/CORS changes propagate, and this module must never be read as a
  * licence to change that.
  *
- * SANDBOX PARITY with the legacy `/apps/[appBlockId]` preview
+ * SANDBOX PARITY with the preview on the now-retired `/apps/[appBlockId]` page
  * (`sandbox="allow-scripts allow-same-origin"`, `referrerPolicy="no-referrer"`):
  * the block is served from its OWN `<slug>.civit.ai` origin, so
  * `allow-same-origin` grants the frame ITS OWN origin — NOT the parent's. It is

@@ -10,8 +10,10 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 /**
  * App Store Listings (W13) — P2c detail view-model unit tests (node `unit`
- * project → the BLOCKING correctness gate; the browser component suites are
- * report-only). Pin the kind × hasPage × subKind primary-action matrix incl.
+ * project — the fast, deterministic suite; CI runs it `continue-on-error`, and
+ * the browser component suites are not run by CI at all, so this is where the
+ * correctness coverage belongs even though nothing here BLOCKS a merge).
+ * Pin the kind × hasPage × subKind primary-action matrix incl.
  * the appBlocksPages gate, https guard, connect stub, and slug encoding, so a
  * regression in the detail action routing FAILS here.
  */
@@ -151,17 +153,34 @@ describe('getDetailPrimaryAction — on-site', () => {
     // set identical or fails here — that is the point of enumerating it instead
     // of hiding it behind an `|| !!action.note`.
     //
-    // All three share one degenerate shape: a non-https liveUrl (so the https
-    // guard drops BOTH the escape hatch and the in-page preview) AND no
-    // appBlockId (so there is no "learn more" target either). Unreachable with
-    // real data — liveUrl is server-computed as `https://<slug>.<APPS_DOMAIN>`,
-    // and an on-site listing always has its backing AppBlock — which is exactly
-    // why it is pinned rather than fixed with invented UI.
+    // 🔴 This set GREW from 3 to 6 when the model-slot `info` href was removed
+    // (#3493 retired `/apps/[appBlockId]`, so that href had become a redirect
+    // back onto this very page — a circular self-link is not a way to use the
+    // app, and counting it as one is exactly the kind of false "usable" this
+    // matrix exists to catch). The three added entries are the `appBlockId`
+    // arms that the old href used to rescue.
+    //
+    // The invariant is now CLEANER, not weaker: all six share ONE degenerate
+    // shape — a non-https `liveUrl`, so the `safeExternalHref` guard drops both
+    // the "Open live" escape hatch AND the in-page preview. `appBlockId` no
+    // longer appears in the condition at all. Unreachable with real data:
+    // `liveUrl` is server-computed as `https://<slug>.<APPS_DOMAIN>`. Note what
+    // is NOT here — every `hasPage=false` (model-slot) row with an https
+    // `liveUrl` stays usable, because `getListingPreview` gates on kind + URL
+    // and not on `hasPage`, so the in-page preview still renders for it. What a
+    // model-slot app lacks on this page is an INSTALL surface, which is the gap
+    // #3493 tracks and which is deliberately not invented here.
     expect(stranded).toEqual([
+      'hasPage=true canOpenPage=false liveUrl=http appBlockId=blk-1',
       'hasPage=true canOpenPage=false liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=true liveUrl=http appBlockId=blk-1',
       'hasPage=false canOpenPage=true liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=false liveUrl=http appBlockId=blk-1',
       'hasPage=false canOpenPage=false liveUrl=http appBlockId=null',
     ]);
+    // Every dead end is a non-https liveUrl — asserted structurally so the list
+    // above cannot silently acquire an entry of a different shape.
+    for (const key of stranded) expect(key).toContain('liveUrl=http ');
   });
   it('hasPage + !canOpenPage + non-https liveUrl → info fallback (guard drops it)', () => {
     const action = getDetailPrimaryAction(
@@ -171,21 +190,50 @@ describe('getDetailPrimaryAction — on-site', () => {
     expect(action.mode).toBe('info');
     expect(action.label).toBe('Runs on model pages');
   });
-  it('!hasPage (model-slot) → info "Runs on model pages" → link to live /apps/<appBlockId>', () => {
-    const action = getDetailPrimaryAction(onsiteDetail({ hasPage: false, appBlockId: 'blk-9' }), {
-      canOpenPage: true,
-    });
-    expect(action.mode).toBe('info');
-    expect(action.label).toBe('Runs on model pages');
-    expect(action.href).toBe('/apps/blk-9');
-    expect(action.note).toBeTruthy();
+  it('🔴 !hasPage (model-slot) → info TEXT ONLY — never links to the retired /apps/<appBlockId>', () => {
+    // #3493 retired `/apps/[appBlockId]`: it is now getServerSideProps-only and
+    // 302s to `/apps/store-preview/<slug>` (the page the store detail viewer is
+    // ALREADY on — a circular self-link) or 404s for an app with no approved
+    // listing. There is no install surface on `AppListingDetailBody` to retarget
+    // to, so the affordance is informational copy with NO href. This must hold
+    // whether or not the app has an appBlockId — the id is exactly what the old
+    // href was built from, so a regression would resurface only in this arm.
+    for (const appBlockId of ['blk-9', null]) {
+      for (const canOpenPage of [true, false]) {
+        const action = getDetailPrimaryAction(onsiteDetail({ hasPage: false, appBlockId }), {
+          canOpenPage,
+        });
+        const key = `appBlockId=${appBlockId ?? 'null'} canOpenPage=${canOpenPage}`;
+        expect(action.mode, key).toBe('info');
+        expect(action.label, key).toBe('Runs on model pages');
+        // The honest signal survives: the viewer is told WHY it can't be opened.
+        expect(action.note, key).toBeTruthy();
+        expect(action.href, key).toBeUndefined();
+        expect(action.external, key).toBe(false);
+      }
+    }
   });
-  it('!hasPage + no appBlockId → info with no learn-more link (no dead nav)', () => {
-    const action = getDetailPrimaryAction(onsiteDetail({ hasPage: false, appBlockId: null }), {
-      canOpenPage: true,
-    });
-    expect(action.mode).toBe('info');
-    expect(action.href).toBeUndefined();
+  it('🔴 NO action of any kind can target the retired /apps/<appBlockId> route', () => {
+    // Route-shape guard, independent of the branch above: `/apps/run/<slug>` and
+    // `/apps/<id>/edit` are live siblings, but a bare `/apps/<segment>` is the
+    // retired route. Pinned across the whole on-site matrix so a future branch
+    // cannot reintroduce the redirect loop somewhere else in this function.
+    const retired = /^\/apps\/[^/]+$/;
+    for (const hasPage of [true, false]) {
+      for (const canOpenPage of [true, false]) {
+        for (const liveUrl of ['https://my-app.civit.ai', 'http://insecure.example']) {
+          for (const appBlockId of ['blk-1', null]) {
+            const action = getDetailPrimaryAction(onsiteDetail({ hasPage, liveUrl, appBlockId }), {
+              canOpenPage,
+            });
+            const key = `hasPage=${hasPage} canOpenPage=${canOpenPage} liveUrl=${liveUrl} appBlockId=${
+              appBlockId ?? 'null'
+            }`;
+            if (action.href) expect(action.href, key).not.toMatch(retired);
+          }
+        }
+      }
+    }
   });
   it('encodes an odd slug on the Open run link', () => {
     expect(

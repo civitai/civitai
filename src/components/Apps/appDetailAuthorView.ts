@@ -10,13 +10,22 @@
  * `?? appId` fallback displayed an opaque internal id. Both are wrong, and both
  * looked plausible enough to survive review.
  *
- * 🔴 Why the MODAL and not the `/apps/[appBlockId]` PAGE, which has the same
- * bug: that page is being retired wholesale by a separate PR, and touching it
- * here would make the two PRs collide on one file. The modal sits on the
- * documented one-line `/apps` → `MarketplaceBody` ROLLBACK path, so fixing it
- * here means rolling back does not reintroduce the wrong-author bug. The
- * server-side `PublicAppDetail.owner` allowlist this reads is shared, so
- * whatever surface survives gets the correct attribution.
+ * 🔴 Why the MODAL and not the `/apps/[appBlockId]` PAGE, which had the same
+ * bug: that page is now RETIRED (#3493, merged) — a `getServerSideProps`-only
+ * route that 302s to `/apps/store-preview/<slug>` or 404s, whose body is
+ * unreachable and slated for deletion. Fixing it there would have fixed nothing
+ * and collided with that PR on one file, so this PR does not touch it at all.
+ *
+ * ⚠️ CONSUMER REALITY — stated precisely so "live" is not over-read.
+ * `AppDetailsModal` is the ONLY consumer of `PublicAppDetail.owner`, and it is
+ * reached only via `AppBlockCard`, which today renders only from
+ * `MarketplaceBody` / `RecentlyOpenedAppsView` — and `MarketplaceBody` has NO
+ * page importer (`/apps` renders `AppListingsMarketplaceBody`). So this
+ * attribution sits on the documented one-line `/apps` ROLLBACK path rather than
+ * on the currently-rendered store. That is the point of fixing it here: taking
+ * the rollback must not reintroduce the wrong-author bug. The canonical store
+ * detail reads a DIFFERENT DTO (`appListings.getAppDetail` → `ListingDetail`)
+ * and renders its own listing `creator` chip; `owner` is not part of it.
  *
  * The rule now: attribution comes ONLY from the real owner chip
  * (`PublicAppDetail.owner`, the `{id, username, image}` allowlist). No owner, or

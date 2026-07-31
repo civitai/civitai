@@ -72,15 +72,24 @@ import type {
  * app icon + name + tagline + creator chip + kind badge + Steam-style recommend
  * breakdown + a screenshot gallery + a `CustomMarkdown` description + the
  * kind-aware primary action (`getDetailPrimaryAction`). Mirrors the visual
- * language of the LIVE per-app detail (`/apps/[appBlockId]` + `AppDetailsModal`)
- * — same screenshot-grid + description + external-link discipline — so listings
- * feel native.
+ * language of the per-app detail it supersedes (the now-retired
+ * `/apps/[appBlockId]`) and of `AppDetailsModal` — same screenshot-grid +
+ * description + external-link discipline — so listings feel native.
  *
  * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
  * surface AND, in read-only `preview` mode (see props), by the moderator
- * listing-media review as a store preview of an unapproved shadow listing. The
- * live `/apps/[appBlockId]` detail + `AppDetailsModal` + default `/apps` are
- * byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
+ * listing-media review as a store preview of an unapproved shadow listing.
+ *
+ * 🔴 This body is now the DESTINATION of the retired `/apps/[appBlockId]` route
+ * (#3493 redirects it here for any app with an approved listing), so nothing in
+ * this file may link back to `/apps/<appBlockId>` — that is a redirect loop onto
+ * the page the viewer is already reading. See `getDetailPrimaryAction`'s
+ * model-slot branch. `AppDetailsModal` + the default `/apps` are byte-unchanged.
+ *
+ * ⚠️ KNOWN GAP (tracked by #3493, deliberately NOT closed here): this body has
+ * no INSTALL surface, so a model-slot app — one that installs into a slot rather
+ * than opening a page — has nowhere on the store detail to install from. Vacuous
+ * today (every approved on-site listing declares a page).
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
@@ -246,11 +255,12 @@ function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryS
  * a cover nor screenshots) — the placeholder still activates, so a listing
  * without art never loses its preview.
  *
- * SANDBOX/REFERRER PARITY with the legacy `/apps/[appBlockId]` preview. The
- * block is served from its OWN `<slug>.civit.ai` origin, so `allow-same-origin`
- * grants the frame ITS OWN origin — not civitai.com's — which is what lets the
- * block use its own storage. See `appListingPreview.ts` for the full note; the
- * token list itself is single-sourced there.
+ * SANDBOX/REFERRER PARITY with the preview on the now-retired
+ * `/apps/[appBlockId]` page. The block is served from its OWN `<slug>.civit.ai`
+ * origin, so `allow-same-origin` grants the frame ITS OWN origin — not
+ * civitai.com's — which is what lets the block use its own storage. See
+ * `appListingPreview.ts` for the full note; the token list itself is
+ * single-sourced there.
  *
  * 🔴 NOT an HTTP-caching change. Block HTML is deliberately `Cache-Control:
  * no-store` at the platform layer so CSP/CORS changes propagate; "cache the
@@ -414,7 +424,11 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
     );
   }
 
-  // Informational (`info`) — optional "learn more" internal link + a note.
+  // Informational (`info`) — a note plus, if the action ever carries one, an
+  // internal "learn more" link. `getDetailPrimaryAction` produces NO href for
+  // `info` today (the only such target was the retired `/apps/[appBlockId]`),
+  // so the text-only arm is the live one; the link arm is kept as the type's
+  // optional-href contract, NOT as a place to reinstate a circular self-link.
   return (
     <Stack gap={4}>
       {action.href ? (
