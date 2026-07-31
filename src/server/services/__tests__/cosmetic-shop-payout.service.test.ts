@@ -11,6 +11,7 @@ const { mocks } = vi.hoisted(() => ({
     createBuzzTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     logToAxiom: vi.fn(),
+    getBlockedPairIds: vi.fn(),
   },
 }));
 
@@ -41,6 +42,9 @@ vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
   getAllImages: vi.fn(),
   enqueueImageIngestion: vi.fn(),
+}));
+vi.mock('~/server/services/user-preferences.service', () => ({
+  getBlockedPairIds: mocks.getBlockedPairIds,
 }));
 
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
@@ -90,6 +94,21 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.userCosmeticFindFirst.mockResolvedValue(null); // buyer doesn't own it yet
     mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it('a block between buyer and creator rejects the purchase before any charge', async () => {
+    mocks.getBlockedPairIds.mockResolvedValue([CREATOR_ID]);
+
+    await expect(purchase()).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('official items (no creator) skip the block lookup entirely', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ createdById: null, meta: {} }));
+
+    await purchase();
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
   });
 
   it('charges the buyer the full price to the bank before paying anyone', async () => {

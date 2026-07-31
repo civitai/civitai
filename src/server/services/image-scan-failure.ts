@@ -66,6 +66,8 @@ const PERMANENT_REASON_PATTERNS = [
   'invalid image',
   'invalid media',
   'not a valid',
+  // Not a bare 'too large' — that would also match our own oversized request body.
+  'image is too large',
   'unsupported',
   'unscannable',
 ];

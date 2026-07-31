@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust } = vi.hoisted(() => ({
+const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
+  // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
+  mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
   mockDbWrite: {
     paidAccess: {
       deleteMany: vi.fn(),
@@ -18,14 +20,20 @@ const { mockDbWrite, mockBust } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
 vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: { CACHES: { PAID_ACCESS: 'test:paid-access' } },
+  REDIS_KEYS: {
+    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
+  },
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({
-  createCachedObject: () => ({ fetch: vi.fn(), bust: mockBust }),
+  createCachedObject: ({ key }: { key: string }) => ({
+    fetch: (ids: number[]) => mockCacheFetch(key, ids),
+    bust: mockBust,
+  }),
 }));
 
 import {
   assertPaidAccessInput,
+  getViewerMonetization,
   materializePaidAccessEndsAt,
   toModelVersionPaidAccessDto,
   toPublicPaidAccessDto,
@@ -218,70 +226,202 @@ describe('toPublicPaidAccessDto — the v1 public API view', () => {
   });
 });
 
-// Free tier caps paid access at 500 buzz; an unknown/lapsed tier resolves to that same cap.
-describe('toModelVersionPaidAccessDto — buyer-facing price capping', () => {
-  const gate = (terms: object) =>
-    ({
-      entityType: 'ModelVersion',
-      entityId: 1,
-      ownerId: 1,
-      endsAt: null,
-      timeframeDays: null,
-      terms,
-    } as Parameters<typeof toModelVersionPaidAccessDto>[0]);
+describe('getViewerMonetization — gate price and licensing fee capped as one', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
 
-  it('returns the stored terms untouched when no tier is supplied (the owner/edit-form path)', () => {
-    const terms = { download: { price: 5000 } };
-    expect(toModelVersionPaidAccessDto(gate(terms))?.terms).toEqual(terms);
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: 7,
+    terms: { download: { price: 5000 } },
+    ...over,
   });
 
-  it('lowers the download price to the tier cap for a lapsed owner', () => {
-    expect(toModelVersionPaidAccessDto(gate({ download: { price: 5000 } }), null)?.terms).toEqual({
+  const drive = (
+    gates: Record<string, unknown>,
+    tiers: Record<number, string | null> = { [OWNER]: null }
+  ) =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier'
+        ? Object.fromEntries(
+            Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
+          )
+        : gates
+    );
+
+  it('lowers an over-cap gate price for a non-owner when the owner has lapsed', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
+  });
+
+  it('leaves the OWNER the stored price — their editors write these terms back', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
+  });
+
+  it('leaves a MODERATOR the stored price', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1 }],
+      viewer: { id: 2, isModerator: true },
+    });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
+  });
+
+  it('leaves a price already under the cap alone', async () => {
+    drive({ 1: row({ terms: { download: { price: 300 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 300 } });
+  });
+
+  it('caps a paid generation tier and keeps trialLimit', async () => {
+    drive({
+      1: row({ terms: { download: { price: 5000 }, generation: { price: 2000, trialLimit: 5 } } }),
+    });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({
       download: { price: 500 },
+      generation: { price: 500, trialLimit: 5 },
     });
   });
 
-  it('leaves a price already under the cap alone', () => {
-    expect(toModelVersionPaidAccessDto(gate({ download: { price: 300 } }), null)?.terms).toEqual({
-      download: { price: 300 },
+  // A paid generation tier with no explicit price falls back to the download price at charge time, so
+  // the display must NOT invent one — capping the download alone keeps the two in step.
+  it('does not invent a generation price when the tier relies on the download fallback', async () => {
+    drive({ 1: row({ terms: { download: { price: 5000 }, generation: { trialLimit: 5 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({
+      download: { price: 500 },
+      generation: { trialLimit: 5 },
     });
   });
 
-  it('caps a paid generation tier and keeps trialLimit', () => {
-    expect(
-      toModelVersionPaidAccessDto(
-        gate({ download: { price: 5000 }, generation: { price: 2000, trialLimit: 5 } }),
-        null
-      )?.terms
-    ).toEqual({ download: { price: 500 }, generation: { price: 500, trialLimit: 5 } });
+  it('never turns a free generation grant into a paid one', async () => {
+    drive({ 1: row({ terms: { download: { price: 5000 }, generation: { free: true } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({
+      download: { price: 500 },
+      generation: { free: true },
+    });
   });
 
-  // A paid generation tier with no explicit price falls back to the download price at charge time, so the
-  // display must NOT invent one — capping the download alone keeps the two in step.
-  it('does not invent a generation price when the tier relies on the download fallback', () => {
-    expect(
-      toModelVersionPaidAccessDto(
-        gate({ download: { price: 5000 }, generation: { trialLimit: 5 } }),
-        null
-      )?.terms
-    ).toEqual({ download: { price: 500 }, generation: { trialLimit: 5 } });
+  it('caps a generation-only gate without inventing a download tier', async () => {
+    drive({ 1: row({ terms: { generation: { price: 3000, trialLimit: 10 } } }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 500, trialLimit: 10 } });
+    expect(out[1].paidAccess?.terms).not.toHaveProperty('download');
   });
 
-  it('never turns a free generation grant into a paid one', () => {
-    expect(
-      toModelVersionPaidAccessDto(
-        gate({ download: { price: 5000 }, generation: { free: true } }),
-        null
-      )?.terms
-    ).toEqual({ download: { price: 500 }, generation: { free: true } });
+  it('keeps a stored fee of 0 as 0 rather than null', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: OWNER, licensingFee: 0, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].licensingFee).toBe(0);
   });
 
-  it('caps a generation-only gate without inventing a download tier', () => {
-    const capped = toModelVersionPaidAccessDto(
-      gate({ generation: { price: 3000, trialLimit: 10 } }),
-      null
-    )?.terms;
-    expect(capped).toEqual({ generation: { price: 500, trialLimit: 10 } });
-    expect(capped).not.toHaveProperty('download');
+  it('caps the licensing fee against the same tier as the gate', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
+    expect(out[1].licensingFee).toBe(1); // free-tier checkpoint cap
+  });
+
+  it('caps a licensing fee on an UNGATED version when the owner is given', async () => {
+    drive({});
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].paidAccess).toBeUndefined();
+    expect(out[1].licensingFee).toBe(1);
+  });
+
+  it('resolves cap tiers in ONE batched fetch across distinct owners', async () => {
+    drive(
+      {
+        1: row({ entityId: 1, ownerId: 8 }),
+        2: row({ entityId: 2, ownerId: 8 }),
+        3: row({ entityId: 3, ownerId: 9 }),
+      },
+      { 8: null, 9: null }
+    );
+
+    await getViewerMonetization({
+      versions: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      viewer: { id: 2 },
+    });
+
+    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier');
+    expect(tierCalls).toHaveLength(1);
+    expect(tierCalls[0][1]).toEqual([8, 9]);
+  });
+
+  it('runs NO cap-tier fetch when nothing is chargeable', async () => {
+    drive({ 1: row({ terms: { generation: { free: true } } }) });
+
+    await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+  });
+});
+
+describe('getViewerMonetization — an unset gate/fee is never invented', () => {
+  const drive = () =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
+    );
+
+  it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
+    drive();
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: 7 }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1]).toEqual({ paidAccess: undefined, licensingFee: null });
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+  });
+
+  it('a null fee stays null rather than falling back to the free-tier cap', async () => {
+    drive();
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: 7, licensingFee: null, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].licensingFee).toBeNull();
   });
 });

@@ -20,6 +20,8 @@ export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle" | "Civitai";
 
+export type MembershipGiftStatus = "Pending" | "Fulfilled" | "Failed" | "Refunded" | "Revoked";
+
 export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
@@ -478,6 +480,8 @@ export interface User {
   createdAt: Date;
   deletedAt: Date | null;
   subscriptions?: CustomerSubscription[];
+  membershipGiftsGiven?: MembershipGift[];
+  membershipGiftsReceived?: MembershipGift[];
   mutedAt: Date | null;
   muted: boolean;
   muteExpiresAt: Date | null;
@@ -671,6 +675,27 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface MembershipGift {
+  id: string;
+  gifterId: number;
+  gifter?: User;
+  recipientId: number;
+  recipient?: User;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: MembershipGiftStatus;
+  message: string | null;
+  anonymous: boolean;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Product {

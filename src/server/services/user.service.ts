@@ -65,7 +65,6 @@ import {
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
@@ -234,12 +233,9 @@ export const getUserCreator = async ({
   );
 
   // Expose only whether the shop is public — never leak the raw settings blob.
-  // "Live" requires an enabled shop AND an active membership; only pay for the
-  // membership check when the shop is enabled.
   const { settings, ...rest } = user;
-  const shopEnabled =
+  const creatorShopEnabled =
     (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true;
-  const creatorShopEnabled = shopEnabled && (await hasValidCreatorMembership(user.id));
   return {
     ...rest,
     creatorShopEnabled,

@@ -225,7 +225,6 @@ const MembershipLapsedCard = () => {
 
           <div className="flex flex-col gap-2.5">
             <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
-            <LapsedBenefitRow text="Re-open your creator shop" />
             <LapsedBenefitRow text="Earn real cash from your creations" />
           </div>
 

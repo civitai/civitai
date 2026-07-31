@@ -264,12 +264,13 @@ export const getFileForModelVersion = async ({
 
   // The paid gate is checked BEFORE the generic access check so a gated version routes the user to
   // the purchase flow; the other order collapses it into a bare denial and loses the reason.
-  if (
-    inEarlyAccess &&
-    ((versionAccess?.permissions ?? 0) & EntityAccessPermission.EarlyAccessDownload) == 0 &&
-    !isMod &&
-    !isOwner
-  ) {
+  // `permissions` only carries grant bits when there IS a grant — hasEntityAccess reports "no grant"
+  // as -1 (every bit set), so testing the bit alone reads a buyer-less user as already owning the
+  // download and skips the purchase route.
+  const boughtDownload =
+    !!versionAccess?.hasAccess &&
+    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0;
+  if (inEarlyAccess && !boughtDownload && !isMod && !isOwner) {
     return { status: 'early-access', details: { deadline } };
   }
 

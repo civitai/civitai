@@ -29,6 +29,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import {
   createEntityImages,
   getAllImages,
@@ -450,9 +451,18 @@ export const reorderCosmeticShopSections = async ({
 export const getShopSectionsWithItems = async ({
   isModerator,
   creatorShopEnabled,
+  userId,
   cosmeticTypes,
   sectionId,
-}: { isModerator?: boolean; creatorShopEnabled?: boolean } & GetShopInput = {}) => {
+}: {
+  isModerator?: boolean;
+  creatorShopEnabled?: boolean;
+  userId?: number;
+} & GetShopInput = {}) => {
+  // Creator items are only visible to flagged viewers, so blocks only matter
+  // there; official items (createdById null) are never block-filtered.
+  const blockedPairIds =
+    !isModerator && creatorShopEnabled && userId ? await getBlockedPairIds(userId) : [];
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -485,6 +495,11 @@ export const getShopSectionsWithItems = async ({
               // disappears entirely for unflagged viewers via the
               // empty-section filter below.
               ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+              // A block between viewer and creator (either direction) hides
+              // that creator's items even when featured in official sections.
+              ...(blockedPairIds.length
+                ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
+                : {}),
             },
             archivedAt: null,
             // Creator items in official sections can lose their Published
@@ -584,6 +599,20 @@ export const purchaseCosmeticShopItem = async ({
   // Creators can't buy their own cosmetic — they're granted it on approval.
   if (shopItem.cosmetic.createdById === userId) {
     throw new Error('You already own this cosmetic');
+  }
+
+  // A block between the buyer and the item's creator or lister (either
+  // direction) makes the item unpurchasable no matter where it surfaced — the
+  // generic error keeps the block from being revealed. Official items (no
+  // creator) are unaffected.
+  if (shopItem.cosmetic.createdById) {
+    const blockedPairIds = await getBlockedPairIds(userId);
+    const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
+      (id): id is number => id != null
+    );
+    if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+      throw new Error('Cosmetic is not available');
+    }
   }
 
   if (

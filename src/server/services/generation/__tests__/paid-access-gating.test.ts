@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelVersionTerms } from '@civitai/buzz';
 
-const { mockGetPaidAccess, mockHasEntityAccess } = vi.hoisted(() => ({
+const { mockGetPaidAccess, mockHasEntityAccess, mockGetViewerMonetization } = vi.hoisted(() => ({
   mockGetPaidAccess: vi.fn(),
   mockHasEntityAccess: vi.fn(),
+  mockGetViewerMonetization: vi.fn(),
 }));
 
-vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: mockGetPaidAccess }));
+// Rows reach the gate through getViewerMonetization, which prices them; this stub hands back the stored
+// rows so these tests stay about the ACCESS decision. Pricing has its own tests in paid-access.service.
+vi.mock('~/server/services/paid-access.service', () => ({
+  getViewerMonetization: mockGetViewerMonetization,
+}));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
 
 import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
@@ -15,7 +20,10 @@ const OWNER = 99;
 const FUTURE = new Date('2099-01-01T00:00:00.000Z');
 
 const BUNDLED: ModelVersionTerms = { download: { price: 500 } }; // no generation key = must buy
-const TRIAL: ModelVersionTerms = { download: { price: 500 }, generation: { price: 200, trialLimit: 5 } };
+const TRIAL: ModelVersionTerms = {
+  download: { price: 500 },
+  generation: { price: 200, trialLimit: 5 },
+};
 const FREE: ModelVersionTerms = { generation: { free: true } };
 
 // A generation resource as it arrives from resource-data: gated versions are availability='Public',
@@ -43,6 +51,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetPaidAccess.mockResolvedValue({});
   mockHasEntityAccess.mockResolvedValue([]);
+  mockGetViewerMonetization.mockImplementation(
+    async ({ versions }: { versions: { id: number }[] }) => {
+      const rows = await mockGetPaidAccess(versions.map((v) => v.id));
+      return Object.fromEntries(
+        versions.map((v) => [v.id, { paidAccess: rows[v.id], licensingFee: null }])
+      );
+    }
+  );
 });
 
 describe('applyPaidAccessGating — the sole paid generation gate', () => {
@@ -153,10 +169,36 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
       4: gate({ entityId: 4, terms: BUNDLED }),
     });
 
-    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], { id: 1 });
+    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], {
+      id: 1,
+    });
 
     // Only id 1 qualifies for the purchase check.
     expect(mockHasEntityAccess).toHaveBeenCalledTimes(1);
     expect(mockHasEntityAccess).toHaveBeenCalledWith(expect.objectContaining({ entityIds: [1] }));
+  });
+});
+
+describe('applyPaidAccessGating — pricing is delegated, not reimplemented', () => {
+  it('forwards the VIEWER so the owner keeps their stored prices (a dropped arg caps them)', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+
+    await applyPaidAccessGating([resource()], { id: OWNER, isModerator: false });
+
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1 }],
+      viewer: { id: OWNER, isModerator: false },
+    });
+  });
+
+  it('puts the PRICED terms on the wire, not the stored ones', async () => {
+    mockGetViewerMonetization.mockResolvedValueOnce({
+      1: { paidAccess: gate({ terms: { download: { price: 500 } } }), licensingFee: null },
+    });
+
+    const r = resource();
+    await applyPaidAccessGating([r], { id: 2 });
+
+    expect(r.paidAccess?.terms).toEqual({ download: { price: 500 } });
   });
 });

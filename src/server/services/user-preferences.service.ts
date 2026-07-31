@@ -8,6 +8,7 @@ import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
 import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -235,6 +236,21 @@ export const BlockedByUsers = createUserCache({
       `,
 });
 
+// User ids the given user has a block relationship with, in either direction.
+// A block hides the pair's shop content from each other and forbids purchases
+// and resale pairings between them.
+export const getBlockedPairIds = async (userId: number) => {
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return boundExcludedUserIds(
+    [],
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+};
+
 export interface HiddenPreferenceBase {
   id: number;
   /** the presence of hidden: true indicates that this is a user setting*/
@@ -318,8 +334,7 @@ const getAllHiddenForUsersCached = async ({
   );
 
   const getModerationTags = async () =>
-    (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ??
-    (await getModeratedTags());
+    (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ?? (await getModeratedTags());
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenTags.field] as AsyncReturnType<typeof HiddenTags.get>) ??
@@ -364,27 +379,19 @@ const getAllHiddenForUsersCached = async ({
   // Resolve the 8 base preferences — each is a no-op if cached, otherwise
   // hits the DB. Wrapped so we can attribute the cache-miss DB fallback
   // latency separately from the redis fan-out above.
-  const [
-    moderatedTags,
-    hiddenTags,
-    images,
-    models,
-    model3ds,
-    users,
-    blockedUsers,
-    blockedByUsers,
-  ] = await withSpan('user-preferences:getAllHidden:resolve', () =>
-    Promise.all([
-      getModerationTags(),
-      getHiddenTags({ userId }),
-      getHiddenImages({ userId }),
-      getHiddenModels({ userId }),
-      getHiddenModel3Ds({ userId }),
-      getHiddenUsers({ userId }),
-      getBlockedUsers({ userId }),
-      getBlockedByUsers({ userId }),
-    ])
-  );
+  const [moderatedTags, hiddenTags, images, models, model3ds, users, blockedUsers, blockedByUsers] =
+    await withSpan('user-preferences:getAllHidden:resolve', () =>
+      Promise.all([
+        getModerationTags(),
+        getHiddenTags({ userId }),
+        getHiddenImages({ userId }),
+        getHiddenModels({ userId }),
+        getHiddenModel3Ds({ userId }),
+        getHiddenUsers({ userId }),
+        getBlockedUsers({ userId }),
+        getBlockedByUsers({ userId }),
+      ])
+    );
 
   const [implicitImages] = await Promise.all([
     getHiddenImplicitImages({
@@ -408,25 +415,17 @@ const getAllHiddenForUsersCached = async ({
 };
 
 const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
-  const [
-    moderatedTags,
-    hiddenTags,
-    images,
-    models,
-    model3ds,
-    users,
-    blockedUsers,
-    blockedByUsers,
-  ] = await Promise.all([
-    getModeratedTags(),
-    HiddenTags.get({ userId }),
-    HiddenImages.get({ userId }),
-    HiddenModels.get({ userId }),
-    HiddenModel3Ds.get({ userId }),
-    HiddenUsers.get({ userId }),
-    BlockedUsers.get({ userId }),
-    BlockedByUsers.get({ userId }),
-  ]);
+  const [moderatedTags, hiddenTags, images, models, model3ds, users, blockedUsers, blockedByUsers] =
+    await Promise.all([
+      getModeratedTags(),
+      HiddenTags.get({ userId }),
+      HiddenImages.get({ userId }),
+      HiddenModels.get({ userId }),
+      HiddenModel3Ds.get({ userId }),
+      HiddenUsers.get({ userId }),
+      BlockedUsers.get({ userId }),
+      BlockedByUsers.get({ userId }),
+    ]);
 
   const [implicitImages] = await Promise.all([
     ImplicitHiddenImages.get({

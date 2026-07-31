@@ -44,7 +44,9 @@ export function ratioToFee(buzz: number, images: number): number {
 export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
 export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
 export function suggestedFeePerImage(modelType: string | null | undefined): number {
-  return (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+  return (
+    (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE
+  );
 }
 
 // Per-tier ceiling on the per-image licensing fee (CU 868kj4q49). Anyone may set a fee — including free
@@ -69,8 +71,23 @@ export function maxLicensingFee(
   tier: string | null | undefined,
   modelType?: string | null
 ): number {
-  const caps = (tier ? LICENSING_FEE_CAP_BY_TIER[tier] : undefined) ?? LICENSING_FEE_CAP_BY_TIER.free;
+  const caps =
+    (tier ? LICENSING_FEE_CAP_BY_TIER[tier] : undefined) ?? LICENSING_FEE_CAP_BY_TIER.free;
   return modelType === 'Checkpoint' ? caps.checkpoint : caps.default;
+}
+
+/**
+ * What a generation is billed: the stored fee lowered to the RECIPIENT's current cap. The stored value is
+ * never rewritten, so re-subscribing restores it. A positive fee never clamps to 0 (the lowest cap of any
+ * tier is 0.1), so callers never need to drop a zeroed component.
+ */
+export function effectiveLicensingFee(
+  storedFee: number | null | undefined,
+  recipientTier: string | null | undefined,
+  modelType?: string | null
+): number {
+  if (storedFee == null || storedFee <= 0) return 0;
+  return Math.min(storedFee, maxLicensingFee(recipientTier, modelType));
 }
 
 /**

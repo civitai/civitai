@@ -408,6 +408,8 @@ model User {
   createdAt               DateTime               @default(now())
   deletedAt               DateTime?
   subscriptions           CustomerSubscription[]
+  membershipGiftsGiven    MembershipGift[]       @relation("membershipGiftsGiven")
+  membershipGiftsReceived MembershipGift[]       @relation("membershipGiftsReceived")
   mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
@@ -621,6 +623,40 @@ enum PaymentProvider {
   Stripe
   Paddle
   Civitai
+}
+
+enum MembershipGiftStatus {
+  Pending
+  Fulfilled
+  Failed
+  Refunded
+  Revoked
+}
+
+model MembershipGift {
+  id          String               @id @default(cuid())
+  gifterId    Int
+  gifter      User                 @relation("membershipGiftsGiven", fields: [gifterId], references: [id], onDelete: Cascade)
+  recipientId Int
+  recipient   User                 @relation("membershipGiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  tier        String
+  months      Int
+  amountCents Int
+  status      MembershipGiftStatus @default(Pending)
+  message     String?
+  anonymous   Boolean              @default(false)
+
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+  stripeCouponId          String?
+  stripeSubscriptionId    String?
+
+  fulfilledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([recipientId])
+  @@index([gifterId])
 }
 
 model Product {
