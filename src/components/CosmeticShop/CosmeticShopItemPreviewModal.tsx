@@ -137,7 +137,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   const resaleShare = parsedMeta.success ? parsedMeta.data.sellerShare : undefined;
 
   // Blue-accepting items let the buyer choose how to pay: the domain color
-  // (default), blue only, or blue first with the rest in the domain color.
+  // (default), or blue first with the rest in the domain color.
   const acceptsBlue = parsedMeta.success && !!parsedMeta.data.acceptsBlueBuzz;
   const [domainType] = useAvailableBuzz();
   const [payWith, setPayWith] = useState<PayWithOption>('default');

@@ -672,7 +672,11 @@ export const purchaseCosmeticShopItem = async ({
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
-  // Confirms user has enough buzz across the chosen accounts:
+  // Confirms user has enough buzz across the chosen accounts. The bank credit
+  // lands under the API's default account type — that's bookkeeping only: the
+  // bank is the system ledger, not a balance-constrained account, so the
+  // per-color payouts below don't depend on what the bank was credited in
+  // (auction bids and green-domain purchases have always worked this way).
   const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`;
   const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
