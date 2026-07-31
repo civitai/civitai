@@ -9,7 +9,8 @@ const { mocks } = vi.hoisted(() => ({
     purchasesCreate: vi.fn(),
     userCosmeticCreate: vi.fn(),
     createBuzzTransaction: vi.fn(),
-    refundTransaction: vi.fn(),
+    createMultiTx: vi.fn(),
+    refundMultiTx: vi.fn(),
     logToAxiom: vi.fn(),
     getBlockedPairIds: vi.fn(),
   },
@@ -34,9 +35,9 @@ vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() }
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
-  createMultiAccountBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
-  refundTransaction: mocks.refundTransaction,
+  createMultiAccountBuzzTransaction: mocks.createMultiTx,
+  refundMultiAccountTransaction: mocks.refundMultiTx,
+  refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
@@ -84,8 +85,15 @@ const sellCalls = () =>
     .map(([arg]) => arg)
     .filter((arg) => arg.type === TransactionType.Sell);
 
-const purchase = (viaShopUserId?: number) =>
-  purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID, viaShopUserId });
+// The buyer's charge, per funding account. Defaults to the whole price in yellow.
+const chargeResponse = (charges: { accountType: string; amount: number }[]) => ({
+  transactionIds: charges.map((c, i) => ({ transactionId: `tx-${i}`, ...c })),
+  totalAmount: charges.reduce((sum, c) => sum + c.amount, 0),
+  transactionCount: charges.length,
+});
+
+const purchase = (viaShopUserId?: number, payWith?: 'default' | 'blue-first') =>
+  purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID, viaShopUserId, payWith });
 
 describe('purchaseCosmeticShopItem payouts', () => {
   beforeEach(() => {
@@ -94,6 +102,9 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.userCosmeticFindFirst.mockResolvedValue(null); // buyer doesn't own it yet
     mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
     mocks.getBlockedPairIds.mockResolvedValue([]);
   });
 
@@ -101,7 +112,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.getBlockedPairIds.mockResolvedValue([CREATOR_ID]);
 
     await expect(purchase()).rejects.toThrow('Cosmetic is not available');
-    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('official items (no creator) skip the block lookup entirely', async () => {
@@ -114,13 +125,17 @@ describe('purchaseCosmeticShopItem payouts', () => {
   it('charges the buyer the full price to the bank before paying anyone', async () => {
     await purchase();
 
-    const charge = mocks.createBuzzTransaction.mock.calls[0][0];
+    const charge = mocks.createMultiTx.mock.calls[0][0];
     expect(charge).toMatchObject({
       fromAccountId: BUYER_ID,
+      fromAccountTypes: ['yellow'],
       toAccountId: 0,
       amount: PRICE,
       type: TransactionType.Purchase,
     });
+    expect(charge.externalTransactionIdPrefix).toMatch(
+      new RegExp(`^cosmetic-purchase-${BUYER_ID}-${SHOP_ITEM_ID}-`)
+    );
   });
 
   it('own-storefront purchase (shop enabled) pays the creator the full 70% pool: 7000', async () => {
@@ -137,7 +152,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
         fromAccountId: 0,
         toAccountId: CREATOR_ID,
         amount: 7000,
-        externalTransactionId: 'tx-1',
+        externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:yellow$`),
       }),
     ]);
   });
@@ -204,13 +219,13 @@ describe('purchaseCosmeticShopItem payouts', () => {
           fromAccountId: 0,
           toAccountId: CREATOR_ID,
           amount: 5000,
-          externalTransactionId: `tx-1:${CREATOR_ID}`,
+          externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:yellow$`),
         }),
         expect.objectContaining({
           fromAccountId: 0,
           toAccountId: RESELLER_ID,
           amount: 2000,
-          externalTransactionId: `tx-1:${RESELLER_ID}`,
+          externalTransactionId: expect.stringMatching(`:sell:${RESELLER_ID}:yellow$`),
         }),
       ])
     );
@@ -259,8 +274,16 @@ describe('purchaseCosmeticShopItem payouts', () => {
     await purchase(undefined);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: 11, amount: 5000, externalTransactionId: 'tx-1:11' }),
-      expect.objectContaining({ toAccountId: 22, amount: 5000, externalTransactionId: 'tx-1:22' }),
+      expect.objectContaining({
+        toAccountId: 11,
+        amount: 5000,
+        externalTransactionId: expect.stringMatching(':sell:11:yellow$'),
+      }),
+      expect.objectContaining({
+        toAccountId: 22,
+        amount: 5000,
+        externalTransactionId: expect.stringMatching(':sell:22:yellow$'),
+      }),
     ]);
   });
 
@@ -273,8 +296,8 @@ describe('purchaseCosmeticShopItem payouts', () => {
 
     expect(sellCalls()).toHaveLength(0);
     // The only transaction is the buyer's charge.
-    expect(mocks.createBuzzTransaction).toHaveBeenCalledTimes(1);
-    expect(mocks.createBuzzTransaction.mock.calls[0][0].type).toBe(TransactionType.Purchase);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
     // And the payout block didn't silently blow up either.
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
   });
@@ -283,7 +306,77 @@ describe('purchaseCosmeticShopItem payouts', () => {
     await purchase(undefined);
 
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
-    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('purchaseCosmeticShopItem blue buzz payments', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: false, acceptsBlueBuzz: true } })
+    );
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(chargeResponse([{ accountType: 'blue', amount: PRICE }]));
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it('rejects blue payment for items that do not accept it, before any charge', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ meta: { sellableByOthers: false } }));
+
+    await expect(purchase(undefined, 'blue-first')).rejects.toThrow('does not accept Blue Buzz');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('fully-covered blue-first purchase pays the creator the whole pool in blue', async () => {
+    await purchase(undefined, 'blue-first');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['blue', 'yellow']);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({
+        toAccountId: CREATOR_ID,
+        toAccountType: 'blue',
+        amount: 7000,
+        externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:blue$`),
+      }),
+    ]);
+  });
+
+  it('blue-first: drains blue then the domain color, payout pro-rated per color', async () => {
+    // Buyer had 6000 blue; the remaining 4000 came from yellow.
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([
+        { accountType: 'blue', amount: 6000 },
+        { accountType: 'yellow', amount: 4000 },
+      ])
+    );
+
+    await purchase(undefined, 'blue-first');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['blue', 'yellow']);
+    // Creator pool 7000 → floor(7000 * 6000/10000) = 4200 blue + 2800 yellow.
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'blue', amount: 4200 }),
+        expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'yellow', amount: 2800 }),
+      ])
+    );
+    expect(sellCalls()).toHaveLength(2);
+  });
+
+  it('default payment on a blue-accepting item stays on the domain color', async () => {
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+
+    await purchase(undefined, 'default');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['yellow']);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'yellow', amount: 7000 }),
+    ]);
   });
 });
 

@@ -47,7 +47,7 @@ describe('getCommunityCosmetics', () => {
     mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
     const { items, nextCursor } = await getCommunityCosmetics({ limit: 40 });
     expect(items.map((i) => i.id)).toEqual([2, 1]);
-    expect(items[0].meta).toEqual({ purchases: 3 });
+    expect(items[0].meta).toEqual({ purchases: 3, acceptsBlueBuzz: false });
     expect(nextCursor).toBeUndefined();
   });
 

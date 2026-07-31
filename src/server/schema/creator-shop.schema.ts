@@ -145,6 +145,9 @@ export const submitCreatorShopItemSchema = z.object({
   // price (0-70, out of the creator's 70% pool).
   sellableByOthers: z.boolean().default(false),
   sellerShare: z.number().int().min(0).max(70).default(0),
+  // Accept Blue Buzz from buyers (fully or partially); the creator is paid
+  // blue for the blue-paid portion.
+  acceptsBlueBuzz: z.boolean().default(false),
   // ProfileDecoration only — per-side fit adjustment (ignored for other types).
   offsets: cosmeticOffsetsSchema.nullish(),
 });
@@ -159,6 +162,8 @@ export const updateCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR).optional(),
   availableQuantity: z.number().int().positive().nullish(),
+  // Payment term like price/quantity — editable on published items, no re-review.
+  acceptsBlueBuzz: z.boolean().optional(),
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
