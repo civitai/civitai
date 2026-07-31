@@ -242,7 +242,7 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
 
   it('counts a challenge with no resolvable judge as skipped', async () => {
     mockQueryRaw.mockResolvedValue([{ ...CHALLENGE, judgeId: null }]);
-    mockGetChallengeConfig.mockResolvedValueOnce({ defaultJudgeId: null });
+    mockGetChallengeConfig.mockResolvedValue({ defaultJudgeId: null });
 
     const { promise, res } = runRequest();
     await promise;
@@ -278,6 +278,8 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
     const payload = (res.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.attempted).toBe(0);
     expect(payload.backfilled).toBe(0);
+    expect(payload.failures).toBe(0);
+    expect(payload.skipped).toBe(0);
     expect(mockExecuteRaw).not.toHaveBeenCalled();
   });
 });
