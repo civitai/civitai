@@ -383,11 +383,13 @@ export function PageBlockHost({
   // from `status`, because under host reuse `status` is itself STALE (it is still
   // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
   //
-  // Be precise about the cost, because it is NOT an edge case: under host reuse
-  // `status` is structurally frozen at app A's 'ready' — every `setStatus` here is
-  // gated on the current value, and the only unconditional reset to 'loading' is
-  // `performRetry`. So after a soft nav the latch re-arms only via a manual or
-  // automatic Retry, and until then app B can emit no mid-session beacon at all.
+  // Be precise about the cost, because it is NOT an edge case. `status` inherited
+  // from app A can still move FORWARD out of 'ready' (→ 'error' on a terminal
+  // token, → 'fatal' on BLOCK_ERROR) — it is not frozen. What it cannot do is go
+  // BACK: every `setStatus` here is gated on the current value, and the only
+  // unconditional reset to 'loading' is `performRetry`. Since re-reaching 'ready'
+  // requires passing through 'loading', app B can never earn a genuine `ready`
+  // after a soft nav, so the latch re-arms only via a manual or automatic Retry.
   //
   // That costs nothing real TODAY, because on the same path app B never gets a
   // working session to lose: `shouldStartInit` returns false for any non-'loading'

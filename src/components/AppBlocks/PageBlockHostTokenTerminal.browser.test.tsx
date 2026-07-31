@@ -463,10 +463,17 @@ describe('app → app soft navigation (the host is NOT remounted)', () => {
     // And pin the FULL beacon set, which documents the pre-existing host-reuse
     // state this PR deliberately does NOT fix: app B emits NOTHING AT ALL — not
     // even its own launch-failure `error` — because `blockRenderEmittedRef` is
-    // per-mount and was already spent by app A's impression. So the whole
-    // soft-nav session is under-reported, which is exactly why the real fix is
-    // `key={blockInstanceId}` on the run page (its own PR — it changes
-    // impression COUNTS).
+    // per-mount and was already spent by app A's impression, so the whole
+    // soft-nav session is under-reported.
+    //
+    // Scope of that pin, stated exactly so it isn't misread: this test renders
+    // PageBlockHost DIRECTLY and unkeyed, so it pins the HOST's behaviour under
+    // instance reuse. Landing the real fix (`key={blockInstanceId}` on the run
+    // page) would NOT fail this test — it removes the scenario in production
+    // while this test keeps reproducing it here. The only change that would trip
+    // `['ok']` is scoping `blockRenderEmittedRef` per instance, which this PR
+    // reasons against above (the per-mount impression invariant). So it is
+    // over-specified BY DESIGN and unlikely to obstruct the named follow-up.
     //
     // 🔴 Asserting the whole set matters: an earlier version of this test added a
     // second "nothing attributed to app B's id" filter that looked like an extra
