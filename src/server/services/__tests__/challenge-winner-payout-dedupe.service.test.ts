@@ -27,6 +27,8 @@ const {
   mockCreateChallengeWinner,
   mockCreateBuzzTransactionMany,
   mockGetExistingWinnersForRetry,
+  mockWithRetries,
+  mockBuildWinnerPayoutTransactions,
 } = vi.hoisted(() => ({
   mockDbWrite: {
     $queryRaw: vi.fn().mockResolvedValue([]),
@@ -42,6 +44,12 @@ const {
   mockCreateChallengeWinner: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
+  // Real `withRetries` re-invokes its closure up to 4 times on a flaky payout; doubled so a test can
+  // drive that deterministically.
+  mockWithRetries: vi.fn(),
+  // A SPY that delegates to the real (pure) builder — the transaction ids stay genuine, but the
+  // number of times the payout is BUILT becomes observable.
+  mockBuildWinnerPayoutTransactions: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -115,8 +123,10 @@ vi.mock('~/server/jobs/daily-challenge-processing', () => ({
 // against the genuine externalTransactionId strings — the actual money keys.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
   const actual = await importOriginal<typeof ChallengeFunding>();
+  mockBuildWinnerPayoutTransactions.mockImplementation(actual.buildWinnerPayoutTransactions);
   return {
     ...actual,
+    buildWinnerPayoutTransactions: mockBuildWinnerPayoutTransactions,
     chargeInitialPrize: vi.fn(),
     refundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
     reportPoolFundingShortfall: vi.fn().mockResolvedValue(undefined),
@@ -170,7 +180,7 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 vi.mock('~/utils/errorHandling', () => ({
-  withRetries: vi.fn((fn: () => unknown) => fn()),
+  withRetries: mockWithRetries,
 }));
 
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
@@ -302,6 +312,8 @@ beforeEach(() => {
   mockGetExistingWinnersForRetry.mockResolvedValue([]);
   mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
   mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
+  // Default: the happy path, one invocation — same as real `withRetries` when nothing throws.
+  mockWithRetries.mockImplementation((fn: (remaining: number) => unknown) => fn(3));
   stubUniqueWinnerTable();
 });
 
@@ -407,6 +419,32 @@ describe('endChallengeAndPickWinners — one creator named twice is paid once', 
     expect(await counterValue(DUPLICATE_PICK_METRIC, { source: ChallengeSource.System })).toBe(1);
   });
 
+  // `origin` was asserted nowhere on either path, so its two values were interchangeable and the
+  // label could be flipped with the whole suite still green. Mislabelling a caller emit as
+  // `chokepoint` produces exactly the operator misreading the label was introduced to prevent: the
+  // choke point's own drop means "a caller reached the money path with duplicates and did NOT report
+  // it" — real prize money silently unpaid — so an operator would open an incident for a payout
+  // failure that never happened, on the human-triggered path where someone is already watching.
+  it('tags the drop as origin=caller — this path reported it, the choke point did not catch it', async () => {
+    llmWinners([
+      { creatorId: 100, creator: 'alice' },
+      { creatorId: 100, creator: 'alice' },
+      { creatorId: 200, creator: 'bob' },
+    ]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(
+      await counterValue(DUPLICATE_PICK_METRIC, {
+        source: ChallengeSource.System,
+        origin: 'caller',
+      })
+    ).toBe(1);
+    // The duplicate was dropped before the builder saw it, so the choke point's guard is a genuine
+    // no-op here and must leave no series behind.
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { origin: 'chokepoint' })).toBeUndefined();
+  });
+
   it('leaves a clean pick alone — the guard does not over-trigger', async () => {
     llmWinners([
       { creatorId: 100, creator: 'alice' },
@@ -422,5 +460,57 @@ describe('endChallengeAndPickWinners — one creator named twice is paid once', 
       `challenge-winner-prize-${CHALLENGE_ID}-300-place-3`,
     ]);
     expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(3);
+  });
+});
+
+// Parity with the cron path: the builder is called OUTSIDE the `withRetries` closure. Its output is
+// deterministic so a rebuild would not move different money — but it increments the duplicate-pick
+// counter on its drop branch, and `withRetries` re-invokes up to 4 times, so inside the closure a
+// flaky payout would record up to 4x the placements actually dropped.
+describe('endChallengeAndPickWinners — the payout is built ONCE, outside the retry closure', () => {
+  const cleanPick = () =>
+    llmWinners([
+      { creatorId: 100, creator: 'alice' },
+      { creatorId: 200, creator: 'bob' },
+    ]);
+
+  it('a payout that retries three times still builds the transactions exactly once', async () => {
+    cleanPick();
+    mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
+      await fn(3);
+      await fn(2);
+      await fn(1);
+    });
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    // The retry must genuinely have happened — otherwise this passes on a build that never retries.
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(3);
+    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it('every retry submits the SAME transaction array instance, not a rebuilt one', async () => {
+    cleanPick();
+    mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
+      await fn(3);
+      await fn(2);
+    });
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const [first] = mockCreateBuzzTransactionMany.mock.calls[0];
+    const [second] = mockCreateBuzzTransactionMany.mock.calls[1];
+    // Identity, not deep equality: a rebuild yields an equal-but-distinct array, so `toEqual` would
+    // pass on the very mutation this pins.
+    expect(second).toBe(first);
+  });
+
+  it('does not rebuild on the happy path either — one build, one submit', async () => {
+    cleanPick();
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
+    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
   });
 });

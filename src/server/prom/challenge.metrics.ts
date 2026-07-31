@@ -3,7 +3,7 @@ import client from 'prom-client';
 // definitions + record helpers stay a runtime-light leaf that a unit test can load without booting
 // the app graph. The DB used by the state gauges is pulled in LAZILY (dynamic import inside the
 // gauge refresh) so importing this module never statically drags in pgDb/env.
-import { registerCounterWithLabels } from '@civitai/telemetry/client';
+import { registerCounter, registerCounterWithLabels } from '@civitai/telemetry/client';
 
 /**
  * CHALLENGE observability (additive telemetry only — no behavior change).
@@ -161,6 +161,33 @@ const winnerDuplicatePickCounter = registerCounterWithLabels({
   // choke point caught what a caller missed" from "a caller emitted without a readable source".
   // Those want different responses, so they get different label values rather than a shared bucket.
   labelNames: ['source', 'origin'] as const,
+});
+// Money-path anomaly, and DELIBERATELY ITS OWN COUNTER rather than another `field` value on
+// `challenge_winner_place_divergence_total`. That counter means "a stored row disagreed with a
+// re-pick and the payout WAS reconciled onto it" — the record was wrong, the money is safe. This one
+// means the conflict could NOT be resolved: no stored row was readable, so the payout is left on the
+// freshly-picked place and settles a `-place-N` transaction id with no ChallengeWinner row to key it
+// to. Opposite money verdicts, so sharing a series would make any read that did not break out the
+// label report "reconciled" for the one case where money may have moved twice.
+//
+// The causes differ as much as the verdicts. Divergence is triggered by a completion re-picking
+// winners over an existing record; remediation is finding out why a completion ran twice. This one's
+// reachable trigger is a P2002 raised by a DIFFERENT unique constraint: `ChallengeWinner` also has
+// `id Int @id @default(autoincrement())`, and a sequence left behind by a restore or a manual insert
+// collides on `id` — a conflict that says nothing about (challengeId, userId), so the re-read that
+// follows finds no row. Remediation there is resyncing the sequence. Same function, different
+// constraint, different fix; the module's existing split (duplicate-pick vs divergence) draws the
+// line in exactly the same place.
+//
+// UNLABELLED on purpose, and that is a feature here. `createChallengeWinner` is handed a winner row,
+// not a challenge, so the `source` every other counter in this file slices by is genuinely not in
+// scope, and adding a parameter for it would change a money-path signature to carry a telemetry
+// label. The side effect is that an unlabelled counter emits `0` from process start instead of
+// emitting no series until its first increment — so a `> 0` rule on it cannot fail open the way one
+// on a label-bearing counter can.
+const winnerConflictUnresolvedCounter = registerCounter({
+  name: 'challenge_winner_conflict_unresolved_total',
+  help: 'ChallengeWinner inserts that conflicted (P2002) but whose stored row could not be read; the payout was LEFT on the freshly-picked place with no winner row to key it to (expected to stay at zero)',
 });
 
 // ---------------------------------------------------------------------------
@@ -331,11 +358,34 @@ export function recordChallengeWinnerPlaceDivergence(args: { field: 'place' | 'p
 }
 
 /**
+ * The winner-insert conflict that could NOT be resolved to a stored row — the one branch of
+ * `createChallengeWinner` that still settles an unreconciled payout key. See the counter definition
+ * above for why this is not a `field` value on the divergence counter.
+ */
+export function recordChallengeWinnerConflictUnresolved() {
+  try {
+    winnerConflictUnresolvedCounter.inc();
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/**
  * `count` = how many placements were dropped, not how many picks contained a duplicate.
  *
- * An explicit `count: 0` records NOTHING. This counter is documented as sitting flat at zero and is
- * an alert trigger, so "I dropped nothing" must never read as "I dropped one" — an omitted `count`
- * still defaults to 1, which is the only case where 1 is the honest answer.
+ * An EXPLICITLY SUPPLIED `count` that is not a positive finite number records NOTHING — `0`, but
+ * equally `-1`, `NaN` and `Infinity`. This counter's contract is that it sits flat at zero and that
+ * every unit of it is a real placement dropped before payout, so neither "I dropped nothing" nor "my
+ * caller computed garbage" may be rounded up into "I dropped one". An OMITTED `count` still defaults
+ * to 1: that caller is not supplying a number at all, it is saying "one drop", which is the only
+ * case where 1 is the honest answer.
+ *
+ * NOT AN ALERT TRIGGER TODAY — no rule, no dashboard panel and no recording rule consumes this
+ * counter or `challenge_winner_place_divergence_total`; both are scrape-only signals, and that
+ * wiring is tracked separately from this repo. The INTENT is that any non-zero value is actionable
+ * and worth paging on, which is why the emit sites are this careful about what a unit means. Read
+ * "expected to stay at zero" as a contract on the emitters, not as a promise that somebody is
+ * notified when it doesn't.
  */
 export function recordChallengeWinnerDuplicatePick(args: {
   source?: string | null;
@@ -343,7 +393,7 @@ export function recordChallengeWinnerDuplicatePick(args: {
   origin: 'caller' | 'chokepoint';
 }) {
   try {
-    if (args.count === 0) return;
+    if (args.count !== undefined && !isPositiveFinite(args.count)) return;
     const count = isPositiveFinite(args.count) ? args.count : 1;
     winnerDuplicatePickCounter.inc(
       { source: normSource(args.source), origin: args.origin },
@@ -667,6 +717,7 @@ export function __resetChallengeMetricsForTest(): void {
   // which is precisely backwards for a metric whose whole contract is "expected to sit at zero".
   winnerPlaceDivergenceCounter.reset();
   winnerDuplicatePickCounter.reset();
+  winnerConflictUnresolvedCounter.reset();
 }
 
 /**

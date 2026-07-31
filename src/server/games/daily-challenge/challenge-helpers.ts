@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeOperationSpentBuzz,
+  recordChallengeWinnerConflictUnresolved,
   recordChallengeWinnerPlaceDivergence,
 } from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
@@ -606,10 +607,23 @@ export async function createChallengeWinner(
       });
 
       if (!persisted) {
-        // Structurally unreachable — (challengeId, userId) is this table's only unique constraint,
-        // so a P2002 here means the row exists. Surfaced loudly rather than silently, and the
-        // caller is deliberately left on its in-memory placement: refusing to pay would introduce
-        // an UNDER-payment failure mode on a path where nobody has ever been underpaid.
+        // NOT structurally unreachable. (challengeId, userId) is not this table's only unique
+        // constraint — `id Int @id @default(autoincrement())` is one too — so a P2002 here does not
+        // imply that a (challengeId, userId) row exists. A sequence that has fallen behind the
+        // table, the routine aftermath of a restore or a manual insert, makes the INSERT collide on
+        // `id`; that conflict says nothing about (challengeId, userId), and the re-read above
+        // correctly finds nothing.
+        //
+        // This is the only branch left in this function that can settle an unreconciled payout key.
+        // The caller is deliberately left on its in-memory placement — refusing to pay would
+        // introduce an UNDER-payment failure mode on a path where nobody has ever been underpaid —
+        // so the prize goes out under a freshly-picked `-place-N` id with NO ChallengeWinner row to
+        // key it to. Nothing durable then records what was paid, and a later completion that re-picks
+        // this user at any other place settles a second, non-conflicting id.
+        //
+        // Hence a counter of its own, not the divergence counter below it: that one means "the
+        // payout was reconciled onto the stored row", which is exactly what did NOT happen here, and
+        // it reads 0 on this path.
         logToAxiom({
           type: 'warning',
           name: 'challenge-winner-conflict-unresolved',
@@ -618,6 +632,7 @@ export async function createChallengeWinner(
           userId: input.userId,
           attemptedPlace: input.place,
         });
+        recordChallengeWinnerConflictUnresolved();
         return null;
       }
 
