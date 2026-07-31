@@ -174,11 +174,13 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // The on-site code-review affordance (off-site has no bundle/code) is the
     // in-app diff, not an external link.
     await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
-    // 🔴 #3498 regression guard: in-review snapshots are private, so ANY raw
-    // deep-link out to them is a dead link for the moderator who clicks it.
-    // None of these affordances may come back.
+    // 🔴 #3498 regression guard: the modal's own raw-source affordances are
+    // retired and may not come back. (The per-FILE fallback that used to sit
+    // inside an elided diff row is guarded where it actually renders —
+    // `src/tests/pages/apps/review-diff-panels.browser.test.tsx`. Asserting it
+    // here would prove nothing: the code-diff panel is collapsed by default, so
+    // no file row is mounted at this point.)
     expect(page.getByText('View full source').elements()).toHaveLength(0);
-    expect(page.getByText('View in Forgejo').elements()).toHaveLength(0);
     expect(page.getByText('View code in Forgejo').elements()).toHaveLength(0);
     expect(
       document.querySelectorAll(`a[href="${ONSITE_PENDING.reviewRepoUrl}"]`).length
