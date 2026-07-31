@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -13,7 +14,10 @@ vi.mock('~/components/CivitaiWrapped/AccountProvider', () => ({
   useAccountContext: () => ({ logout }),
 }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
-vi.mock('~/utils/trpc', () => ({
+// Only the `trpc` client is overridden; the module's other exports are kept via importOriginal
+// so a consumer elsewhere in the tree doesn't get `undefined` and silently collect zero tests.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     subscriptions: {
       getAllUserSubscriptions: { useQuery: () => ({ data: [], isLoading: false }) },
