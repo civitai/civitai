@@ -10,7 +10,7 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import type { TransformedModel } from '~/shared/search/models-transform';
+import type { ResourceSelectModel } from '~/types/router';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -22,7 +22,7 @@ export function TopRightIcons({
   imageId,
 }: {
   setFlipped: React.Dispatch<React.SetStateAction<boolean>>;
-  data: TransformedModel;
+  data: ResourceSelectModel;
   imageId?: number;
 }) {
   const currentUser = useCurrentUser();

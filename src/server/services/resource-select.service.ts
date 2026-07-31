@@ -24,6 +24,10 @@ import {
   getModelSearchIndexRecords,
   type ModelSearchIndexRecord,
 } from '~/server/search-index/models.search-index';
+import {
+  projectResourceSelectItems,
+  RESOURCE_SELECT_MODEL_KEYS,
+} from '~/server/services/resource-select.projection';
 import { transformModelHits } from '~/shared/search/models-transform';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -184,6 +188,13 @@ function buildFilter({
   );
 }
 
+// Top-level document keys the picker needs. Drops metrics/rank/hiddenMetrics/
+// triggerWords/category/fileFormats/status/createdAt/locked/mode/isOfficial/sfwOnly/
+// earlyAccessDeadline/lastVersionAtUnix, plus `sortMetrics` — which the index's
+// displayedAttributes is supposed to withhold but currently returns on every hit, so
+// this also stops the picker leaking masked Creator Controls counts.
+const RESOURCE_SELECT_ATTRIBUTES = RESOURCE_SELECT_MODEL_KEYS;
+
 async function searchModels(
   query: string,
   request: SearchParams
@@ -275,6 +286,10 @@ export async function getResourceSelectModels(
     sort: meiliSortFor(sort),
     offset,
     limit: take,
+    // Meili whitelists by TOP-LEVEL attribute only — nested children ride along with
+    // their parent, so per-version and per-image trimming happens in the projection
+    // below. Filtering and sorting still read the stored doc, not this list.
+    attributesToRetrieve: [...RESOURCE_SELECT_ATTRIBUTES],
   });
 
   let items = transformModelHits(results.hits);
@@ -298,5 +313,7 @@ export async function getResourceSelectModels(
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
 
-  return { items, nextCursor };
+  // Single application point, AFTER transformModelHits and after the pin's base-model
+  // filter, so the Meili and Postgres paths are guaranteed to return one shape.
+  return { items: projectResourceSelectItems(items), nextCursor };
 }
