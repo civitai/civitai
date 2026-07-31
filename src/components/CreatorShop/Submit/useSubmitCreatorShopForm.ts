@@ -56,6 +56,10 @@ export function useSubmitCreatorShopForm({
   );
   const [sellableByOthers, setSellableByOthers] = useState(false);
   const [sellerShare, setSellerShare] = useState(0);
+  const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
+    ?.acceptsBlueBuzz;
+  const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
+  const acceptsBlueBuzzChanged = acceptsBlueBuzz !== itemAcceptsBlueBuzz;
   // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
   const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
     (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
@@ -174,6 +178,7 @@ export function useSubmitCreatorShopForm({
           payload.animated = animated;
         }
         if (offsetsChanged) payload.offsets = normalizedOffsets;
+        if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
         await submitItem.mutateAsync({
@@ -187,6 +192,7 @@ export function useSubmitCreatorShopForm({
           buzzType,
           sellableByOthers,
           sellerShare: sellableByOthers ? sellerShare : 0,
+          acceptsBlueBuzz,
           offsets: normalizedOffsets,
         });
       }
@@ -229,6 +235,9 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    acceptsBlueBuzz,
+    setAcceptsBlueBuzz,
+    acceptsBlueBuzzChanged,
     offsets,
     setOffset,
     offsetsChanged,

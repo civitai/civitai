@@ -13,9 +13,14 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
+import { useState } from 'react';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import type { PayWithOption } from '~/components/CosmeticShop/PayWithSelector';
+import { PayWithSelector } from '~/components/CosmeticShop/PayWithSelector';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   useEquipProfileDecoration,
@@ -130,6 +135,14 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // Resold items carry the seller share so the buyer sees who earns what.
   const parsedMeta = cosmeticShopItemMeta.safeParse(shopItem.meta);
   const resaleShare = parsedMeta.success ? parsedMeta.data.sellerShare : undefined;
+
+  // Blue-accepting items let the buyer choose how to pay: the domain color
+  // (default), blue only, or blue first with the rest in the domain color.
+  const acceptsBlue = parsedMeta.success && !!parsedMeta.data.acceptsBlueBuzz;
+  const [domainType] = useAvailableBuzz();
+  const [payWith, setPayWith] = useState<PayWithOption>('default');
+  const accountTypes: BuzzSpendType[] =
+    !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
   // The split note only shows for cross-creator resale — not on the official
   // Civitai shop, and not when buying the creator's own item on their own
   // storefront (the creator keeps the full pool there).
@@ -146,7 +159,11 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
 
   const handlePurchaseShopItem = async () => {
     try {
-      const userCosmetic = await purchaseShopItem({ shopItemId: shopItem.id, viaShopUserId });
+      const userCosmetic = await purchaseShopItem({
+        shopItemId: shopItem.id,
+        viaShopUserId,
+        payWith: acceptsBlue ? payWith : undefined,
+      });
 
       showSuccessNotification({
         message: 'Your purchase has been completed and your cosmetic is now available to equip',
@@ -223,14 +240,25 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                   </Paper>
                 )}
                 {canPurchase ? (
-                  <BuzzTransactionButton
-                    disabled={purchasingShopItem || !isAvailable}
-                    loading={purchasingShopItem}
-                    buzzAmount={shopItem.unitAmount}
-                    radius="xl"
-                    onPerformTransaction={handlePurchaseShopItem}
-                    label="Purchase"
-                  />
+                  <Stack gap={6}>
+                    {acceptsBlue && isAvailable && (
+                      <PayWithSelector
+                        value={payWith}
+                        onChange={setPayWith}
+                        domainType={domainType}
+                      />
+                    )}
+                    <BuzzTransactionButton
+                      disabled={purchasingShopItem || !isAvailable}
+                      loading={purchasingShopItem}
+                      buzzAmount={shopItem.unitAmount}
+                      radius="xl"
+                      onPerformTransaction={handlePurchaseShopItem}
+                      label="Purchase"
+                      accountTypes={accountTypes}
+                      showTypePct={acceptsBlue && payWith === 'blue-first'}
+                    />
+                  </Stack>
                 ) : (
                   <Stack gap={4}>
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>

@@ -26,7 +26,6 @@ import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
@@ -552,6 +551,7 @@ export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
   viaShopUserId,
+  payWith = 'default',
   buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -664,22 +664,31 @@ export const purchaseCosmeticShopItem = async ({
 
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
 
-  // Confirms user has enough buzz:
-  const transaction = await createBuzzTransaction({
+  // Blue payment is a per-item creator opt-in (meta.acceptsBlueBuzz).
+  if (payWith !== 'default' && !meta.acceptsBlueBuzz) {
+    throw new Error('This item does not accept Blue Buzz');
+  }
+  // 'blue-first' drains blue before completing with the domain color.
+  const fromAccountTypes: BuzzSpendType[] =
+    payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
+
+  // Confirms user has enough buzz across the chosen accounts:
+  const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`;
+  const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
-    // Can use a combination of all these accounts:
-    fromAccountType: buzzType,
+    fromAccountTypes,
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
-    externalTransactionId: `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`,
+    externalTransactionIdPrefix: transactionId,
   });
-
-  const transactionId = transaction.transactionId;
-  if (!transactionId) {
+  if (!transaction.transactionCount) {
     throw new Error('There was an error creating the transaction');
   }
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
 
   try {
     const data = await dbWrite.$transaction(async (tx) => {
@@ -791,20 +800,29 @@ export const purchaseCosmeticShopItem = async ({
           }));
         }
 
+        // Pay recipients in the same Buzz color(s) the buyer paid with: the
+        // blue-paid portion of the price pays out as blue (pro-rated per
+        // recipient, floored), the rest in the domain color.
+        const payouts = recipients.flatMap((r) => {
+          const blueAmount = price > 0 ? Math.floor((r.amount * bluePaid) / price) : 0;
+          return [
+            { userId: r.userId, amount: blueAmount, color: 'blue' as BuzzSpendType },
+            { userId: r.userId, amount: r.amount - blueAmount, color: buzzType },
+          ].filter((p) => p.amount > 0);
+        });
+
         await Promise.all(
-          recipients.map((r) =>
+          payouts.map((p) =>
             createBuzzTransaction({
               fromAccountId: 0,
-              toAccountId: r.userId,
-              // Pay creators/resellers in the same Buzz color the buyer paid with.
-              toAccountType: buzzType,
-              amount: r.amount,
+              toAccountId: p.userId,
+              toAccountType: p.color,
+              amount: p.amount,
               type: TransactionType.Sell,
               description: `A user has purchased your cosmetic - ${shopItem.title}`,
-              // Unique per recipient when the pool is split, so the two payouts
-              // don't collide on the same external id.
-              externalTransactionId:
-                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
+              // Unique per recipient and color so payouts never collide on the
+              // same external id.
+              externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
             })
           )
@@ -826,7 +844,10 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await refundTransaction(transactionId, `Failed to purchase cosmetic - ${shopItem.title}`);
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: transactionId,
+      description: `Failed to purchase cosmetic - ${shopItem.title}`,
+    });
 
     throw new Error('Failed to purchase cosmetic');
   }

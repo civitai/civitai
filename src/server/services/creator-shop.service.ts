@@ -221,6 +221,7 @@ export const submitCreatorShopItem = async ({
   buzzType,
   sellableByOthers,
   sellerShare,
+  acceptsBlueBuzz,
   offsets,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // Validate the artwork server-side BEFORE charging anything.
@@ -282,6 +283,7 @@ export const submitCreatorShopItem = async ({
             imageHash,
             sellableByOthers,
             sellerShare: sellableByOthers ? sellerShare : 0,
+            acceptsBlueBuzz,
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -326,6 +328,7 @@ export const updateCreatorShopItem = async ({
   animated,
   price,
   availableQuantity,
+  acceptsBlueBuzz,
   offsets,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
@@ -348,11 +351,15 @@ export const updateCreatorShopItem = async ({
     : offsets;
 
   // Cross-listings point at another creator's shared cosmetic — the seller may
-  // never touch its art/name/description, only price & quantity.
+  // never touch its art/name/description/payment terms, only price & quantity.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
-    (name !== undefined || description !== undefined || imageUrl !== undefined || offsetsChange)
+    (name !== undefined ||
+      description !== undefined ||
+      imageUrl !== undefined ||
+      acceptsBlueBuzz !== undefined ||
+      offsetsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
@@ -451,6 +458,7 @@ export const updateCreatorShopItem = async ({
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
       meta: {
         ...meta,
+        ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
         ...(artwork
           ? {
               autoChecks: artwork.checks,
@@ -661,11 +669,14 @@ export const getCreatorShop = async ({
     `.then((r) => r[0]?.count ?? 0),
   ]);
 
-  // Sanitize meta to only the purchase count the card needs — never the creator
+  // Sanitize meta to what the card/checkout needs — never the creator
   // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
-    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+    },
   });
   const cosmetics = items.map(sanitize);
   // Resold items keep the seller share so the buyer can see the split at checkout.
@@ -674,6 +685,7 @@ export const getCreatorShop = async ({
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
       sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
     },
   });
   const resold = preview
@@ -746,10 +758,13 @@ export const getCommunityCosmetics = async ({
   });
   let nextCursor: number | undefined;
   if (raw.length > limit) nextCursor = raw.pop()?.id;
-  // Same meta sanitation as the storefront — cards only need the purchase count.
+  // Same meta sanitation as the storefront.
   const items = raw.map((item) => ({
     ...item,
-    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+    },
   }));
   return { items, nextCursor };
 };
