@@ -57,12 +57,43 @@ module.exports = {
     // normal, safe thing to do, and flagging it would make the rule noisy enough
     // to get switched off. Extend `modules` if another hub module starts biting.
     //
-    // 'warn', matching no-io-in-transaction above: there is a pre-existing
-    // backlog of ~66 wholesale trpc mocks, and converting them in bulk without
-    // being able to run the browser suite risks re-creating the very
-    // 0-tests-collected failure this rule exists to catch. Escalate to 'error'
-    // once that backlog is burned down.
-    'local-rules/no-wholesale-module-mock': ['warn', { modules: ['~/utils/trpc'] }],
+    // 'error', NOT 'warn' — unlike no-io-in-transaction above, and deliberately.
+    // The severity has to be read against .github/workflows/lint.yml, which
+    // splits ESLint by how the PR touched the file:
+    //
+    //   ADDED files    -> BLOCKING, errors only, no --max-warnings
+    //                     (lint.yml, "ESLint (added files)": no
+    //                      continue-on-error, no --max-warnings)
+    //   MODIFIED files -> report-only, continue-on-error: true
+    //                     (lint.yml, "ESLint (modified files, report-only)")
+    //
+    // At 'warn' this rule gates NOTHING anywhere: the added-files step ignores
+    // warnings by design (the repo carries ~3,470 of them), so a brand-new
+    // browser test with a wholesale trpc mock merges green — which is precisely
+    // the authoring path the rule exists to close.
+    //
+    // At 'error' the blast radius on the pre-existing backlog is ZERO: all 65
+    // remaining offenders are pre-existing files, so a PR touching one reaches
+    // only the report-only modified-files step. Nothing else in CI runs a
+    // whole-src lint (`pnpm lint` is not invoked by any workflow, and
+    // .husky/pre-push runs typecheck only, and only on `main`). The rule can
+    // therefore only block a NEWLY ADDED file — the one case where "fix it
+    // before it merges" is both cheap and correct.
+    //
+    // One exception to "the backlog only ever reaches the report-only step":
+    // `--diff-filter=A` sees a MOVED file as added when git's rename detection
+    // misses it (a move plus edits below the ~50% similarity threshold
+    // decomposes into A + D). Relocating a backlog file with substantial edits
+    // can therefore land it in the blocking step. Fixing the factory at that
+    // point is the right outcome, but it is a real cost, not zero.
+    //
+    // Scope note: the check is proof-based, so an exotic-but-safe factory it
+    // cannot walk is reported (`unprovableMock`) rather than assumed safe.
+    // That is the intended direction: a false positive costs one disable
+    // comment, a false negative costs a silently-empty test suite. The known
+    // false-positive shapes are listed in eslint-local-rules.js so a blocked
+    // author can recognise their own and reach for a disable comment.
+    'local-rules/no-wholesale-module-mock': ['error', { modules: ['~/utils/trpc'] }],
 
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],

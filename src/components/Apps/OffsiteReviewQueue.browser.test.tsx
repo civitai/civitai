@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 P3a — /apps/review off-site (external-link) queue. Browser-mode render test
@@ -68,7 +69,7 @@ vi.mock('~/utils/notifications', () => ({
 // Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
 // link ("does not provide an export named X") and the whole file collects 0 tests.
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/trpc')>();
+  const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
     trpc: {
