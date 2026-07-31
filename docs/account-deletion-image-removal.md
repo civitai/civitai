@@ -54,7 +54,12 @@ the pre-existing backlog of already-deleted accounts, keep today's hard-delete b
 branches still end in deletion — this is a timing choice, not a retention one:
 
 - **Immediate (`removeImages: true`).** The drain job hard-deletes the images as soon as it
-  reaches the account, same as before this choice existed.
+  reaches the account, same as before this choice existed. "As soon as it reaches the account" is
+  not "at once": the per-run cap is 500 images and nothing is hidden first, so an account above
+  that stays fully public for hours (784,498 images ≈ 65 days at the shipped default) while it
+  drains. The modal says "starts deleting them right away" rather than claiming an immediacy the
+  drain does not deliver — for any account over ~500 images, "Delete now" leaves content public
+  strictly *longer* than "Delete after 7 days", which hides everything within one tick.
 - **Grace (`removeImages: false`).** The drain job blocks the images (`ingestion = 'Blocked'`)
   instead of deleting them. That's the same `Image.ingestion = 'Blocked'` lever the "Hard
   delete, not soft delete" section above rejected as a *general* solution — rejected there
@@ -63,6 +68,41 @@ branches still end in deletion — this is a timing choice, not a retention one:
   delay: the 7-day countdown is the point, and `blockedFor: 'moderated'` is accurate because a
   moderator can undo it during the window. The existing `remove-blocked-images` job purges them
   after 7 days, counted from the block's `updatedAt`.
+
+The grace block mirrors what `handleBlockImages` does after its own update — search-index delete,
+`invalidateManyImageExistence`, `bustCachesForPosts`, and clearing `needsReview`. The incremental
+index pull filters on `ingestion = 'Scanned'`, so a bare `UPDATE` leaves the row *indexed* rather
+than removing it: without the mirror the images stay findable in site search for the whole window
+the modal calls "hidden".
+
+Two classes of already-blocked image would otherwise survive grace forever while the immediate
+branch deletes them, because `remove-blocked-images` reads only `JobQueue` and refuses
+`blockedFor = 'AiNotVerified'`:
+
+- **`AiNotVerified`** rows are re-pointed to `blockedFor = 'moderated'` with a fresh `updatedAt`.
+  The trigger fires only on an `ingestion` transition, so this write enqueues nothing by itself.
+- **Blocked rows with no queue row** — those blocked in the week the `20260113194750` backfill
+  deliberately excluded, plus the re-pointed rows above — are enqueued explicitly
+  (`INSERT … ON CONFLICT DO NOTHING`, matching `create_job_queue_record`) on the run that finds
+  the account has nothing left pending.
+
+Each row the grace pass writes records what it overwrote in `Image.metadata`
+(`accountDeletionPriorIngestion`, plus `accountDeletionPriorBlockedFor` when re-pointing). That is
+what makes the block reversible: `blockedFor = 'moderated'` is also what a moderator block writes,
+so nothing scoped on it could tell the two apart, and restoring to a flat `Scanned` would promote
+an image past a scan it never had.
+
+The destructive branch re-reads the choice from the primary on every gate that already re-reads
+`deletedAt` — the image JOIN, the per-batch check, and the post `DELETE`'s `EXISTS`. The worklist
+resolves the choice off a replica, so a restore plus a re-delete with a different choice inside the
+replication window would otherwise resolve to the stale value, and the stale direction that hurts
+is `immediate`.
+
+**Residual:** a grace account whose images are *all* already `moderated`-blocked with missing queue
+rows is never selected at all, so those rows keep their pre-feature "retained forever" status. The
+predicate that would catch them (a correlated `NOT EXISTS` on `JobQueue` per image) sits on the
+job's driving query, which already needed an index to stay off a seq scan — not worth it for a
+population that is blocked, hidden, and already permanently retained today.
 
 ### Execution: background drain, worklist derived from `User.deletedAt`
 
@@ -130,10 +170,19 @@ observable.
 
 These are accepted, not open questions.
 
-- **`restoreAccount` can no longer restore images.** Models still restore through the
-  ClickHouse audit path in `restoreUser`. The doc comment at
-  `src/server/services/user.service.ts:1085-1095` describes what survives deletion and becomes
-  wrong — it must be updated.
+- **`restoreAccount` restores images on the grace branch only.** `restoreUser` reverses the whole
+  grace block: it clears `meta.imageRemoval`, deletes the account's
+  `JobQueue(BlockedImageDelete)` rows, and restores each blocked row to the `ingestion` /
+  `blockedFor` recorded in its metadata breadcrumbs. Without that, `remove-blocked-images` — which
+  has no owner and no `deletedAt` predicate — destroys every image row and S3 object on day 7 of a
+  live, restored account. On the immediate branch, whatever the drain already took is gone; the
+  rest survives from the restore onward. Models still restore through the ClickHouse audit path.
+  The `restoreUser` doc comment describes both branches.
+- **A restore disarms the purge for *every* blocked image the account owns**, not only the ones the
+  grace pass touched, because our queue backfill cannot be distinguished from a trigger-created row
+  after the fact. A moderator-blocked image therefore stays blocked (correct) but stops counting
+  down (a retention change). Losing images on a restored account is the failure that matters, so
+  the disarm is deliberately wider than the unblock.
 - **Orphaned models keep empty galleries.** With `removeModels=false`, models move to
   `userId = -1` and stay Published while their showcase images are deleted.
 - **The unpublish cascade does not fire.** `reset-to-draft-without-requirements.ts:22` guards
@@ -159,6 +208,9 @@ These are accepted, not open questions.
 - Both branches end in deletion. "Grace" buys a 7-day window in which the images are hidden and
   a moderator can still reverse the block, not indefinite retention. This differs from
   `removeModels: false`, which keeps models live permanently.
+- **`needsReview` is not restorable.** The grace block clears it, matching `handleBlockImages`, and
+  nothing records the prior value. An image sitting in a moderator review queue at deletion time
+  comes back from a restore with that queue entry gone.
 
 ## Open items
 
@@ -204,8 +256,14 @@ Gathered during design; recorded so the plan does not re-derive them.
 | `src/pages/api/webhooks/run-jobs/[[...run]].ts` | Register the job (import + `jobs` array) |
 | `packages/civitai-redis/src/client.ts` | `REDIS_SYS_KEYS.SYSTEM.DELETED_USER_IMAGE_PURGE_LIMIT` |
 | `packages/civitai-db-schema/prisma/migrations/20260730130000_user_deleted_at_partial_index/migration.sql` | Partial index on `User."deletedAt"` (hand-applied) |
-| `src/server/services/user.service.ts` | Update the `restoreUser` doc comment |
-| `src/server/services/image.service.ts` | `deleteImages` reused as-is; `deleteImageFromS3` now logs its failures instead of swallowing them |
+| `src/server/services/user.service.ts` | Record the choice on delete; reverse the grace block on restore; correct the `restoreUser` doc comment |
+| `src/server/services/account-deletion-images.ts` | The restore-side reversal: disarm the purge queue, unblock from the metadata breadcrumbs |
+| `src/server/services/__tests__/account-deletion-images.test.ts` | Reversal SQL semantics |
+| `src/server/services/__tests__/restore-user-image-recovery.test.ts` | `restoreUser` wiring and ordering |
+| `src/server/utils/image-removal-mode.ts` | `imageRemoval` normalization + the `Image.metadata` breadcrumb keys |
+| `src/components/Account/DeleteCard.tsx` | The images question |
+| `src/components/Account/DeleteCard.browser.test.tsx` | Modal dismissal and button emphasis |
+| `src/server/services/image.service.ts` | `deleteImages`, `queueImageSearchIndexUpdate`, `invalidateManyImageExistence`, `resetBlockedNsfwLevel` reused as-is; `deleteImageFromS3` now logs its failures instead of swallowing them |
 | `src/server/services/__tests__/delete-image-from-s3-logging.test.ts` | Guards that logging |
 
 One index-only migration (hand-applied). No schema change, no UI change, no new tRPC procedure.
