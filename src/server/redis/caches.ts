@@ -1,3 +1,22 @@
+/* eslint-disable local-rules/no-module-scope-cache --
+ * 22 module-scope caches, every one of them keyed off REDIS_KEYS during module
+ * evaluation. This is a tracked BACKLOG, not a safe shape: it is structurally the
+ * same tripwire as the eager `capTierCache` that broke three suites at collection
+ * and turned `Unit tests` red on main (#3505 / #3506), and this module is imported
+ * far more widely than paid-access.service.ts was. Any suite that wholesale-mocks
+ * `~/server/redis/client` without `REDIS_KEYS.CACHES` and reaches this file
+ * unmocked dies during COLLECTION — the three suites in #3505 stay green only
+ * because they additionally mock this module.
+ *
+ * Disabled file-wide rather than converted here because that is 22 call-site
+ * migrations across the busiest cache module in the repo, and it wants to be its
+ * own reviewable change. The file-wide form also silences a NEW cache added here,
+ * which is accepted: a 23rd cache in this file adds no NEW tripwire, because
+ * anything reaching this module already has to mock it. A new cache in a SERVICE
+ * does add one, and that is what the rule is scoped to catch.
+ *
+ * Delete this disable once the caches below are lazy — the rule then guards them.
+ */
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';

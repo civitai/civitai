@@ -708,7 +708,190 @@ const noWholesaleModuleMock = {
   },
 };
 
+/**
+ * no-module-scope-cache
+ *
+ * Flags a `createCachedObject(...)` / `createCachedArray(...)` call that runs at
+ * MODULE SCOPE — i.e. during module evaluation, as a side effect of anyone
+ * merely importing the file.
+ *
+ * This is the OTHER end of the same failure that `no-wholesale-module-mock`
+ * catches. That rule guards the mock; this one guards the trigger.
+ *
+ * A test suite that wholesale-mocks `~/server/utils/cache-helpers` or
+ * `~/server/redis/client` replaces the entire module, so any export the factory
+ * omits is simply absent. If a service builds its cache at module scope, then
+ * every suite that mocks one of those modules and imports that service — even
+ * TRANSITIVELY, three hops down an import chain it never mentions — fails
+ * during COLLECTION, before a single test runs:
+ *
+ *   "No createCachedObject export is defined on the mock"   (cache-helpers)
+ *   "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')"
+ *                                                           (REDIS_KEYS.CACHES)
+ *
+ * Collection errors are reported one file at a time, so the causes peel off one
+ * per fix, and the blast radius is not the file you edited — it is every suite
+ * whose import graph happens to reach it. ~150 suites mock `redis/client` and
+ * ~26 mock `cache-helpers` today, so this is a broad live tripwire, not a
+ * hypothetical: adding one eager `capTierCache` to paid-access.service.ts
+ * killed three model-service suites (57 tests) and turned `Unit tests` red on
+ * `main` for every open PR (PRs #3505 / #3506).
+ *
+ * Fixing the ~150 mocks is the wrong end of the problem — each one is correct
+ * for what it tests, and the list only grows. Building the cache lazily is a
+ * three-line change that makes the whole class impossible.
+ *
+ * The fix — the house pattern, already documented in the file that broke:
+ *
+ *   function createCapTierCache() {
+ *     return createCachedObject<CachedCapTier>({ key: ..., lookupFn: ... });
+ *   }
+ *   let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
+ *   function capTierCache() {
+ *     return (capTierCacheInstance ??= createCapTierCache());
+ *   }
+ *
+ * Call sites become `capTierCache().fetch(...)`. Nothing about runtime
+ * behaviour changes — the cache is still a per-process singleton, it is just
+ * built on first USE instead of on first IMPORT.
+ *
+ * Canonical in-repo example: `paidAccessCache` in
+ * src/server/services/paid-access.service.ts, whose comment gives this exact
+ * reasoning — the eager `capTierCache` was added directly beneath it.
+ *
+ * ---------------------------------------------------------------------------
+ * Scope, and why it is narrow
+ * ---------------------------------------------------------------------------
+ *
+ * Applied via an `overrides` entry in .eslintrc.js to `src/server/services/**`
+ * and `src/server/redis/**` — the two places module-scope caches actually live.
+ *
+ * There are 29 of them today. 7 are reported; the 22 in
+ * `src/server/redis/caches.ts` are silenced by a documented file-level disable
+ * in that file. Do NOT read that disable as "caches.ts is safe" — it is the
+ * hotter tripwire, not the exempt one: all 22 are keyed off `REDIS_KEYS` at
+ * module scope, and the module is imported far more widely than
+ * paid-access.service.ts was. The three suites #3505 repaired stay green only
+ * because they ALSO mock `~/server/redis/caches`; the next suite that mocks
+ * `~/server/redis/client` without `CACHES` and reaches caches.ts unmocked dies
+ * the same way, and making one service's cache lazy does not prevent that.
+ *
+ * The disable is a blast-radius decision, written down where the next author
+ * will read it: converting 22 call sites in the busiest cache module wants to be
+ * its own reviewable change. What the rule buys meanwhile is that the backlog
+ * stops GROWING — a new eager cache in a service creates a brand-new transitive
+ * tripwire on a module no suite knows to mock, which is exactly how one
+ * `capTierCache` took out three unrelated suites.
+ *
+ * "Module scope" is decided structurally, by walking to the nearest enclosing
+ * function. A call inside a function is deferred and therefore fine — EXCEPT
+ * when that function is immediately invoked (`(() => createCachedObject())()`),
+ * which runs at module scope after all and is handled.
+ *
+ * Known gaps (deliberate):
+ *   - eager invocation through a callback the rule cannot classify:
+ *     `TYPES.map(() => createCachedObject(...))` at module scope is eager, but
+ *     the arrow makes it look deferred. Detecting this needs to know which
+ *     callees run their argument synchronously;
+ *   - the callee is matched by NAME, not resolved to its import. A local helper
+ *     that happens to be called `createCachedObject` is reported (one disable
+ *     comment), and a cache built through an aliased import is not;
+ *   - a cache built at module scope by a helper the rule can't see through
+ *     (`const c = makeCache()` where makeCache calls createCachedObject) is not
+ *     reported. The hazard is real there too, but the shape is not in the tree.
+ *
+ * Intentional exceptions should use:
+ *   // eslint-disable-next-line local-rules/no-module-scope-cache -- <reason>
+ */
+const DEFAULT_CACHE_CREATORS = ['createCachedObject', 'createCachedArray'];
+
+/** `(() => ...)()` / `(function () { ... })()` — the function runs where it sits. */
+function isImmediatelyInvoked(fn) {
+  const parent = fn.parent;
+  return !!parent && parent.type === 'CallExpression' && parent.callee === fn;
+}
+
+/**
+ * Does this node evaluate during module evaluation?
+ *
+ * Walk to the Program. Any enclosing function DEFERS the call (its body runs
+ * when it is called, not when the module loads) — unless the function is itself
+ * immediately invoked, in which case we keep walking from the invocation. A
+ * non-static class property initialiser runs per instantiation, so it defers
+ * too; a static one does not.
+ */
+function isEvaluatedAtModuleScope(node) {
+  let current = node;
+  let parent = current.parent;
+
+  while (parent) {
+    if (
+      parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression' ||
+      parent.type === 'ArrowFunctionExpression'
+    ) {
+      if (!isImmediatelyInvoked(parent)) return false;
+      // An IIFE: resume the walk from the call that invokes it.
+      current = parent.parent;
+      parent = current.parent;
+      continue;
+    }
+
+    if (parent.type === 'PropertyDefinition' && parent.value === current && !parent.static) {
+      return false;
+    }
+
+    current = parent;
+    parent = current.parent;
+  }
+
+  return current.type === 'Program';
+}
+
+const noModuleScopeCache = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Require createCachedObject/createCachedArray in services to be built lazily — a module-scope call breaks test COLLECTION for every suite that wholesale-mocks cache-helpers or redis/client and transitively imports the service.',
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          creators: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      moduleScopeCache:
+        '`{{creator}}(...)` at MODULE SCOPE — it runs when this file is IMPORTED, not when the cache is used. ~150 suites wholesale-mock `~/server/redis/client` and ~26 mock `~/server/utils/cache-helpers`; every one of them that reaches this service transitively then fails at COLLECTION, before any test runs, with "No {{creator}} export is defined on the mock" or "Cannot read properties of undefined (reading \'<KEY>\')". Nothing in the failing suite mentions this file. Build it lazily instead: `function createX() { return {{creator}}({ ... }); }` plus `let xInstance: ReturnType<typeof createX> | undefined; function x() { return (xInstance ??= createX()); }`, and call `x().fetch(...)`. Runtime behaviour is unchanged — still one instance per process, built on first USE instead of first IMPORT. Canonical example: `paidAccessCache` in src/server/services/paid-access.service.ts. If this one really must be eager, silence it explicitly: `// eslint-disable-next-line local-rules/no-module-scope-cache -- <reason>`',
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const creators = new Set(options.creators || DEFAULT_CACHE_CREATORS);
+
+    return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (!callee || callee.type !== 'Identifier' || !creators.has(callee.name)) return;
+        if (!isEvaluatedAtModuleScope(node)) return;
+
+        context.report({
+          node,
+          messageId: 'moduleScopeCache',
+          data: { creator: callee.name },
+        });
+      },
+    };
+  },
+};
+
 module.exports = {
   'no-io-in-transaction': noIoInTransaction,
+  'no-module-scope-cache': noModuleScopeCache,
   'no-wholesale-module-mock': noWholesaleModuleMock,
 };
