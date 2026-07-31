@@ -36,6 +36,7 @@ vi.mock('~/server/jobs/job', () => ({
   getJobDate: mockGetJobDate,
 }));
 
+import { NsfwLevel } from '~/server/common/enums';
 import {
   removeDeletedUserImages,
   CURSOR_START,
@@ -53,8 +54,8 @@ import {
 type Fixture = {
   deletedAt: Date;
   images: number[];
-  /** `User.meta`; only `imageRemoval` reaches the job. */
-  meta?: { imageRemoval?: 'grace' | 'immediate' };
+  /** `User.meta`; `imageRemoval` is jsonb, so it can hold a value the job does not recognize. */
+  meta?: { imageRemoval?: string };
   /** Per-image `ingestion`; an id absent from here holds anything other than `Blocked`. */
   ingestion?: Record<number, string>;
   /** Blocked by another writer in the window between the job's image read and its write. */
@@ -62,7 +63,7 @@ type Fixture = {
   posts?: number[];
   /** Still in the (replica-read) worklist, but the primary now says `deletedAt IS NULL`. */
   restored?: boolean;
-  /** Restored in the window between the job's drained-check and its post delete. */
+  /** Restored in the window between a freshness check and the write that check guards. */
   restoredAfterCheck?: boolean;
   /** Restored once this many image batches have cleared the job's in-batch freshness check. */
   restoreAfterBatches?: number;
@@ -79,9 +80,28 @@ let batchChecks: Record<number, number> = {};
 /** The substring both the worklist and the block path use to exclude already-blocked rows. */
 const SKIPS_BLOCKED = `ingestion <> 'Blocked'`;
 
-const mode = (fixture: Fixture) => fixture.meta?.imageRemoval ?? 'immediate';
 const unblocked = (fixture: Fixture) =>
   fixture.images.filter((id) => fixture.ingestion?.[id] !== 'Blocked');
+
+/**
+ * Evaluates the worklist's mode expression instead of pattern-matching one accepted spelling of
+ * it, so a `CASE` that normalizes the wrong way reads as the wrong mode rather than as no
+ * normalization at all. Falls back to the stored value where the job names no `CASE`.
+ */
+function modeExpression(sql: string) {
+  const branches = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(sql);
+  if (!branches) return (fixture: Fixture) => fixture.meta?.imageRemoval ?? 'immediate';
+
+  const [, condition, whenTrue, whenFalse] = branches;
+  const atoms = condition.split(/\s+OR\s+/);
+  return (fixture: Fixture) => {
+    const choice = fixture.meta?.imageRemoval;
+    const holds = atoms.some((atom) =>
+      atom.includes('IS NULL') ? choice == null : choice === /= '([^']*)'/.exec(atom)?.[1]
+    );
+    return holds ? whenTrue : whenFalse;
+  };
+}
 
 /**
  * Reads the `SET` assignments back out of the statement — a literal off the SQL text, a `?` off
@@ -95,7 +115,11 @@ function parseSetClause(sql: string, params: unknown[]) {
   for (const assignment of body.split(',')) {
     const [column, value] = assignment.split('=').map((part) => part.trim());
     row[column.replace(/"/g, '')] =
-      value === '?' ? queue.shift() : value.replace(/::.*$/, '').replace(/'/g, '');
+      value === '?'
+        ? queue.shift()
+        : value === 'now()'
+        ? new Date()
+        : value.replace(/::.*$/, '').replace(/'/g, '');
   }
   return row;
 }
@@ -130,8 +154,10 @@ function seed(next: Record<number, Fixture>) {
     // Like the bound comparisons, the mode predicates are read out of the SQL: dropping one in
     // the job makes the fixture hand back a row the job then mishandles, rather than hiding it.
     const skipsBlockedImages = sql.includes(SKIPS_BLOCKED);
-    const skipsGracePosts = sql.includes(`'imageRemoval', 'immediate') <> 'grace'`);
-    const selectsMode = sql.includes(`COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode`);
+    const skipsBlockedForGraceOnly = sql.includes(`m.mode = 'immediate' OR i.${SKIPS_BLOCKED}`);
+    const skipsGracePosts = /m\.mode = 'immediate'\s+AND EXISTS \(SELECT 1 FROM "Post"/.test(sql);
+    const selectsMode = /SELECT u\.id, u\."deletedAt", m\.mode/.test(sql);
+    const modeOf = modeExpression(sql);
     const order = ascending ? [...newestFirst].reverse() : newestFirst;
 
     return Promise.resolve(
@@ -139,16 +165,21 @@ function seed(next: Record<number, Fixture>) {
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
         .filter((id) => {
           const fixture = fixtures[id];
-          const images = skipsBlockedImages ? unblocked(fixture) : fixture.images;
-          const postsCount =
-            skipsGracePosts && mode(fixture) === 'grace' ? 0 : (fixture.posts ?? []).length;
-          return (selectsImageOwners && images.length > 0) || (selectsPostOwners && postsCount > 0);
+          const immediate = modeOf(fixture) === 'immediate';
+          const images =
+            skipsBlockedImages && !(skipsBlockedForGraceOnly && immediate)
+              ? unblocked(fixture)
+              : fixture.images;
+          const posts = skipsGracePosts && !immediate ? [] : fixture.posts ?? [];
+          return (
+            (selectsImageOwners && images.length > 0) || (selectsPostOwners && posts.length > 0)
+          );
         })
         .slice(0, limit)
         .map((id) => ({
           id,
           deletedAt: fixtures[id].deletedAt,
-          ...(selectsMode ? { mode: mode(fixtures[id]) } : {}),
+          ...(selectsMode ? { mode: modeOf(fixtures[id]) } : {}),
         }))
     );
   });
@@ -173,7 +204,9 @@ function seed(next: Record<number, Fixture>) {
         const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
         if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
           fixture.restored = true;
-        return Promise.resolve([{ stillDeleted: !fixture.restored }]);
+        const state = { stillDeleted: !fixture.restored };
+        if (fixture.restoredAfterCheck) fixture.restored = true;
+        return Promise.resolve([state]);
       }
       if (sql.includes('FROM "Image" i')) {
         const limit = values[1] as number;
@@ -238,15 +271,16 @@ function seedUser({
   alreadyBlocked = 0,
   blockedAfterRead = 0,
   deletedAt = NEWER,
+  ...restoreHooks
 }: {
   id: number;
-  imageRemoval?: 'grace' | 'immediate';
+  imageRemoval?: string;
   images: number;
   posts?: number;
   alreadyBlocked?: number;
   blockedAfterRead?: number;
   deletedAt?: Date;
-}) {
+} & Pick<Fixture, 'restored' | 'restoredAfterCheck' | 'restoreAfterBatches'>) {
   seed({
     [id]: {
       deletedAt,
@@ -255,6 +289,7 @@ function seedUser({
       ingestion: Object.fromEntries(ids(alreadyBlocked).map((imageId) => [imageId, 'Blocked'])),
       blockAfterRead: ids(blockedAfterRead, alreadyBlocked),
       posts: ids(posts, 900),
+      ...restoreHooks,
     },
   });
 }
@@ -693,9 +728,21 @@ describe('grace mode', () => {
     expect(blockedImageIds()).toHaveLength(150);
     expect(blockedRows()[0]).toMatchObject({
       ingestion: 'Blocked',
+      nsfwLevel: NsfwLevel.Blocked,
       blockedFor: 'moderated',
     });
     expect(result.blockedImages).toBe(150);
+  });
+
+  it('stamps updatedAt so the 7-day retention clock starts now', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+
+    await run();
+
+    // `@updatedAt` is a Prisma-client concern that raw SQL skips, and remove-blocked-images
+    // counts the `moderated` retention window from `updatedAt` — an unstamped row is already
+    // past the cutoff and gets hard-deleted on the next hourly run.
+    expect(blockedRows()[0]).toMatchObject({ updatedAt: NOW });
   });
 
   it('leaves a grace user posts alone', async () => {
@@ -753,6 +800,27 @@ describe('grace mode', () => {
     expect(blockedImageIds()).not.toContain(1);
   });
 
+  it('gates the block itself, not just the decision to run it', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, restoredAfterCheck: true });
+
+    const result = await run();
+
+    expect(result.blockedImages).toBe(0);
+    expect(blockedImageIds()).toEqual([]);
+  });
+
+  it('stops blocking a grace user restored between batches', async () => {
+    mockSysRedis.get.mockResolvedValue('1000');
+    seedUser({ id: 7, imageRemoval: 'grace', images: 300, restoreAfterBatches: 1 });
+
+    const result = await run();
+
+    // The gate on the UPDATE keeps the writes correct on its own; re-reading between batches is
+    // what stops the run charging its whole budget to statements that now affect nothing.
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(result.blockedImages).toBe(100);
+  });
+
   it('hard-deletes a user with no recorded choice', async () => {
     seedUser({ id: 7, images: 10 });
 
@@ -760,6 +828,27 @@ describe('grace mode', () => {
 
     expect(result.deletedImages).toBe(10);
     expect(result.blockedImages).toBe(0);
+  });
+
+  it('still drains an immediate user whose images are all blocked', async () => {
+    seedUser({ id: 7, images: 10, alreadyBlocked: 10 });
+
+    const result = await run();
+
+    // Scoping the unblocked-image predicate to grace users is what keeps these reachable: their
+    // rows can predate the JobQueue trigger, so remove-blocked-images would never see them.
+    expect(result.deletedImages).toBe(10);
+  });
+
+  it('blocks a user whose recorded choice is not one the job knows', async () => {
+    seedUser({ id: 7, imageRemoval: 'sometime-later', images: 10 });
+
+    const result = await run();
+
+    // Absent stays immediate for the backlog's sake, but a value we cannot read should cost
+    // seven days of storage rather than the images.
+    expect(result.blockedImages).toBe(10);
+    expect(mockDeleteImages).not.toHaveBeenCalled();
   });
 
   it('charges blocked images against the budget', async () => {

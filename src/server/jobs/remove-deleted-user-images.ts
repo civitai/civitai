@@ -157,14 +157,20 @@ async function blockUserImages(
     )) {
       if (isCanceled())
         return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: true };
+      // The gate on the UPDATE keeps a restore from being written over; this keeps the run from
+      // charging its whole budget to statements that now affect nothing.
+      if (!(await isStillDeleted(userId)))
+        return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false };
 
-      // Re-blocking an already-blocked image refires the trigger and restarts its 7-day clock,
-      // so the predicate has to survive into the UPDATE and not just the fetch above.
+      // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it — and it is the
+      // clock remove-blocked-images counts the `moderated` retention window from, so restamping
+      // an already-blocked row would push its purge out another 7 days.
       blockedImages += await dbWrite.$executeRaw`
         UPDATE "Image"
         SET ingestion = 'Blocked'::"ImageIngestionStatus",
             "nsfwLevel" = ${NsfwLevel.Blocked},
-            "blockedFor" = ${BlockedReason.Moderated}
+            "blockedFor" = ${BlockedReason.Moderated},
+            "updatedAt" = now()
         WHERE id IN (${Prisma.join(batch)})
           AND "userId" = ${userId}
           AND ingestion <> 'Blocked'::"ImageIngestionStatus"
@@ -222,10 +228,12 @@ async function drainPage(
       break;
     }
 
+    // Dispatched on 'immediate' rather than on 'grace' so that anything the worklist failed to
+    // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
     const result =
-      user.mode === 'grace'
-        ? await blockUserImages(user.id, remaining, isCanceled)
-        : await drainUser(user.id, remaining, isCanceled);
+      user.mode === 'immediate'
+        ? await drainUser(user.id, remaining, isCanceled)
+        : await blockUserImages(user.id, remaining, isCanceled);
     remaining -= result.budgetUsed;
     deletedImages += result.deletedImages;
     blockedImages += result.blockedImages;
@@ -276,23 +284,29 @@ export const removeDeletedUserImages = createJob(
     // `now()` across many accounts, and the worklist already drops accounts that no longer own
     // anything, so re-reading the tie costs nothing and is the only way not to skip the rest.
 
-    // A grace user has outstanding work only while they still own an unblocked image: their
-    // posts leave with the images at day 7, via CleanIfEmpty, not from here.
+    // An absent or 'immediate' choice resolves to deletion and anything else to grace: a value
+    // we cannot read should cost storage rather than the images. A grace user then has work only
+    // while they own an unblocked image — their posts leave at day 7 with CleanIfEmpty — while an
+    // immediate user still matches on any image, or an account left holding only blocked ones
+    // would drop out of the worklist with nothing else to sweep it.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
-      SELECT u.id, u."deletedAt",
-             COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode
+      SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
+      CROSS JOIN LATERAL (
+        SELECT CASE
+          WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
+          THEN 'immediate' ELSE 'grace'
+        END AS mode
+      ) m
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
-            WHERE i."userId" = u.id AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+            WHERE i."userId" = u.id
+              AND (m.mode = 'immediate' OR i.ingestion <> 'Blocked'::"ImageIngestionStatus")
           )
-          OR (
-            COALESCE(u.meta->>'imageRemoval', 'immediate') <> 'grace'
-            AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-          )
+          OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
         )
       ORDER BY u."deletedAt" ASC
       LIMIT ${USERS_PER_RUN}
@@ -312,21 +326,24 @@ export const removeDeletedUserImages = createJob(
 
     if (freshRun.remaining > 0 && !freshRun.canceled) {
       const backlog = await dbRead.$queryRaw<Candidate[]>`
-        SELECT u.id, u."deletedAt",
-               COALESCE(u.meta->>'imageRemoval', 'immediate') AS mode
+        SELECT u.id, u."deletedAt", m.mode
         FROM "User" u
+        CROSS JOIN LATERAL (
+          SELECT CASE
+            WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
+            THEN 'immediate' ELSE 'grace'
+          END AS mode
+        ) m
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i
-              WHERE i."userId" = u.id AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+              WHERE i."userId" = u.id
+                AND (m.mode = 'immediate' OR i.ingestion <> 'Blocked'::"ImageIngestionStatus")
             )
-            OR (
-              COALESCE(u.meta->>'imageRemoval', 'immediate') <> 'grace'
-              AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-            )
+            OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
           )
         ORDER BY u."deletedAt" DESC
         LIMIT ${USERS_PER_RUN}
