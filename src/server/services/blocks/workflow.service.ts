@@ -7,6 +7,7 @@ import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.con
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
   BlockWorkflowBody,
@@ -427,11 +428,22 @@ function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkf
 /**
  * Resolve which image graph workflow a block body maps to when combined with the
  * checkpoint's ecosystem:
- *   - no source image                          → `txt2img`
+ *   - no source image + txt2img-capable eco    → `txt2img`
+ *   - no source image + EDIT-ONLY ecosystem    → BAD_REQUEST
  *   - source image + SD-family ecosystem       → `img2img`      (Image Variations)
  *   - source image + edit-capable ecosystem    → `img2img:edit` (OpenAI / Qwen /
  *                                                Flux Kontext / … — EDIT_IMG_IDS)
  *   - source image + neither variant available → BAD_REQUEST
+ *
+ * The EDIT-ONLY rejection is the ecosystem-level half of the "silently produced
+ * the wrong graph" guard (see `assertCheckpointVersionSupportsWorkflow` for the
+ * VERSION-level half, which is what actually bites today). An ecosystem that
+ * supports `img2img:edit` but NOT `txt2img` cannot honour a bare body at all;
+ * without this it would build a txt2img graph the ecosystem has no route for.
+ * No image ecosystem is edit-only in the CURRENT config (every member of
+ * EDIT_IMG_IDS is also in TXT2IMG_IDS), so this is a fail-closed guard against
+ * a future edit-only ecosystem, derived from `isWorkflowAvailable` rather than
+ * from a hardcoded list so it can never go stale.
  *
  * Variant selection is DETERMINISTIC via `isWorkflowAvailable` (the same
  * availability check the generation graph uses) — it never leans on
@@ -445,7 +457,21 @@ export function resolveBlockImageWorkflowType(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
   ecosystemId?: number
 ): BlockImageWorkflowType {
-  if (!body.sourceImage) return 'txt2img';
+  if (!body.sourceImage) {
+    if (
+      ecosystemId != null &&
+      !isWorkflowAvailable('txt2img', ecosystemId) &&
+      isWorkflowAvailable('img2img:edit', ecosystemId)
+    ) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          "this checkpoint's ecosystem is edit-only — it supports img2img:edit but not " +
+          'txt2img. Send a `sourceImage` to run an edit, or pick a text-to-image checkpoint.',
+      });
+    }
+    return 'txt2img';
+  }
   if (ecosystemId != null && isWorkflowAvailable('img2img', ecosystemId)) return 'img2img';
   if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId))
     return 'img2img:edit';
@@ -454,6 +480,75 @@ export function resolveBlockImageWorkflowType(
     message:
       'img2img (source image) is not supported for this checkpoint — its ecosystem supports ' +
       'neither img2img (SD-family) nor img2img:edit (edit-capable: OpenAI/Qwen/Flux Kontext/…)',
+  });
+}
+
+/**
+ * Reject a checkpoint version the target workflow does not offer, when the
+ * ecosystem scopes its checkpoint versions BY WORKFLOW.
+ *
+ * THE BUG THIS CLOSES. Several image ecosystems ship DIFFERENT checkpoint
+ * versions per workflow (`createCheckpointGraph({ workflowVersions })` in
+ * qwen-graph / boogu-graph / mage-flow-graph). Qwen model 2268063, for example,
+ * hosts BOTH `2558804` ("Image Edit 2511", offered only on `img2img:edit`) and
+ * `2552908` (offered only on `txt2img`).
+ *
+ * The block bridge picks its workflow purely from `sourceImage` presence, so a
+ * body naming the EDIT version with no `sourceImage` resolved to `txt2img` —
+ * and the generation graph did NOT reject it. `buildModelTransform` maps an
+ * out-of-workflow version to its SAME-INDEX sibling in the target workflow's
+ * list, so the graph silently REWROTE `model.id` 2558804 → 2552908 and returned
+ * success. The caller was billed, got images, and never learned that the
+ * checkpoint it asked for was swapped for a different one. Verified against the
+ * real graph, not inferred — see the `silently substitutes` test.
+ *
+ * Nothing in the response, the snapshot, or the `block_workflows` read-model
+ * reveals the substitution, which makes it the worst available failure mode: a
+ * successful-looking wrong answer.
+ *
+ * SCOPE — this deliberately only fires when the version IS one of the
+ * ecosystem's workflow-scoped versions but belongs to a DIFFERENT workflow. A
+ * community checkpoint the ecosystem does not list is left alone (the graph's
+ * own transform skips unknown ids too, so nothing is being substituted for it
+ * and there is nothing to warn about).
+ */
+export function assertCheckpointVersionSupportsWorkflow(opts: {
+  ecosystem: string;
+  ecosystemId?: number;
+  workflow: BlockImageWorkflowType;
+  checkpointVersionId: number;
+}): void {
+  const { ecosystem, ecosystemId, workflow, checkpointVersionId } = opts;
+
+  // Only the image workflows the block bridge can produce are candidates, and
+  // only those the ecosystem actually supports — asking about a route the
+  // ecosystem has no config for would just yield noise.
+  const candidateWorkflows = BLOCK_IMAGE_WORKFLOW_TYPES.filter(
+    (w) => ecosystemId != null && isWorkflowAvailable(w, ecosystemId)
+  );
+
+  const scope = resolveVersionWorkflowScope({
+    ecosystem,
+    workflow,
+    candidateWorkflows,
+    versionId: checkpointVersionId,
+  });
+  if (scope.kind !== 'wrong-workflow') return;
+
+  const isEditOnly = scope.offeredFor.every((w) => w.startsWith('img2img'));
+  const remedy = isEditOnly
+    ? 'send a `sourceImage` to run it as an image edit'
+    : `send this version on ${scope.offeredFor.join(' / ')} instead`;
+  const alternative = scope.suggestedVersionId
+    ? `, or use modelVersionId ${scope.suggestedVersionId} for ${workflow}`
+    : '';
+
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      `modelVersion ${checkpointVersionId} is not available for '${workflow}' on the ` +
+      `${ecosystem} ecosystem — it is offered for ${scope.offeredFor.join(' / ')} only. ` +
+      `Either ${remedy}${alternative}.`,
   });
 }
 
@@ -551,6 +646,28 @@ export function buildImageWorkflowInput(
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: `workflow '${workflowType}' is not supported for base model '${resolved.checkpointBaseModel}'`,
+    });
+  }
+
+  // Version-level guard (see assertCheckpointVersionSupportsWorkflow). Placed
+  // HERE rather than inside resolveBlockImageWorkflowType so it covers BOTH the
+  // derive path and the `workflowTypeOverride` seam, and because the CHECKPOINT
+  // version (not `body.modelVersionId`) is what the graph anchors on — for a
+  // LoRA-bound install those differ.
+  //
+  // SCOPED TO txt2img ON PURPOSE. The symmetric case — a txt2img-only version
+  // sent WITH a `sourceImage`, which today is silently substituted the same way
+  // in the other direction — is left alone in this change: it is a separate
+  // behaviour change with its own blast radius, and no live traffic could be
+  // measured either way (the submitted body is not retained anywhere; see the
+  // PR description). Flipping this to guard every resolved workflowType is a
+  // one-line follow-up — the helper is already direction-agnostic.
+  if (workflowType === 'txt2img') {
+    assertCheckpointVersionSupportsWorkflow({
+      ecosystem,
+      ecosystemId: ecoRecord?.id,
+      workflow: workflowType,
+      checkpointVersionId: resolved.checkpointVersionId,
     });
   }
 
