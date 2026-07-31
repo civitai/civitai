@@ -29,6 +29,8 @@ import {
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
+import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import {
@@ -379,6 +381,12 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 size="sm"
                 variant="light"
                 rightSection={<IconExternalLink size={16} />}
+                // "Opened" = actually opened. An OFF-SITE app is opened the
+                // moment this Visit CTA is followed — there is no on-platform
+                // route afterwards that could record it (the on-site path is
+                // recorded by `/apps/run/<slug>` itself). Recording on a detail
+                // VIEW would be wrong: browsing is not opening.
+                onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(card))}
               >
                 {cta.label}
               </Button>

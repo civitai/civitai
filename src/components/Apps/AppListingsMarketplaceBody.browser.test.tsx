@@ -83,10 +83,14 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
+  './recentlyOpenedAppsStore'
+);
 
 beforeEach(() => {
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
+  clearRecentlyOpenedApps();
 });
 
 describe('AppListingsMarketplaceBody', () => {
@@ -147,5 +151,50 @@ describe('AppListingsMarketplaceBody', () => {
     const bases = Array.from(css.matchAll(/--col-flex-basis:([\d.]+)%/g)).map((m) => m[1]);
     expect(bases).toEqual(['100', '50', '33.333333333333336', '25', '25']);
     expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
+  });
+
+  // ── "Recently opened" rail ──────────────────────────────────────────────────
+  // Selection/target logic is pinned in the blocking unit suite
+  // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
+  // page really reads the store after mount, really renders the rail ABOVE the
+  // search box, and really renders NOTHING for a viewer with no recents.
+
+  test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
+    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
+  });
+
+  test('a viewer WITH recents sees the rail, above the search input', async () => {
+    recordRecentlyOpenedApp({
+      id: 'ab_1',
+      blockId: 'gen-matrix',
+      slug: 'gen-matrix',
+      kind: 'onsite',
+      hasPage: true,
+      name: 'Gen Matrix',
+    });
+    renderWithProviders(<AppListingsMarketplaceBody />);
+
+    const rail = page.getByTestId('apps-recent-rail');
+    await expect.element(rail).toBeInTheDocument();
+    await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
+
+    // Document order: the rail precedes the search field. `compareDocumentPosition`
+    // is the direct encoding of "at the top" — a visual-only check would pass
+    // even if the rail were appended at the bottom like the legacy body did.
+    const railEl = rail.element();
+    const search = page.getByLabelText('Search').element();
+    expect(railEl.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
+    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' });
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    const item = page.getByTestId('apps-recent-rail-item');
+    await expect.element(item).toBeInTheDocument();
+    // hasPage unknown for a legacy entry → the always-valid detail link.
+    await expect.element(item).toHaveAttribute('href', '/apps/store-preview/legacy-app');
   });
 });

@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
 
 /**
  * Two user-controlled install scopes. Both live in the same
@@ -443,7 +444,19 @@ export type PublicAppDetail = {
   id: string;
   blockId: string;
   appId: string;
+  /**
+   * The OAuth CLIENT's name. 🔴 This is the APP's own title, NOT its author —
+   * for every approved block in prod `OauthClient.name` equals the app title.
+   * Rendering it in an author slot ("by {appName}") is a bug; use `owner`.
+   */
   appName: string | null;
+  /**
+   * The app's real owner, as the standard public `{id, username, image}` chip
+   * (see `~/server/services/blocks/public-owner.ts` for the allowlist). `null`
+   * when the owner row can't be resolved; `username` is independently nullable,
+   * and the UI renders no attribution rather than a fallback in that case.
+   */
+  owner: PublicOwnerChip | null;
   manifest: PublicBlockManifest;
   scopes: string[];
   contentRating: string | null;

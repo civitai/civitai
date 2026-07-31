@@ -1,10 +1,20 @@
 import { Button, Center, Grid, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconApps, IconExternalLink, IconLayoutGrid, IconSearch } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import { CategoryFilterButtons } from '~/components/Apps/CategoryFilterButtons';
+import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
+import {
+  selectRecentRailEntries,
+  type ResolvedRecentApp,
+} from '~/components/Apps/recentAppsRail';
+import {
+  getRecentlyOpenedApps,
+  recordRecentlyOpenedApp,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type {
@@ -92,6 +102,37 @@ export function AppListingsMarketplaceBody() {
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
+  // "Recently opened" rail (client-only personalisation from localStorage).
+  // SEEDED EMPTY so SSR and the first client render match — reading
+  // localStorage during render would be a hydration mismatch — and the real
+  // list loads in a post-mount effect. A viewer with no recents therefore sees
+  // the page exactly as before: `RecentlyOpenedListingsView` renders null for an
+  // empty list, so nothing (not even a spacer) is added above the search box.
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps());
+  }, []);
+  const recentEntries = useMemo(() => selectRecentRailEntries(recents), [recents]);
+
+  // Re-opening from the rail moves that app back to the front of the store. For
+  // an OFF-SITE entry this is the only chance to record it (following the link
+  // leaves the SPA); for an on-site one the run page records it too, and the
+  // store dedups, so double-recording is harmless.
+  function handleOpenRecent(entry: ResolvedRecentApp) {
+    setRecents(
+      recordRecentlyOpenedApp({
+        id: entry.id,
+        slug: entry.slug,
+        kind: entry.kind,
+        hasPage: entry.hasPage,
+        ...(entry.blockId ? { blockId: entry.blockId } : {}),
+        ...(entry.externalUrl ? { externalUrl: entry.externalUrl } : {}),
+        ...(entry.name ? { name: entry.name } : {}),
+        ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
+      })
+    );
+  }
+
   const {
     data,
     isLoading,
@@ -147,6 +188,17 @@ export function AppListingsMarketplaceBody() {
 
   return (
     <Stack gap="md">
+      {/* RECENTLY OPENED — at the very top, ABOVE the search input: it is a
+          "jump back in" shortcut for a returning viewer, so burying it under the
+          filters (where the legacy body put it, at the BOTTOM) defeats it.
+          Renders null when empty, so a first-time viewer's layout is unchanged
+          and nothing shifts when the post-mount localStorage read lands. */}
+      <RecentlyOpenedListingsView
+        entries={recentEntries}
+        canOpenPage={!!features.appBlocksPages}
+        onOpenRecent={handleOpenRecent}
+      />
+
       <Group gap="md" align="end">
         <TextInput
           label="Search"

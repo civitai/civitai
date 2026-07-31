@@ -217,7 +217,15 @@ export function AppBlockChrome({
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
   }, []);
-  const recentApps = recents.filter((r) => r.id !== appBlockId).slice(0, RECENTLY_RUN_LIMIT);
+  // `blockId` became OPTIONAL when the recents store widened to also carry
+  // OFF-SITE listings (which have no AppBlock at all — see
+  // `recentlyOpenedAppsStore`). This menu links to `/apps/run/<blockId>`, so it
+  // must show only entries that HAVE one; an off-site entry here would render a
+  // `/apps/run/undefined` dead link. Behaviour for every pre-existing (on-site)
+  // entry is unchanged.
+  const recentApps = recents
+    .filter((r) => r.id !== appBlockId && !!r.blockId)
+    .slice(0, RECENTLY_RUN_LIMIT);
 
   // Controlled-Menu change handler: mirror the open state AND re-read the recents
   // store on the transition to open, so the "Recently run" list is fresh within
@@ -352,7 +360,8 @@ export function AppBlockChrome({
                   <Menu.Item
                     key={r.id}
                     component={Link}
-                    href={`/apps/run/${r.blockId}`}
+                    // Non-null by the `!!r.blockId` filter above.
+                    href={`/apps/run/${r.blockId as string}`}
                     data-testid="app-recently-run-item"
                     leftSection={
                       r.iconUrl ? (
@@ -371,7 +380,7 @@ export function AppBlockChrome({
                         handle. `lineClamp={1}` keeps a pathologically long name
                         from blowing out the width={200} dropdown. */}
                     <Text size="sm" lineClamp={1}>
-                      {sanitizeAppChromeName(r.name) || r.blockId}
+                      {sanitizeAppChromeName(r.name) || (r.blockId as string)}
                     </Text>
                   </Menu.Item>
                 ))}

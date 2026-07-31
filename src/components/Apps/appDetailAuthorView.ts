@@ -1,0 +1,49 @@
+/**
+ * Legacy per-app detail (`/apps/<appBlockId>`) — AUTHOR ATTRIBUTION view-model
+ * (pure, React-free).
+ *
+ * THE BUG THIS EXISTS TO KILL: the page rendered `by {detail.appName ??
+ * detail.appId}`. `appName` is the OAuth CLIENT's name, and in prod every
+ * approved block's `OauthClient.name` equals the APP's own title (verified:
+ * `appblk-gen-matrix` → OauthClient name "Gen Matrix", real owner
+ * `zachlowdenzx`). So the author slot displayed the app's own title — and the
+ * `?? appId` fallback displayed an opaque internal id. Both are wrong, and both
+ * looked plausible enough to survive review.
+ *
+ * The rule now: attribution comes ONLY from the real owner chip
+ * (`PublicAppDetail.owner`, the `{id, username, image}` allowlist). No owner, or
+ * an owner with no username → NO attribution line at all. Showing nothing is
+ * strictly better than showing a wrong name, and there is nothing else on the
+ * DTO that is a person.
+ *
+ * Pure so the blocking gate lives in the node `unit` project (the browser-mode
+ * component suites are report-only).
+ */
+
+import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
+
+export type AppDetailAuthor = {
+  username: string;
+  /** Profile link — matches the store's `CreatorChip` target. */
+  href: string;
+  /** Avatar source (raw; the caller runs it through `getEdgeUrl`). */
+  image: string | null;
+};
+
+/**
+ * The author chip for the legacy detail page, or `null` when there is no
+ * attributable person. NEVER falls back to `appName` / `appId`.
+ */
+export function getAppDetailAuthor(
+  detail: { owner?: PublicOwnerChip | null } | null | undefined
+): AppDetailAuthor | null {
+  const owner = detail?.owner;
+  if (!owner) return null;
+  const username = typeof owner.username === 'string' ? owner.username.trim() : '';
+  if (!username) return null;
+  return {
+    username,
+    href: `/user/${encodeURIComponent(username)}`,
+    image: owner.image ?? null,
+  };
+}

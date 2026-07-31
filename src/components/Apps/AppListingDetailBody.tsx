@@ -21,6 +21,7 @@ import {
   IconExternalLink,
   IconInfoCircle,
   IconPencil,
+  IconPlayerPlay,
   IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -38,6 +39,15 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
+import {
+  getListingPreview,
+  LISTING_PREVIEW_HEIGHT,
+  LISTING_PREVIEW_SANDBOX,
+  shouldMountPreviewIframe,
+} from '~/components/Apps/appListingPreview';
+import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
+import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
@@ -223,6 +233,129 @@ function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryS
   );
 }
 
+/**
+ * In-page LIVE PREVIEW — poster first, iframe only on click.
+ *
+ * 🔴 The `<iframe>` is NOT in the tree until the viewer activates it. Booting a
+ * third-party app frame on page load would make every shopper pay that app's
+ * full JS/network cost just to read the listing, on every listing. Before the
+ * click we show a static poster (the listing's own cover → first screenshot →
+ * a neutral placeholder) with an explicit activate affordance.
+ *
+ * "No poster available" is a normal case (several approved listings ship neither
+ * a cover nor screenshots) — the placeholder still activates, so a listing
+ * without art never loses its preview.
+ *
+ * SANDBOX/REFERRER PARITY with the legacy `/apps/[appBlockId]` preview. The
+ * block is served from its OWN `<slug>.civit.ai` origin, so `allow-same-origin`
+ * grants the frame ITS OWN origin — not civitai.com's — which is what lets the
+ * block use its own storage. See `appListingPreview.ts` for the full note; the
+ * token list itself is single-sourced there.
+ *
+ * 🔴 NOT an HTTP-caching change. Block HTML is deliberately `Cache-Control:
+ * no-store` at the platform layer so CSP/CORS changes propagate; "cache the
+ * preview" here means poster-then-activate and nothing else.
+ */
+function LivePreview({ detail }: { detail: ListingDetail }) {
+  const [activated, setActivated] = useState(false);
+  const preview = getListingPreview(detail);
+  if (!preview) return null;
+  const mounted = shouldMountPreviewIframe({ preview, activated });
+
+  return (
+    <>
+      <Divider />
+      <Stack gap="xs" data-testid="apps-listing-preview">
+        <Title order={4}>Live preview</Title>
+        <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+          {mounted ? (
+            <iframe
+              src={preview.liveUrl}
+              title={preview.frameTitle}
+              sandbox={LISTING_PREVIEW_SANDBOX}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              data-testid="apps-listing-preview-frame"
+              style={{
+                width: '100%',
+                height: LISTING_PREVIEW_HEIGHT,
+                border: 0,
+                display: 'block',
+              }}
+            />
+          ) : (
+            <Box
+              component="button"
+              type="button"
+              onClick={() => setActivated(true)}
+              aria-label={`Start the live preview of ${detail.name}`}
+              data-testid="apps-listing-preview-activate"
+              style={{
+                position: 'relative',
+                display: 'block',
+                width: '100%',
+                height: LISTING_PREVIEW_HEIGHT,
+                padding: 0,
+                border: 0,
+                cursor: 'pointer',
+                // No poster → the listing's own seeded gradient (same identity
+                // the cover/icon placeholders use), never a blank grey box.
+                background: preview.posterUrl
+                  ? undefined
+                  : listingPlaceholderGradient({
+                      slug: detail.slug,
+                      category: detail.category,
+                      surface: 'cover',
+                    }),
+              }}
+            >
+              {preview.posterUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={preview.posterUrl}
+                  alt=""
+                  aria-hidden
+                  loading="lazy"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+              )}
+              {/* Activate affordance, above the poster. */}
+              <Group
+                justify="center"
+                style={{ position: 'relative', height: '100%' }}
+                data-testid="apps-listing-preview-poster"
+              >
+                <Group
+                  gap={8}
+                  wrap="nowrap"
+                  px="md"
+                  py="xs"
+                  style={{
+                    borderRadius: 'var(--mantine-radius-xl)',
+                    background: 'rgba(0,0,0,0.65)',
+                    color: 'var(--mantine-color-white)',
+                  }}
+                >
+                  <IconPlayerPlay size={18} />
+                  <Text size="sm" fw={600} c="white">
+                    Run live preview
+                  </Text>
+                </Group>
+              </Group>
+            </Box>
+          )}
+        </Card>
+      </Stack>
+    </>
+  );
+}
+
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
@@ -243,6 +376,11 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
         target="_blank"
         rel="noopener noreferrer"
         leftSection={<IconExternalLink size={16} />}
+        // Only OFF-SITE listings reach `visit` now (the on-site "Open live"
+        // button was removed in favour of the in-page preview). Following this
+        // link IS the moment the app is opened, and it leaves the SPA — so it is
+        // the only chance to record the open. A detail-page VIEW never records.
+        onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
       >
         {action.label}
       </Button>
@@ -440,6 +578,12 @@ export function AppListingDetailBody({
         </>
       )}
 
+      {/* IN-PAGE LIVE PREVIEW (poster → click to activate). Placed above the
+          screenshot gallery: a runnable app outranks static stills. Omitted in
+          read-only mod preview along with every other live surface — a shadow
+          listing's block may not even be deployed. */}
+      {!preview && <LivePreview detail={detail} />}
+
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
       {/* Description — shared CustomMarkdown (no dangerouslySetInnerHTML). */}
@@ -464,6 +608,19 @@ export function AppListingDetailBody({
             permissions.
           </Alert>
         )}
+
+      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
+          Placed AFTER the description/disclosure but BEFORE the comments: the
+          comment thread is unbounded, so a rail below it would be buried behind
+          an arbitrary amount of scrolling for the viewers most likely to want
+          it (the ones who read the listing and didn't convert). Omitted in
+          read-only preview — it is a live, tRPC-backed surface. */}
+      {!preview && (
+        <>
+          <Divider />
+          <RelatedListings listingId={detail.id} category={detail.category} />
+        </>
+      )}
 
       {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
           on the listing's Thread (`entityType="appListing"`, integer surrogate).

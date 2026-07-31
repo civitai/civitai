@@ -104,6 +104,9 @@ function makeDetail(overrides: Partial<PublicAppDetail> = {}): PublicAppDetail {
     blockId: 'my-block',
     appId: 'app-1',
     appName: 'My App',
+    // The app's real owner chip. Distinct from `appName` (the OAuth client's
+    // name, which in prod IS the app title) — see `getAppDetailAuthor`.
+    owner: { id: 42, username: 'owner-user', image: null },
     manifest: {
       name: 'My App',
       description: 'Does a thing.',

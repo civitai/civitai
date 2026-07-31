@@ -1,5 +1,6 @@
 import {
   Anchor,
+  Avatar,
   Badge,
   Button,
   Card,
@@ -27,7 +28,9 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
@@ -136,6 +139,8 @@ export default function AppDetailPage() {
 
   const detail = data as PublicAppDetail | undefined;
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
+  // Real owner attribution (never `appName`/`appId` — see getAppDetailAuthor).
+  const author = getAppDetailAuthor(detail);
   const description = detail?.manifest.description ?? '';
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
   // Show Install ONLY for an app that installs into a model/in-context slot.
@@ -228,9 +233,37 @@ export default function AppDetailPage() {
               <Group justify="space-between" align="flex-start" wrap="nowrap">
                 <Stack gap={4}>
                   <Title order={2}>{name}</Title>
-                  <Text c="dimmed" size="sm">
-                    by {detail.appName ?? detail.appId}
-                  </Text>
+                  {/* AUTHOR — the app's REAL owner, linked to their profile
+                      (consistent with the store's CreatorChip). This used to
+                      render `by {detail.appName ?? detail.appId}`, which showed
+                      the APP's OWN TITLE in the author slot (every approved
+                      block's OauthClient.name equals its title) and fell back to
+                      an opaque internal id. The whole decision — including "no
+                      username → render NOTHING rather than a wrong name" —
+                      lives in the pure `getAppDetailAuthor`. */}
+                  {author && (
+                    <Anchor
+                      component={Link}
+                      href={author.href}
+                      underline="hover"
+                      c="dimmed"
+                      data-testid="app-detail-author"
+                    >
+                      <Group gap={6} wrap="nowrap">
+                        <Avatar
+                          src={author.image ? getEdgeUrl(author.image, { width: 64 }) : undefined}
+                          alt=""
+                          radius="xl"
+                          size={20}
+                        >
+                          {author.username.charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Text c="dimmed" size="sm">
+                          by {author.username}
+                        </Text>
+                      </Group>
+                    </Anchor>
+                  )}
                   <Group gap="xs" mt={4}>
                     <Badge variant="light" color="gray" size="sm">
                       {detail.installCount.toLocaleString()} install

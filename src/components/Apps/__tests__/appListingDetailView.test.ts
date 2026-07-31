@@ -5,6 +5,7 @@ import {
   getOwnerEditHref,
   isEditableListingStatus,
 } from '~/components/Apps/appListingDetailView';
+import { getListingPreview } from '~/components/Apps/appListingPreview';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -21,6 +22,7 @@ function onsiteDetail(
   const { hasPage, appBlockId = 'blk-1', liveUrl = 'https://my-app.civit.ai', ...rest } = over;
   return {
     id: 'l1',
+    serialId: 1,
     slug: 'my-app',
     kind: 'onsite',
     name: 'My App',
@@ -46,6 +48,7 @@ function offsiteDetail(
   const { externalUrl = null, connectClientId = null, slug = 'ext-app' } = over;
   return {
     id: 'l2',
+    serialId: 2,
     slug,
     kind: 'offsite',
     name: 'Ext App',
@@ -72,12 +75,50 @@ describe('getDetailPrimaryAction — on-site', () => {
       external: false,
     });
   });
-  it('hasPage + !canOpenPage → Open live → the standalone liveUrl (no dead run link)', () => {
+  it('hasPage + !canOpenPage → points at the IN-PAGE preview; the "Open live" button is GONE', () => {
+    const action = getDetailPrimaryAction(
+      onsiteDetail({ hasPage: true, liveUrl: 'https://my-app.civit.ai' }),
+      { canOpenPage: false }
+    );
+    // The redundant off-site "Open live" button was removed now that the detail
+    // renders the app in-page (poster → click to activate).
+    expect(action.label).not.toBe('Open live');
+    expect(action.mode).not.toBe('visit');
+    // No external nav at all from this branch.
+    expect(action.external).toBe(false);
+    expect(action.href).toBeUndefined();
+    // …and it is not a dead end: it explicitly points at the preview.
+    expect(action.mode).toBe('info');
+    expect(action.note).toBeTruthy();
+  });
+
+  it('🔴 removing "Open live" does NOT strand the viewer — the pointer and the preview agree', () => {
+    // This is the invariant the removal hinges on: whenever the header claims a
+    // preview exists, `getListingPreview` must actually produce one (both derive
+    // from kindData.liveUrl through the same https guard). Exercised over the
+    // full on-site matrix so a future change to either side fails here.
+    for (const canOpenPage of [true, false]) {
+      for (const liveUrl of ['https://my-app.civit.ai', 'http://insecure.example']) {
+        const detail = onsiteDetail({ hasPage: true, liveUrl });
+        const action = getDetailPrimaryAction(detail, { canOpenPage });
+        const preview = getListingPreview(detail);
+        const pointsAtPreview = action.label === 'Live preview below';
+        if (pointsAtPreview) {
+          expect(preview, `claimed a preview for liveUrl=${liveUrl}`).not.toBeNull();
+        }
+        // And there is ALWAYS some way to use the app: an Open link, a preview,
+        // or (worst case) an informational affordance with a learn-more href.
+        const usable =
+          (action.mode === 'open' && !!action.href) || !!preview || !!action.href || !!action.note;
+        expect(usable, `stranded at canOpenPage=${canOpenPage} liveUrl=${liveUrl}`).toBe(true);
+      }
+    }
+  });
+
+  it('hasPage + canOpenPage still wins over the preview pointer (Open is the direct action)', () => {
     expect(
-      getDetailPrimaryAction(onsiteDetail({ hasPage: true, liveUrl: 'https://my-app.civit.ai' }), {
-        canOpenPage: false,
-      })
-    ).toEqual({ label: 'Open live', mode: 'visit', href: 'https://my-app.civit.ai', external: true });
+      getDetailPrimaryAction(onsiteDetail({ hasPage: true }), { canOpenPage: true }).mode
+    ).toBe('open');
   });
   it('hasPage + !canOpenPage + non-https liveUrl → info fallback (guard drops it)', () => {
     const action = getDetailPrimaryAction(

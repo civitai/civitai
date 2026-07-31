@@ -97,14 +97,32 @@ export default function AppPage(props: PageProps) {
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Record this ACTUAL run in the client-only recents store (localStorage), so
-  // the shared app-chrome "Recently run" menu can offer a 1-click return. Keyed
-  // by appBlockId (the store's stable de-dup id); `blockId` backs the
-  // `/apps/run/<blockId>` link and `name` is the display label. No icon URL is
-  // plumbed to this SSR page (PageProps carries none), so `iconUrl` is omitted —
-  // the menu falls back to a generic app icon. Fires once per mount; the store
-  // dedups so revisiting just moves the entry to the front.
+  // both the shared app-chrome "Recently run" menu AND the `/apps` store's
+  // "Recently opened" rail can offer a 1-click return. Keyed by appBlockId (the
+  // store's stable de-dup id).
+  //
+  // Fields, and why each is written:
+  //  - `blockId` — backs `/apps/run/<blockId>` (the chrome menu's link).
+  //  - `slug`    — backs `/apps/store-preview/<slug>` (the store rail's fallback
+  //    link). For an on-site app the AppListing slug IS the AppBlock `block_id`
+  //    (server-side single source: `app-listing-mapper.ts` → `slug: ab.blockId`),
+  //    which is also why this page's own `slug` prop is `page.blockId`.
+  //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
+  //    surface, so `hasPage` is true by construction; the rail uses it to decide
+  //    between re-opening the run route and the detail page.
+  // No icon URL is plumbed to this SSR page (PageProps carries none), so
+  // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
+  // generic app icon. Fires once per mount; the store dedups, so revisiting just
+  // moves the entry to the front.
   useEffect(() => {
-    recordRecentlyOpenedApp({ id: appBlockId, blockId, name: appName });
+    recordRecentlyOpenedApp({
+      id: appBlockId,
+      blockId,
+      slug: blockId,
+      kind: 'onsite',
+      hasPage: true,
+      name: appName,
+    });
   }, [appBlockId, blockId, appName]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
