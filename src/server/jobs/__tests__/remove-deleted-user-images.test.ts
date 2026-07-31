@@ -4,6 +4,9 @@ const {
   mockDbRead,
   mockDbWrite,
   mockDeleteImages,
+  mockQueueSearchIndex,
+  mockInvalidateExistence,
+  mockBustCachesForPosts,
   mockLogToAxiom,
   mockSafeError,
   mockSysRedis,
@@ -12,6 +15,9 @@ const {
   mockDbRead: { $queryRaw: vi.fn() },
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockDeleteImages: vi.fn(),
+  mockQueueSearchIndex: vi.fn(async () => undefined),
+  mockInvalidateExistence: vi.fn(async () => undefined),
+  mockBustCachesForPosts: vi.fn(async () => undefined),
   mockLogToAxiom: vi.fn(async () => undefined),
   mockSafeError: vi.fn((e: unknown) => ({
     message: (e as Error).message,
@@ -22,7 +28,14 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/services/image.service', () => ({ deleteImages: mockDeleteImages }));
+vi.mock('~/server/services/image.service', () => ({
+  deleteImages: mockDeleteImages,
+  queueImageSearchIndexUpdate: mockQueueSearchIndex,
+  invalidateManyImageExistence: mockInvalidateExistence,
+}));
+vi.mock('~/server/services/post.service', () => ({
+  bustCachesForPosts: mockBustCachesForPosts,
+}));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
   safeError: mockSafeError,
@@ -36,7 +49,8 @@ vi.mock('~/server/jobs/job', () => ({
   getJobDate: mockGetJobDate,
 }));
 
-import { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import {
   removeDeletedUserImages,
   CURSOR_START,
@@ -47,17 +61,26 @@ import {
 
 /**
  * The suite stands in a tiny in-memory Postgres for the job: `seed()` interprets each SQL
- * statement the job issues against the fixtures, including the `deletedAt` gates and both
- * cursor bounds. A restored user is therefore only protected if the job actually carries the
- * gate — dropping it makes the fixture hand back the rows and the restore tests fail.
+ * statement the job issues against the fixtures, including the `deletedAt` gates, the removal
+ * choice, the delete-queue trigger and both cursor bounds. A restored user is therefore only
+ * protected if the job actually carries the gate — dropping it makes the fixture hand back the
+ * rows and the restore tests fail.
  */
 type Fixture = {
   deletedAt: Date;
   images: number[];
-  /** `User.meta`, keyed as the job spells it; jsonb, so it can hold a value it cannot read. */
+  /** `User.meta` as the replica hands it back, keyed as the job spells it. */
   meta?: Record<string, string>;
-  /** Per-image `ingestion`; an id absent from here holds anything other than `Blocked`. */
+  /** `User.meta` as the primary holds it, when the two have not converged yet. */
+  primaryMeta?: Record<string, string>;
+  /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
+  /** Per-image `blockedFor`; an id absent from here holds NULL. */
+  blockedFor?: Record<number, string>;
+  /** Per-image `postId`; an id absent from here holds NULL. */
+  postIdOf?: Record<number, number>;
+  /** Image ids holding a `JobQueue(BlockedImageDelete)` row. */
+  jobQueue?: number[];
   /** Blocked by another writer in the window between the job's image read and its write. */
   blockAfterRead?: number[];
   posts?: number[];
@@ -67,64 +90,208 @@ type Fixture = {
   restoredAfterCheck?: boolean;
   /** Restored once this many image batches have cleared the job's in-batch freshness check. */
   restoreAfterBatches?: number;
+  /** Re-deleted as `grace` on the primary once this many in-batch checks have cleared. */
+  graceAfterBatches?: number;
 };
 
 let fixtures: Record<number, Fixture> = {};
 let cursorStore: Record<string, Date> = {};
 let cursorSets: Record<string, Date[]> = {};
 let imageLimits: number[] = [];
+let pagedImageIds: number[] = [];
 let deletedPostIds: number[] = [];
 let blockedUpdates: Record<string, unknown>[] = [];
 let batchChecks: Record<number, number> = {};
 
-/** The substring both the worklist and the block path use to exclude already-blocked rows. */
+/** The atom that keeps already-blocked rows out of a pass. */
 const SKIPS_BLOCKED = `ingestion <> 'Blocked'`;
+/** The atom that scopes a statement to rows that are already blocked. */
+const TAKES_BLOCKED = `ingestion = 'Blocked'`;
+/** The parenthesised form of the choice check on the destructive path. */
+const IMMEDIATE_PREDICATE = /\((u\.meta->>'[^']*' IS NULL OR u\.meta->>'[^']*' = '[^']*')\)/;
 
-const unblocked = (fixture: Fixture) =>
-  fixture.images.filter((id) => fixture.ingestion?.[id] !== 'Blocked');
+const AI_NOT_VERIFIED = 'AiNotVerified';
+
+const ingestionOf = (fixture: Fixture, id: number) => fixture.ingestion?.[id] ?? 'Scanned';
+const blockedForOf = (fixture: Fixture, id: number) => fixture.blockedFor?.[id] ?? null;
+
+/** The atom that pulls `AiNotVerified` rows back in so the purge job will accept them. */
+const takesAiNotVerified = (sql: string, values: unknown[]) =>
+  /"blockedFor" = \?/.test(sql) && values.includes(AI_NOT_VERIFIED);
+
+/**
+ * Reads the pass's own image predicate out of the statement rather than assuming one spelling, so
+ * dropping either atom in the job shows up as the fixture handing back the wrong set of rows.
+ */
+function pendingImages(sql: string, values: unknown[], fixture: Fixture) {
+  const skipsBlocked = sql.includes(SKIPS_BLOCKED);
+  const takesAi = takesAiNotVerified(sql, values);
+  return fixture.images.filter((id) => {
+    if (!skipsBlocked) return true;
+    if (ingestionOf(fixture, id) !== 'Blocked') return true;
+    return takesAi && blockedForOf(fixture, id) === AI_NOT_VERIFIED;
+  });
+}
+
+/**
+ * Answers the meta atoms of a predicate from a given `meta` map. Each atom is read down to the
+ * key it names and that key is what the fixture is asked for: the key is a bare literal on both
+ * sides of the app, so a rename that only lands here has to surface as a user the fixture reports
+ * no choice for.
+ */
+function metaHolds(condition: string, meta: Record<string, string> | undefined) {
+  return condition.split(/\s+OR\s+/).some((atom) => {
+    const key = /meta->>'([^']*)'/.exec(atom)?.[1];
+    const choice = key == null ? undefined : meta?.[key];
+    return atom.includes('IS NULL') ? choice == null : choice === /= '([^']*)'/.exec(atom)?.[1];
+  });
+}
 
 /**
  * Evaluates the worklist's mode expression instead of pattern-matching one accepted spelling of
  * it, so a `CASE` that normalizes the wrong way reads as the wrong mode rather than as no
- * normalization at all. Each atom is read down to the `meta` key it names and that key is what
- * the fixture is asked for: the key is a bare literal on both sides of the app, so a rename that
- * only lands here has to surface as a user the fixture reports no choice for.
+ * normalization at all.
  */
 function modeExpression(sql: string) {
   const branches = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(sql);
   if (!branches) throw new Error(`unrecognized mode expression: ${sql}`);
 
   const [, condition, whenTrue, whenFalse] = branches;
-  const atoms = condition.split(/\s+OR\s+/);
-  return (fixture: Fixture) => {
-    const holds = atoms.some((atom) => {
-      const key = /meta->>'([^']*)'/.exec(atom)?.[1];
-      const choice = key == null ? undefined : fixture.meta?.[key];
-      return atom.includes('IS NULL') ? choice == null : choice === /= '([^']*)'/.exec(atom)?.[1];
-    });
-    return holds ? whenTrue : whenFalse;
-  };
+  return (fixture: Fixture) => (metaHolds(condition, fixture.meta) ? whenTrue : whenFalse);
+}
+
+/** The primary-side statements re-read the choice; absent from the SQL means they do not. */
+function passesPrimaryChoice(sql: string, fixture: Fixture) {
+  const predicate = IMMEDIATE_PREDICATE.exec(sql)?.[1];
+  if (!predicate) return true;
+  return metaHolds(predicate, fixture.primaryMeta ?? fixture.meta);
+}
+
+function splitAssignments(body: string) {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of body) {
+    if (char === '(') depth++;
+    else if (char === ')') depth--;
+    if (char === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+    } else current += char;
+  }
+  parts.push(current);
+  return parts.map((part) => part.trim()).filter(Boolean);
 }
 
 /**
  * Reads the `SET` assignments back out of the statement — a literal off the SQL text, a `?` off
  * the parameter list — so the recorded row is what the job actually wrote rather than what the
- * test expects it to write.
+ * test expects it to write. The jsonb merge keeps its source expressions: they read the *old*
+ * row, so only the per-image applier can resolve them.
  */
 function parseSetClause(sql: string, params: unknown[]) {
   const body = sql.slice(sql.indexOf('SET ') + 4, sql.indexOf('WHERE'));
   const queue = [...params];
   const row: Record<string, unknown> = {};
-  for (const assignment of body.split(',')) {
-    const [column, value] = assignment.split('=').map((part) => part.trim());
-    row[column.replace(/"/g, '')] =
-      value === '?'
-        ? queue.shift()
-        : value === 'now()'
-        ? new Date()
-        : value.replace(/::.*$/, '').replace(/'/g, '');
+  for (const assignment of splitAssignments(body)) {
+    const split = assignment.indexOf('=');
+    const column = assignment.slice(0, split).trim().replace(/"/g, '');
+    const value = assignment.slice(split + 1).trim();
+
+    if (value === '?') row[column] = queue.shift();
+    else if (value === 'now()') row[column] = new Date();
+    else if (value === 'NULL') row[column] = null;
+    else if (value.startsWith('"metadata" || jsonb_build_object(')) {
+      const args = value.slice(value.indexOf('(') + 1, value.lastIndexOf(')')).split(',');
+      const merge: { key: string; source: string }[] = [];
+      for (let i = 0; i < args.length; i += 2) {
+        const key = args[i].trim();
+        merge.push({
+          key: key.startsWith('?') ? (queue.shift() as string) : key.replace(/'/g, ''),
+          source: args[i + 1].trim(),
+        });
+      }
+      row[column] = merge;
+    } else row[column] = value.replace(/::.*$/, '').replace(/'/g, '');
   }
   return row;
+}
+
+function resolveMetadata(
+  merge: { key: string; source: string }[],
+  fixture: Fixture,
+  id: number
+): Record<string, unknown> {
+  return Object.fromEntries(
+    merge.map(({ key, source }) => {
+      const column = source.replace(/::.*$/, '').replace(/"/g, '');
+      if (column === 'ingestion') return [key, ingestionOf(fixture, id)];
+      if (column === 'blockedFor') return [key, blockedForOf(fixture, id)];
+      throw new Error(`unhandled metadata source: ${source}`);
+    })
+  );
+}
+
+function enqueueBlockedDelete(fixture: Fixture, id: number) {
+  const queue = (fixture.jobQueue ??= []);
+  if (queue.includes(id)) return false;
+  queue.push(id);
+  return true;
+}
+
+/** Stands in for `trg_blocked_image_delete_queue`: an `ingestion` transition into Blocked only. */
+function fireBlockedDeleteTrigger(
+  fixture: Fixture,
+  id: number,
+  before: string,
+  row: Record<string, unknown>
+) {
+  if (row.ingestion !== 'Blocked' || before === 'Blocked') return;
+  if (row.blockedFor === AI_NOT_VERIFIED) return;
+  enqueueBlockedDelete(fixture, id);
+}
+
+function applyImageUpdate(sql: string, values: unknown[]) {
+  const joined = values.findIndex((v) => Array.isArray((v as { values?: number[] })?.values));
+  const ids = ((values[joined] as { values?: number[] })?.values ?? []) as number[];
+  const userId = values[joined + 1] as number;
+  const fixture = fixtures[userId];
+  if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
+
+  const row = parseSetClause(sql, values);
+  // Only the WHERE clause selects rows; the SET clause names the same columns.
+  const where = sql.slice(sql.indexOf('WHERE'));
+  const targets = ids.filter((id) => {
+    if (!fixture.images.includes(id)) return false;
+    const blocked = ingestionOf(fixture, id) === 'Blocked';
+    if (where.includes(TAKES_BLOCKED))
+      return (
+        blocked &&
+        (!takesAiNotVerified(where, values) || blockedForOf(fixture, id) === AI_NOT_VERIFIED)
+      );
+    if (where.includes(SKIPS_BLOCKED)) return !blocked;
+    return true;
+  });
+
+  const touched: { id: number; postId: number | null }[] = [];
+  for (const id of targets) {
+    const before = ingestionOf(fixture, id);
+    const recorded = { ...row };
+    if (Array.isArray(row.metadata))
+      recorded.metadata = resolveMetadata(
+        row.metadata as { key: string; source: string }[],
+        fixture,
+        id
+      );
+
+    if (typeof row.ingestion === 'string') (fixture.ingestion ??= {})[id] = row.ingestion;
+    if (typeof row.blockedFor === 'string') (fixture.blockedFor ??= {})[id] = row.blockedFor;
+    fireBlockedDeleteTrigger(fixture, id, before, recorded);
+
+    blockedUpdates.push({ id, ...recorded });
+    touched.push({ id, postId: fixture.postIdOf?.[id] ?? null });
+  }
+  return touched;
 }
 
 function seed(next: Record<number, Fixture>) {
@@ -156,8 +323,7 @@ function seed(next: Record<number, Fixture>) {
     const selectsPostOwners = sql.includes('FROM "Post" p WHERE p."userId" = u.id');
     // Like the bound comparisons, the mode predicates are read out of the SQL: dropping one in
     // the job makes the fixture hand back a row the job then mishandles, rather than hiding it.
-    const skipsBlockedImages = sql.includes(SKIPS_BLOCKED);
-    const skipsBlockedForGraceOnly = sql.includes(`m.mode = 'immediate' OR i.${SKIPS_BLOCKED}`);
+    const skipsBlockedForGraceOnly = sql.includes(`m.mode = 'immediate'`);
     const skipsGracePosts = /m\.mode = 'immediate'\s+AND EXISTS \(SELECT 1 FROM "Post"/.test(sql);
     const selectsMode = /SELECT u\.id, u\."deletedAt", m\.mode/.test(sql);
     const modeOf = modeExpression(sql);
@@ -170,9 +336,9 @@ function seed(next: Record<number, Fixture>) {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
           const images =
-            skipsBlockedImages && !(skipsBlockedForGraceOnly && immediate)
-              ? unblocked(fixture)
-              : fixture.images;
+            skipsBlockedForGraceOnly && immediate
+              ? fixture.images
+              : pendingImages(sql, values, fixture);
           const posts = skipsGracePosts && !immediate ? [] : fixture.posts ?? [];
           return (
             (selectsImageOwners && images.length > 0) || (selectsPostOwners && posts.length > 0)
@@ -190,6 +356,9 @@ function seed(next: Record<number, Fixture>) {
   mockDbWrite.$queryRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = strings.join('?');
+
+      if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
+
       const userId = values[0] as number;
       const fixture = fixtures[userId];
       const gated = sql.includes('u."deletedAt" IS NOT NULL');
@@ -199,24 +368,31 @@ function seed(next: Record<number, Fixture>) {
         if (fixture.restoredAfterCheck) fixture.restored = true;
         return Promise.resolve([state]);
       }
-      if (sql.includes('"hasUnblocked"')) {
-        const images = sql.includes(SKIPS_BLOCKED) ? unblocked(fixture) : fixture.images;
-        return Promise.resolve([{ hasUnblocked: images.length > 0 }]);
-      }
+      if (sql.includes('"hasPending"'))
+        return Promise.resolve([{ hasPending: pendingImages(sql, values, fixture).length > 0 }]);
       if (sql.includes('"stillDeleted"')) {
         const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
         if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
           fixture.restored = true;
-        const state = { stillDeleted: !fixture.restored };
+        if (fixture.graceAfterBatches != null && checks > fixture.graceAfterBatches)
+          fixture.primaryMeta = { imageRemoval: 'grace' };
+        const state = {
+          stillDeleted: !fixture.restored && passesPrimaryChoice(sql, fixture),
+        };
         if (fixture.restoredAfterCheck) fixture.restored = true;
         return Promise.resolve([state]);
       }
       if (sql.includes('FROM "Image" i')) {
-        const limit = values[1] as number;
+        const limit = values[values.length - 1] as number;
         imageLimits.push(limit);
-        if (gated && fixture.restored) return Promise.resolve([]);
-        const images = sql.includes(SKIPS_BLOCKED) ? unblocked(fixture) : fixture.images;
-        const page = images.slice(0, limit).map((id) => ({ id }));
+        if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
+          return Promise.resolve([]);
+        const images = pendingImages(sql, values, fixture);
+        const page = images.slice(0, limit).map((id) => ({
+          id,
+          wasBlocked: ingestionOf(fixture, id) === 'Blocked',
+        }));
+        pagedImageIds.push(...page.map((row) => row.id));
         for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
         return Promise.resolve(page);
       }
@@ -230,26 +406,26 @@ function seed(next: Record<number, Fixture>) {
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = strings.join('?');
-      // The id list is the only `Prisma.join` in either statement, and the owner check follows it.
+
+      if (sql.includes('INSERT INTO "JobQueue"')) {
+        const userId = values[0] as number;
+        const fixture = fixtures[userId];
+        if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
+          return Promise.resolve(0);
+        const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
+        const eligible = fixture.images.filter(
+          (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
+        );
+        return Promise.resolve(eligible.filter((id) => enqueueBlockedDelete(fixture, id)).length);
+      }
+
+      // The id list is the only `Prisma.join` in the statement, and the owner check follows it.
       const joined = values.findIndex((v) => Array.isArray((v as { values?: number[] })?.values));
       const ids = ((values[joined] as { values?: number[] })?.values ?? []) as number[];
       const userId = values[joined + 1] as number;
       const fixture = fixtures[userId];
       if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
-
-      if (sql.includes('UPDATE "Image"')) {
-        const row = parseSetClause(sql, values);
-        const targets = ids.filter(
-          (id) =>
-            fixture.images.includes(id) &&
-            (!sql.includes(SKIPS_BLOCKED) || fixture.ingestion?.[id] !== 'Blocked')
-        );
-        for (const id of targets) {
-          (fixture.ingestion ??= {})[id] = String(row.ingestion);
-          blockedUpdates.push({ id, ...row });
-        }
-        return Promise.resolve(targets.length);
-      }
+      if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -273,6 +449,7 @@ function seedUser({
   posts = 0,
   alreadyBlocked = 0,
   blockedAfterRead = 0,
+  postId,
   deletedAt = NEWER,
   ...restoreHooks
 }: {
@@ -282,6 +459,7 @@ function seedUser({
   posts?: number;
   alreadyBlocked?: number;
   blockedAfterRead?: number;
+  postId?: number;
   deletedAt?: Date;
 } & Pick<Fixture, 'restored' | 'restoredAfterCheck' | 'restoreAfterBatches'>) {
   seed({
@@ -290,6 +468,10 @@ function seedUser({
       meta: imageRemoval ? { imageRemoval } : undefined,
       images: ids(images),
       ingestion: Object.fromEntries(ids(alreadyBlocked).map((imageId) => [imageId, 'Blocked'])),
+      blockedFor: Object.fromEntries(ids(alreadyBlocked).map((imageId) => [imageId, 'moderated'])),
+      postIdOf: postId
+        ? Object.fromEntries(ids(images).map((imageId) => [imageId, postId]))
+        : undefined,
       blockAfterRead: ids(blockedAfterRead, alreadyBlocked),
       posts: ids(posts, 900),
       ...restoreHooks,
@@ -300,6 +482,7 @@ function seedUser({
 const blockedRows = () => blockedUpdates;
 const blockedImageIds = () => blockedUpdates.map((row) => row.id);
 const remainingPosts = (userId: number) => fixtures[userId].posts ?? [];
+const queuedForDelete = (userId: number) => [...(fixtures[userId].jobQueue ?? [])].sort();
 
 const run = (checkIfCanceled: () => void = () => undefined) =>
   (removeDeletedUserImages as unknown as (ctx: { checkIfCanceled: () => void }) => Promise<any>)({
@@ -322,6 +505,7 @@ beforeEach(() => {
   cursorStore = {};
   cursorSets = {};
   imageLimits = [];
+  pagedImageIds = [];
   deletedPostIds = [];
   blockedUpdates = [];
   batchChecks = {};
@@ -748,6 +932,16 @@ describe('grace mode', () => {
     expect(blockedRows()[0]).toMatchObject({ updatedAt: NOW });
   });
 
+  it('clears needsReview the way the moderator block path does', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 1 });
+
+    await run();
+
+    // Left set, these pile up in moderator review queues for an account that no longer exists,
+    // and a later unblock branches on it for poi/minor handling.
+    expect(blockedRows()[0]).toHaveProperty('needsReview', null);
+  });
+
   it('leaves a grace user posts alone', async () => {
     seedUser({ id: 7, imageRemoval: 'grace', images: 10, posts: 5 });
 
@@ -820,7 +1014,6 @@ describe('grace mode', () => {
 
     // The gate on the UPDATE keeps the writes correct on its own; re-reading between batches is
     // what stops the run charging its whole budget to statements that now affect nothing.
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
     expect(result.blockedImages).toBe(100);
   });
 
@@ -861,5 +1054,190 @@ describe('grace mode', () => {
     const result = await run();
 
     expect(result.blockedImages).toBe(100);
+  });
+});
+
+describe('grace mode search index and caches', () => {
+  it('removes the blocked images from the search index', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+
+    await run();
+
+    // The incremental pull filters on `ingestion = 'Scanned'`, so a bare UPDATE leaves the row
+    // indexed and findable in site search until the next full reindex.
+    expect(mockQueueSearchIndex).toHaveBeenCalledWith({
+      ids: ids(10),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(mockInvalidateExistence).toHaveBeenCalledWith(ids(10));
+  });
+
+  it('busts the caches of the posts that held them', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, postId: 900 });
+
+    await run();
+
+    expect(mockBustCachesForPosts).toHaveBeenCalledWith([900]);
+  });
+
+  it('propagates only the rows the update actually changed', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, blockedAfterRead: 2 });
+
+    await run();
+
+    // Propagating the fetched ids rather than the updated ones would evict two images a
+    // concurrent writer owns from the index on this account's behalf.
+    expect(mockQueueSearchIndex).toHaveBeenCalledWith({
+      ids: [3, 4, 5, 6, 7, 8, 9, 10],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  });
+
+  it('does not call the post cache bust with an empty list', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+
+    await run();
+
+    expect(mockBustCachesForPosts).not.toHaveBeenCalled();
+  });
+});
+
+describe('grace mode delete queue', () => {
+  it('queues the images it blocks through the delete-queue trigger', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 3 });
+
+    await run();
+
+    expect(queuedForDelete(7)).toEqual([1, 2, 3]);
+  });
+
+  it('queues a blocked image the trigger never enqueued', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1, 2],
+        ingestion: { 1: 'Blocked' },
+        blockedFor: { 1: 'moderated' },
+      },
+    });
+
+    await run();
+
+    // Blocked inside the week the trigger migration's backfill excluded, so it holds no queue
+    // row — and remove-blocked-images reads nothing else. Left alone it is retained forever
+    // while the immediate branch, which has no ingestion predicate, deletes it.
+    expect(queuedForDelete(7)).toEqual([1, 2]);
+  });
+
+  it('re-points an AiNotVerified block so the purge job will accept it', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1],
+        ingestion: { 1: 'Blocked' },
+        blockedFor: { 1: AI_NOT_VERIFIED },
+      },
+    });
+
+    const result = await run();
+
+    // remove-blocked-images refuses `AiNotVerified` outright and evicts its queue rows as stale.
+    expect(result.blockedImages).toBe(1);
+    expect(blockedRows()[0]).toMatchObject({ blockedFor: 'moderated', updatedAt: NOW });
+    expect(queuedForDelete(7)).toEqual([1]);
+  });
+
+  it('does not arm the queue for a user restored mid-run', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, restoredAfterCheck: true });
+
+    await run();
+
+    expect(queuedForDelete(7)).toEqual([]);
+  });
+});
+
+describe('grace mode restore breadcrumbs', () => {
+  it('records the ingestion it overwrote', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1],
+        ingestion: { 1: 'Pending' },
+      },
+    });
+
+    await run();
+
+    // Restoring these to a flat `Scanned` would promote an image past the scan it never had.
+    expect(blockedRows()[0].metadata).toEqual({ [PRIOR_INGESTION_KEY]: 'Pending' });
+  });
+
+  it('records the block reason it overwrote when re-pointing', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1],
+        ingestion: { 1: 'Blocked' },
+        blockedFor: { 1: AI_NOT_VERIFIED },
+      },
+    });
+
+    await run();
+
+    expect(blockedRows()[0].metadata).toEqual({
+      [PRIOR_INGESTION_KEY]: 'Blocked',
+      [PRIOR_BLOCKED_FOR_KEY]: AI_NOT_VERIFIED,
+    });
+  });
+});
+
+describe('removal choice re-read on the destructive path', () => {
+  it('keeps the images of a user whose choice has not replicated yet', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(10),
+        posts: [900],
+        primaryMeta: { imageRemoval: 'grace' },
+      },
+    });
+
+    const result = await run();
+
+    // The worklist reads the choice off a replica; a restore plus a re-delete with a different
+    // choice inside the replication window resolves to the stale one, and the stale direction
+    // that hurts is `immediate`.
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(result.deletedImages).toBe(0);
+    // Carried on the JOIN rather than only on the per-batch re-read: an id list the run is not
+    // allowed to act on should never be built in the first place.
+    expect(pagedImageIds).toEqual([]);
+  });
+
+  it('gates the post delete on the choice as well as on deletedAt', async () => {
+    seed({
+      7: { deletedAt: NEWER, images: [], posts: [900], primaryMeta: { imageRemoval: 'grace' } },
+    });
+
+    const result = await run();
+
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(0);
+  });
+
+  it('stops deleting when the choice flips to grace between image batches', async () => {
+    mockSysRedis.get.mockResolvedValue('1000');
+    seed({ 7: { deletedAt: NEWER, images: ids(300), graceAfterBatches: 1 } });
+
+    const result = await run();
+
+    // The fetched id list is as stale as the read that produced it; without the re-read the
+    // flip still costs the account every id already fetched.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(1);
+    expect(result.deletedImages).toBe(100);
   });
 });

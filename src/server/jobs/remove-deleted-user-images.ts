@@ -1,10 +1,16 @@
 import { Prisma } from '@prisma/client';
-import { chunk } from 'lodash-es';
-import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { chunk, uniq } from 'lodash-es';
+import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { deleteImages } from '~/server/services/image.service';
+import {
+  deleteImages,
+  invalidateManyImageExistence,
+  queueImageSearchIndexUpdate,
+} from '~/server/services/image.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
+import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { createJob, getJobDate } from './job';
 
 export const USERS_PER_RUN = 50;
@@ -50,10 +56,29 @@ type UserDrain = {
   error?: unknown;
 };
 
+type TouchedImage = { id: number; postId: number | null };
+
 async function isStillDeleted(userId: number) {
   const [row] = await dbWrite.$queryRaw<{ stillDeleted: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL
+    ) AS "stillDeleted"
+  `;
+  return row.stillDeleted;
+}
+
+/**
+ * The choice is read off a replica by the worklist while every gate on the destructive path is
+ * read off the primary. Re-reading it here — and on every gate below — makes a stale read resolve
+ * to the branch that keeps the images rather than the one that destroys them.
+ */
+async function isStillMarkedForDeletion(userId: number) {
+  const [row] = await dbWrite.$queryRaw<{ stillDeleted: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "User" u
+      WHERE u.id = ${userId}
+        AND u."deletedAt" IS NOT NULL
+        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
     ) AS "stillDeleted"
   `;
   return row.stillDeleted;
@@ -73,7 +98,9 @@ async function drainUser(
     const images = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT i.id
       FROM "Image" i
-      JOIN "User" u ON u.id = i."userId" AND u."deletedAt" IS NOT NULL
+      JOIN "User" u ON u.id = i."userId"
+        AND u."deletedAt" IS NOT NULL
+        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
       WHERE i."userId" = ${userId}
       LIMIT ${budget}
     `;
@@ -86,7 +113,7 @@ async function drainUser(
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       // The id list is only as fresh as the fetch above, and the delete below is by id: without
       // a re-read a restore landing mid-drain still costs the account every id already fetched.
-      if (!(await isStillDeleted(userId)))
+      if (!(await isStillMarkedForDeletion(userId)))
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
       const deleted = await deleteImages(batch);
@@ -116,7 +143,12 @@ async function drainUser(
         DELETE FROM "Post"
         WHERE id IN (${Prisma.join(batch)})
           AND "userId" = ${userId}
-          AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+          AND EXISTS (
+            SELECT 1 FROM "User" u
+            WHERE u.id = ${userId}
+              AND u."deletedAt" IS NOT NULL
+              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+          )
       `;
     }
 
@@ -133,6 +165,42 @@ async function drainUser(
   }
 }
 
+/**
+ * A bare UPDATE leaves the row in the incremental index, which pulls on `ingestion = 'Scanned'`
+ * and so skips a blocked row rather than removing it — the image stays findable in site search
+ * until a full reindex. Mirrors `handleBlockImages`.
+ */
+async function propagateBlock(touched: TouchedImage[]) {
+  if (!touched.length) return;
+  const ids = touched.map((x) => x.id);
+  const postIds = uniq(touched.map((x) => x.postId).filter((id): id is number => id != null));
+
+  await Promise.all([
+    queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
+    invalidateManyImageExistence(ids),
+  ]);
+  if (postIds.length) await bustCachesForPosts(postIds);
+}
+
+/**
+ * `trg_blocked_image_delete_queue` only fires on an `ingestion` transition, so the rows this pass
+ * re-pointed off `AiNotVerified` carry no queue row — and neither do rows blocked in the week the
+ * trigger migration's backfill deliberately excluded. `remove-blocked-images` reads nothing but
+ * the queue, so without this they are retained forever on an account that asked to be deleted.
+ */
+async function queueBlockedImagesForDelete(userId: number) {
+  await dbWrite.$executeRaw`
+    INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+    SELECT i.id, 'Image'::"EntityType", 'BlockedImageDelete'::"JobQueueType"
+    FROM "Image" i
+    WHERE i."userId" = ${userId}
+      AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
+      AND i."blockedFor" IS DISTINCT FROM ${BlockedReason.AiNotVerified}
+      AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+    ON CONFLICT DO NOTHING
+  `;
+}
+
 async function blockUserImages(
   userId: number,
   budget: number,
@@ -142,19 +210,19 @@ async function blockUserImages(
   let budgetUsed = 0;
 
   try {
-    const images = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT i.id
+    const images = await dbWrite.$queryRaw<{ id: number; wasBlocked: boolean }[]>`
+      SELECT i.id, i.ingestion = 'Blocked'::"ImageIngestionStatus" AS "wasBlocked"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId" AND u."deletedAt" IS NOT NULL
       WHERE i."userId" = ${userId}
-        AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+        AND (
+          i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+          OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+        )
       LIMIT ${budget}
     `;
 
-    for (const batch of chunk(
-      images.map((i) => i.id),
-      DELETE_BATCH_SIZE
-    )) {
+    for (const batch of chunk(images, DELETE_BATCH_SIZE)) {
       if (isCanceled())
         return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: true };
       // The gate on the UPDATE keeps a restore from being written over; this keeps the run from
@@ -162,35 +230,74 @@ async function blockUserImages(
       if (!(await isStillDeleted(userId)))
         return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false };
 
-      // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it — and it is the
-      // clock remove-blocked-images counts the `moderated` retention window from, so restamping
-      // an already-blocked row would push its purge out another 7 days.
-      blockedImages += await dbWrite.$executeRaw`
-        UPDATE "Image"
-        SET ingestion = 'Blocked'::"ImageIngestionStatus",
-            "nsfwLevel" = ${NsfwLevel.Blocked},
-            "blockedFor" = ${BlockedReason.Moderated},
-            "updatedAt" = now()
-        WHERE id IN (${Prisma.join(batch)})
-          AND "userId" = ${userId}
-          AND ingestion <> 'Blocked'::"ImageIngestionStatus"
-          AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
-      `;
+      const hide = batch.filter((i) => !i.wasBlocked).map((i) => i.id);
+      const repoint = batch.filter((i) => i.wasBlocked).map((i) => i.id);
+      const touched: TouchedImage[] = [];
+
+      if (hide.length) {
+        // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it — and it is the
+        // clock remove-blocked-images counts the `moderated` retention window from, so restamping
+        // an already-blocked row would push its purge out another 7 days.
+        touched.push(
+          ...(await dbWrite.$queryRaw<TouchedImage[]>`
+            UPDATE "Image"
+            SET ingestion = 'Blocked'::"ImageIngestionStatus",
+                "nsfwLevel" = ${NsfwLevel.Blocked},
+                "blockedFor" = ${BlockedReason.Moderated},
+                "needsReview" = NULL,
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
+                "updatedAt" = now()
+            WHERE id IN (${Prisma.join(hide)})
+              AND "userId" = ${userId}
+              AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+              AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+            RETURNING id, "postId"
+          `)
+        );
+      }
+
+      if (repoint.length) {
+        // remove-blocked-images refuses `AiNotVerified` and evicts its queue rows as stale, so a
+        // grace account would keep these forever while an immediate one deletes them.
+        touched.push(
+          ...(await dbWrite.$queryRaw<TouchedImage[]>`
+            UPDATE "Image"
+            SET "blockedFor" = ${BlockedReason.Moderated},
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "updatedAt" = now()
+            WHERE id IN (${Prisma.join(repoint)})
+              AND "userId" = ${userId}
+              AND ingestion = 'Blocked'::"ImageIngestionStatus"
+              AND "blockedFor" = ${BlockedReason.AiNotVerified}
+              AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+            RETURNING id, "postId"
+          `)
+        );
+      }
+
+      blockedImages += touched.length;
       budgetUsed += batch.length;
+      await propagateBlock(touched);
     }
 
-    const [state] = await dbWrite.$queryRaw<{ hasUnblocked: boolean }[]>`
+    const [state] = await dbWrite.$queryRaw<{ hasPending: boolean }[]>`
       SELECT EXISTS (
         SELECT 1 FROM "Image" i
-        WHERE i."userId" = ${userId} AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-      ) AS "hasUnblocked"
+        WHERE i."userId" = ${userId}
+          AND (
+            i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+            OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+          )
+      ) AS "hasPending"
     `;
+
+    if (!state.hasPending) await queueBlockedImagesForDelete(userId);
 
     return {
       deletedImages: 0,
       blockedImages,
       budgetUsed,
-      drained: !state.hasUnblocked,
+      drained: !state.hasPending,
       canceled: false,
     };
   } catch (error) {
@@ -286,9 +393,9 @@ export const removeDeletedUserImages = createJob(
 
     // An absent or 'immediate' choice resolves to deletion and anything else to grace: a value
     // we cannot read should cost storage rather than the images. A grace user then has work only
-    // while they own an unblocked image — their posts leave at day 7 with CleanIfEmpty — while an
-    // immediate user still matches on any image, or an account left holding only blocked ones
-    // would drop out of the worklist with nothing else to sweep it.
+    // while they own an image the purge pipeline would not take — their posts leave at day 7 with
+    // CleanIfEmpty — while an immediate user still matches on any image, or an account left
+    // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
@@ -304,7 +411,11 @@ export const removeDeletedUserImages = createJob(
           EXISTS (
             SELECT 1 FROM "Image" i
             WHERE i."userId" = u.id
-              AND (m.mode = 'immediate' OR i.ingestion <> 'Blocked'::"ImageIngestionStatus")
+              AND (
+                m.mode = 'immediate'
+                OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+                OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+              )
           )
           OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
         )
@@ -341,7 +452,11 @@ export const removeDeletedUserImages = createJob(
             EXISTS (
               SELECT 1 FROM "Image" i
               WHERE i."userId" = u.id
-                AND (m.mode = 'immediate' OR i.ingestion <> 'Blocked'::"ImageIngestionStatus")
+                AND (
+                  m.mode = 'immediate'
+                  OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+                  OR i."blockedFor" = ${BlockedReason.AiNotVerified}
+                )
             )
             OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
           )
