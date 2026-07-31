@@ -15,7 +15,12 @@
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
-  import { feeToRatio, formatFeeRatio, FEE_IMAGE_OPTIONS, DEFAULT_FEE_IMAGES } from '$lib/monetization/fee';
+  import {
+    feeToRatio,
+    formatFeeRatio,
+    FEE_IMAGE_OPTIONS,
+    DEFAULT_FEE_IMAGES,
+  } from '$lib/monetization/fee';
 
   // Bulk licensing-fee bar (sibling of PaidAccessBulkBar). Owns the fee inputs + confirm dialog; the
   // caller owns the shared `selected` set and the version list / checkboxes.
@@ -25,12 +30,15 @@
     suggestedFee,
     cancelHref,
     onSelectAll,
+    feeCap,
   }: {
     matchingVersionIds: number[];
     selected: SvelteSet<number>;
     suggestedFee: number | undefined;
     cancelHref: string;
     onSelectAll: (ids: number[]) => void;
+    /** Strictest per-image fee cap across the selection — one fee is applied to every picked version. */
+    feeCap: number;
   } = $props();
 
   let bulkBuzz = $state<number | undefined>(1);
@@ -39,8 +47,7 @@
   let form = $state<HTMLFormElement>();
 
   const bulkEnhance =
-    () =>
-    async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
       await event.update({ reset: false });
       if (event.result.type === 'success') {
         const n = Number(event.result.data?.updated ?? 0);
@@ -71,11 +78,18 @@
   {#if selected.size > 0}
     <Button variant="outline" size="sm" onclick={() => selected.clear()}>Clear</Button>
   {/if}
-  <form bind:this={form} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
+  <form
+    bind:this={form}
+    method="POST"
+    action="?/bulkSetFee"
+    use:enhance={bulkEnhance}
+    class="contents"
+  >
     <input type="hidden" name="versionIds" value={[...selected].join(',')} />
     <NumberInput
       name="buzz"
       min={0}
+      max={feeCap * Number(bulkImages)}
       bind:value={bulkBuzz}
       placeholder="Buzz"
       aria-label="Buzz (leave empty to clear the fee)"
@@ -84,7 +98,13 @@
     />
     <span class="text-sm text-dark-1">⚡ per</span>
     <input type="hidden" name="images" value={bulkImages} />
-    <Select.Root type="single" value={bulkImages} onValueChange={(v: string) => { if (v) bulkImages = v; }}>
+    <Select.Root
+      type="single"
+      value={bulkImages}
+      onValueChange={(v: string) => {
+        if (v) bulkImages = v;
+      }}
+    >
       <Select.Trigger size="sm" class="w-16 text-white" aria-label="Generations">
         {bulkImages}
       </Select.Trigger>
@@ -98,7 +118,8 @@
     <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
       Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
     </Button>
-    <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button>
+    <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button
+    >
     {#if suggestedFee !== undefined}
       {@const sr = feeToRatio(suggestedFee)}
       <button
@@ -119,9 +140,12 @@
 <AlertDialog bind:open={showConfirm}>
   <AlertDialogContent>
     <AlertDialogHeader>
-      <AlertDialogTitle>Apply fee to {selected.size} version{selected.size === 1 ? '' : 's'}?</AlertDialogTitle>
+      <AlertDialogTitle
+        >Apply fee to {selected.size} version{selected.size === 1 ? '' : 's'}?</AlertDialogTitle
+      >
       <AlertDialogDescription>
-        This changes what creators are charged to generate with these versions. An empty value clears the fee.
+        This changes what creators are charged to generate with these versions. An empty value
+        clears the fee.
       </AlertDialogDescription>
     </AlertDialogHeader>
     <AlertDialogFooter>

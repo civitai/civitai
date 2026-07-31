@@ -83,7 +83,11 @@ export function dayDiff(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 }
 
-const cmpMonthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const cmpMonthFmt = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
 export type CompareBaseline = { key: string; label: string; range: DateRange };
 
 /** The calendar month containing today. The earnings + analytics pages are month-primary: the whole app compares
@@ -94,7 +98,11 @@ export function currentMonthRange(today = new Date()): DateRange {
 
 /** Parse ?from&to into a **calendar-month** range — snapping to the month that contains `from`, so even a stale
  *  rolling-window URL resolves to a clean month. Falls back to the current month when absent/invalid. */
-export function parseMonthRange(fromParam: string | null, _toParam: string | null, today = new Date()): DateRange {
+export function parseMonthRange(
+  fromParam: string | null,
+  _toParam: string | null,
+  today = new Date()
+): DateRange {
   if (fromParam && ISO_RE.test(fromParam)) {
     const d = new Date(`${fromParam}T00:00:00Z`);
     if (!Number.isNaN(d.getTime())) return monthRange(d.getUTCFullYear(), d.getUTCMonth());

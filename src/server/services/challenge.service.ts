@@ -26,6 +26,7 @@ import {
   recordChallengeVoided,
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 import {
   ChallengeParticipation,
@@ -107,6 +108,10 @@ import {
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
+import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
@@ -2569,9 +2574,41 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         })
         .filter(isDefined);
 
-      // Create ChallengeWinner records (idempotent via P2002 handling)
+      // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+      // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
+      // one creator on two places. That creator has at most one `ChallengeWinner` row to be paid
+      // for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before the
+      // create loop, rather than at the payout: it keeps the duplicate from conflicting against the
+      // row its own twin just inserted, which would otherwise fire the place-divergence warning and
+      // counter for an anomaly that is not a re-pick at all. (Parity with the cron path.)
+      const { winners: dedupedWinners, dropped: droppedWinners } =
+        dedupeWinnersForPayout(winningEntries);
+      if (droppedWinners.length) {
+        winningEntries = dedupedWinners;
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-duplicate-pick',
+          message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
+          challengeId,
+          droppedUserIds: droppedWinners.map((entry) => entry.userId),
+          droppedPlaces: droppedWinners.map((entry) => entry.position),
+        }).catch(() => undefined);
+        recordChallengeWinnerDuplicatePick({
+          source: challenge.source,
+          count: droppedWinners.length,
+          origin: 'caller',
+        });
+      }
+
+      // Create ChallengeWinner records, then pay the placement that is PERSISTED rather than the
+      // one just picked. A user already recorded as a winner of this challenge cannot get a second
+      // row — (challengeId, userId) is unique, so the insert conflicts and the stored row keeps its
+      // original place. Paying the freshly-picked place would key the payout to a different
+      // externalTransactionId than the one already settled at the stored place and mint a second
+      // prize. (Parity with the cron completion path.)
+      const reconciledEntries: typeof winningEntries = [];
       for (const entry of winningEntries) {
-        await createChallengeWinner({
+        const persisted = await createChallengeWinner({
           challengeId,
           userId: entry.userId,
           imageId: entry.imageId!, // always non-null on fresh winner path
@@ -2580,7 +2617,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
           reason: entry.reason ?? undefined,
         });
+        reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
       }
+      winningEntries = reconciledEntries;
       log('ChallengeWinner records created');
     }
 
@@ -2588,25 +2627,16 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
     // stranded the collected green pool for green challenges. Deterministic externalTransactionId
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId,
-          title: challenge.title,
-          buzzType: challenge.buzzType,
-          winners: winningEntries,
-        })
-      )
-    );
-    log('Prizes sent');
-
-    // Economy telemetry: total winner-prize Buzz paid this completion (paid in the challenge's
-    // stored currency). Entry-participation prizes below are a separate blue-Buzz reward, not counted.
-    recordChallengePrizePaidBuzz({
-      source: challenge.source,
+    // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
+    // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId,
+      title: challenge.title,
       buzzType: challenge.buzzType,
-      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+      winners: winningEntries,
     });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
+    log('Prizes sent');
 
     // Send entry participation prizes to all eligible users
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
@@ -2701,6 +2731,38 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
     log('Challenge status updated to Completed');
 
+    // Economy + funnel telemetry, emitted TOGETHER immediately after the Completed write.
+    //
+    // Why not at the payout call above (where the prize emit used to live): everything between the
+    // payout and this write is awaited and throwable (entry-prize `createBuzzTransactionMany`,
+    // `createNotification`, `logToAxiom`) and the catch below re-throws, leaving the challenge in
+    // `Completing`. `resetStuckCompletingChallenges` then flips it back to `Active`, the scheduled
+    // job claims it, takes the `existingWinners` branch and re-issues the same (already-settled,
+    // deterministic-id) payout before writing Completed and emitting. An emit at the payout site
+    // would count that Buzz once here and again there — one payout, two increments.
+    //
+    // Why the completed emit moved up here too (it used to sit after the winner-notification loop):
+    // a throw in that loop suppressed the completed emit while the prize emit had already fired, so
+    // the two counters silently diverged on this path. The challenge IS completed once this write
+    // lands — the notification loop is explicitly the non-critical tail — so anchoring both emits to
+    // the same successful write is the placement that makes them consistent by construction, and it
+    // matches the scheduled-job path. Observable consequence, deliberately accepted:
+    // `challenge_completed_total` now also counts a completion whose winner notifications threw.
+    // That completion is real and permanent (status is already Completed, so the time-based
+    // Completing reset can never retry it and the count would otherwise be lost forever), and both
+    // helpers are never-throw no-ops for business logic, so nothing outside telemetry changes.
+    //
+    // Prize amount is Buzz ATTEMPTED for winner prizes, not confirmed-settled:
+    // `createBuzzTransactionMany` silently drops any non-success, non-conflict result (e.g.
+    // insufficientFunds) from both result arrays, so a leg that never moved money is invisible here
+    // and is still counted. Entry-participation prizes are a separate blue-Buzz reward, not counted.
+    recordChallengeCompleted({ source: challenge.source });
+    recordChallengePrizePaidBuzz({
+      source: challenge.source,
+      buzzType: challenge.buzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
+
     // Notify winners (non-critical, last)
     for (const entry of winningEntries) {
       await createNotification({
@@ -2726,7 +2788,6 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
     log('Winners notified');
 
-    recordChallengeCompleted({ source: challenge.source });
     return { success: true, winnersCount: winningEntries.length };
   } catch (error) {
     // On failure, challenge stays in 'Completing' for recovery to handle

@@ -15,8 +15,17 @@
     class?: string;
   };
 
-  let { src, name, type, thumbnailUrl, threshold, muted, alt, class: className, ...options }: Props =
-    $props();
+  let {
+    src,
+    name,
+    type,
+    thumbnailUrl,
+    threshold,
+    muted,
+    alt,
+    class: className,
+    ...options
+  }: Props = $props();
 
   const resolved = $derived(getInferredMediaType(src, { name, type }));
 </script>

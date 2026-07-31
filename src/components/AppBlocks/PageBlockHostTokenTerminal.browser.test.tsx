@@ -1,0 +1,363 @@
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { useState } from 'react';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+
+/**
+ * W10 run page — MID-SESSION credential loss.
+ *
+ * 🔴 THE DEFECT. The `tokenError` effect only transitioned a host still in
+ * `loading`. So a token that died AFTER the block went `ready` did nothing at
+ * all: the host stayed `ready` holding nothing, the `TOKEN_REFRESH` push
+ * early-returns on `!token`, and the block kept its now-dead credential and
+ * silently 401'd every call — no signal to the user, none to the platform.
+ *
+ * 🔴 THE FIX IS DELIBERATELY GATED ON A *SETTLED* FAILURE (`tokenTerminal`), not
+ * on a bare `tokenError`. `useBlockToken` now retries a failed refresh on a
+ * bounded backoff and KEEPS a still-valid token while it does, so a transient
+ * blip must never reach here. Escalating on `tokenError` would rip a working app
+ * out from under the user for a two-second network hiccup — trading a silent
+ * failure for a louder, more destructive one.
+ *
+ * 🔴 AND IT MUST NOT DOUBLE-COUNT. PR #3480 established the contract: ONE beacon
+ * per host MOUNT, reporting the outcome the host settles on. A page that reached
+ * `ready` already emitted its `ok`; escalating later must emit nothing further.
+ *
+ * This suite renders the REAL host with REAL hooks and REAL timers, mirroring
+ * PageBlockHostAutoRetry — only the ambient tRPC client and useCurrentUser are
+ * stubbed (the network/session Context the offline scaffold can't provide, NOT
+ * the condition under test).
+ */
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+vi.mock('~/utils/trpc', () => ({
+  // FeatureFlagsProvider statically imports this; a wholesale module mock MUST
+  // re-declare it or the ESM link fails.
+  setTrpcBatchingEnabled: vi.fn(),
+  trpc: {
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    blocks: {
+      submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
+    apps: {
+      shared: {
+        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
+      storage: {
+        set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
+    },
+    useUtils: () => ({
+      apps: {
+        shared: {
+          list: { fetch: vi.fn() },
+          getCount: { fetch: vi.fn() },
+          getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
+        },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
+      },
+    }),
+  },
+}));
+
+// eslint-disable-next-line import/first
+import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+
+const SAME_ORIGIN_SRC = `${window.location.origin}/`;
+
+const baseProps = {
+  appBlockId: 'apb_test',
+  blockId: 'my-page-app',
+  appId: 'app_test',
+  blockInstanceId: 'page_apb_test',
+  appName: 'Budgeted Generator',
+  iframeSrc: SAME_ORIGIN_SRC,
+  sandbox: 'allow-scripts',
+  trustTier: 'internal' as const,
+  slug: 'my-page-app',
+  token: 'tok_abc',
+  expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  declaredScopes: ['apps:storage:read'],
+  missingScopes: [] as string[],
+  needsConsent: false,
+  tokenError: false,
+  viewer: { id: 42, username: 'tester' },
+  theme: 'light' as const,
+};
+
+let fetchSpy: ReturnType<typeof vi.spyOn>;
+const isBeacon = (call: unknown[]) =>
+  typeof call[0] === 'string' && (call[0] as string).includes('/api/track/block-render');
+const beaconCalls = () => fetchSpy.mock.calls.filter(isBeacon);
+const beaconStatuses = (): string[] =>
+  beaconCalls().map((c: unknown[]) => {
+    const init = c[1] as RequestInit | undefined;
+    return (JSON.parse(String(init?.body ?? '{}')) as { status?: string }).status ?? 'ok';
+  });
+
+beforeEach(() => {
+  fetchSpy = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue({ ok: true, status: 200, json: async () => ({}) } as Response);
+});
+afterEach(() => {
+  fetchSpy.mockRestore();
+});
+
+function postFromBlock(type: string, payload?: unknown) {
+  const iframeEl = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  const cw = iframeEl.contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
+  );
+}
+
+async function driveToReady() {
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  await vi.waitFor(() => {
+    postFromBlock('BLOCK_READY', {});
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (el.getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+  });
+}
+
+const fallbackQuery = () => page.getByTestId('app-page-fallback').query();
+const iframeQuery = () => page.getByTestId('app-page-iframe').query();
+
+describe('a READY page with a transient token failure', () => {
+  test('🔴 is NOT torn down while recovery is still pending', async () => {
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+    expect(beaconCalls()).toHaveLength(1);
+
+    // The upstream hook is retrying: it reports the failure (`tokenError`) but has
+    // NOT settled, so `tokenTerminal` stays false. Even with the token already
+    // gone, the running app must be left alone.
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        tokenTerminal={false}
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fallbackQuery()).toBeNull();
+    expect(iframeQuery()).not.toBeNull();
+    expect(beaconCalls()).toHaveLength(1);
+  });
+
+  test('is untouched when the hook RETAINED a live token through the blip', async () => {
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+
+    // The common case: refresh failed, but the held credential is still valid, so
+    // the hook keeps serving it. `tokenError` is set; the page must ignore it.
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        tokenError
+        tokenTerminal={false}
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fallbackQuery()).toBeNull();
+    expect(beaconCalls()).toHaveLength(1);
+  });
+});
+
+describe('a READY page whose credential is GONE for good', () => {
+  test('🔴 escalates to the real terminal state instead of silently 401ing', async () => {
+    const onRetryToken = vi.fn();
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+    );
+    await driveToReady();
+
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        tokenTerminal
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+
+    // The user now SEES the failure and has a way forward — previously the page
+    // just sat there looking fine while every call 401'd.
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    expect(document.querySelector('[data-block-fallback="token_error"]')).not.toBeNull();
+    expect(document.querySelector('[data-block-fallback-retry="true"]')).not.toBeNull();
+  });
+
+  test('🔴 emits NO second beacon — the mount already reported its outcome', async () => {
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+    expect(beaconStatuses()).toEqual(['ok']);
+
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        tokenTerminal
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    // Let #3480's bounded auto-retry run its whole course too.
+    await new Promise((r) => setTimeout(r, 9_000));
+
+    // Exactly one, and it still says `ok`: the page LOAD did succeed. Counting an
+    // `error` here would corrupt the denominator the BlockRenderFailureRate alert
+    // is built on ("page loads the platform could not recover on its own").
+    expect(beaconStatuses()).toEqual(['ok']);
+  }, 20_000);
+
+  test("re-arms #3480's bounded auto-retry, which re-mints ONCE then settles", async () => {
+    /**
+     * Drives the re-mint loop the way the real route does. `onRetryToken` is
+     * `useBlockToken.refresh`, so a re-mint ATTEMPT briefly clears the failure
+     * props and then fails again — which is what re-reaches the terminal fast
+     * instead of waiting out the 15s token-wait window. An inert `vi.fn()` here
+     * would leave the props frozen and the host parked in `loading`, testing
+     * nothing.
+     */
+    function Harness({ dead, onRemint }: { dead: boolean; onRemint: () => void }) {
+      const [failing, setFailing] = useState(true);
+      const gone = dead && failing;
+      return (
+        <PageBlockHost
+          {...baseProps}
+          token={dead ? null : baseProps.token}
+          tokenError={gone}
+          tokenTerminal={gone}
+          onConsentGranted={vi.fn()}
+          onRetryToken={() => {
+            onRemint();
+            setFailing(false);
+            setTimeout(() => setFailing(true), 10);
+          }}
+        />
+      );
+    }
+
+    const onRemint = vi.fn();
+    const { rerender } = await renderWithProviders(<Harness dead={false} onRemint={onRemint} />);
+    await driveToReady();
+    expect(onRemint).not.toHaveBeenCalled();
+
+    await rerender(<Harness dead onRemint={onRemint} />);
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+
+    // `error` is an AUTH terminal, so the one automatic attempt spends a re-mint…
+    await vi.waitFor(
+      () => {
+        if (onRemint.mock.calls.length < 1) throw new Error('no automatic re-mint yet');
+      },
+      { timeout: 8_000 }
+    );
+
+    // …and then it SETTLES: bounded, never an unbounded auth loop against the
+    // rate-limited mint endpoint. MAX_AUTO_REMINTS is 1.
+    await new Promise((r) => setTimeout(r, 8_000));
+    expect(onRemint.mock.calls.length).toBe(1);
+
+    // What the user is left with: the real terminal message plus an UNMISSABLE
+    // manual Retry — the path forward, never a dead end.
+    expect(document.querySelector('[data-block-fallback="token_error"]')).not.toBeNull();
+    expect(document.querySelector('[data-block-fallback-retry-prominent="true"]')).not.toBeNull();
+    // And still exactly one beacon for the whole episode.
+    expect(beaconStatuses()).toEqual(['ok']);
+  }, 25_000);
+});
+
+describe('backward compatibility', () => {
+  test('🔴 omitting `tokenTerminal` leaves a ready page byte-identical', async () => {
+    // Every pre-existing caller (ReviewBlockPreviewHost, the dev-tunnel page
+    // before it was wired) passes no `tokenTerminal`. A ready page must behave
+    // exactly as before: `tokenError` alone can never tear it down.
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(fallbackQuery()).toBeNull();
+    expect(beaconCalls()).toHaveLength(1);
+  });
+
+  test('a LOADING page still escalates on `tokenError` alone (unchanged)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    // Unchanged pre-existing behaviour: a hard mint failure before the block ever
+    // loaded is terminal immediately, rather than waiting out the 15s token-wait.
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    expect(document.querySelector('[data-block-fallback="token_error"]')).not.toBeNull();
+  });
+});

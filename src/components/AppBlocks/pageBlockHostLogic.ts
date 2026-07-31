@@ -325,3 +325,157 @@ export function pageFallbackReason(status: PageHostStatus): PageFallbackReason |
       return 'timeout';
   }
 }
+
+// ── BOUNDED AUTO-RETRY (launch-failure recovery) ─────────────────────────────
+//
+// The reported defect was NOT that the retry LOGIC was broken — it works — but
+// that a transient launch failure required the user to notice and press a
+// button, and the button was easy to miss ("there might have been a retry
+// button but I didn't notice — I did a full page reload"). So the host now
+// re-attempts the load ITSELF a bounded number of times, and only after that
+// budget is spent does it settle on a definitive terminal state whose manual
+// Retry is made prominent.
+//
+// 🔴 THE TERMINAL STATE IS NEVER DELAYED OR MASKED. The host renders the real
+// terminal `BlockFallback` the instant a terminal status is reached; the pending
+// auto-retry is surfaced as ADDITIONAL copy inside that same fallback. There is
+// no "keep spinning while we quietly retry" state — that would recreate the
+// silent-blank failure class this codebase has fought repeatedly.
+//
+// 🔴 BOUNDED, ALWAYS. Two independent caps:
+//   - MAX_AUTO_RETRIES bounds the total automatic attempts per host mount.
+//   - MAX_AUTO_REMINTS bounds how many of those may spend a token RE-MINT.
+//     `/api/v1/block-tokens` is rate-limited (60/min per user+instance), and an
+//     unbounded auth-failure loop is exactly the shape that would burn it.
+// The budgets are per MOUNT and are NOT refilled by a manual Retry — once spent,
+// every subsequent failure goes straight to the definitive terminal state.
+
+/**
+ * Maximum AUTOMATIC load re-attempts per host mount (the initial load excluded).
+ *
+ * 🔴 ROLLBACK: setting this to 0 cleanly disables auto-retry entirely — the
+ * decision returns `none` for every status, so the terminal fallback renders
+ * immediately with the prominent manual Retry and `autoRetriesSpent` stays 0 (no
+ * false "we already retried" copy). It is the one-line kill switch; there is no
+ * feature flag on this path.
+ */
+export const MAX_AUTO_RETRIES = 2;
+
+/**
+ * Maximum automatic attempts that may spend a token RE-MINT. Auth terminals
+ * (`error`/`no_token`) can only be recovered by re-minting — a local remount can
+ * never clear them — so this is the specific cap that protects the rate-limited
+ * `/api/v1/block-tokens` (60/min per user+instance) from an automatic loop.
+ *
+ * 🔴 MUST STAY STRICTLY BELOW `MAX_AUTO_RETRIES`, and there is a test that pins
+ * exactly that. Because `reminted` is a SUBSET of `attempts` (every re-minting
+ * attempt also increments `attempts`), the invariant `reminted <= attempts` holds
+ * — so if the two caps were EQUAL the total-attempt check, which runs first,
+ * would always fire first and this cap would be unreachable dead code: a stated
+ * safety limit that provably cannot bind. Keeping it strictly lower makes it the
+ * binding constraint on the auth path (the expensive one), while non-auth
+ * terminals — which cost nothing but a remount — still get the full budget.
+ */
+export const MAX_AUTO_REMINTS = 1;
+
+/**
+ * Backoff before automatic attempt N (index 0 = the first auto-retry). Modest and
+ * exponential-ish: long enough for a transient blip/deploy-drain to clear, short
+ * enough that a real failure settles quickly. Indices past the end reuse the last
+ * value (defensive — today the array covers MAX_AUTO_RETRIES exactly).
+ */
+export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
+
+/** Terminal statuses a bounded auto-retry may attempt to recover from. */
+export function isAutoRetryableStatus(status: PageHostStatus): boolean {
+  return (
+    status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error'
+  );
+}
+
+/**
+ * AUTH terminals: the iframe never received a usable token. `token`/`tokenError`
+ * are PROPS owned upstream (useBlockToken in the route), and `shouldStartInit`
+ * gates on `hasToken` — so a local remount alone can NEVER recover these; only a
+ * re-mint can. Mirrors the manual-Retry branch in PageBlockHost.handleRetry.
+ */
+export function isAuthTerminalStatus(status: PageHostStatus): boolean {
+  return status === 'error' || status === 'no_token';
+}
+
+export type AutoRetryDecision =
+  | { kind: 'none' }
+  | {
+      kind: 'retry';
+      /** 1-based index of the attempt being scheduled. */
+      attempt: number;
+      /**
+       * The highest attempt number still reachable FROM HERE, given the current
+       * status. This is what the UI must show as the denominator — NOT the raw
+       * `MAX_AUTO_RETRIES`. On an auth terminal the sequence is bounded by the
+       * (lower) re-mint budget, so advertising the attempt cap would promise the
+       * user a retry that will never happen: a fresh auth failure gets
+       * "attempt 1 of 1", not "attempt 1 of 2". Derived rather than passed in, so
+       * the copy cannot drift from the bound that actually governs it.
+       */
+      maxAttempts: number;
+      delayMs: number;
+      /** Whether this attempt spends a token re-mint. */
+      remint: boolean;
+    };
+
+/**
+ * Decide whether the host should schedule another AUTOMATIC load attempt.
+ *
+ * Pure so every bound is unit-testable without driving the real 10s/15s timer
+ * windows, and so the two consumers can never disagree: the scheduling effect
+ * (which arms the backoff timer) and the render-FAILURE beacon (which must stay
+ * silent while the host has not settled — see the beacon-semantics note in
+ * PageBlockHost) both read THIS function.
+ *
+ * Returns `{kind:'none'}` — i.e. the host has SETTLED on this terminal state — when:
+ *   - the status is non-terminal (loading/ready) or not auto-retryable;
+ *   - the total attempt budget is spent;
+ *   - the status is an AUTH terminal and either (a) the re-mint budget is spent,
+ *     or (b) no re-mint is wired (`canRemint:false`). In both cases a further
+ *     attempt is a GUARANTEED re-fail (a remount can't change an upstream token),
+ *     so retrying would waste the user's time and, in case (a), the rate limit.
+ */
+export function decideAutoRetry(args: {
+  status: PageHostStatus;
+  /** Automatic attempts already performed this mount. */
+  attempts: number;
+  /** Automatic attempts already performed that spent a re-mint. */
+  reminted: number;
+  /** Whether the host actually has a token re-mint available (`onRetryToken`). */
+  canRemint: boolean;
+}): AutoRetryDecision {
+  const { status, attempts, reminted, canRemint } = args;
+  if (!isAutoRetryableStatus(status)) return { kind: 'none' };
+  if (attempts >= MAX_AUTO_RETRIES) return { kind: 'none' };
+
+  const remint = isAuthTerminalStatus(status);
+  if (remint && (!canRemint || reminted >= MAX_AUTO_REMINTS)) return { kind: 'none' };
+
+  const delayMs =
+    AUTO_RETRY_BACKOFF_MS[attempts] ?? AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1];
+
+  // The reachable ceiling FROM HERE. An auth terminal can only continue while it
+  // has re-mint budget, so its ceiling is the attempts already spent plus the
+  // re-mints still available — clamped by the attempt cap. A non-auth terminal is
+  // governed by the attempt cap alone. This keeps a MIXED sequence honest too: a
+  // timeout followed by an auth failure has already spent an attempt but no
+  // re-mint, so it correctly reads "attempt 2 of 2".
+  //
+  // Proven never to under-promise: the auth branch is only reached while
+  // `reminted < MAX_AUTO_REMINTS`, so `MAX_AUTO_REMINTS - reminted >= 1` and the
+  // result is always `>= attempt`. 🔴 It CAN still shrink across renders if the
+  // caps are ever widened past `MAX_AUTO_RETRIES === MAX_AUTO_REMINTS + 1` (e.g.
+  // 4 and 2: a timeout shows "1 of 4", a following auth failure "2 of 3"). Today's
+  // constants make that unreachable; revisit this line if they change.
+  const maxAttempts = remint
+    ? Math.min(MAX_AUTO_RETRIES, attempts + (MAX_AUTO_REMINTS - reminted))
+    : MAX_AUTO_RETRIES;
+
+  return { kind: 'retry', attempt: attempts + 1, maxAttempts, delayMs, remint };
+}

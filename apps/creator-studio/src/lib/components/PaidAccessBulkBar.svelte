@@ -15,6 +15,7 @@
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
+  import type { CreatorCaps } from '$lib/server/membership';
   import {
     MIN_ACCESS_PRICE,
     MIN_GENERATION_PRICE,
@@ -26,8 +27,7 @@
   // the parent so the price fields are unambiguous). Owns its own pricing state + confirm dialog; the
   // caller owns the shared `selected` set, the usage filter, and the version list / checkboxes.
   let {
-    permanentCap,
-    permanentUsed,
+    caps,
     matchingVersionIds,
     selectableCount,
     slotsConsumed,
@@ -37,8 +37,7 @@
     onSelectAll,
     cancelHref,
   }: {
-    permanentCap: number | null;
-    permanentUsed: number;
+    caps: CreatorCaps;
     matchingVersionIds: number[];
     // How many matching versions "Select all" would pick (already-permanent re-prices are free; see the parent).
     selectableCount: number;
@@ -50,6 +49,10 @@
     onSelectAll: (ids: number[]) => void;
     cancelHref: string;
   } = $props();
+
+  const permanentCap = $derived(caps.permanentCap);
+  const permanentUsed = $derived(caps.permanentUsed);
+  const priceCap = $derived(caps.priceCap);
 
   const bulkGenOnly = $derived(usage === 'generation');
   // Permanent slots still available (null cap = unlimited) — "max minus current".
@@ -64,8 +67,7 @@
   let form = $state<HTMLFormElement>();
 
   const paidAccessEnhance =
-    () =>
-    async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
       await event.update({ reset: false });
       if (event.result.type === 'success') {
         const n = Number(event.result.data?.updated ?? 0);
@@ -89,14 +91,18 @@
     <button
       type="button"
       onclick={() => onSetUsage('download')}
-      class="px-2.5 py-1 font-medium {!bulkGenOnly ? 'bg-[#9775fa]/20 text-white' : 'text-dark-2 hover:text-white'}"
+      class="px-2.5 py-1 font-medium {!bulkGenOnly
+        ? 'bg-[#9775fa]/20 text-white'
+        : 'text-dark-2 hover:text-white'}"
     >
       Downloadable
     </button>
     <button
       type="button"
       onclick={() => onSetUsage('generation')}
-      class="border-l border-dark-4 px-2.5 py-1 font-medium {bulkGenOnly ? 'bg-[#9775fa]/20 text-white' : 'text-dark-2 hover:text-white'}"
+      class="border-l border-dark-4 px-2.5 py-1 font-medium {bulkGenOnly
+        ? 'bg-[#9775fa]/20 text-white'
+        : 'text-dark-2 hover:text-white'}"
     >
       Generation-only
     </button>
@@ -112,7 +118,9 @@
         {#if permanentCap === null}
           {permanentUsed} permanent · unlimited on your tier
         {:else}
-          {slotsConsumed} of {remainingPermanentSlots} available slot{remainingPermanentSlots === 1 ? '' : 's'} ({permanentUsed} of {permanentCap} used)
+          {slotsConsumed} of {remainingPermanentSlots} available slot{remainingPermanentSlots === 1
+            ? ''
+            : 's'} ({permanentUsed} of {permanentCap} used)
         {/if}
       </span>
     </div>
@@ -145,10 +153,13 @@
       >
         {bulkGenOnly ? 'Generation fee' : 'Access fee'}
         <span class="relative">
-          <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">⚡</span>
+          <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs"
+            >⚡</span
+          >
           <NumberInput
             name="accessPrice"
             min={MIN_ACCESS_PRICE}
+            max={priceCap ?? undefined}
             bind:value={bulkAccessPrice}
             aria-label={bulkGenOnly ? 'Generation fee (Buzz)' : 'Access fee (Buzz)'}
             class="h-7 w-24 pl-6"
@@ -162,11 +173,15 @@
         >
           Gen-only fee
           <span class="relative">
-            <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">⚡</span>
+            <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs"
+              >⚡</span
+            >
             <NumberInput
               name="generationPrice"
               min={MIN_GENERATION_PRICE}
-              max={bulkAccessPrice}
+              max={priceCap == null
+                ? bulkAccessPrice
+                : Math.min(bulkAccessPrice ?? priceCap, priceCap)}
               bind:value={bulkGenerationPrice}
               aria-label="Gen-only fee (Buzz, optional)"
               class="h-7 w-24 pl-6"
@@ -191,9 +206,13 @@
       <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
         Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
       </Button>
-      <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button>
+      <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm"
+        >Cancel</Button
+      >
       <span class="text-xs text-dark-1">
-        {bulkGenOnly ? '⚡ Buyers pay to generate on-site.' : '⚡ Access unlocks download + generation.'}
+        {bulkGenOnly
+          ? '⚡ Buyers pay to generate on-site.'
+          : '⚡ Access unlocks download + generation.'}
       </span>
     </form>
   </div>

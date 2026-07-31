@@ -125,6 +125,16 @@ function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function unpublishedModelVersion(overrides: Record<string, unknown> = {}) {
+  const base = publishedModelVersion();
+  return {
+    ...base,
+    status: 'Unpublished',
+    model: { ...base.model, status: 'Unpublished', publishedAt: null },
+    ...overrides,
+  };
+}
+
 const aFile = {
   id: 55,
   url: 'https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors',
@@ -263,5 +273,67 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
     expect(result.status).toBe('early-access');
     if (result.status === 'early-access') expect(result.details.deadline).toEqual(endsAt);
+  });
+
+  // --- Unpublished models: the review path ---------------------------------
+  // Moderators review unpublished models constantly (takedowns, TOS checks) and need the actual
+  // file to decide. The publish-state gate must keep answering them — and the owner — with the
+  // file while still hiding it from everyone else.
+  describe('unpublished models', () => {
+    beforeEach(() => {
+      modelVersionFindFirst.mockResolvedValue(unpublishedModelVersion());
+      resolveDownloadUrlMock.mockResolvedValue({
+        url: 'https://cdn.example.com/signed',
+        urlExpiryDate: new Date(),
+      });
+    });
+
+    it('serves the file to a moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 7, isModerator: true },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('serves the file to the owner', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('returns not-found for a signed-in user who is neither owner nor moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 1234, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('returns not-found for an anonymous request', async () => {
+      const result = await getFileForModelVersion({ modelVersionId: 1 });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('still hides a deleted model from its own owner', async () => {
+      modelVersionFindFirst.mockResolvedValue(
+        unpublishedModelVersion({
+          model: { ...publishedModelVersion().model, status: 'Deleted' },
+        })
+      );
+
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
   });
 });

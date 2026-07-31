@@ -103,6 +103,19 @@ vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => s3,
 }));
+// W13 draft-at-submit: the (3b-transition) + (3b-reset) go-live scan-clean gate is a
+// no-op here (media scan-clean is exercised in the assets-service suite). Both are
+// dynamic imports, so mocking just the helpers the approve path pulls is safe.
+// `resolveListingRatingFloorInTx` defaults to IDENTITY (returns the declared rating
+// unchanged = no mature media attached); the raise-only derive itself is unit-tested
+// for real in the assets-service suite. A test below overrides it to pin that the
+// transition writes the FLOOR's result, not the raw AppBlock rating.
+vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
+  assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
+  resolveListingRatingFloorInTx: vi.fn(
+    async (_db: unknown, _id: string, declared: string | null) => declared
+  ),
+}));
 
 const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
 
@@ -395,5 +408,130 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       )
     ).toBe(false);
     warn.mockRestore();
+  });
+});
+
+describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
+  // Return the pre-approval draft for the slug-scoped resolve, null for the
+  // (3b-reset) appBlockId+pending probe (so the unrelated reset branch stays inert).
+  function draftFor(id: string) {
+    return async (args: { where?: Record<string, unknown> }) => {
+      const w = args?.where ?? {};
+      if (w.status === 'draft' && w.appBlockId === null) return { id };
+      return null;
+    };
+  }
+
+  it('TRANSITIONS the draft in place (appBlockId+approved+scalars) and does NOT create a second listing; media (icon/cover) is NEVER touched', async () => {
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    // No fresh create — the existing draft BECOMES the approved listing (media preserved).
+    expect(db.write.appListing.create).not.toHaveBeenCalled();
+
+    // The transition updateMany carries appBlockId + status:approved + manifest scalars,
+    // status-guarded on the draft.
+    const transitionCall = db.write.appListing.updateMany.mock.calls.find((c) => {
+      const d = (c[0] as { data?: Record<string, unknown> })?.data ?? {};
+      return 'appBlockId' in d;
+    });
+    expect(transitionCall).toBeDefined();
+    const arg = transitionCall![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(arg.where).toEqual({ id: 'apl_draft', status: 'draft' });
+    expect(arg.data).toEqual({
+      appBlockId: 'apb_1',
+      status: 'approved',
+      contentRating: 'pg',
+      name: 'Cool App v2',
+      description: 'Now with more cool.',
+      tagline: 'The coolest app',
+      category: 'utility',
+    });
+    // 🔴 Media columns are NEVER in the transition payload — icon/cover survive approval.
+    expect(arg.data).not.toHaveProperty('iconId');
+    expect(arg.data).not.toHaveProperty('coverId');
+  });
+
+  it('FLOOR STAYS ADVISORY: approve is NOT blocked when the draft has no icon/cover (transition still runs)', async () => {
+    // No `assertListingMeetsFloor` on the onsite approve path — a media-less draft still
+    // transitions to approved (the floor gates PUBLISH visibility, not approve — D2).
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    expect(db.write.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('LEGACY COMPAT: a pending request with NO draft (pre-ship) still CREATES the listing the old way at approve', async () => {
+    // Simulate a request that predates draft-at-submit: no draft resolvable by slug, and
+    // no listing keyed by appBlockId → falls through to the legacy mapper-create path.
+    db.write.appListing.findFirst.mockResolvedValue(null);
+    db.read.appListing.findUnique.mockResolvedValue(null);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(db.write.appListing.create).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 RATING FLOOR at go-live. The AppBlock's contentRating is MANIFEST-declared
+  // (author-controlled) and the attach path deliberately accepts an image ABOVE the
+  // declared rating (see the assets suite: "setIcon ATTACHES an over-declared-rating
+  // image (X image on a g listing)") because draft/pending listings are "rated at
+  // approve". This is that approve — so it must stamp the FLOORED rating, never the
+  // raw declared one, or mature media goes live on a g-rated card and passes
+  // listingMatureFilter(redCapable=false) to SFW-only users.
+  // -------------------------------------------------------------------------
+  it('stamps the MEDIA-DERIVED floor, not the manifest-declared rating, when the pending media is more mature', async () => {
+    const assets = await import('~/server/services/blocks/app-listing-assets.service');
+    // The draft carries an R-rated icon the author attached while pending; the
+    // AppBlock/manifest still declares 'pg'.
+    // `Once` so the identity default is restored for the following tests (clearAllMocks
+    // clears calls, not implementations).
+    vi.mocked(assets.resolveListingRatingFloorInTx).mockResolvedValueOnce('r');
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    // The floor is resolved against THIS draft's id, on the primary client.
+    expect(assets.resolveListingRatingFloorInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'apl_draft',
+      'pg'
+    );
+    const transitionCall = db.write.appListing.updateMany.mock.calls.find(
+      (c) => 'appBlockId' in (((c[0] as { data?: Record<string, unknown> })?.data ?? {}) as object)
+    );
+    const data = (transitionCall![0] as { data: Record<string, unknown> }).data;
+    // 🔴 The RAISED rating is what goes live — NOT the declared 'pg'.
+    expect(data.contentRating).toBe('r');
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 OWNER SCOPE. The transition carries the draft's `userId` forward untouched, so
+  // transitioning a draft owned by ANOTHER user would hand them ownership of this
+  // submitter's approved listing (the asset procs gate on AppListing.userId).
+  // -------------------------------------------------------------------------
+  it('resolves the draft OWNER-SCOPED to the request submitter (a foreign draft is not transitioned)', async () => {
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    const draftProbe = db.write.appListing.findFirst.mock.calls
+      .map((c) => (c[0] as { where?: Record<string, unknown> })?.where ?? {})
+      .find((w) => w.status === 'draft' && w.appBlockId === null);
+    expect(draftProbe).toBeDefined();
+    // Scoped to the submitter (the fixture request's submittedByUserId) — a same-slug
+    // draft owned by anyone else cannot match.
+    expect(draftProbe!.userId).toBe(4242);
   });
 });

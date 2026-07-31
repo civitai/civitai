@@ -141,6 +141,11 @@ function resolveStackSample(): number {
  * block — so a descheduled pod doesn't emit a fake multi-second "block". The
  * authoritative lag signal remains the monitorEventLoopDelay histogram. Tunable
  * via EVENTLOOP_LONGTASK_SUSPEND_MS; <=0 disables the cap.
+ *
+ * COUPLED TO THE HISTOGRAM BUCKETS: the cap is the largest value the duration
+ * histogram can ever observe, so raising it past
+ * LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS without adding buckets pushes the newly
+ * admitted band into `+Inf`, where histogram_quantile() cannot resolve it.
  */
 function resolveSuspendCapMs(): number {
   const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_SUSPEND_MS ?? '', 10);
@@ -437,11 +442,56 @@ function installStackHook(sampleEvery: number, mapCap: number): void {
 // Prometheus metrics (registered via the existing prom/client helpers)
 // ---------------------------------------------------------------------------
 
+/**
+ * Highest EVENTLOOP_LONGTASK_SUSPEND_MS value the duration buckets below are sized
+ * for, in milliseconds.
+ *
+ * The cap and the top bucket are COUPLED and must move together:
+ *   - A gap whose excess is >= the suspension cap is classified as `suspension`
+ *     (see classifyDrift) and never reaches the histogram at all. So a bucket
+ *     ABOVE the cap can never be observed — it would be a permanently-empty series.
+ *   - Conversely, everything between the top finite bucket and the cap collapses
+ *     into `+Inf`. histogram_quantile() then reports exactly the top bound and
+ *     cannot tell an 11s block from a 29s one.
+ *
+ * Therefore: top finite bucket == the highest cap we intend to run.
+ * If the deployed cap is ever raised past this, raise this constant AND add the
+ * matching buckets in the same change. Both directions are guarded by the
+ * "duration buckets cover the suspension cap" suite in
+ * src/server/__tests__/eventloop-longtask-metrics.test.ts.
+ *
+ * Applies to BOTH histograms: installLabelHook receives the same resolved
+ * suspendCapMs as the drift timer (see armEventLoopLongTaskDetector).
+ */
+export const LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS = 30_000;
+
+/**
+ * Shared duration buckets (seconds) for BOTH long-task histograms.
+ *
+ * The low end (50ms..2s) is where routine pins live. The 5/10/20/30 tail exists
+ * because the deployed suspension cap was raised from the 5s default to 30s,
+ * which admits a real multi-second freeze class that used to be discarded as
+ * "suspension" before it ever reached a histogram. With the old ceiling of 10 the
+ * entire 10-30s band landed in `+Inf` and had no duration resolution.
+ *
+ * COST: each bucket is one extra time series per label combination per process.
+ * The drift histogram's `label` is the constant 'unlabeled' (see recordDrift), so
+ * this is +1 series per added bucket per process on that family.
+ *
+ * NOT RETROACTIVE: changing this does not rewrite existing series. Pods started
+ * before the change keep emitting the old `le` set, so histogram_quantile() over a
+ * window spanning the rollout mixes two bucket layouts and is not meaningful until
+ * every process has restarted. `_sum` and `_count` are unaffected either way.
+ */
+export const LONGTASK_DURATION_BUCKETS: readonly number[] = [
+  0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30,
+];
+
 // Long-task duration histogram, labeled by attributed operation. Cardinality is
 // bounded: in base-armed mode every block is 'unlabeled' (one series); with the
 // labels tier on, `label` is the same fixed tRPC-procedure / route enum that
-// trpc_procedure_duration already uses. Buckets target the 50ms..several-seconds
-// range that matters for pins.
+// trpc_procedure_duration already uses. Buckets target the 50ms..suspension-cap
+// range that matters for pins — see LONGTASK_DURATION_BUCKETS.
 const longTaskHistogram = registerInstrumentationMetric(
   PROM_PREFIX + 'eventloop_longtask_duration_seconds',
   () =>
@@ -449,7 +499,7 @@ const longTaskHistogram = registerInstrumentationMetric(
       name: PROM_PREFIX + 'eventloop_longtask_duration_seconds',
       help: 'Synchronous event-loop blocks over threshold, by attributed operation label. NOTE: drift-timer based — counts include GC pauses and (below the suspension cap) brief CPU-steal, not only JS blocks. The authoritative lag signal is civitai_app_eventloop_delay_ms.',
       labelNames: ['label'] as const,
-      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      buckets: [...LONGTASK_DURATION_BUCKETS],
       // Register into the shared cross-graph registry instead of the default
       // (per-graph) globalRegistry, so the request-graph /metrics scrape sees the
       // observes made from the instrumentation-graph detector loop.
@@ -506,7 +556,7 @@ const labeledHistogram = registerInstrumentationMetric(
       name: PROM_PREFIX + 'eventloop_longtask_labeled_duration_seconds',
       help: 'Per-resource (async_hooks-attributed) synchronous event-loop blocks over threshold, by tRPC-procedure/route label. SEPARATE attribution view — only present when EVENTLOOP_LONGTASK_LABELS is armed. Does NOT sum to eventloop_longtask_duration_seconds (the loop-level drift total); it is "which routes contributed long single-callback blocks", not total blocked time.',
       labelNames: ['label'] as const,
-      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      buckets: [...LONGTASK_DURATION_BUCKETS],
       registers: [instrumentationRegistry],
     })
 );

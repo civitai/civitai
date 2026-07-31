@@ -31,6 +31,7 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
+import { dedupeWinnersForPayout } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import { logToAxiom } from '~/server/logging/client';
 import {
   createBuzzTransaction,
@@ -49,6 +50,7 @@ import {
   recordChallengeEntryFeesBuzz,
   recordChallengeRefundBuzz,
   recordChallengeRefundFailure,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 
 const log = createLogger('challenge-funding', 'yellow');
@@ -378,7 +380,17 @@ export async function reportPoolFundingShortfall({
   }).catch(() => {});
 }
 
-/** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */
+/** The idempotency key a winner-prize payout is settled under. */
+export function winnerPayoutExternalId(challengeId: number, userId: number, position: number) {
+  return `challenge-winner-prize-${challengeId}-${userId}-place-${position}`;
+}
+
+/**
+ * Build the winner-prize transactions for a challenge, paid in its stored currency.
+ *
+ * Pure apart from one never-throwing counter increment on the duplicate-drop branch — see below for
+ * why a silent drop here would be the worst possible failure.
+ */
 export function buildWinnerPayoutTransactions({
   challengeId,
   title,
@@ -390,13 +402,28 @@ export function buildWinnerPayoutTransactions({
   buzzType: ChallengeBuzzType;
   winners: Array<{ userId: number; position: number; prize: number }>;
 }) {
-  return winners.map((entry) => ({
+  // Both callers dedupe before they get here (so they can report the anomaly with the challenge
+  // context they hold), which makes this a no-op on every current path. It is applied anyway
+  // because this function is the single choke point every winner payout passes through, and a
+  // duplicate id inside one batch is handed to an external Buzz service whose within-batch
+  // behaviour is not observable from this repo. Guaranteeing the invariant here costs one pass and
+  // removes the need to trust that a future caller remembers.
+  //
+  // If this branch ever fires, a caller reached the money path with duplicates and did NOT report
+  // it — the drop is real money not paid, and this counter is the only trace it leaves. It is
+  // tagged `origin: 'chokepoint'` rather than being distinguished by an absent `source`: the
+  // challenge's source genuinely isn't in scope here, but `normSource` also folds enum drift and a
+  // caller's own null source into `unknown`, so `source` alone cannot tell those three apart.
+  const { winners: payable, dropped } = dedupeWinnersForPayout(winners);
+  if (dropped.length)
+    recordChallengeWinnerDuplicatePick({ count: dropped.length, origin: 'chokepoint' });
+  return payable.map((entry) => ({
     type: TransactionType.Reward,
     toAccountId: entry.userId,
     fromAccountId: 0,
     amount: entry.prize,
     description: `Challenge Winner Prize #${entry.position}: ${title}`,
-    externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
+    externalTransactionId: winnerPayoutExternalId(challengeId, entry.userId, entry.position),
     toAccountType: buzzType,
   }));
 }

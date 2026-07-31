@@ -25,16 +25,21 @@ const dbMocks = vi.hoisted(() => ({
   pubReqFindFirst: vi.fn(),
   appBlockFindFirst: vi.fn(),
   userFindUnique: vi.fn(),
+  // W13 draft-at-submit — the pre-approval draft AppListing pre-check (read) + create (write).
+  appListingFindFirst: vi.fn(),
+  appListingCreate: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
+    appListing: { findFirst: dbMocks.appListingFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
     appBlockPublishRequest: { create: dbMocks.createPublishRequest },
+    appListing: { create: dbMocks.appListingCreate },
   },
 }));
 
@@ -539,6 +544,9 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     dbMocks.appBlockFindFirst.mockResolvedValue(null);
     dbMocks.userFindUnique.mockResolvedValue({ username: 'dev' });
     dbMocks.createPublishRequest.mockResolvedValue({});
+    // Default: the store slug is free → a first-version submit mints the draft.
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockResolvedValue({ id: 'apl_draft' });
   });
 
   it('rejects a NEW sensitive-scope submit with NO scopeJustifications (was: accepted → pending)', async () => {
@@ -578,5 +586,109 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
     expect(result.slug).toBe('my-app');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  // W13 draft-at-submit — a FIRST-version submit mints the on-site store AppListing as
+  // a pre-approval DRAFT (kind='onsite', status='draft', appBlockId=NULL) so the author
+  // can set media while pending.
+  it('creates a pre-approval DRAFT AppListing at submit (first version, owned by submitter)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    expect(dbMocks.appListingCreate).toHaveBeenCalledTimes(1);
+    const data = (dbMocks.appListingCreate.mock.calls[0][0] as { data: Record<string, unknown> })
+      .data;
+    expect(data).toMatchObject({
+      kind: 'onsite',
+      status: 'draft',
+      appBlockId: null,
+      slug: 'my-app',
+      name: 'My App',
+      tagline: null,
+      description: null,
+      category: null,
+      contentRating: 'g',
+      userId: 1, // the submitter owns the draft
+    });
+    expect(typeof data.id).toBe('string');
+    expect(data.id as string).toMatch(/^apl_/);
+  });
+
+  it('does NOT create a draft on a SUBSEQUENT-version submit (an AppBlock already exists)', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_existing', appId: 'app_1' });
+    const buf = await makeBundle({ ...baseManifest, version: '0.2.0', scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('re-submit does NOT duplicate — a reusable on-site orphan draft is reused, not re-created', async () => {
+    // A first-version re-submit whose prior draft survived (cleanup didn't run) →
+    // the pre-check finds the reusable on-site pre-approval draft and skips the create.
+    dbMocks.appListingFindFirst.mockResolvedValue({
+      id: 'apl_orphan',
+      kind: 'onsite',
+      status: 'draft',
+      appBlockId: null,
+      userId: 1, // owned by THIS submitter — reuse is owner-scoped
+    });
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 Orphan reuse is OWNER-SCOPED. An orphan draft keeps its original `userId`, and
+  // the approve transition carries that `userId` forward untouched — so reusing
+  // ANOTHER user's orphan would hand them ownership of THIS submitter's approved
+  // listing (the asset procs gate on AppListing.userId, so they'd control its media).
+  // -------------------------------------------------------------------------
+  it('REFUSES to reuse an orphan draft owned by a DIFFERENT user (no cross-user listing takeover)', async () => {
+    dbMocks.appListingFindFirst.mockResolvedValue({
+      id: 'apl_orphan_foreign',
+      kind: 'onsite',
+      status: 'draft',
+      appBlockId: null,
+      userId: 999, // someone ELSE's abandoned draft on this slug
+    });
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    // Treated as TAKEN, exactly like any other foreign listing on the slug.
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 1 })).rejects.toThrow(
+      /already taken by another store listing/
+    );
+    // Fail-fast: nothing is inserted, and the foreign draft is never adopted.
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('the slug pre-check SELECTS userId (the owner-scope decision cannot be made without it)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const call = dbMocks.appListingFindFirst.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+      select: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ slug: 'my-app' });
+    expect(call.select).toMatchObject({ userId: true });
+  });
+
+  it('a slug already taken by a NON-reusable listing → friendly "slug taken" (before any insert)', async () => {
+    dbMocks.appListingFindFirst.mockResolvedValue({
+      id: 'apl_live',
+      kind: 'offsite',
+      status: 'approved',
+      appBlockId: null,
+    });
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 1 })).rejects.toThrow(
+      /already taken by another store listing/
+    );
+    // Fail-fast: neither the request nor the draft is inserted.
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
 });

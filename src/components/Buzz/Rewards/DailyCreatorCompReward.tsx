@@ -307,13 +307,14 @@ export function DailyCreatorCompReward({
         >
           {/* Header — always padded */}
           <Stack gap={0} p="md" pb={0}>
-            <Group gap={8} justify="space-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xl font-bold">
                 {source === 'licenseFee' ? 'License Fees Earned' : 'Generation Buzz Earned'}
               </h3>
-              <Group gap={8} wrap="nowrap">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
                 {hasLicenseEarnings && (
                   <SegmentedControl
+                    className="shrink-0"
                     value={source}
                     onChange={(value) => {
                       setSource(value as 'compensation' | 'licenseFee');
@@ -328,6 +329,7 @@ export function DailyCreatorCompReward({
                   />
                 )}
                 <Select
+                  className="min-w-[150px] flex-1 sm:flex-none"
                   data={dateOptions}
                   defaultValue={dateOptions[0].value}
                   onChange={(value) => {
@@ -338,8 +340,8 @@ export function DailyCreatorCompReward({
                     setFilteredVersionIds([]);
                   }}
                 />
-              </Group>
-            </Group>
+              </div>
+            </div>
             {!isLoading && resources.length > 0 && (
               <Group justify="flex-start" gap="md" wrap="nowrap">
                 {totalBuzz > 0 && (
@@ -473,7 +475,7 @@ export function DailyCreatorCompReward({
                           w="100%"
                         >
                           <Group justify="space-between" gap={8} wrap="nowrap">
-                            <Stack gap={0}>
+                            <Stack gap={0} className="min-w-0 flex-1">
                               <Text size="sm" fw="bold" lineClamp={1}>
                                 {version.modelName}
                               </Text>
@@ -481,7 +483,7 @@ export function DailyCreatorCompReward({
                                 {version.name}
                               </Text>
                             </Stack>
-                            <Stack gap={2} align="flex-end">
+                            <Stack gap={2} align="flex-end" className="shrink-0">
                               {(version.totalSum > 0 || source !== 'licenseFee') && (
                                 <Group gap={4} wrap="nowrap">
                                   <CurrencyIcon

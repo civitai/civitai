@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import {
+    Card,
+    CardHeader,
+    CardTitle,
+    CardContent,
+  } from '@civitai/ui/components/ui/card/index.js';
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -39,11 +44,41 @@
   const activity = $derived(
     data.content
       ? [
-          { label: 'Reactions', value: data.content.reactions, prev: data.contentPrev?.reactions ?? null, icon: IconHeart, color: '#ff6b6b' },
-          { label: 'New followers', value: data.content.followers, prev: data.contentPrev?.followers ?? null, icon: IconUserPlus, color: '#4dabf7' },
-          { label: 'Images posted', value: data.content.images, prev: data.contentPrev?.images ?? null, icon: IconPhoto, color: '#9775fa' },
-          { label: 'Posts published', value: data.content.posts, prev: data.contentPrev?.posts ?? null, icon: IconArticle, color: '#3bc9db' },
-          { label: 'Profile views', value: data.content.profileViews, prev: data.contentPrev?.profileViews ?? null, icon: IconEye, color: '#20c997' },
+          {
+            label: 'Reactions',
+            value: data.content.reactions,
+            prev: data.contentPrev?.reactions ?? null,
+            icon: IconHeart,
+            color: '#ff6b6b',
+          },
+          {
+            label: 'New followers',
+            value: data.content.followers,
+            prev: data.contentPrev?.followers ?? null,
+            icon: IconUserPlus,
+            color: '#4dabf7',
+          },
+          {
+            label: 'Images posted',
+            value: data.content.images,
+            prev: data.contentPrev?.images ?? null,
+            icon: IconPhoto,
+            color: '#9775fa',
+          },
+          {
+            label: 'Posts published',
+            value: data.content.posts,
+            prev: data.contentPrev?.posts ?? null,
+            icon: IconArticle,
+            color: '#3bc9db',
+          },
+          {
+            label: 'Profile views',
+            value: data.content.profileViews,
+            prev: data.contentPrev?.profileViews ?? null,
+            icon: IconEye,
+            color: '#20c997',
+          },
         ]
       : []
   );
@@ -127,7 +162,11 @@
   ]);
 
   const sections = [
-    { href: '/models', title: 'Licensing', body: 'Set licensing fees, manage access, sell indefinitely.' },
+    {
+      href: '/models',
+      title: 'Licensing',
+      body: 'Set licensing fees, manage access, sell indefinitely.',
+    },
     { href: '/earnings', title: 'Earnings', body: 'Your earnings broken down by source.' },
     { href: '/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },
     { href: '/settings', title: 'Settings', body: 'Payout status, membership, defaults.' },
@@ -163,7 +202,9 @@
       {/each}
     </div>
   {:else}
-    <p class="text-sm text-dark-3">Activity is temporarily unavailable — please try again shortly.</p>
+    <p class="text-sm text-dark-3">
+      Activity is temporarily unavailable — please try again shortly.
+    </p>
   {/if}
 </section>
 
@@ -180,7 +221,10 @@
             <p class="text-xl font-semibold text-white">
               {#if stat.buzz != null}<CurrencyDisplay amount={stat.buzz} />{:else}{stat.value}{/if}
             </p>
-            {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
+            {#if stat.label === 'Buzz earned'}<DeltaChip
+                current={buzzNow}
+                previous={buzzPrev}
+              />{/if}
           </div>
         {:else if stat.pending}
           <p class="mt-1 text-xl font-semibold text-dark-4">—</p>

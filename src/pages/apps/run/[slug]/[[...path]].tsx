@@ -156,8 +156,21 @@ export default function AppPage(props: PageProps) {
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
   // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
   // TOKEN_REFRESH push delivers the granted scopes and the block retries.
-  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
-    useBlockToken(install, context);
+  const {
+    token,
+    expiresAt,
+    needsConsent,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    error,
+    // `terminal` = the mint failed, nothing usable is left, AND the hook's
+    // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
+    // down a running page — a transient refresh blip sets it while recovery is
+    // still under way — so the mid-session escalation keys on this instead.
+    terminal,
+    refresh,
+  } = useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -185,6 +198,7 @@ export default function AppPage(props: PageProps) {
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
           tokenError={error != null}
+          tokenTerminal={terminal}
           viewer={viewer}
           theme={theme}
           onConsentGranted={refresh}

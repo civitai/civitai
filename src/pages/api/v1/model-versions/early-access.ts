@@ -6,6 +6,8 @@ import {
   updateModelVersionPaidAccess,
 } from '~/server/services/model-version.service';
 import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
+import { assertPaidAccessCaps } from '~/server/services/paid-access.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Tracker } from '~/server/clickhouse/client';
@@ -40,7 +42,8 @@ export default AuthedEndpoint(
 
     const { paidAccess } = input;
 
-    // Permanent access is set only from the Creator Studio (which enforces the tier cap); require the shared token.
+    // Permanent access is reachable only from the Creator Studio — require the shared token. The tier caps
+    // themselves are enforced below (assertPaidAccessCaps), not by whoever is calling.
     if (paidAccess?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
       return res
         .status(403)
@@ -48,6 +51,17 @@ export default AuthedEndpoint(
     }
 
     try {
+      // Per-tier price + permanent-count caps. This endpoint is reachable directly with a session cookie, so
+      // without this a creator could POST any price and bypass the caps the tRPC handler and the Creator
+      // Studio action both apply. Tier is read fresh so a lapse takes effect immediately.
+      await assertPaidAccessCaps({
+        userId: user.id,
+        isModerator: user.isModerator,
+        versionId: input.id,
+        paidAccess,
+        tier: await getCapTier(user.id),
+      });
+
       // Shared user-level EA caps (max days + max concurrent). Throws BAD_REQUEST → mapped to 400 below.
       await assertUserEarlyAccessLimits({
         userId: user.id,

@@ -994,11 +994,12 @@ async function getPreviousApprovedState(
  * second round-trip.
  */
 export async function submitVersion(params: SubmitVersionParams): Promise<SubmitVersionResult> {
-  const [{ dbRead, dbWrite }, { newUlid }, { SEMVER_REGEX, SLUG_REGEX }] = await Promise.all([
-    import('~/server/db/client'),
-    import('~/server/utils/app-block-ids'),
-    import('~/server/schema/blocks/publish-request.schema'),
-  ]);
+  const [{ dbRead, dbWrite }, { newUlid, newAppListingId }, { SEMVER_REGEX, SLUG_REGEX }] =
+    await Promise.all([
+      import('~/server/db/client'),
+      import('~/server/utils/app-block-ids'),
+      import('~/server/schema/blocks/publish-request.schema'),
+    ]);
   const { bundleBuffer, submittedByUserId } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
@@ -1110,6 +1111,52 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     select: { id: true, appId: true },
   });
 
+  // (submit-draft pre-check) W13 draft-at-submit — a FIRST-version submit now also
+  // mints the on-site store `AppListing` as a pre-approval DRAFT (kind='onsite',
+  // status='draft', appBlockId=NULL) so the author can set listing media
+  // (icon/cover/screenshots) WHILE the app is still pending review (they carry
+  // forward on approve). Mirrors the proven off-site `submitExternalListing` shape (a
+  // draft listing minted at submit, deleted on reject/withdraw). Only a first-version
+  // submit (`existingApp == null`) is meaningful: a subsequent version already has an
+  // approved listing whose media edits go through the shadow-revision path.
+  //
+  // Fail fast (BEFORE the MinIO upload + review-repo push) if the store slug is
+  // already taken in `app_listings` by a NON-reusable listing — the draft reserves
+  // `AppListing.slug @unique`, and the friendly error mirrors `submitExternalListing`'s
+  // slug pre-check. An existing on-site pre-approval DRAFT for this slug (no backing
+  // AppBlock) is a REUSABLE orphan (a prior submit whose reject/withdraw cleanup didn't
+  // run) — reuse it idempotently rather than error, so a re-submit never duplicates.
+  //
+  // 🔴 Reuse is OWNER-SCOPED (`userId === submittedByUserId`). An orphan draft keeps its
+  // original owner, and the approve transition carries that `userId` FORWARD untouched —
+  // so reusing ANOTHER user's orphan would hand them ownership of THIS submitter's
+  // approved store listing (the listing-media procs gate on `AppListing.userId`, so they
+  // would control its media). A same-slug orphan owned by someone else is therefore
+  // treated as TAKEN, exactly like any other foreign listing on the slug.
+  let createDraftListing = false;
+  if (existingApp == null) {
+    const existingSlugListing = await dbRead.appListing.findFirst({
+      where: { slug },
+      select: { id: true, kind: true, status: true, appBlockId: true, userId: true },
+    });
+    if (!existingSlugListing) {
+      createDraftListing = true;
+    } else if (
+      !(
+        existingSlugListing.kind === 'onsite' &&
+        existingSlugListing.status === 'draft' &&
+        existingSlugListing.appBlockId == null &&
+        existingSlugListing.userId === submittedByUserId
+      )
+    ) {
+      throw new Error(
+        `store slug "${slug}" is already taken by another store listing; choose a different blockId`
+      );
+    }
+    // else: a reusable on-site pre-approval draft owned by THIS submitter already exists
+    // for this slug → reuse it (idempotent re-submit), so createDraftListing stays false.
+  }
+
   // Deep manifest validation (contentRating / scopes / iframe.sandbox /
   // targets / scope subset / iframe.src origin) happens at the
   // BlockManifestValidator step in the approve flow, when the
@@ -1199,6 +1246,58 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       );
     }
     throw err;
+  }
+
+  // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
+  // `AppListing` now that the pending request exists. Ordered AFTER the request create
+  // so there is never a draft orphaned without a request: a request without a draft
+  // simply falls back to the legacy approve-time create path (new-submits-only compat),
+  // while a draft can only exist alongside its request.
+  //
+  // BEST-EFFORT (log-and-continue, same posture as the approve-path listing writes):
+  // the store listing is a convenience and must NEVER fail the primary submit. If the
+  // draft create loses a rare slug race (P2002) the pre-check above missed, or hits a
+  // transient DB error, the submit still succeeds — the author just can't set media
+  // until approve mints the listing the legacy way. Only created for a first-version
+  // submit that didn't reuse an existing orphan draft.
+  if (createDraftListing) {
+    try {
+      const { buildListingScalarSync } = await import('./app-listing-mapper');
+      const scalars = buildListingScalarSync({
+        manifest,
+        blockId: slug,
+        category: typeof manifest.category === 'string' ? manifest.category : null,
+      });
+      await dbWrite.appListing.create({
+        data: {
+          id: newAppListingId(),
+          kind: 'onsite',
+          status: 'draft',
+          slug,
+          name: scalars.name,
+          tagline: scalars.tagline,
+          description: scalars.description,
+          category: scalars.category,
+          // Seed the maturity rating from the submitted manifest (approve re-syncs it
+          // authoritatively from the AppBlock); default SFW so an omitted rating is never
+          // mature. Drives the asset NSFW-scan threshold while pending.
+          contentRating: typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g',
+          // No backing AppBlock until approve — the draft is tied to its pending request
+          // purely by the shared, @unique slug.
+          appBlockId: null,
+          userId: submittedByUserId,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[submitVersion] pre-approval draft AppListing create failed (slug=${slug}); submit STANDS — ` +
+          `the app is still reviewable and its store listing is minted at approve the legacy way, so the ` +
+          `author sets media after approval instead of while pending: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // Fire-and-forget Discord notify to the mod queue. Don't await — a
@@ -1338,6 +1437,24 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
 }
 
 /**
+ * W13 draft-at-submit cleanup — on REJECT or WITHDRAW of a first-version on-site
+ * publish request, delete the pre-approval DRAFT `AppListing` minted at submit so the
+ * store slug is released and the unreviewed media is discarded. Mirrors the off-site
+ * `closeTerminalListing` draft branch: a status-guarded `deleteMany` (`status:'draft'`)
+ * can never remove an approved/removed row; `AppListingScreenshot` is
+ * `onDelete: Cascade` so screenshots go with it, and the underlying `Image` rows are
+ * `onDelete: SetNull` (DETACHED, not hard-deleted — same as off-site). Resolved BY SLUG
+ * (no request→listing FK). No-op for a subsequent-version request (no such draft), an
+ * already-cleaned draft, or a legacy pre-ship pending request.
+ */
+async function deleteOnsiteDraftListingForSlug(opts: { slug: string }): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  await dbWrite.appListing.deleteMany({
+    where: { slug: opts.slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+  });
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1411,6 +1528,21 @@ export async function withdrawRequest(opts: {
     // owner self-restore — a mod must `relistListing` (which also un-suspends the
     // block). A first-time submission withdraw has no `pending` onsite listing → no-op.
     await closeOnsiteResetListingOnWithdraw({ slug: row.slug, actorUserId: userId });
+    // W13 draft-at-submit — also delete a FIRST-version pre-approval DRAFT listing
+    // (disjoint from the reset case above, which targets a `pending` on-site listing;
+    // a first-time draft is `status='draft'`). Release the slug + drop unreviewed
+    // media. Best-effort: the withdraw has already committed, so a cleanup failure must
+    // never fail the outcome (the slug stays reserved until a later cleanup / mod
+    // delete — recoverable).
+    try {
+      await deleteOnsiteDraftListingForSlug({ slug: row.slug });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[withdrawRequest] pre-approval draft cleanup failed (id=${publishRequestId}, slug=${row.slug}); ` +
+          `withdraw STANDS: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
     // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
     // the withdraw has already committed, so a teardown failure must never affect
@@ -2404,11 +2536,120 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // first listing minted now on a subsequent-version approve.
   const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
   try {
-    const existingListing = await dbRead.appListing.findUnique({
-      where: { appBlockId },
-      select: { id: true, kind: true },
+    // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
+    // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
+    // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
+    // any listing media the author set while pending. TRANSITION that draft in place
+    // → approved (PRESERVING its icon/cover/screenshots) rather than minting a fresh
+    // media-less listing via the mapper. Resolved BY SLUG on the PRIMARY (the
+    // `AppBlockPublishRequest` has no appListingId FK; the primary read is
+    // read-your-writes-safe + consistent with the (3b-reset) resolve below). If NO
+    // draft exists — a request pending BEFORE this shipped (new-submits-only compat,
+    // no backfill) or a subsequent-version approve keyed by appBlockId — this no-ops
+    // and the UNCHANGED create-or-sync-by-appBlockId path below runs.
+    //
+    // 🔴 OWNER-SCOPED (`userId: request.submittedByUserId`) — defense-in-depth mirroring
+    // the submit-side reuse gate. The transition carries the draft's `userId` forward
+    // untouched, so transitioning a draft owned by ANOTHER user would hand them
+    // ownership of THIS submitter's approved listing (the listing-media procs gate on
+    // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
+    // through to the legacy create path below.
+    let handledByDraftTransition = false;
+    const draftListing = await dbWrite.appListing.findFirst({
+      where: {
+        slug: request.slug,
+        kind: 'onsite',
+        appBlockId: null,
+        status: 'draft',
+        userId: request.submittedByUserId,
+      },
+      select: { id: true },
     });
-    if (!existingListing) {
+    if (draftListing) {
+      // A draft existed → this app's listing is handled here; NEVER fall through to
+      // the create branch (that would mint a second, media-less listing).
+      handledByDraftTransition = true;
+      // Scan-clean go-live gate (same invariant + shared helper as the (3b-reset)
+      // restore below and the off-site approve flip): the draft was directly
+      // asset-editable while pending, so before making it PUBLICLY visible re-assert
+      // its media is `Scanned` (never `Pending`/`Blocked`). A throw here is caught by
+      // THIS try (log-and-continue) → the draft stays `draft` (re-review), the app
+      // still deploys, and a re-approve after the scan lands transitions it. No-op for
+      // scan-clean media. Upholds: no approved listing may reference unscanned/Blocked
+      // media.
+      const { assertListingAssetsScanCleanInTx, resolveListingRatingFloorInTx } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      await assertListingAssetsScanCleanInTx(dbWrite, draftListing.id);
+      const abForTransition = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: { blockId: true, manifest: true, category: true, contentRating: true },
+      });
+      if (abForTransition) {
+        // 🔴 RATING FLOOR (go-live). The AppBlock's `contentRating` is MANIFEST-declared
+        // (author-controlled), but the author attached the icon/cover/screenshots
+        // DIRECTLY to this draft while pending, and the attach path never compares an
+        // image's `nsfwLevel` against the listing rating (it rejects only
+        // `Blocked`/`NotFound`). Stamping the declared rating verbatim would therefore
+        // let mature-but-Scanned media go live on a `g`-rated card and pass
+        // `listingMatureFilter(redCapable=false)` to SFW-only users. Raise the declared
+        // rating to the media-derived one when the media is more mature (RAISE-ONLY — a
+        // deliberately higher declaration is never lowered). Same floor the off-site
+        // approve applies via `resolveApprovalContentRating`; upholds the
+        // "draft/pending listings are rated at approve" invariant.
+        const flooredRating = await resolveListingRatingFloorInTx(
+          dbWrite,
+          draftListing.id,
+          abForTransition.contentRating
+        );
+        const transitioned = await dbWrite.appListing.updateMany({
+          // Status-guarded (draft): a re-approve after a mid-flight failure finds the
+          // row already `approved` (0-count, benign) → converges without a duplicate.
+          where: { id: draftListing.id, status: 'draft' },
+          data: {
+            // Link the now-existing AppBlock (was NULL) — first writer satisfies @unique.
+            appBlockId,
+            status: 'approved',
+            // The runtime AppBlock rating (single source of truth — same as the mapper's
+            // create path), FLOORED at the rating derived from the media the author
+            // attached while pending (raise-only; see the comment above).
+            contentRating: flooredRating,
+            // Manifest-governed scalars ONLY. iconId/coverId/screenshots, featured,
+            // slug are NOT touched, so the author's pending media carries forward.
+            ...buildListingScalarSync({
+              manifest: abForTransition.manifest,
+              blockId: abForTransition.blockId,
+              category: abForTransition.category,
+            }),
+          },
+        });
+        if (transitioned.count === 0) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+              `the draft may have been concurrently cleaned/approved — re-approve or backfill converges`
+          );
+        }
+      } else {
+        // Anomalous (the just-approved AppBlock read null) — leave the draft as-is
+        // (recoverable via re-approve / backfill) rather than mint a duplicate.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] draft→approved transition skipped: AppBlock ${appBlockId} not readable ` +
+            `(slug=${request.slug}); the draft stays 'draft' until a re-approve/backfill`
+        );
+      }
+    }
+
+    const existingListing = handledByDraftTransition
+      ? null
+      : await dbRead.appListing.findUnique({
+          where: { appBlockId },
+          select: { id: true, kind: true },
+        });
+    if (handledByDraftTransition) {
+      // Already transitioned the pre-approval draft above — nothing more to do.
+    } else if (!existingListing) {
       const ab = await dbWrite.appBlock.findUnique({
         where: { id: appBlockId },
         select: {
@@ -4560,6 +4801,21 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       rejectionReason: reason,
     },
   });
+
+  // W13 draft-at-submit — a first-version REJECT discards the pre-approval DRAFT
+  // listing (release the slug + drop unreviewed media), mirroring the off-site
+  // `closeTerminalListing` draft branch. No-op for a subsequent version (no draft) or a
+  // legacy pre-ship pending request. Best-effort: the reject has already committed, so a
+  // cleanup failure must never fail the outcome.
+  try {
+    await deleteOnsiteDraftListingForSlug({ slug: row.slug });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] pre-approval draft cleanup failed (id=${params.publishRequestId}, slug=${row.slug}); ` +
+        `reject STANDS: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up.
   // Best-effort + non-blocking: the reject has landed, so a teardown failure

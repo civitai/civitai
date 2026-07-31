@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
+  import {
+    Chart,
+    chartColor,
+    createSyncedCrosshair,
+  } from '@civitai/ui/components/ui/chart/index.js';
   import StatCard from '$lib/components/StatCard.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
@@ -30,7 +34,12 @@
     },
   };
 
-  function lineData(series: TimePoint[], label: string, colorIndex: number, prevSeries: TimePoint[] = []) {
+  function lineData(
+    series: TimePoint[],
+    label: string,
+    colorIndex: number,
+    prevSeries: TimePoint[] = []
+  ) {
     // Comparison-month overlay: a muted dashed line, each day lined up under the current day it compares against
     // by ordinal offset (delta), so an arbitrary earlier month reads like-for-like.
     const delta = dayDiff(data.range.from, data.compare.from);
@@ -77,11 +86,41 @@
   const tiles = $derived(
     data.analytics
       ? [
-          { label: 'Reactions', value: data.analytics.totals.reactions, prev: data.analyticsPrev?.totals.reactions ?? null, icon: IconHeart, color: '#ff6b6b' },
-          { label: 'New followers', value: data.analytics.totals.followers, prev: data.analyticsPrev?.totals.followers ?? null, icon: IconUserPlus, color: '#4dabf7' },
-          { label: 'Images posted', value: data.analytics.totals.images, prev: data.analyticsPrev?.totals.images ?? null, icon: IconPhoto, color: '#9775fa' },
-          { label: 'Posts published', value: data.analytics.totals.posts, prev: data.analyticsPrev?.totals.posts ?? null, icon: IconArticle, color: '#3bc9db' },
-          { label: 'Profile views', value: data.analytics.totals.profileViews, prev: data.analyticsPrev?.totals.profileViews ?? null, icon: IconEye, color: '#20c997' },
+          {
+            label: 'Reactions',
+            value: data.analytics.totals.reactions,
+            prev: data.analyticsPrev?.totals.reactions ?? null,
+            icon: IconHeart,
+            color: '#ff6b6b',
+          },
+          {
+            label: 'New followers',
+            value: data.analytics.totals.followers,
+            prev: data.analyticsPrev?.totals.followers ?? null,
+            icon: IconUserPlus,
+            color: '#4dabf7',
+          },
+          {
+            label: 'Images posted',
+            value: data.analytics.totals.images,
+            prev: data.analyticsPrev?.totals.images ?? null,
+            icon: IconPhoto,
+            color: '#9775fa',
+          },
+          {
+            label: 'Posts published',
+            value: data.analytics.totals.posts,
+            prev: data.analyticsPrev?.totals.posts ?? null,
+            icon: IconArticle,
+            color: '#3bc9db',
+          },
+          {
+            label: 'Profile views',
+            value: data.analytics.totals.profileViews,
+            prev: data.analyticsPrev?.totals.profileViews ?? null,
+            icon: IconEye,
+            color: '#20c997',
+          },
         ]
       : []
   );
@@ -89,10 +128,30 @@
   const secondaryCharts = $derived(
     data.analytics
       ? [
-          { title: 'New followers', series: data.analytics.followers, prev: data.analyticsPrev?.followers, color: 1 },
-          { title: 'Images posted', series: data.analytics.images, prev: data.analyticsPrev?.images, color: 2 },
-          { title: 'Posts published', series: data.analytics.posts, prev: data.analyticsPrev?.posts, color: 3 },
-          { title: 'Profile views', series: data.analytics.profileViews, prev: data.analyticsPrev?.profileViews, color: 4 },
+          {
+            title: 'New followers',
+            series: data.analytics.followers,
+            prev: data.analyticsPrev?.followers,
+            color: 1,
+          },
+          {
+            title: 'Images posted',
+            series: data.analytics.images,
+            prev: data.analyticsPrev?.images,
+            color: 2,
+          },
+          {
+            title: 'Posts published',
+            series: data.analytics.posts,
+            prev: data.analyticsPrev?.posts,
+            color: 3,
+          },
+          {
+            title: 'Profile views',
+            series: data.analytics.profileViews,
+            prev: data.analyticsPrev?.profileViews,
+            color: 4,
+          },
         ]
       : []
   );
@@ -108,7 +167,8 @@
   <div class="placeholder">Analytics are temporarily unavailable — please try again shortly.</div>
 {:else if !hasActivity}
   <div class="placeholder">
-    No activity {periodLabel}. Once your images get reactions, followers, or views, they'll show up here.
+    No activity {periodLabel}. Once your images get reactions, followers, or views, they'll show up
+    here.
   </div>
 {:else}
   <p class="mb-2 text-xs text-dark-2">Totals {periodLabel}</p>
@@ -124,7 +184,8 @@
   </section>
   {#if data.allTime}
     <p class="mb-6 text-xs text-dark-3">
-      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong> reactions ·
+      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
+      reactions ·
       <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments
     </p>
   {/if}
@@ -136,7 +197,13 @@
     </div>
     <div class="h-64">
       {#key chartType.value}
-        <Chart type={chartType.value} data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+        <Chart
+          type={chartType.value}
+          data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)}
+          options={commonOptions}
+          plugins={[crosshair]}
+          class="h-full"
+        />
       {/key}
     </div>
   </div>
@@ -147,7 +214,13 @@
         <p class="mb-3 text-sm font-medium text-white">{c.title}</p>
         <div class="h-48">
           {#key chartType.value}
-            <Chart type={chartType.value} data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+            <Chart
+              type={chartType.value}
+              data={lineData(c.series, c.title, c.color, c.prev)}
+              options={commonOptions}
+              plugins={[crosshair]}
+              class="h-full"
+            />
           {/key}
         </div>
       </div>

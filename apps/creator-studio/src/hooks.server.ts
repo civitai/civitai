@@ -30,7 +30,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 };
 
 // Unexpected server errors (thrown loads/actions) — log to Axiom; SvelteKit already returns the 500.
+// 404s come through here too, and at ~700/day of scanners and stray asset requests they drown out the
+// real failures — skip them so this stream only carries things worth acting on.
 export const handleError: HandleServerError = async ({ error, event, status, message }) => {
+  if (status === 404) return { message };
+
   const logger = getLogger();
   await logger.logToAxiom({
     name: 'creator-studio-server-error',

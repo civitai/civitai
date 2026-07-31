@@ -22,7 +22,16 @@
   // Version-comparison overlay (868ke493d) — pick versions and overlay one metric (generations or downloads) across
   // them over the range. Defaults to the most active versions, but any version (incl. zero-activity) can be toggled on.
   const VERSION_COLORS = [
-    '#4dabf7', '#f783ac', '#ffa94d', '#69db7c', '#a78bfa', '#63e6be', '#ff8787', '#ffd43b', '#4dd4c4', '#e599f7',
+    '#4dabf7',
+    '#f783ac',
+    '#ffa94d',
+    '#69db7c',
+    '#a78bfa',
+    '#63e6be',
+    '#ff8787',
+    '#ffd43b',
+    '#4dd4c4',
+    '#e599f7',
   ];
   const metricLabel = { generations: 'Generations', downloads: 'Downloads' } as const;
   const seriesVersions = $derived(data.series?.versions ?? []);
@@ -34,7 +43,9 @@
   $effect(() => {
     selectedVersionIds = [...seriesVersions]
       .filter((v) => v.totalGenerations + v.totalDownloads > 0)
-      .sort((a, b) => b.totalGenerations + b.totalDownloads - (a.totalGenerations + a.totalDownloads))
+      .sort(
+        (a, b) => b.totalGenerations + b.totalDownloads - (a.totalGenerations + a.totalDownloads)
+      )
       .slice(0, 5)
       .map((v) => v.versionId);
   });
@@ -106,7 +117,8 @@
         labels: {
           boxWidth: 12,
           font: { size: 11 },
-          filter: (item: { datasetIndex?: number }) => (item.datasetIndex ?? 0) < pickedVersions.length,
+          filter: (item: { datasetIndex?: number }) =>
+            (item.datasetIndex ?? 0) < pickedVersions.length,
         },
       },
     },
@@ -125,12 +137,21 @@
 
 <div class="mb-4 flex flex-wrap items-start gap-3">
   <div>
-    <a href="/analytics/models" class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white">
+    <a
+      href="/analytics/models"
+      class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white"
+    >
       <IconArrowLeft size={13} /> All models
     </a>
     <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
       {data.model.modelName ?? `Model ${data.model.modelId}`}
-      <a href={civitaiUrl} target="_blank" rel="noreferrer" class="text-dark-3 hover:text-white" aria-label="View on Civitai">
+      <a
+        href={civitaiUrl}
+        target="_blank"
+        rel="noreferrer"
+        class="text-dark-3 hover:text-white"
+        aria-label="View on Civitai"
+      >
         <IconExternalLink size={16} />
       </a>
     </h2>
@@ -144,7 +165,8 @@
       <p class="text-sm font-medium text-white">
         Compare versions
         <span class="text-xs text-dark-3">
-          · {metricLabel[metric].toLowerCase()} over time {periodLabel} · dashed = {data.compare.label}
+          · {metricLabel[metric].toLowerCase()} over time {periodLabel} · dashed = {data.compare
+            .label}
         </span>
       </p>
       <div class="flex flex-wrap items-center gap-2">
@@ -190,7 +212,12 @@
     {#if compareHasData}
       <div class="h-72">
         {#key chartType.value}
-          <Chart type={chartType.value} data={compareData} options={compareOptions} class="h-full" />
+          <Chart
+            type={chartType.value}
+            data={compareData}
+            options={compareOptions}
+            class="h-full"
+          />
         {/key}
       </div>
     {:else}
@@ -222,14 +249,18 @@
       <Table.Body>
         {#each versions as v (v.versionId)}
           <Table.Row>
-            <Table.Cell class="align-top text-dark-1">{v.versionName ?? `Version ${v.versionId}`}</Table.Cell>
+            <Table.Cell class="align-top text-dark-1"
+              >{v.versionName ?? `Version ${v.versionId}`}</Table.Cell
+            >
             <Table.Cell class="align-top text-dark-2">{v.baseModel ?? '—'}</Table.Cell>
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {v.generations ? 'text-white' : 'text-dark-4'}">
                 {v.generations ? num(v.generations) : '—'}
               </div>
               {#if v.generations}
-                <div class="mt-0.5"><DeltaChip current={v.generations} previous={v.prevGenerations} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={v.generations} previous={v.prevGenerations} />
+                </div>
               {/if}
             </Table.Cell>
             <Table.Cell class="align-top text-right">
@@ -237,7 +268,9 @@
                 {v.downloads ? num(v.downloads) : '—'}
               </div>
               {#if v.downloads}
-                <div class="mt-0.5"><DeltaChip current={v.downloads} previous={v.prevDownloads} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={v.downloads} previous={v.prevDownloads} />
+                </div>
               {/if}
             </Table.Cell>
             {#each currencies as c (c)}

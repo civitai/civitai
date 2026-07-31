@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { dbRead, dbWrite } from '$lib/server/db';
-import { canSetLicensingFee, type Membership } from '$lib/server/membership';
+import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import { cappedTier, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
 // Mirrors the main app's MAX_LICENSING_FEE. Fractional to 0.01 buzz/image (the DECIMAL(10,2) column).
@@ -50,8 +51,7 @@ const NON_COMMERCIAL_BASE_MODELS = new Set(['Ideogram 4.0']);
 
 export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 export type BulkFeeResult =
-  | { ok: true; updated: number }
-  | { ok: false; status: 400 | 403; error: string };
+  { ok: true; updated: number } | { ok: false; status: 400 | 403; error: string };
 
 // Clamp/round a raw fee to a valid 2-decimal buzz amount in [0, MAX], null to clear. undefined = invalid input.
 function normalizeFee(raw: number | null): number | null | undefined {
@@ -61,7 +61,7 @@ function normalizeFee(raw: number | null): number | null | undefined {
   return rounded === 0 ? null : rounded; // 0 clears the fee
 }
 
-type OwnedVersion = { id: number; baseModel: string; modelType: string };
+type OwnedVersion = { id: number; baseModel: string; modelType: string; currentFee: number };
 
 // The user's own (non-deleted) versions among the given ids, with the fields the fee ops need: base model for
 // the non-commercial guard, model type for default-by-type. Doubles as the ownership check.
@@ -74,12 +74,18 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
       'ModelVersion.id as id',
       'ModelVersion.baseModel as baseModel',
       'Model.type as modelType',
+      'ModelVersion.licensingFee as currentFee',
     ])
     .where('ModelVersion.id', 'in', versionIds)
     .where('Model.userId', '=', userId)
     .where('Model.deletedAt', 'is', null)
     .execute();
-  return rows.map((r) => ({ id: r.id, baseModel: r.baseModel, modelType: r.modelType }));
+  return rows.map((r) => ({
+    id: r.id,
+    baseModel: r.baseModel,
+    modelType: r.modelType,
+    currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
+  }));
 }
 
 // Ownership re-enforced in the WHERE for defense in depth (the ids already come from an owner-scoped read).
@@ -110,13 +116,6 @@ export async function setLicensingFee(
   versionId: number,
   fee: number | null
 ): Promise<SetFeeResult> {
-  if (!canSetLicensingFee(membership))
-    return {
-      ok: false,
-      status: 403,
-      error: 'Creator Program membership is required to set a licensing fee.',
-    };
-
   const normalized = normalizeFee(fee);
   if (normalized === undefined)
     return {
@@ -133,6 +132,15 @@ export async function setLicensingFee(
       ok: false,
       status: 400,
       error: `"${owned[0].baseModel}" is non-commercial and can't be monetized.`,
+    };
+
+  // Anyone may charge; the tier caps how much, and it varies by model type (CU 868kj4q49).
+  const cap = maxLicensingFee(cappedTier(membership), owned[0].modelType);
+  if (raisesOverCap(normalized, owned[0].currentFee, cap))
+    return {
+      ok: false,
+      status: 403,
+      error: `Your membership allows up to ${cap} buzz per generation for this model type. Lower the fee or upgrade your membership.`,
     };
 
   await writeFee(userId, [versionId], normalized);
@@ -198,13 +206,7 @@ export async function previewLicensingFeeChanges(
   membership: Membership,
   entries: VariedFeeEntry[]
 ): Promise<FeePreview> {
-  if (!canSetLicensingFee(membership))
-    return {
-      ok: false,
-      status: 403,
-      error: 'Creator Program membership is required to set a licensing fee.',
-    };
-
+  const tier = cappedTier(membership);
   const deduped = new Map<number, VariedFeeEntry>();
   for (const e of entries) deduped.set(e.versionId, e);
 
@@ -236,6 +238,11 @@ export async function previewLicensingFeeChanges(
       skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
       continue;
     }
+    const cap = maxLicensingFee(tier, o.modelType);
+    if (raisesOverCap(fee, o.current ?? 0, cap)) {
+      skipped.push({ versionId, row, reason: `above your ${cap} ⚡ cap for ${o.modelType}` });
+      continue;
+    }
     if (o.current === fee) {
       unchanged++;
       continue;
@@ -264,13 +271,7 @@ export async function bulkSetLicensingFeeVaried(
   membership: Membership,
   entries: VariedFeeEntry[]
 ): Promise<VariedFeeResult> {
-  if (!canSetLicensingFee(membership))
-    return {
-      ok: false,
-      status: 403,
-      error: 'Creator Program membership is required to set a licensing fee.',
-    };
-
+  const tier = cappedTier(membership);
   const deduped = new Map<number, VariedFeeEntry>();
   for (const e of entries) deduped.set(e.versionId, e);
 
@@ -304,6 +305,11 @@ export async function bulkSetLicensingFeeVaried(
       skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
       continue;
     }
+    const cap = maxLicensingFee(tier, o.modelType);
+    if (raisesOverCap(fee, o.currentFee, cap)) {
+      skipped.push({ versionId, row, reason: `above your ${cap} ⚡ cap for ${o.modelType}` });
+      continue;
+    }
     const key = fee == null ? 'null' : String(fee);
     (byFee.get(key) ?? byFee.set(key, []).get(key)!).push(versionId);
   }
@@ -321,13 +327,6 @@ export async function bulkSetLicensingFee(
   versionIds: number[],
   fee: number | null
 ): Promise<BulkFeeResult> {
-  if (!canSetLicensingFee(membership))
-    return {
-      ok: false,
-      status: 403,
-      error: 'Creator Program membership is required to set a licensing fee.',
-    };
-
   const normalized = normalizeFee(fee);
   if (normalized === undefined)
     return {
@@ -347,6 +346,23 @@ export async function bulkSetLicensingFee(
         status: 400,
         error: `${nonCommercial.length} selected version(s) use a non-commercial base model and can't be monetized — deselect them and try again.`,
       };
+
+    // One fee across a mixed selection, so the STRICTEST applicable cap governs — a LoRA in the batch holds
+    // the whole batch to the LoRA ceiling rather than silently overcharging on it. Still increase-only, per
+    // version: the batch is rejected only if it would RAISE some version past its own cap, so re-applying a
+    // grandfathered fee across a selection stays possible after a lapse.
+    const tier = cappedTier(membership);
+    const raised = owned.filter((v) =>
+      raisesOverCap(normalized, v.currentFee, maxLicensingFee(tier, v.modelType))
+    );
+    if (raised.length > 0) {
+      const strictest = Math.min(...raised.map((v) => maxLicensingFee(tier, v.modelType)));
+      return {
+        ok: false,
+        status: 403,
+        error: `Your membership allows up to ${strictest} buzz per generation across the selected model types. Lower the fee or upgrade your membership.`,
+      };
+    }
   }
 
   const updated = await writeFee(

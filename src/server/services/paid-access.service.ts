@@ -1,6 +1,11 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
+  gatePrices,
+  isPaidAccessActive,
+  maxPaidAccessPrice,
+  maxPermanentAccessModels,
+  raisesOverCap,
   type ModelVersionTerms,
   type PaidAccessEntityType,
   type PaidAccessRow,
@@ -139,6 +144,54 @@ export async function countUserPermanentAccessVersions(
   return Number(rows[0]?.count ?? 0);
 }
 
+/** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
+export async function assertPaidAccessCaps({
+  userId,
+  isModerator,
+  versionId,
+  paidAccess,
+  tier,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  versionId?: number;
+  paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
+  tier: string | null | undefined;
+}) {
+  if (isModerator || !paidAccess) return;
+
+  const existing = versionId
+    ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
+    : undefined;
+  const priceCap = maxPaidAccessPrice(tier);
+  const next = gatePrices(paidAccess.terms);
+  const prev = gatePrices(existing?.terms as ModelVersionTerms);
+  // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised to
+  // the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
+  if (
+    raisesOverCap(next.download, prev.download, priceCap) ||
+    raisesOverCap(next.generation, prev.generation, priceCap)
+  )
+    throw throwBadRequestError(
+      `Your tier allows a paid-access price of up to ${priceCap} Buzz. Lower the price or upgrade your membership.`
+    );
+
+  // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
+  if (paidAccess.permanent) {
+    const alreadyPermanent = existing != null && existing.timeframeDays == null;
+    const limit = maxPermanentAccessModels(tier);
+    if (!alreadyPermanent && Number.isFinite(limit)) {
+      const used = await countUserPermanentAccessVersions(userId, versionId);
+      if (used + 1 > limit)
+        throw throwBadRequestError(
+          `Your tier allows up to ${limit} permanent paid-access model${
+            limit === 1 ? '' : 's'
+          }. Upgrade your membership for more.`
+        );
+    }
+  }
+}
+
 /** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */
 export function toModelVersionPaidAccessDto(
   row: PaidAccessRow | undefined
@@ -149,6 +202,33 @@ export function toModelVersionPaidAccessDto(
     timeframeDays: row.timeframeDays ?? null,
     terms: row.terms as ModelVersionTerms,
   };
+}
+
+// Public v1 API view of the gate. Omits `terms` (pricing belongs to the purchase flow) and
+// `timeframeDays` (= endsAt - publishedAt, both already in the response). `permanent` earns its
+// place by separating a never-expiring gate from a timed one whose endsAt is pending publish.
+export type PublicPaidAccessDto = {
+  permanent: boolean;
+  endsAt: Date | null;
+};
+
+/** An expired gate keeps its row as a tombstone, so presence alone doesn't mean gated. */
+export function toPublicPaidAccessDto(row: PaidAccessRow | undefined): PublicPaidAccessDto | null {
+  if (!row || !isPaidAccessActive(row)) return null;
+  return { permanent: row.timeframeDays == null, endsAt: row.endsAt };
+}
+
+export async function getPublicPaidAccessForModelVersions(
+  versionIds: number[]
+): Promise<Record<number, PublicPaidAccessDto>> {
+  if (!versionIds.length) return {};
+  const rows = await getPaidAccess('ModelVersion', versionIds);
+  const out: Record<number, PublicPaidAccessDto> = {};
+  for (const id of versionIds) {
+    const dto = toPublicPaidAccessDto(rows[id]);
+    if (dto) out[id] = dto;
+  }
+  return out;
 }
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
@@ -264,4 +344,3 @@ export async function materializePaidAccessEndsAt(
   });
   await bustPaidAccessCache('ModelVersion', [versionId]);
 }
-

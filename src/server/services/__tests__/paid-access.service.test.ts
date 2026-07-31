@@ -17,7 +17,9 @@ const { mockDbWrite, mockBust } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
-vi.mock('~/server/redis/client', () => ({ REDIS_KEYS: { CACHES: { PAID_ACCESS: 'test:paid-access' } } }));
+vi.mock('~/server/redis/client', () => ({
+  REDIS_KEYS: { CACHES: { PAID_ACCESS: 'test:paid-access' } },
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ fetch: vi.fn(), bust: mockBust }),
 }));
@@ -25,6 +27,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 import {
   assertPaidAccessInput,
   materializePaidAccessEndsAt,
+  toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 
@@ -167,5 +170,49 @@ describe('materializePaidAccessEndsAt — publish-time materialization', () => {
     expect(mockDbWrite.paidAccess.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { endsAt: increaseDate(PUBLISHED, 7, 'days') } })
     );
+  });
+});
+
+describe('toPublicPaidAccessDto — the v1 public API view', () => {
+  const row = (over: Partial<Parameters<typeof toPublicPaidAccessDto>[0] & object>) =>
+    ({ entityType: 'ModelVersion', entityId: 5, ownerId: 1, terms: TERMS, ...over } as NonNullable<
+      Parameters<typeof toPublicPaidAccessDto>[0]
+    >);
+
+  it('ungated version (no row): null', () => {
+    expect(toPublicPaidAccessDto(undefined)).toBeNull();
+  });
+
+  it('permanent gate: permanent=true with no deadline', () => {
+    expect(toPublicPaidAccessDto(row({ endsAt: null, timeframeDays: null }))).toEqual({
+      permanent: true,
+      endsAt: null,
+    });
+  });
+
+  it('active timed gate: permanent=false, carries the deadline', () => {
+    const endsAt = increaseDate(new Date(), 3, 'days');
+    expect(toPublicPaidAccessDto(row({ endsAt, timeframeDays: 7 }))).toEqual({
+      permanent: false,
+      endsAt,
+    });
+  });
+
+  it('pending timed gate (unpublished, endsAt not yet materialized): gated, deadline null', () => {
+    expect(toPublicPaidAccessDto(row({ endsAt: null, timeframeDays: 7 }))).toEqual({
+      permanent: false,
+      endsAt: null,
+    });
+  });
+
+  it('expired timed gate (tombstone row): null — the version reads as ungated', () => {
+    const endsAt = new Date('2000-01-01T00:00:00.000Z');
+    expect(toPublicPaidAccessDto(row({ endsAt, timeframeDays: 7 }))).toBeNull();
+  });
+
+  it('never leaks terms (pricing stays with the purchase flow)', () => {
+    const dto = toPublicPaidAccessDto(row({ endsAt: null, timeframeDays: null }));
+    expect(dto).not.toHaveProperty('terms');
+    expect(dto).not.toHaveProperty('ownerId');
   });
 });

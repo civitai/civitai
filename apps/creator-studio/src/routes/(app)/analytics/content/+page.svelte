@@ -65,7 +65,9 @@
 </div>
 
 {#if items === null}
-  <div class="placeholder">{active.label} are temporarily unavailable — please try again shortly.</div>
+  <div class="placeholder">
+    {active.label} are temporarily unavailable — please try again shortly.
+  </div>
 {:else if items.length === 0}
   <div class="placeholder">No {active.singular} reactions {periodLabel} yet.</div>
 {:else}
@@ -91,10 +93,14 @@
           alt="Top {active.singular} #{m.imageId}"
           class="h-full w-full object-cover transition-transform group-hover:scale-105"
         />
-        <div class="absolute inset-x-0 top-0 flex justify-start bg-linear-to-b from-black/60 to-transparent px-2 py-1">
+        <div
+          class="absolute inset-x-0 top-0 flex justify-start bg-linear-to-b from-black/60 to-transparent px-2 py-1"
+        >
           <span class="text-xs font-semibold text-white">#{(curPage - 1) * pageSize + i + 1}</span>
         </div>
-        <div class="absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/70 to-transparent px-2 py-1.5">
+        <div
+          class="absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
+        >
           <span class="text-xs font-semibold text-white">♥ {num(m.reactions)}</span>
         </div>
       </a>

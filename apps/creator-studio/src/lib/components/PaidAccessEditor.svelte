@@ -15,6 +15,7 @@
     DEFAULT_GENERATION_TRIAL_LIMIT,
   } from '$lib/monetization/early-access';
   import type { CreatorModelVersion } from '$lib/server/models';
+  import type { CreatorCaps } from '$lib/server/membership';
 
   // The per-version paid-access editor (timed Early Access + permanent Paid Access) rendered inside the
   // licensing drawer. Owns the editable pricing state (`ea`) and every gating decision derived from the
@@ -22,24 +23,20 @@
   let {
     version,
     onClose,
-    maxEarlyAccessDays,
-    canSellIndefinitely,
-    permanentCap,
-    permanentUsed,
-    earlyAccessUsed,
-    earlyAccessCap,
-    tier,
+    caps,
   }: {
     version: CreatorModelVersion;
     onClose: () => void;
-    maxEarlyAccessDays: number;
-    canSellIndefinitely: boolean;
-    permanentCap: number | null;
-    permanentUsed: number;
-    earlyAccessUsed: number;
-    earlyAccessCap: number;
-    tier: string | null;
+    caps: CreatorCaps;
   } = $props();
+
+  const permanentCap = $derived(caps.permanentCap);
+  const permanentUsed = $derived(caps.permanentUsed);
+  const earlyAccessUsed = $derived(caps.earlyAccessUsed);
+  const earlyAccessCap = $derived(caps.earlyAccessCap);
+  const maxEarlyAccessDays = $derived(caps.maxEarlyAccessDays);
+  const tier = $derived(caps.tier);
+  const priceCap = $derived(caps.priceCap);
 
   const permAtCap = $derived(
     permanentCap !== null && permanentCap > 0 && permanentUsed >= permanentCap
@@ -52,11 +49,11 @@
     const timedNewOk = maxEarlyAccessDays > 0 && v.status !== 'Published';
     return {
       timeframe: Math.min(c?.timeframe ?? 7, maxEarlyAccessDays || Infinity),
-      permanent: c?.permanent ?? (!timedNewOk && canSellIndefinitely),
+      permanent: c?.permanent ?? !timedNewOk,
       accessPrice: (c?.accessPrice ?? MIN_ACCESS_PRICE) as number | undefined,
       generationPrice: c?.generationPrice as number | undefined,
-      freePreviewGenerations: (c?.freePreviewGenerations ??
-        DEFAULT_GENERATION_TRIAL_LIMIT) as number | undefined,
+      freePreviewGenerations: (c?.freePreviewGenerations ?? DEFAULT_GENERATION_TRIAL_LIMIT) as
+        number | undefined,
       donationGoalEnabled: c?.donationGoalEnabled ?? false,
       donationGoal: c?.donationGoal as number | undefined,
     };
@@ -64,13 +61,30 @@
   // Seed once from the version at mount (the parent remounts via `{#key version.id}` on open).
   let ea = $state(untrack(() => seed(version)));
 
+  // max never drops below the stored price: the server blocks only RAISES, so clamping down would silently
+  // cut a grandfathered price on any unrelated edit.
+  const storedAccess = $derived(version.earlyAccessConfig?.accessPrice ?? 0);
+  const accessMax = $derived(priceCap == null ? undefined : Math.max(priceCap, storedAccess));
+  const overCap = $derived(priceCap != null && (ea.accessPrice ?? 0) > priceCap);
+  // The generation-only tier can't exceed the access price, and neither may exceed the tier's ceiling.
+  const genPriceMax = $derived(
+    accessMax == null ? ea.accessPrice : Math.min(ea.accessPrice ?? accessMax, accessMax)
+  );
+
+  // Opt-in to a cheaper generation-only tier. Unchecked, the input isn't rendered so `generationPrice` never
+  // reaches the form, and buildModelVersionTerms omits the price — generation then falls back to the access
+  // price. Seeded on so an existing separate price stays visible instead of silently reverting on the next save.
+  let chargeGenerationSeparately = $state(
+    untrack(() => version.earlyAccessConfig?.generationPrice != null)
+  );
+
   // A donation goal is create-once (the endpoint never updates or removes it), so once a version has one
   // the amount is locked here — reflected, not editable. Timed access only; permanent has none.
   const hadDonationGoal = $derived(!!version.earlyAccessConfig?.donationGoalEnabled);
   // The permanent option stays available to an already-permanent version even if membership lapsed or the
   // tier is at capacity, so an edit can't strand the creator (mirrors the main-app carve-out).
   const alreadyPermanent = $derived(!!version.earlyAccessConfig?.permanent);
-  const canChoosePermanent = $derived(alreadyPermanent || (canSellIndefinitely && !permAtCap));
+  const canChoosePermanent = $derived(alreadyPermanent || !permAtCap);
   const permBlocked = $derived(permAtCap && !alreadyPermanent);
   // A version already on a timed gate stays editable regardless of score/publish state.
   const timedAlreadySet = $derived(!!version.earlyAccessConfig && !alreadyPermanent);
@@ -90,8 +104,7 @@
   const usageLabel = $derived(isGenOnly ? 'Generation only' : 'Download + generation');
 
   const eaEnhance =
-    () =>
-    async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
       await event.update({ reset: false });
       if (event.result.type === 'success') {
         toast.success(
@@ -115,21 +128,26 @@
 
   {#if !paidAccessUsageOk}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
-      Paid access isn't available for this version — it's set to API-only generation, not download or
-      on-site generation.
+      Paid access isn't available for this version — it's set to API-only generation, not download
+      or on-site generation.
     </p>
   {:else if !canChooseTimed && !canChoosePermanent && !version.earlyAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
       {#if version.status === 'Published'}
-        Early access can't be started after a version is published. Permanent paid access needs an
-        active Creator Program membership.
+        Early access can't be started after a version is published, and you've reached your
+        permanent paid-access limit ({permanentUsed} of {permanentCap}).
       {:else}
         Early access isn't available for your account yet — it unlocks as your creator score grows.
-        Permanent paid access needs an active Creator Program membership.
+        You've also reached your permanent paid-access limit ({permanentUsed} of {permanentCap}).
       {/if}
     </p>
   {:else}
-    <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-4">
+    <form
+      method="POST"
+      action="?/setEarlyAccess"
+      use:enhance={eaEnhance}
+      class="flex flex-col gap-4"
+    >
       <input type="hidden" name="versionId" value={version.id} />
       <input type="hidden" name="usageControl" value={usageControl ?? 'Download'} />
 
@@ -146,7 +164,10 @@
               ? 'cursor-not-allowed opacity-50'
               : ''}"
           >
-            <span class="w-fit rounded-full bg-blue-4/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-3">Timed</span>
+            <span
+              class="w-fit rounded-full bg-blue-4/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-3"
+              >Timed</span
+            >
             <span class="text-sm font-semibold text-white">Early Access</span>
             <span class="text-xs text-dark-3">Becomes free when the window ends.</span>
           </button>
@@ -160,23 +181,24 @@
               ? 'cursor-not-allowed opacity-50'
               : ''}"
           >
-            <span class="w-fit rounded-full bg-[#9775fa]/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#d0bfff]">Permanent</span>
+            <span
+              class="w-fit rounded-full bg-[#9775fa]/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#d0bfff]"
+              >Permanent</span
+            >
             <span class="text-sm font-semibold text-white">Paid Access</span>
             <span class="text-xs text-dark-3">Always requires purchase.</span>
           </button>
         </div>
         {#if !canChooseTimed && version.status === 'Published'}
           <span class="text-xs text-dark-3">
-            Early access can't be started after a version is published — use permanent paid access instead.
+            Early access can't be started after a version is published — use permanent paid access
+            instead.
           </span>
         {/if}
         {#if !canChoosePermanent}
           <span class="text-xs text-dark-3">
-            {#if !canSellIndefinitely}
-              Permanent access requires an active Creator Program membership.
-            {:else}
-              You've reached your tier's permanent-access limit ({permanentUsed} of {permanentCap}).
-            {/if}
+            You've reached your permanent paid-access limit ({permanentUsed} of {permanentCap}) —
+            upgrade your membership for more.
           </span>
         {/if}
       </div>
@@ -195,13 +217,23 @@
       {:else}
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Early access duration (days)</span>
-          <NumberInput name="timeframe" min={0} max={maxEarlyAccessDays} bind:value={ea.timeframe} class="w-32" />
+          <NumberInput
+            name="timeframe"
+            min={0}
+            max={maxEarlyAccessDays}
+            bind:value={ea.timeframe}
+            class="w-32"
+          />
           <span class="text-xs text-dark-3">
-            Up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
+            Up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'} at your creator level
+            — set 0 to turn early access off.
           </span>
         </label>
         <div class="text-xs text-dark-3">
-          Early access {earlyAccessUsed} of {earlyAccessCap} active · up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'}
+          Early access {earlyAccessUsed} of {earlyAccessCap} active · up to {maxEarlyAccessDays} day{maxEarlyAccessDays ===
+          1
+            ? ''
+            : 's'}
         </div>
       {/if}
 
@@ -217,27 +249,55 @@
         </div>
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Price for access <span class="text-red-6">*</span></span>
-          <NumberInput name="accessPrice" min={MIN_ACCESS_PRICE} bind:value={ea.accessPrice} class="w-40" />
+          <NumberInput
+            name="accessPrice"
+            min={MIN_ACCESS_PRICE}
+            max={accessMax}
+            bind:value={ea.accessPrice}
+            class="w-40"
+          />
           <span class="text-xs text-dark-3">
             {isGenOnly
               ? 'What buyers pay to generate with this version on-site.'
-              : 'Buyers unlock download + generation.'}
+              : 'Buyers unlock download + generation.'}{#if priceCap != null}
+              Your membership allows up to {priceCap.toLocaleString()} ⚡.
+            {/if}
           </span>
+          {#if overCap}
+            <span class="text-xs text-yellow-5">
+              This price is above your membership's cap. You can keep or lower it, but not raise it
+              — upgrade to charge more.
+            </span>
+          {/if}
         </label>
         {#if !isGenOnly}
-          <label class="flex flex-col gap-1 text-sm">
-            <span class="text-dark-1">Generation-only price</span>
-            <NumberInput
-              name="generationPrice"
-              min={MIN_GENERATION_PRICE}
-              max={ea.accessPrice}
-              bind:value={ea.generationPrice}
-              class="w-40"
-            />
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-2">
+              <Checkbox id="ea-gen-price" bind:checked={chargeGenerationSeparately} />
+              <Label for="ea-gen-price" class="cursor-pointer text-sm font-normal text-white">
+                Charge a different price for generation access
+              </Label>
+            </div>
             <span class="text-xs text-dark-3">
-              Defaults to the access price. Lower it to offer a cheaper generation-only tier.
+              Off, buyers pay the same access price whether they download or generate.
             </span>
-          </label>
+            {#if chargeGenerationSeparately}
+              <label class="flex flex-col gap-1 text-sm">
+                <span class="text-dark-1">Generation-only price</span>
+                <NumberInput
+                  name="generationPrice"
+                  min={MIN_GENERATION_PRICE}
+                  max={genPriceMax}
+                  bind:value={ea.generationPrice}
+                  class="w-40"
+                />
+                <span class="text-xs text-dark-3">
+                  What buyers pay to generate on-site without unlocking the download. Can't exceed
+                  the access price.
+                </span>
+              </label>
+            {/if}
+          </div>
         {/if}
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Free preview generations</span>
@@ -258,18 +318,30 @@
       {#if !ea.permanent}
         <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
           <div class="flex items-center gap-2">
-            <Checkbox id="ea-dg" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} disabled={hadDonationGoal} />
+            <Checkbox
+              id="ea-dg"
+              name="donationGoalEnabled"
+              bind:checked={ea.donationGoalEnabled}
+              disabled={hadDonationGoal}
+            />
             <Label for="ea-dg" class="cursor-pointer text-sm font-normal text-white">
               Let the community unlock this early
             </Label>
           </div>
           <span class="text-xs text-dark-3">
-            If the goal is met before the window ends, early access ends and the version becomes free for everyone.
+            If the goal is met before the window ends, early access ends and the version becomes
+            free for everyone.
           </span>
           {#if ea.donationGoalEnabled}
             <label class="flex flex-col gap-1 text-sm">
               <span class="text-dark-2">Goal amount (⚡)</span>
-              <NumberInput name="donationGoal" min={0} bind:value={ea.donationGoal} disabled={hadDonationGoal} class="w-40" />
+              <NumberInput
+                name="donationGoal"
+                min={0}
+                bind:value={ea.donationGoal}
+                disabled={hadDonationGoal}
+                class="w-40"
+              />
             </label>
             {#if hadDonationGoal}
               <span class="text-xs text-dark-3">

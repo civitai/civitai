@@ -219,9 +219,16 @@ export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchem
  * `beginListingRevision` + the asset procs). Owner-bound in the service
  * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
  */
-export const getMyListingForAppSchema = z.object({
-  appBlockId: z.string().min(1).max(64),
-});
+export const getMyListingForAppSchema = z
+  .object({
+    appBlockId: z.string().min(1).max(64).optional(),
+    // W13 draft-at-submit: a FIRST-version app has no AppBlock yet, so the
+    // owner-media page resolves its pre-approval draft BY SLUG while pending.
+    slug: z.string().min(1).max(64).optional(),
+  })
+  .refine((v) => v.appBlockId != null || v.slug != null, {
+    message: 'either appBlockId or slug is required',
+  });
 export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
 
 /**

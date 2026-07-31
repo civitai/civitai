@@ -64,6 +64,7 @@
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content={TITLE} />
   <meta name="twitter:description" content={DESCRIPTION} />
+  <!-- eslint-disable-next-line svelte/no-at-html-tags -- JSON.stringify of module constants; no user input -->
   {@html `<script type="application/ld+json">${jsonLd}</` + `script>`}
 </svelte:head>
 
@@ -72,6 +73,7 @@
 <div class="min-h-screen bg-background text-foreground" data-sveltekit-reload>
   <header class="mx-auto flex w-full max-w-6xl items-center gap-3 px-6 py-5">
     <div class="flex items-center gap-2 [&>span>svg]:block [&>span>svg]:h-6 [&>span>svg]:w-auto">
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- buildWordmarkSvg output; no user input -->
       <span>{@html wordmark}</span>
       <span
         class="rounded bg-dark-6 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-dark-1"
@@ -96,8 +98,8 @@
           Get paid for the models you share.
         </h1>
         <p class="mt-5 text-lg text-dark-1">
-          Creator Studio is where Civitai creators set licensing fees, watch real usage, and turn the
-          Buzz they earn into cash — all in one place.
+          Creator Studio is where Civitai creators set licensing fees, watch real usage, and turn
+          the Buzz they earn into cash — all in one place.
         </p>
         <div class="mt-8 flex flex-wrap items-center gap-3">
           <Button href="/dashboard" size="lg" class="gap-1.5">

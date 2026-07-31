@@ -43,6 +43,7 @@ import {
 import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
+  checkSharedReportRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -71,6 +72,7 @@ const REQUIRE_PAID_TIER = false;
 
 type SharedOp =
   | 'list'
+  | 'get'
   | 'getCount'
   | 'append'
   // Author-scoped in-place edit of an OWN published row (write-gated exactly like
@@ -85,7 +87,7 @@ type SharedOp =
   //   - 'getTop' is a READ (anon-allowed like list/getCount)
   | 'increment'
   | 'getTop';
-const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'getCount', 'getTop']);
+const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCount', 'getTop']);
 
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
@@ -292,7 +294,9 @@ export const appsSharedRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'list');
+      // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
+      // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+      const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
       const pool = requireAppsDb();
 
       const afterKey = input.cursor
@@ -301,6 +305,12 @@ export const appsSharedRouter = router({
       const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
       const prefixPattern = `${escapedPrefix}%`;
 
+      // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
+      // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
+      // (never true) for a NULL param, so an anonymous viewer always reads
+      // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
+      // is index-covered and adds no scan to the hot list path. The raw vote rows
+      // are NEVER returned — only the boolean derived from the viewer's own row.
       const rows = (
         await pool.query<{
           key: string;
@@ -309,17 +319,20 @@ export const appsSharedRouter = router({
           count: string;
           created_at: Date;
           updated_at: Date;
+          viewer_voted: boolean;
         }>(
           `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at
+                  s.created_at, s.updated_at,
+                  (v.user_id IS NOT NULL) AS viewer_voted
              FROM ${schema}.shared_kv s
              LEFT JOIN ${schema}.counters c ON c.key = s.key
+             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
             WHERE s.hidden_at IS NULL
               AND s.key LIKE $1 ESCAPE '\\'
               AND ($2::text IS NULL OR s.key < $2)
             ORDER BY s.key DESC
             LIMIT $3`,
-          [prefixPattern, afterKey, input.limit]
+          [prefixPattern, afterKey, input.limit, userId]
         )
       ).rows;
 
@@ -336,8 +349,59 @@ export const appsSharedRouter = router({
           count: Number(r.count),
           createdAt: r.created_at,
           updatedAt: r.updated_at,
+          viewerVoted: r.viewer_voted,
         })),
         nextCursor,
+      };
+    }),
+
+  /**
+   * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
+   * item shape as `list` (incl. `count` + the per-viewer `viewerVoted`), or
+   * `null` when the key is missing OR hidden — applying the identical
+   * `hidden_at IS NULL` visibility gate as `list`, so a direct key fetch can
+   * NOT leak a withdrawn / moderator-hidden row that the paged list excludes.
+   * READ op (anon-allowed like `list`/`getCount`). Reuses `resolveSharedContext`
+   * so per-app isolation, the approved-block + revocation checks, the read scope,
+   * and the fail-closed kill-switch all hold verbatim. The `votes`/`kv` rows are
+   * never returned — only the aggregate count + the viewer's own vote boolean.
+   */
+  get: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .query(async ({ input }) => {
+      const { schema, userId } = await resolveSharedContext(input.blockToken, 'get');
+      const pool = requireAppsDb();
+      const row = (
+        await pool.query<{
+          key: string;
+          author_user_id: number;
+          value: unknown;
+          count: string;
+          created_at: Date;
+          updated_at: Date;
+          viewer_voted: boolean;
+        }>(
+          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+                  s.created_at, s.updated_at,
+                  (v.user_id IS NOT NULL) AS viewer_voted
+             FROM ${schema}.shared_kv s
+             LEFT JOIN ${schema}.counters c ON c.key = s.key
+             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
+            WHERE s.key = $1 AND s.hidden_at IS NULL`,
+          [input.key, userId]
+        )
+      ).rows[0];
+      if (!row) return { item: null };
+      return {
+        item: {
+          key: row.key,
+          authorUserId: row.author_user_id,
+          value: row.value,
+          count: Number(row.count),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          viewerVoted: row.viewer_voted,
+        },
       };
     }),
 
@@ -745,17 +809,39 @@ export const appsSharedRouter = router({
         'report'
       );
       const uid = userId as number;
+
+      // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
+      // and each report files a row AND fires a mod-channel Discord webhook. Every
+      // OTHER shared write op is rate-limited; this one was not — so a trusted user
+      // could loop it into report-table growth + mod-channel flooding. Bound the
+      // per-(user, app) report velocity on its own daily bucket (fail-open, like the
+      // other buckets — the containment is defence-in-depth, not the auth boundary).
+      const rl = await checkSharedReportRateLimit(uid, appBlockId);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many reports — retry in ${rl.retryAfterSeconds}s`,
+        });
+      }
+
       const pool = requireAppsDb();
       const exists = (
         await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [input.key])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
       const reason = input.reason ?? 'user-report';
-      await insertSharedReport(schema, {
+
+      // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
+      // no 2nd row, no 2nd webhook, no 2nd alert. `filed` is false when this
+      // (reporter, key) pair already has a report row, and the observability +
+      // mod-notify side effects below are skipped entirely. Only a genuinely-new
+      // report fires them (distinct keys / distinct reporters are unaffected).
+      const filed = await insertUserSharedReportDeduped(schema, {
         key: input.key,
         reporterUserId: uid,
         reason,
       });
+      if (!filed) return { ok: true as const };
 
       // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): a user report previously
       // filed a `shared_kv_reports` row that NOTHING reads, so ordinary abuse
@@ -1090,6 +1176,38 @@ async function insertSharedReport(
      VALUES ($1, $2, $3, $4)`,
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
+}
+
+/**
+ * F1 — file a USER report row with per-(reporter, key) dedup. A single
+ * conditional INSERT that no-ops when this reporter already has a report row for
+ * this key. Returns true iff a NEW row was filed — the caller then emits the
+ * abuse alert + fires the mod webhook; false on a duplicate (skip both, so a
+ * re-report can't grow the table or re-ping the mod channel).
+ *
+ * `reporter_user_id` and `key` are both non-null on the user-report path (the
+ * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
+ * the (reporter, key) pair, so it never collides with the auto-report rows
+ * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
+ * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
+ * the per-(user, app) report rate limit is the hard ceiling; this collapses the
+ * common repeat-click / retry case, which is the actual webhook-spam vector.
+ */
+async function insertUserSharedReportDeduped(
+  schema: string,
+  args: { key: string; reporterUserId: number; reason: string }
+): Promise<boolean> {
+  const pool = requireAppsDb();
+  const res = await pool.query(
+    `INSERT INTO ${schema}.shared_kv_reports (id, key, reporter_user_id, reason)
+     SELECT $1, $2, $3, $4
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ${schema}.shared_kv_reports
+       WHERE reporter_user_id = $3 AND key = $2
+     )`,
+    [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /**

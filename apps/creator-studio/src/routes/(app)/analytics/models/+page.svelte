@@ -2,7 +2,12 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
-  import { IconArrowUp, IconArrowDown, IconArrowsSort, IconChevronRight } from '@tabler/icons-svelte';
+  import {
+    IconArrowUp,
+    IconArrowDown,
+    IconArrowsSort,
+    IconChevronRight,
+  } from '@tabler/icons-svelte';
   import { page } from '$app/state';
   import { setSortParam } from '$lib/table-nav';
   import { formatRange } from '$lib/date-range';
@@ -19,7 +24,9 @@
 
   const modelCurrencies = $derived(
     data.modelPerformance
-      ? [...new Set(data.modelPerformance.flatMap((m) => m.currencies.map((c) => c.currency)))].sort(currencySort)
+      ? [
+          ...new Set(data.modelPerformance.flatMap((m) => m.currencies.map((c) => c.currency))),
+        ].sort(currencySort)
       : []
   );
   const modelCell = (m: NonNullable<PageData['modelPerformance']>[number], currency: string) =>
@@ -49,7 +56,9 @@
 {#if data.modelPerformance && data.modelPerformance.length > 0}
   <div class="cs-panel p-4">
     <p class="mb-3 text-sm font-medium text-white">
-      Per-model performance <span class="text-xs text-dark-3">{periodLabel} · click a column to sort</span>
+      Per-model performance <span class="text-xs text-dark-3"
+        >{periodLabel} · click a column to sort</span
+      >
     </p>
     {#snippet sortHead(key: string, label: string)}
       {@const active = sortKey === key}
@@ -96,16 +105,26 @@
                 <a
                   href="/analytics/models/{m.modelId}"
                   class="group flex items-center gap-1 font-medium text-blue-4 hover:text-blue-3"
-                  title="{m.modelName ?? `Model ${m.modelId}`}{m.versionName ? ` · ${m.versionName}` : ''}"
+                  title="{m.modelName ?? `Model ${m.modelId}`}{m.versionName
+                    ? ` · ${m.versionName}`
+                    : ''}"
                 >
-                  <span class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3">
-                    {m.modelName ?? `Model ${m.modelId}`}{#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+                  <span
+                    class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
+                  >
+                    {m.modelName ?? `Model ${m.modelId}`}{#if m.versionName}<span
+                        class="text-dark-3"
+                      >
+                        · {m.versionName}</span
+                      >{/if}
                   </span>
                   <IconChevronRight size={14} class="shrink-0" />
                 </a>
               {:else}
                 <div class="truncate text-dark-2" title={m.versionName ?? ''}>
-                  Version {m.modelVersionId}{#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+                  Version {m.modelVersionId}{#if m.versionName}<span class="text-dark-3">
+                      · {m.versionName}</span
+                    >{/if}
                 </div>
               {/if}
               <div class="truncate text-xs text-dark-3">{m.modelType ?? '—'}</div>
@@ -115,7 +134,9 @@
                 {m.generations ? num(m.generations) : '—'}
               </div>
               {#if m.generations}
-                <div class="mt-0.5"><DeltaChip current={m.generations} previous={m.prevGenerations} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={m.generations} previous={m.prevGenerations} />
+                </div>
               {/if}
             </Table.Cell>
             <Table.Cell class="align-top text-right">
@@ -123,7 +144,9 @@
                 {m.downloads ? num(m.downloads) : '—'}
               </div>
               {#if m.downloads}
-                <div class="mt-0.5"><DeltaChip current={m.downloads} previous={m.prevDownloads} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={m.downloads} previous={m.prevDownloads} />
+                </div>
               {/if}
             </Table.Cell>
             {#each modelCurrencies as c (c)}
@@ -150,7 +173,9 @@
     {/if}
   </div>
 {:else if data.modelPerformance === null}
-  <div class="placeholder">Per-model performance is temporarily unavailable — please try again shortly.</div>
+  <div class="placeholder">
+    Per-model performance is temporarily unavailable — please try again shortly.
+  </div>
 {:else}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
     <strong class="text-dark-2">Per-model performance</strong> — no model activity {periodLabel} yet.
