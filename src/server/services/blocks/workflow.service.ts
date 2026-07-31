@@ -8,8 +8,10 @@ import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
+import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
+  BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
@@ -426,6 +428,29 @@ function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkf
 }
 
 /**
+ * THE single place the two source-image wire shapes collapse into one.
+ *
+ * `sourceImage` (singular) is a DEPRECATED ALIAS — the published developer docs
+ * and `@civitai/app-sdk` still ship it — and `sourceImages` is the current
+ * field. Everything downstream of this function sees ONLY an array, so no code
+ * path can accidentally handle one shape and miss the other.
+ *
+ * Supplying both is rejected at the WIRE schema (ambiguous), so it cannot reach
+ * here; the `sourceImages`-first order below is defensive, not a preference.
+ * Returns an empty array when the body carries neither — that is the txt2img
+ * case. An explicitly EMPTY `sourceImages: []` never reaches here either: the
+ * schema's `.min(1)` rejects it rather than let it degrade into a txt2img
+ * generation the caller did not ask for.
+ */
+export function normalizeBlockSourceImages(
+  body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>
+): BlockSourceImage[] {
+  if (body.sourceImages?.length) return body.sourceImages;
+  if (body.sourceImage) return [body.sourceImage];
+  return [];
+}
+
+/**
  * Resolve which image graph workflow a block body maps to when combined with the
  * checkpoint's ecosystem:
  *   - no source image + txt2img-capable eco    → `txt2img`
@@ -457,7 +482,14 @@ export function resolveBlockImageWorkflowType(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
   ecosystemId?: number
 ): BlockImageWorkflowType {
-  if (!body.sourceImage) {
+  // 🔴 UNION OF TWO CHANGES — the CONDITION comes from the sourceImages[] work,
+  // the guard BODY from the edit-only work. Reading the NORMALIZED array (not the
+  // deprecated singular `body.sourceImage`) is load-bearing: an array-only body
+  // has `sourceImage` undefined, so the old literal check would route it to
+  // `txt2img`, silently DROP the images, and bill the caller for a text-to-image
+  // generation. That is the exact silent-wrong-answer class both changes exist to
+  // close, so it must not be reintroduced by a conflict resolution.
+  if (normalizeBlockSourceImages(body).length === 0) {
     if (
       ecosystemId != null &&
       !isWorkflowAvailable('txt2img', ecosystemId) &&
@@ -579,6 +611,61 @@ export function assertCheckpointVersionSupportsWorkflow(opts: {
       `${ecosystem} ecosystem — it is offered for ${scope.offeredFor.join(' / ')} only. ` +
       `Either ${remedy}${alternative}.`,
   });
+}
+
+/**
+ * Enforce the PER-ECOSYSTEM source-image cap.
+ *
+ * The cap is not a constant — it is declared per ecosystem in the graph's own
+ * `imagesNode({ min, max })` and the spread is wide: Boogu / Flux.1 Kontext /
+ * MAI / SD-family accept 1, Qwen / Qwen2 / MageFlow 3, Reve / HiDream-O1 4,
+ * WanImage 5, Flux.2 / Klein / OpenAI / NanoBanana / Seedream / Grok 7. A flat
+ * constant would over-allow the 1-image ecosystems and under-allow the 7-image
+ * ones, so `getImagesLimit` reads the real graph config instead.
+ *
+ * WHY REJECT RATHER THAN LET THE GRAPH HANDLE IT: `imagesNode`'s INPUT
+ * transform does `arr.slice(0, effectiveMax)` — an over-cap array is silently
+ * TRUNCATED, and the caller is billed for a generation conditioned on fewer
+ * images than it sent, with nothing in the response saying so. Same
+ * silent-wrong-answer class the ecosystem/variant guard above exists to stop.
+ *
+ * FAIL CLOSED when the limit cannot be determined: `getImagesLimit` returns
+ * `undefined` for a pair with no images node, which for a resolved img2img
+ * workflow means our routing and the graph's disagree. Rejecting is correct
+ * there — proceeding would hand the graph an `images` array it has no node for.
+ * The ecosystem/variant guard upstream makes that unreachable today (and a test
+ * enumerates every img2img-capable ecosystem to prove each one HAS a readable
+ * limit), so this is defense-in-depth against the two guards drifting apart —
+ * exported so it can be exercised directly rather than left unverified.
+ *
+ * The MINIMUM is deliberately NOT re-checked here. Every image workflow's
+ * `imagesNode` has `min: 1` today, and we only call this with `count >= 1`; if
+ * a future ecosystem raises its minimum, the graph's own OUTPUT schema
+ * (`.min(effectiveMin, 'At least N images are required')`) rejects LOUDLY
+ * during `safeParse` — that failure mode is already an error, not a silent
+ * wrong answer, so duplicating it here would only add a second place to drift.
+ */
+export function assertSourceImageCount(opts: {
+  ecosystem: string;
+  workflow: BlockImageWorkflowType;
+  count: number;
+}): void {
+  const { ecosystem, workflow, count } = opts;
+  const limit = getImagesLimit(ecosystem, workflow);
+  if (!limit) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `workflow '${workflow}' does not accept source images on the ${ecosystem} ecosystem`,
+    });
+  }
+  if (count > limit.max) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        `too many source images: ${count} sent, but the ${ecosystem} ecosystem accepts at most ` +
+        `${limit.max} for '${workflow}'`,
+    });
+  }
 }
 
 /**
@@ -754,19 +841,22 @@ export function buildImageWorkflowInput(
     // qwen-graph: `images` node shown `when: !workflow.startsWith('txt')`). The
     // denoise/edit node applies at its default and output dimensions derive from
     // the source (SD) or the ecosystem's aspectRatio default (edit) — so
-    // aspectRatio is OMITTED here. `sourceImage` is guaranteed present (the
-    // variant only resolves to an img2img* type when the body carries one); the
-    // fallback keeps the types honest for an explicit-type caller. The graph's
-    // imagesNode reads { url, width, height }; extra fields are stripped by its
-    // object parse.
-    if (body.sourceImage) {
-      input.images = [
-        {
-          url: body.sourceImage.url,
-          width: body.sourceImage.width,
-          height: body.sourceImage.height,
-        },
-      ];
+    // aspectRatio is OMITTED here. The graph's imagesNode reads
+    // { url, width, height }; extra fields are stripped by its object parse.
+    //
+    // MULTI-IMAGE: the source images are the NORMALIZED array, so the singular
+    // deprecated `sourceImage` and the array `sourceImages` produce identical
+    // downstream shapes. The count is checked against the ECOSYSTEM's real cap
+    // BEFORE emitting — the graph would otherwise silently truncate an over-cap
+    // array (see assertSourceImageCount).
+    const sourceImages = normalizeBlockSourceImages(body);
+    if (sourceImages.length) {
+      assertSourceImageCount({ ecosystem, workflow: workflowType, count: sourceImages.length });
+      input.images = sourceImages.map((img) => ({
+        url: img.url,
+        width: img.width,
+        height: img.height,
+      }));
     }
     return input;
   }

@@ -3633,11 +3633,15 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is a PAGE-ONLY
+        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
         // feature. Custom Generators is a page app; model-bound img2img is out
         // of scope and unvetted for 2a, so reject it fail-closed on the model
         // path (mirrors the additionalResources guard above).
-        if (input.body.sourceImage) {
+        //
+        // BOTH wire shapes are gated identically — the deprecated singular
+        // `sourceImage` AND the array `sourceImages`. Gating only one would
+        // leave a model-bound token a way in through the other.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3853,10 +3857,12 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is PAGE-ONLY.
+        // IMAGE bridge (Phase-2a): img2img via source images is PAGE-ONLY.
         // Reject it fail-closed on the model path (see estimateWorkflow for the
-        // same guard). Custom Generators is a page app.
-        if (input.body.sourceImage) {
+        // same guard). Custom Generators is a page app. BOTH wire shapes — the
+        // deprecated singular `sourceImage` and the array `sourceImages` — are
+        // gated identically; gating only one would leave a way in.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',

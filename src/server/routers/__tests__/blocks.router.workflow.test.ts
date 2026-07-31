@@ -904,6 +904,24 @@ describe('blocks.estimateWorkflow', () => {
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
+
+  // The ARRAY form must hit the identical page-only gate. Gating only the
+  // deprecated singular field would leave a model-bound token a way in.
+  it('rejects sourceImages[] on a MODEL-bound token (array form, same page-only gate)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImages: [
+            { url: 'https://image.civitai.com/abc/a.jpeg', width: 768, height: 1024 },
+            { url: 'https://image.civitai.com/abc/b.jpeg', width: 768, height: 1024 },
+          ],
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
 });
 
 describe('blocks.submitWorkflow', () => {
@@ -2029,6 +2047,24 @@ describe('blocks.submitWorkflow', () => {
         }),
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('rejects sourceImages[] on a MODEL-bound token (array form, same page-only gate)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({
+          sourceImages: [
+            { url: 'https://image.civitai.com/abc/a.jpeg', width: 768, height: 1024 },
+            { url: 'https://image.civitai.com/abc/b.jpeg', width: 768, height: 1024 },
+          ],
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Fail-closed BEFORE any orchestrator call / spend.
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
   it('rejects when prompt audit blocks the prompt', async () => {

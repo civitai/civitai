@@ -26,6 +26,8 @@ import {
   BLOCK_IMAGE_WORKFLOW_TYPES,
   createBlockCustomComfyStep,
   isPageLoraResource,
+  assertSourceImageCount,
+  normalizeBlockSourceImages,
   projectAppWorkflow,
   resolveBlockImageWorkflowType,
   resolveBlockVersionContext,
@@ -40,7 +42,9 @@ import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
 // live in the browser-safe `shared/` tree (no DB/redis), so we import and run
 // them for real in the integration-style test below.
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import { ECO } from '~/shared/constants/basemodel.constants';
+import { ECO, ecosystems } from '~/shared/constants/basemodel.constants';
+import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -1944,5 +1948,236 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       cost: 47,
       createdAt: '2026-07-17T00:00:00.000Z',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-image conditioning: sourceImages[] + PER-ECOSYSTEM cap
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The graph layer has always accepted N reference images (`imagesNode({min,max})`);
+// the block bridge could only express one. The cap is NOT a constant — it is
+// declared per ecosystem in the graph files and the real spread is 1 / 3 / 4 /
+// 5 / 7. These tests read the same real config the guard does, and pin the
+// ecosystem-specific behaviour rather than a flat number.
+describe('sourceImages[] — normalization + per-ecosystem cap', () => {
+  const IMG = (n = 0) => ({
+    url: `https://image.civitai.com/abc/${n}.jpeg`,
+    width: 1024,
+    height: 1024,
+  });
+  const body = (over: Record<string, unknown> = {}) => ({
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'edit the cat', quantity: 1 },
+    ...over,
+  });
+  const resolved = (checkpointBaseModel: string) => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+    checkpointBaseModel,
+  });
+  const images = (n: number) => Array.from({ length: n }, (_, i) => IMG(i));
+  function catchError(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // ── normalization ──────────────────────────────────────────────────────────
+  it('normalizes the deprecated singular sourceImage to a 1-element array', () => {
+    expect(normalizeBlockSourceImages(body({ sourceImage: IMG(1) }) as never)).toEqual([IMG(1)]);
+  });
+
+  it('passes an array through unchanged', () => {
+    expect(normalizeBlockSourceImages(body({ sourceImages: images(3) }) as never)).toEqual(
+      images(3)
+    );
+  });
+
+  it('returns an empty array when the body carries neither (txt2img)', () => {
+    expect(normalizeBlockSourceImages(body() as never)).toEqual([]);
+  });
+
+  // ── the emitted graph input ────────────────────────────────────────────────
+  it('emits EVERY array element into the graph images[] (order preserved)', () => {
+    const out = buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Qwen'));
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.images).toEqual([
+      { url: 'https://image.civitai.com/abc/0.jpeg', width: 1024, height: 1024 },
+      { url: 'https://image.civitai.com/abc/1.jpeg', width: 1024, height: 1024 },
+      { url: 'https://image.civitai.com/abc/2.jpeg', width: 1024, height: 1024 },
+    ]);
+  });
+
+  it('produces an IDENTICAL graph input for the singular alias and a 1-element array', () => {
+    const singular = buildImageWorkflowInput(
+      body({ sourceImage: IMG(0) }) as never,
+      resolved('Qwen')
+    );
+    const array = buildImageWorkflowInput(
+      body({ sourceImages: [IMG(0)] }) as never,
+      resolved('Qwen')
+    );
+    expect(array).toEqual(singular);
+  });
+
+  it('routes an array on an SD-family checkpoint to plain img2img', () => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: [IMG(0)] }) as never,
+      resolved('SDXL 1.0')
+    );
+    expect(out.workflow).toBe('img2img');
+    expect(out.images).toHaveLength(1);
+  });
+
+  // ── PER-ECOSYSTEM CAP ──────────────────────────────────────────────────────
+  // Caps read from each ecosystem's own imagesNode config. A flat constant would
+  // over-allow Boogu (1) and under-allow Flux.2 (7).
+  it.each([
+    ['Qwen', 'Qwen', 3],
+    ['Flux.2 D', 'Flux2', 7],
+    ['Boogu', 'Boogu', 1],
+    ['OpenAI', 'OpenAI', 7],
+    ['SDXL 1.0', 'SDXL', 1],
+    ['HiDream-O1', 'HiDream-O1', 4],
+  ])('accepts exactly the cap for %s (%s = %i)', (baseModel, _ecoKey, cap) => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: images(cap) }) as never,
+      resolved(baseModel)
+    );
+    expect(out.images).toHaveLength(cap);
+  });
+
+  it.each([
+    ['Qwen', 4, 3],
+    ['Flux.2 D', 8, 7],
+    ['Boogu', 2, 1],
+    ['SDXL 1.0', 2, 1],
+  ])('REJECTS over-cap for %s (%i sent, cap %i)', (baseModel, count, cap) => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ sourceImages: images(count) }) as never, resolved(baseModel))
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    // The error names the limit AND the ecosystem, not a generic "too many".
+    expect(caught.message).toContain(String(cap));
+    expect(caught.message).toContain(String(count));
+    expect(caught.message).toMatch(/ecosystem/);
+  });
+
+  // The cap really is per-ecosystem: the SAME count is accepted on one and
+  // rejected on another. A flat constant cannot satisfy both of these.
+  it('accepts 3 images on Qwen but rejects 3 on Boogu (cap is per-ecosystem)', () => {
+    expect(
+      buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Qwen')).images
+    ).toHaveLength(3);
+    expect(
+      catchError(() =>
+        buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Boogu'))
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('accepts 7 images on Flux.2 but rejects 7 on Qwen', () => {
+    expect(
+      buildImageWorkflowInput(body({ sourceImages: images(7) }) as never, resolved('Flux.2 D'))
+        .images
+    ).toHaveLength(7);
+    expect(
+      catchError(() =>
+        buildImageWorkflowInput(body({ sourceImages: images(7) }) as never, resolved('Qwen'))
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── the over-cap behaviour we are preventing ───────────────────────────────
+  it('documents that the graph SILENTLY TRUNCATES an over-cap images array', () => {
+    // imagesNode's input transform does `arr.slice(0, effectiveMax)`. Without
+    // the guard, an over-cap block body would be billed for a generation
+    // conditioned on fewer images than it sent, with nothing saying so.
+    const externalCtx: GenerationCtx = {
+      limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+      user: { isMember: false, tier: 'free' },
+      flags: {},
+      selfHostedDisabledEcosystems: [],
+      selfHostedMode: 'enabled',
+      gateRules: [],
+    };
+    const result = generationGraph.safeParse(
+      {
+        workflow: 'img2img:edit',
+        ecosystem: 'Qwen',
+        model: { id: 2558804 },
+        resources: [],
+        prompt: 'edit the cat',
+        sampler: 'Euler',
+        steps: 25,
+        quantity: 1,
+        priority: 'low',
+        images: images(6),
+      },
+      externalCtx
+    );
+    expect(result.success).toBe(true);
+    // 6 sent, 3 kept — silently.
+    expect((result.data as { images: unknown[] }).images).toHaveLength(3);
+  });
+
+  // ── fail-closed when the cap cannot be determined ──────────────────────────
+  //
+  // Unreachable through buildImageWorkflowInput today — the ecosystem/variant
+  // guard rejects a checkpoint whose ecosystem doesn't support the variant
+  // before we get here, and the population test below proves every supported
+  // pair HAS a readable cap. Exercised directly so the branch is not shipped
+  // untested: if the two guards ever drift apart, this must reject rather than
+  // hand the graph an images[] it has no node for.
+  it('REJECTS fail-closed when the (ecosystem, workflow) pair has no images node', () => {
+    // Flux1 is txt2img-only — no img2img node, so no derivable limit.
+    const caught = catchError(() =>
+      assertSourceImageCount({ ecosystem: 'Flux1', workflow: 'img2img', count: 1 })
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(caught.message).toMatch(/does not accept source images/);
+  });
+
+  it('REJECTS fail-closed for a pair the graph would re-route (unknown ecosystem)', () => {
+    expect(
+      catchError(() =>
+        assertSourceImageCount({ ecosystem: 'NotAnEcosystem', workflow: 'img2img:edit', count: 1 })
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── every edit-capable ecosystem has a READABLE cap ────────────────────────
+  //
+  // Audit the POPULATION, not a handful: enumerate every ecosystem the real
+  // config marks as supporting an img2img variant and assert the bridge can
+  // read a cap for it. If a new ecosystem ships whose limit is not derivable,
+  // this fails instead of that ecosystem silently falling into the fail-closed
+  // "does not accept source images" branch.
+  it('derives a cap for EVERY ecosystem supporting an img2img variant', () => {
+    const missing: string[] = [];
+    let checked = 0;
+    for (const workflow of ['img2img', 'img2img:edit'] as const) {
+      for (const eco of ecosystems) {
+        if (!isWorkflowAvailable(workflow, eco.id)) continue;
+        checked += 1;
+        const limit = getImagesLimit(eco.key, workflow);
+        if (!limit || !(limit.max >= 1) || !(limit.min >= 0)) {
+          missing.push(`${eco.key}/${workflow}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+    // Guard the guard: if the enumeration ever silently matches nothing, an
+    // empty `missing` would look like a pass.
+    expect(checked).toBeGreaterThan(15);
   });
 });
