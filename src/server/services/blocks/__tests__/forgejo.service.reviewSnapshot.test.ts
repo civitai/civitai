@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Coverage for the in-review SNAPSHOT repo lifecycle on the Forgejo client:
- * create-private (the #3495 security fix), enumerate, flip-to-private (backfill)
+ * create-private (the #3498 security fix), enumerate, flip-to-private (backfill)
  * and delete (retention).
  *
  * Strategy mirrors forgejo.service.test.ts: mock global.fetch and assert on the

@@ -11,7 +11,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  * unlocks. Asserts:
  *  - onsite-specific visibility (the in-app code-diff affordance + the mod
  *    Review-preview panel + the structured manifest render), and that NO
- *    raw-source deep-link is offered (retired in #3495 — in-review snapshots are
+ *    raw-source deep-link is offered (retired in #3498 — in-review snapshots are
  *    private, so such a link would 404 for the moderator who clicked it);
  *  - Approve FIRES `blocks.approveRequest` with the request id;
  *  - the reject reason gate (disabled < 3 chars) AND that Reject FIRES
@@ -174,7 +174,7 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // The on-site code-review affordance (off-site has no bundle/code) is the
     // in-app diff, not an external link.
     await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
-    // 🔴 #3495 regression guard: in-review snapshots are private, so ANY raw
+    // 🔴 #3498 regression guard: in-review snapshots are private, so ANY raw
     // deep-link out to them is a dead link for the moderator who clicks it.
     // None of these affordances may come back.
     expect(page.getByText('View full source').elements()).toHaveLength(0);

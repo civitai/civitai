@@ -606,7 +606,7 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
   // by browsing the raw repo. So `private` costs us nothing and is the only
   // control that holds no matter how the request reaches the host.
   //
-  // This was `private: false` until #3495. That flag leaned on an
+  // This was `private: false` until #3498. That flag leaned on an
   // authentication layer sitting in front of every request to the review source
   // host — true when it was written, no longer true after that host's routing
   // was later changed for an unrelated reason. Two individually-reasonable

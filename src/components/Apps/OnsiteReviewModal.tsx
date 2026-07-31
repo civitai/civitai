@@ -414,7 +414,7 @@ export function OnsiteReviewModalBody({
             )}
           </Group>
           {/* The raw-source deep-link that used to sit here has been retired
-              (#3495). In-review snapshots are private now, so an anonymous
+              (#3498). In-review snapshots are private now, so an anonymous
               click on it 404s — a dead link is worse than no link. Source
               review happens in the "Show code diff" panel below, which reads
               the submitted artifact server-side and needs no second login.

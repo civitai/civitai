@@ -72,7 +72,7 @@ export type FileLineDiff = {
 /**
  * Why a file has no inline diff. These used to end in "— view in Forgejo" next
  * to a deep-link into the raw in-review snapshot; that link was retired in
- * #3495 when snapshots became private (an anonymous click 404s, and a dead link
+ * #3498 when snapshots became private (an anonymous click 404s, and a dead link
  * is worse than none). The labels now just state the reason — the mod knows the
  * file changed and why it isn't rendered, which is what the label is for.
  */

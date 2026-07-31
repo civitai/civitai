@@ -1892,7 +1892,7 @@ export const blocksRouter = router({
 
   /**
    * ONE-OFF moderator-only backfill — flip every EXISTING in-review snapshot
-   * repo to private (#3495). New snapshots are created private, but the create
+   * repo to private (#3498). New snapshots are created private, but the create
    * call is idempotent on an existing repo, so pre-change snapshots keep their
    * original visibility until this walks the org and patches them.
    *
