@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     sectionFindMany: vi.fn(),
+    getBlockedPairIds: vi.fn(),
   },
 }));
 
@@ -19,6 +20,9 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() } }));
+vi.mock('~/server/services/user-preferences.service', () => ({
+  getBlockedPairIds: mocks.getBlockedPairIds,
+}));
 
 import { getShopSectionsWithItems } from '../cosmetic-shop.service';
 
@@ -56,6 +60,8 @@ describe('getShopSectionsWithItems viewer gating', () => {
   beforeEach(() => {
     mocks.sectionFindMany.mockReset();
     mocks.sectionFindMany.mockResolvedValue([sectionRow]);
+    mocks.getBlockedPairIds.mockReset();
+    mocks.getBlockedPairIds.mockResolvedValue([]);
   });
 
   it('anonymous / non-mod without the flag: gates on cosmetic.createdById (never addedById) and still returns official items', async () => {
@@ -89,6 +95,22 @@ describe('getShopSectionsWithItems viewer gating', () => {
     expect(where.cosmetic).toEqual({});
     expect(where.status).toBeUndefined();
     expect(where.OR).toBeUndefined();
+  });
+
+  it('flagged viewer with blocks: creator items from blocked pairs are filtered, official items stay', async () => {
+    mocks.getBlockedPairIds.mockResolvedValue([777]);
+
+    await getShopSectionsWithItems({ creatorShopEnabled: true, userId: 1 });
+
+    const where = capturedShopItemWhere();
+    expect(where.cosmetic.OR).toEqual([{ createdById: null }, { createdById: { notIn: [777] } }]);
+  });
+
+  it('skips the block lookup for anonymous, unflagged, and moderator viewers', async () => {
+    await getShopSectionsWithItems({ creatorShopEnabled: true });
+    await getShopSectionsWithItems({ userId: 1 });
+    await getShopSectionsWithItems({ isModerator: true, creatorShopEnabled: true, userId: 1 });
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
   });
 
   it('drops sections whose items were entirely filtered out', async () => {

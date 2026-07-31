@@ -3,8 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindMany: vi.fn(),
-    blockedByGetCached: vi.fn(),
-    blockedGetCached: vi.fn(),
+    getBlockedPairIds: vi.fn(),
   },
 }));
 
@@ -22,8 +21,7 @@ vi.mock('~/server/services/creator-program.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user-preferences.service', () => ({
-  BlockedByUsers: { getCached: mocks.blockedByGetCached },
-  BlockedUsers: { getCached: mocks.blockedGetCached },
+  getBlockedPairIds: mocks.getBlockedPairIds,
 }));
 
 import { getCommunityCosmetics } from '../creator-shop.service';
@@ -42,8 +40,7 @@ describe('getCommunityCosmetics', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.shopItemFindMany.mockResolvedValue([]);
-    mocks.blockedByGetCached.mockResolvedValue([]);
-    mocks.blockedGetCached.mockResolvedValue([]);
+    mocks.getBlockedPairIds.mockResolvedValue([]);
   });
 
   it('strips payout/fee internals from item meta', async () => {
@@ -75,15 +72,16 @@ describe('getCommunityCosmetics', () => {
 
   it('skips the block lookup for anonymous viewers', async () => {
     await getCommunityCosmetics({ limit: 40 });
-    expect(mocks.blockedByGetCached).not.toHaveBeenCalled();
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
     expect(mocks.shopItemFindMany.mock.calls[0][0].where.addedById).toBeUndefined();
   });
 
   it('excludes creators with a block in either direction from the viewer', async () => {
-    mocks.blockedByGetCached.mockResolvedValue([{ id: 5 }]);
-    mocks.blockedGetCached.mockResolvedValue([{ id: 6 }]);
+    mocks.getBlockedPairIds.mockResolvedValue([5, 6]);
     await getCommunityCosmetics({ limit: 40, viewerId: 99 });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    // Both the lister and the original creator — they differ on cross-listings.
     expect(where.addedById.notIn).toEqual(expect.arrayContaining([5, 6]));
+    expect(where.cosmetic.createdById).toEqual({ not: null, notIn: [5, 6] });
   });
 });
