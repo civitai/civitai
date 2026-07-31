@@ -26,9 +26,11 @@ import { resolveRecentApp } from '~/components/Apps/recentAppsRail';
  *
  * 🔴 DON'T READ THAT AS "THIS BLOCKS A MERGE" — it does not. The `Unit tests`
  * job carries `continue-on-error: true`, so a red test annotates and merges.
- * The only merge-blocking steps today are Typecheck, the "migrations are in the
- * schema package" check, and ESLint/Prettier over ADDED files. Running on every
- * PR is the value here; enforcement is not.
+ * The merge-blocking steps today are Typecheck, the "migrations are in the
+ * schema package" check, ESLint/Prettier over ADDED files (all in
+ * `.github/workflows/lint.yml`), and the `event-engine-common pin` job in
+ * `.github/workflows/submodule-pin-guard.yml`. Running on every PR is the value
+ * here; enforcement is not.
  *
  * The store is SSR-safe via `isClient()`, so a node test has to supply a
  * `window.localStorage`. A minimal in-memory Storage is enough — the store only

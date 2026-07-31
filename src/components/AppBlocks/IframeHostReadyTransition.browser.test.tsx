@@ -79,6 +79,18 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
 // this suite renders the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+// IframeHost now reads `appBlocksPages` to decide whether the chrome may offer
+// `/apps/run/<blockId>` shortcuts; the real hook THROWS without a
+// FeatureFlagsProvider (which this scaffold does not mount). Dark flag = the
+// production default, and this suite asserts host lifecycle, not the menu.
+// Deliberately a WHOLE-module factory, not an `importOriginal` spread: the real
+// module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
+// wholesale trpc factory below does not provide, so spreading the original makes
+// the file fail to LOAD.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocksPages: false }),
+}));
+
 // IframeHost drives two tRPC queries at render plus the SDK bridges. Stub them so
 // the host mounts network-free AND the init handshake is ALLOWED to start
 // immediately (getEffectiveCheckpoint must report isLoading:false so

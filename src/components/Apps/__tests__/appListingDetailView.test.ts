@@ -219,6 +219,12 @@ describe('getDetailPrimaryAction — on-site', () => {
     // retired route. Pinned across the whole on-site matrix so a future branch
     // cannot reintroduce the redirect loop somewhere else in this function.
     const retired = /^\/apps\/[^/]+$/;
+    // 🔴 Anti-vacuity counter. The assertion below is inside `if (action.href)`,
+    // so if a future change stripped the href from EVERY branch the loop would
+    // run 16 times, assert nothing, and stay green — the exact "cannot fail"
+    // class this PR exists to kill. Count the hrefs actually produced and
+    // require the guard to have had something to guard.
+    let hrefsSeen = 0;
     for (const hasPage of [true, false]) {
       for (const canOpenPage of [true, false]) {
         for (const liveUrl of ['https://my-app.civit.ai', 'http://insecure.example']) {
@@ -229,11 +235,18 @@ describe('getDetailPrimaryAction — on-site', () => {
             const key = `hasPage=${hasPage} canOpenPage=${canOpenPage} liveUrl=${liveUrl} appBlockId=${
               appBlockId ?? 'null'
             }`;
-            if (action.href) expect(action.href, key).not.toMatch(retired);
+            if (action.href) {
+              hrefsSeen++;
+              expect(action.href, key).not.toMatch(retired);
+            }
           }
         }
       }
     }
+    // Half the matrix (`hasPage` with an https liveUrl) yields an href — 8 of
+    // the 16 combinations today. Assert the guard saw real targets rather than
+    // an all-text matrix.
+    expect(hrefsSeen).toBeGreaterThan(0);
   });
   it('encodes an odd slug on the Open run link', () => {
     expect(

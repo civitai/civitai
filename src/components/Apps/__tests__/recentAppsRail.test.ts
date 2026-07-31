@@ -368,13 +368,17 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
    * `appListingPreview.test.ts`'s `<iframe sandbox>` check.
    */
   describe('AppBlockChrome is actually WIRED to this gate', () => {
-    const SOURCE = path.resolve(__dirname, '../../AppBlocks/IframeHost.tsx');
-    // Comments stripped: the file's own prose names both symbols repeatedly, and
-    // matching that would scope these assertions to a doc-comment.
-    const source = fs
-      .readFileSync(SOURCE, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^[ \t]*\/\/.*$/gm, '');
+    const SRC = path.resolve(__dirname, '../../..');
+    /** Read a source file with comments stripped — the files' own prose names
+     *  every symbol here repeatedly, and matching that would scope these
+     *  assertions to a doc-comment instead of to code. */
+    const readCode = (rel: string) =>
+      fs
+        .readFileSync(path.join(SRC, rel), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^[ \t]*\/\/.*$/gm, '');
+
+    const source = readCode('components/AppBlocks/IframeHost.tsx');
 
     it('builds its "Recently run" list through selectChromeRecentApps', () => {
       expect(source).toMatch(/selectChromeRecentApps\(/);
@@ -388,6 +392,20 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
       expect(source).not.toMatch(/canOpenPage\s*=\s*true/);
     });
 
+    it('🔴 PageBlockHost FAILS CLOSED TOO — the forwarding default is false, never true', () => {
+      // Both links of the chain default the prop, and only one of them used to
+      // be covered here. `PageBlockHost` is what three of the four chrome
+      // surfaces mount through, so flipping ITS default to true re-opens
+      // guaranteed-404 links on all three at once with the check above still
+      // green.
+      const host = readCode('components/AppBlocks/PageBlockHost.tsx');
+      expect(host).toMatch(/canOpenPage\s*=\s*false/);
+      expect(host).not.toMatch(/canOpenPage\s*=\s*true/);
+      // …and it really forwards it to the chrome (a default nothing passes on
+      // is not a gate).
+      expect(host).toMatch(/<AppBlockChrome[\s\S]{0,400}?canOpenPage=\{canOpenPage\}/);
+    });
+
     it('has no second, ungated source of /apps/run/ hrefs in the chrome', () => {
       // The menu's links must come from the gated list, so the only `/apps/run/`
       // template in the file is the one indexed by a ChromeRecentApp blockId.
@@ -395,6 +413,114 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
         m[1].trim()
       );
       expect(runHrefs).toEqual(['r.blockId']);
+    });
+  });
+
+  /**
+   * 🔴 THE OPT-IN IS PINNED BY NOTHING UNLESS THE POPULATION IS ENUMERATED.
+   *
+   * The gate above only proves the DEFAULT is closed. The bug that actually
+   * shipped was the mirror image: three of the four surfaces that mount the
+   * chrome passed nothing, so the fail-closed default silently removed
+   * "Recently run" for every viewer on the model slot, mod review and the dev
+   * tunnel — with every existing test green, because deleting the opt-in from
+   * the one wired surface broke no assertion either.
+   *
+   * A hardcoded list of "the four known mounters" would not have caught it (it
+   * IS the thing that was wrong), so this DISCOVERS the mounters by scanning
+   * the tree and asserts the invariant over whatever it finds:
+   *
+   *   - every non-test mount of `<AppBlockChrome` / `<PageBlockHost` passes a
+   *     `canOpenPage` prop, and
+   *   - every mount OUTSIDE the two host modules sources it from the viewer's
+   *     `appBlocksPages` flag — not a per-surface constant.
+   *
+   * The second half is the design fix: what gates the SURFACE (`appBlocksPages`
+   * on `/apps/run`, `appBlocksAuthor` on the dev tunnel, the reviewer check on
+   * mod review) is a different question from what gates the LINK TARGET, and
+   * only the latter matters — the menu always points at `/apps/run/<blockId>`,
+   * whose own `getServerSideProps` 404s on `appBlocks && appBlocksPages` for
+   * every viewer regardless of where they came from. So the predicate is
+   * uniform, exactly as it already is for `AppListingCard`,
+   * `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody`.
+   */
+  describe('every chrome mounter opts in from the appBlocksPages flag', () => {
+    const SRC = path.resolve(__dirname, '../../..');
+    /** The two modules that declare the prop; both must appear in the scan. */
+    const HOST_MODULES = [
+      'components/AppBlocks/IframeHost.tsx',
+      'components/AppBlocks/PageBlockHost.tsx',
+    ];
+    /** The ONLY module allowed to pass something other than the flag: it is a
+     *  pure forwarder of its own `canOpenPage` prop (asserted above). Note
+     *  `IframeHost.tsx` is NOT exempt — the model slot is a real surface and
+     *  must read the flag like every other one. */
+    const FORWARDER = 'components/AppBlocks/PageBlockHost.tsx';
+    const MOUNT = /<(?:AppBlockChrome|PageBlockHost)\b/g;
+
+    function walk(dir: string, out: string[] = []): string[] {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, out);
+        else if (entry.name.endsWith('.tsx') && !/\.test\.tsx$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    }
+
+    /**
+     * The JSX element starting at `idx`, ending at its own closing `/>` (or
+     * `>`) line. Bounding matters: an unbounded `[\s\S]*?canOpenPage` would let
+     * a `canOpenPage` mention ANYWHERE later in the file satisfy the check —
+     * `PageBlockHost.tsx` mentions it in its own prop list, which is exactly the
+     * false green this guard exists to avoid.
+     */
+    function elementAt(code: string, idx: number): string {
+      const rest = code.slice(idx);
+      const end = rest.search(/\n[ \t]*\/?>[ \t]*\n/);
+      return end === -1 ? rest.slice(0, 2000) : rest.slice(0, end);
+    }
+
+    /** Every non-test .tsx that renders one of the two chrome-bearing hosts. */
+    const mounters = walk(path.join(SRC, 'components'))
+      .concat(walk(path.join(SRC, 'pages')))
+      .map((file) => ({
+        rel: path.relative(SRC, file).split(path.sep).join('/'),
+        code: fs
+          .readFileSync(file, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^[ \t]*\/\/.*$/gm, ''),
+      }))
+      .map((m) => ({
+        ...m,
+        elements: [...m.code.matchAll(MOUNT)].map((hit) => elementAt(m.code, hit.index ?? 0)),
+      }))
+      .filter((m) => m.elements.length > 0);
+
+    it('found the mount sites (the scan itself must not silently match nothing)', () => {
+      // Without this, every assertion below would pass vacuously if the walk
+      // broke, the components were renamed, or the roots moved.
+      expect(mounters.length).toBeGreaterThanOrEqual(5);
+      expect(mounters.map((m) => m.rel)).toEqual(expect.arrayContaining(HOST_MODULES));
+    });
+
+    it('🔴 every chrome/host mount passes canOpenPage — none may rely on the default', () => {
+      const missing = mounters
+        .filter((m) => m.elements.some((el) => !/\bcanOpenPage\b/.test(el)))
+        .map((m) => m.rel);
+      expect(missing).toEqual([]);
+    });
+
+    it('🔴 every mount but the forwarder sources it from appBlocksPages', () => {
+      const offenders = mounters
+        .filter((m) => m.rel !== FORWARDER)
+        .filter((m) =>
+          m.elements.some((el) => !/canOpenPage=\{!!features\.appBlocksPages\}/.test(el))
+        )
+        .map((m) => m.rel);
+      // A per-surface constant (`canOpenPage` / `canOpenPage={true}` /
+      // `canOpenPage={false}`) fails here: the link target is gated on the
+      // VIEWER, so the predicate cannot vary by surface.
+      expect(offenders).toEqual([]);
     });
   });
 });

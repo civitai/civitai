@@ -21,13 +21,37 @@ import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publis
 // Stub the real host so the test targets the control surface only. It surfaces the
 // security-relevant prop so we can assert what the host is actually told to do.
 vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
-  PageBlockHost: ({ reviewRunForReal }: { reviewRunForReal?: boolean }) => (
-    <div data-testid="page-host" data-rfr={String(!!reviewRunForReal)} />
+  PageBlockHost: ({
+    reviewRunForReal,
+    canOpenPage,
+  }: {
+    reviewRunForReal?: boolean;
+    canOpenPage?: boolean;
+  }) => (
+    <div
+      data-testid="page-host"
+      data-rfr={String(!!reviewRunForReal)}
+      // Surfaced so the chrome "Recently run" wiring is assertable: this surface
+      // must forward the VIEWER's `appBlocksPages`, not a per-surface constant.
+      data-can-open-page={String(!!canOpenPage)}
+    />
   ),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, username: 'mod' }),
+}));
+
+// The review surface reads `appBlocksPages` to decide whether the app-chrome may
+// offer `/apps/run/<blockId>` shortcuts. The real hook THROWS without a
+// FeatureFlagsProvider, and the flag is per-test controllable so both directions
+// of the forward are assertable. Deliberately a WHOLE-module factory, not an
+// `importOriginal` spread: the real module imports `setTrpcBatchingEnabled` from
+// '~/utils/trpc', which the wholesale trpc factory below does not provide, so
+// spreading the original makes the file fail to LOAD.
+const flagState = vi.hoisted(() => ({ appBlocksPages: false }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => flagState,
 }));
 
 // Typed to the PRODUCTION mint-result shape (`buzzCap: number | null`,
@@ -92,6 +116,7 @@ import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost
 
 beforeEach(() => {
   mintCalls.inputs = [];
+  flagState.appBlocksPages = false;
 });
 
 function mount() {
@@ -172,5 +197,30 @@ describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
     expect(page.getByTestId('review-run-for-real-consent').elements()).toHaveLength(0);
     // No run-for-real mint ever happened.
     expect(mintCalls.inputs.every((i) => i.runForReal === false)).toBe(true);
+  });
+});
+
+// The app-chrome "Recently run" menu links ONLY to `/apps/run/<blockId>`, which
+// 404s for a viewer without `appBlocksPages` — on EVERY surface, because that
+// route's own gate is on the viewer, not on where the link was clicked from.
+// This surface previously passed nothing, so the fail-closed default hid the
+// menu even for the mods who DO hold the flag. It must forward the flag, both
+// ways. Mutation-sanity: hardcoding `canOpenPage={false}` (or dropping the prop)
+// fails the ON case; hardcoding `true` fails the OFF case.
+describe('ReviewBlockPreviewHost — forwards the viewer’s appBlocksPages to the host chrome', () => {
+  test('flag ON → canOpenPage=true (a mod reviewer keeps the "Recently run" shortcuts)', async () => {
+    flagState.appBlocksPages = true;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(page.getByTestId('page-host').element().getAttribute('data-can-open-page')).toBe('true');
+  });
+
+  test('flag OFF → canOpenPage=false (no guaranteed-404 links for a pages-dark reviewer)', async () => {
+    flagState.appBlocksPages = false;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(page.getByTestId('page-host').element().getAttribute('data-can-open-page')).toBe(
+      'false'
+    );
   });
 });

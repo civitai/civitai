@@ -264,11 +264,20 @@ export interface PageBlockHostProps {
    * where it gates the "Recently run" menu — that section's ONLY link shape is
    * that route, which 404s fail-closed for a viewer without `appBlocksPages`.
    *
-   * NOT derivable inside the host: the two surfaces that mount it gate on
-   * DIFFERENT flags — `/apps/run/<slug>` requires `appBlocksPages`, while the
-   * author dev tunnel (`/apps/dev/<blockId>`) requires `appBlocksAuthor` and
-   * says nothing about pages. So each route passes what it actually proved.
-   * Default false → no dead links for a caller that hasn't.
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER: `!!features.appBlocksPages`.
+   * An earlier revision justified a per-surface constant with "the surfaces
+   * gate on DIFFERENT flags" — that conflates what gates the SURFACE with what
+   * gates the LINK TARGET. The dev tunnel gating on `appBlocksAuthor` and mod
+   * review gating on the reviewer check say nothing about whether the menu's
+   * `/apps/run/<blockId>` links resolve; only the viewer's `appBlocksPages`
+   * does, because that is what `/apps/run/[slug]`'s own `getServerSideProps`
+   * checks. Hardcoding it per surface is what silently killed the menu for
+   * mods on three of four surfaces. All three mounters
+   * (`/apps/run/[slug]`, `/apps/dev/[blockId]`, `ReviewBlockPreviewHost`) now
+   * read the flag; the source-level guard in `recentAppsRail.test.ts`
+   * enumerates them so a NEW mounter cannot quietly omit it.
+   *
+   * Default false → a mounter that hasn't wired it shows no dead links.
    */
   canOpenPage?: boolean;
 }

@@ -5,6 +5,7 @@ import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsSto
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -93,6 +94,7 @@ export default function AppPage(props: PageProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
     props;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
@@ -221,13 +223,14 @@ export default function AppPage(props: PageProps) {
           theme={theme}
           onConsentGranted={refresh}
           onRetryToken={refresh}
-          // This route's own getServerSideProps 404s unless BOTH `appBlocks`
-          // and `appBlocksPages` are on for the viewer — so anyone rendering
-          // here has provably passed the `/apps/run/` gate, and the chrome's
-          // "Recently run" shortcuts to that same route cannot be dead. (The
-          // dev tunnel, gated on `appBlocksAuthor` instead, proves nothing
-          // about pages and correctly leaves this at its false default.)
-          canOpenPage
+          // The chrome's "Recently run" shortcuts point at this very route, so
+          // what decides whether they resolve is the viewer's `appBlocksPages`
+          // flag — the same predicate every other `canOpenPage` consumer reads,
+          // and the same one this route's own getServerSideProps 404s on. (It
+          // is therefore redundantly true here; it is written as the flag
+          // anyway so all four chrome mounters carry ONE greppable shape and a
+          // future surface can't justify a per-surface constant.)
+          canOpenPage={!!features.appBlocksPages}
         />
       </Box>
     </>

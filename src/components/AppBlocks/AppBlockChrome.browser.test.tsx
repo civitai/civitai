@@ -285,6 +285,14 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
 // store. Icon + name per entry, links to `/apps/run/<blockId>`, EXCLUDES the
 // current app, and the whole label+section is omitted when there are no other
 // recents. The store is real localStorage in browser mode, so seed it directly.
+//
+// 🔴 EVERY RENDER IN THIS BLOCK MUST PASS `canOpenPage` — the prop is the
+// `appBlocksPages` gate and it FAILS CLOSED (defaults to false), so a render
+// that omits it can never show the section. That makes a presence assertion
+// permanently red and, worse, an ABSENCE assertion permanently green: it would
+// keep passing with the exclusion logic, the store and the cap all deleted. The
+// deliberate fail-closed case is its own test at the bottom of this block, where
+// the omission is the thing under test rather than an accident.
 describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => {
   beforeEach(() => {
     clearRecentlyOpenedApps();
@@ -314,6 +322,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
         appBlockId="current"
         appName="Current App"
         slotId="app.page"
+        canOpenPage
       />
     );
     await openPlatformNav();
@@ -344,6 +353,9 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
 
   test('the whole "Recently run" section is ABSENT when there are no OTHER recents', async () => {
     // Only the current app is a recent → nothing to offer after exclusion.
+    // `canOpenPage` is ON so the absence below is caused by SELF-EXCLUSION, not
+    // by the fail-closed gate. Mutation-sanity: deleting the `r.id !==
+    // currentAppBlockId` filter in selectChromeRecentApps makes this red.
     recordRecentlyOpenedApp({ id: 'solo', blockId: 'solo-block', name: 'Solo App' });
 
     renderWithProviders(
@@ -352,26 +364,64 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
         appBlockId="solo"
         appName="Solo App"
         slotId="app.page"
+        canOpenPage
       />
     );
     await openPlatformNav();
 
-    // Neither the label nor the section wrapper renders.
+    // The menu really did mount its dropdown (otherwise every `not.toBe…`
+    // below would pass against an empty document) …
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    // … and neither the label nor the section wrapper renders in it.
     await expect.element(page.getByText('Recently run', { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
   });
 
   test('an EMPTY recents store renders no "Recently run" section', async () => {
+    // `canOpenPage` is ON so the absence is caused by the EMPTY STORE. Mutation-
+    // sanity: seeding one other app here makes this red.
     renderWithProviders(
       <AppBlockChrome
         blockInstanceId="inst-empty"
         appBlockId="anything"
         appName="Anything"
         slotId="app.page"
+        canOpenPage
       />
     );
     await openPlatformNav();
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+  });
+
+  // 🔴 The fail-closed case, stated deliberately: a mounter that cannot prove the
+  // viewer holds `appBlocksPages` omits the prop, and the section must not render
+  // even though the store HAS offerable entries. This is the one render in this
+  // block that leaves `canOpenPage` off, and the seeded store is what makes it a
+  // real assertion — the same seed with `canOpenPage` renders two items (asserted
+  // in the first test above).
+  test('OMITTING canOpenPage hides the section even with offerable recents (fail-closed)', async () => {
+    recordRecentlyOpenedApp({ id: 'other', blockId: 'other-block', name: 'Other App' });
+    recordRecentlyOpenedApp({ id: 'third', blockId: 'third-block', name: 'Third App' });
+
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-failclosed"
+        appBlockId="current"
+        appName="Current App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+    // And no `/apps/run/` link leaked in via some other menu item.
+    const hrefs = page
+      .getByRole('menuitem')
+      .all()
+      .map((el) => el.element().getAttribute('href'));
+    expect(hrefs.some((h) => h?.startsWith('/apps/run/'))).toBe(false);
   });
 
   // Security-adjacent consistency: the persisted `name` is publisher-controlled
@@ -392,6 +442,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
         appBlockId="viewer"
         appName="Viewer App"
         slotId="app.page"
+        canOpenPage
       />
     );
     await openPlatformNav();
@@ -422,6 +473,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
         appBlockId="viewer"
         appName="Viewer App"
         slotId="app.page"
+        canOpenPage
       />
     );
     await openPlatformNav();

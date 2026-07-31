@@ -4,6 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -138,6 +139,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
 export default function DevTunnelPage(props: DevTunnelProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, scopes, host } = props;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
@@ -263,6 +265,12 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             theme={theme}
             onConsentGranted={refresh}
             onRetryToken={refresh}
+            // The chrome's "Recently run" menu links to `/apps/run/<blockId>`,
+            // which is gated on `appBlocksPages` for the VIEWER — this route's
+            // own `appBlocksAuthor` gate says nothing about that, so read the
+            // flag rather than assuming. An author who also has pages gets the
+            // menu here; one who doesn't gets no dead links.
+            canOpenPage={!!features.appBlocksPages}
           />
         )}
       </Box>

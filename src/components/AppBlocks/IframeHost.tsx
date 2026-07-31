@@ -46,6 +46,7 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
@@ -182,8 +183,21 @@ export function AppBlockChrome({
   /** Mirrors the viewer's `appBlocksPages` flag: may this viewer actually open
    *  `/apps/run/<blockId>`? Gates the "Recently run" section, whose ONLY link
    *  shape is that route — it 404s fail-closed without the flag, and the writers
-   *  that feed the recents store record flag-blind. 🔴 DEFAULTS TO FALSE (no
-   *  dead links) — a caller that can prove the viewer passed the gate opts in.
+   *  that feed the recents store record flag-blind.
+   *
+   *  🔴 THE PREDICATE IS UNIFORM ACROSS SURFACES — do not hardcode it per
+   *  mount. What gates the *surface* (`appBlocksPages` on `/apps/run`,
+   *  `appBlocksAuthor` on the dev tunnel, the reviewer gate on mod review) is a
+   *  different question from what gates the *link target*, and only the latter
+   *  matters here: the menu always points at `/apps/run/<blockId>`, whose
+   *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
+   *  viewer regardless of where they came from. So every mounter passes
+   *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
+   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
+   *
+   *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
+   *  prop hides the menu rather than offering guaranteed-404 links.
    */
   canOpenPage?: boolean;
 }) {
@@ -530,6 +544,12 @@ export function IframeHost({
   // the only producer in v1 (ModelVersionDetails); other surfaces use the
   // base SlotContext shape.
   const modelCtx = context as Partial<ModelSlotContext>;
+  // The chrome's "Recently run" menu links ONLY to `/apps/run/<blockId>`, and
+  // that route 404s for a viewer without `appBlocksPages` — on EVERY surface,
+  // because the gate is on the viewer, not on where the link was clicked from.
+  // So the predicate is the viewer's flag, read the same way every other
+  // `canOpenPage` consumer in `~/components/Apps` reads it.
+  const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [iframeHeight, setIframeHeight] = useState<number>(
@@ -1886,6 +1906,7 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        canOpenPage={!!features.appBlocksPages}
       />
       {children}
     </Box>
