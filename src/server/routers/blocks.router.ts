@@ -48,11 +48,13 @@ import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   getAppDetailSchema,
+  getAppSpendCapOverrideSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
   listAppBlockReviewsSchema,
   listAvailableSchema,
   setAppReviewExcludedSchema,
+  setAppSpendCapOverrideSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
   toPublicBlockManifest,
@@ -2791,6 +2793,52 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       return BlockRegistry.setMarketplaceMeta(input);
+    }),
+
+  /**
+   * MOD-ONLY read of one app's generation-cap configuration — its trust tier,
+   * any per-app override, and the RESOLVED ceilings the submit path enforces.
+   * Seeds the moderator override form and lets an operator confirm the effective
+   * number after a write.
+   *
+   * 🔴 MOD-ONLY ON PURPOSE. The exact ceiling is withheld from apps themselves
+   * (the submit rejection above is deliberately number-free) so a hostile app
+   * cannot probe where its limit sits and tune a Sybil ring just under it.
+   */
+  getAppSpendCapOverride: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppSpendCapOverrideSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      const config = await BlockRegistry.getAppSpendCapOverride(input.appBlockId);
+      if (!config) throw throwNotFoundError('App block not found');
+      return config;
+    }),
+
+  /**
+   * MOD-ONLY write of the per-app generation spend/velocity cap OVERRIDE — the
+   * escape hatch on top of the `trustTier`-derived ceilings.
+   *
+   * GATING / SECURITY (mirrors setMarketplaceMeta):
+   *   - `moderatorProcedure` + a re-asserted `ctx.user?.isModerator` belt. There
+   *     is intentionally NO publisher path: an app must never be able to raise
+   *     its own abuse ceiling, which is also why the limits are NOT read from
+   *     the manifest.
+   *   - `enforceAppBlocksFlag` keeps it behind the dark mod segment.
+   *   - Bounds/normalisation live in the schema AND are re-applied in the
+   *     service with the reader's own rules, so a stored value can never mean
+   *     something different from what the reserve path will enforce.
+   */
+  setAppSpendCapOverride: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppSpendCapOverrideSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      return BlockRegistry.setAppSpendCapOverride(input);
     }),
 
   /**

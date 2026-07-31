@@ -312,6 +312,63 @@ export const getMarketplaceMetaSchema = z.object({
 export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
 
 // ---------------------------------------------------------------------------
+// PER-APP generation-cap OVERRIDE (mod-only) — schemas.
+// ---------------------------------------------------------------------------
+
+/**
+ * MOD-ONLY: set (or clear) the per-app override on the generation spend/velocity
+ * ceilings enforced by `app-spend-cap.service.ts`.
+ *
+ * Semantics, mirroring `setMarketplaceMetaSchema`: a field OMITTED (undefined) is
+ * left unchanged; an explicit `null` CLEARS the override so the app falls back
+ * to its `trustTier`'s limit. A positive integer replaces that field's ceiling
+ * for this app only, and may tighten as well as loosen.
+ *
+ * 🔴 `.min(1)` is deliberate — 0 is NOT accepted. "Cannot generate at all" is a
+ * DISABLE decision whose surface is the app's `status`, not a cap of zero (which
+ * would present to users as a permanent, unexplained rate-limit rejection).
+ * The maxima mirror `APP_CAP_OVERRIDE_MAX_*` in `app-cap-limits.constants.ts`,
+ * which re-enforces them at READ time so a value written straight into the DB
+ * (this DB is edited by hand — migrations are applied manually) still cannot
+ * express an effectively unlimited app.
+ */
+export const setAppSpendCapOverrideSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  /** Per-UTC-day aggregate Buzz ceiling for this app. Max 1e9 Buzz ≈ $1M/day. */
+  spendCapBuzzPerDay: z.number().int().min(1).max(1_000_000_000).nullable().optional(),
+  /** Gens per velocity window for this app. Max 100k ≈ 1,666/sec at the 60s window. */
+  spendVelocityMaxGens: z.number().int().min(1).max(100_000).nullable().optional(),
+});
+export type SetAppSpendCapOverrideInput = z.infer<typeof setAppSpendCapOverrideSchema>;
+
+/** Input for the MOD-ONLY `blocks.getAppSpendCapOverride` (seeds the mod form). */
+export const getAppSpendCapOverrideSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type GetAppSpendCapOverrideInput = z.infer<typeof getAppSpendCapOverrideSchema>;
+
+/**
+ * MOD-ONLY view of one app's cap configuration: the raw override columns, the
+ * tier they sit on top of, and the RESOLVED ceilings actually enforced — so a
+ * moderator can see the effective number without re-deriving the tier table by
+ * hand.
+ *
+ * 🔴 Mod surface only. Never returned by an anon/publisher-facing procedure: the
+ * exact ceiling is withheld from apps on purpose (`blocks.router.ts` returns a
+ * no-number rejection) so a hostile app can't probe where its limit sits.
+ */
+export type AppSpendCapConfig = {
+  appBlockId: string;
+  /** The app's server-owned trust tier (the source of the default limits). */
+  trustTier: string;
+  /** NULL when no override is set for that field. */
+  spendCapBuzzPerDay: number | null;
+  spendVelocityMaxGens: number | null;
+  /** What the reserve path will actually enforce (override ?? tier). */
+  effective: { dailyBuzz: number; velocityMaxGens: number };
+};
+
+// ---------------------------------------------------------------------------
 // F-E marketplace REVIEWS (5-star) — schemas.
 // ---------------------------------------------------------------------------
 

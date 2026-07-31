@@ -278,6 +278,8 @@ export type AppBlock = {
   featured_order: number | null;
   screenshots: unknown | null;
   external_url: string | null;
+  spend_cap_buzz_per_day: number | null;
+  spend_velocity_max_gens: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };

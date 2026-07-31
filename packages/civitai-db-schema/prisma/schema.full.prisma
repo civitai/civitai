@@ -2405,6 +2405,25 @@ model AppBlock {
   // migration 20260629120000_add_appblock_external_url). NULL until applied.
   externalUrl        String?   @map("external_url")
 
+  // PER-APP generation-cap OVERRIDE — the moderator escape hatch on top of the
+  // `trust_tier`-derived ceilings enforced by app-spend-cap.service.ts (daily
+  // aggregate Buzz spend + short-window generation velocity). NULL = no
+  // override, use the tier's limits. A non-NULL value REPLACES that one field
+  // only (they are independent), and may TIGHTEN as well as loosen — clamping a
+  // single abusive app without demoting its tier.
+  //
+  // 🔴 PLATFORM-CONTROLLED, mod-only write (BlockRegistry.setAppSpendCapOverride
+  // behind moderatorProcedure). Never publisher-declared and never sourced from
+  // the manifest: a developer must not be able to raise their own abuse ceiling.
+  // Same posture as trust_tier / category / featured above.
+  //
+  // ADDITIVE + MANUALLY APPLIED (migration
+  // 20260731120000_app_block_spend_cap_override; CNPG nvme0 does not auto-apply).
+  // Until applied, the cap resolver's row read fails and every app falls back to
+  // the STRICTEST tier — i.e. the pre-change ceilings — never to "uncapped".
+  spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
+  spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

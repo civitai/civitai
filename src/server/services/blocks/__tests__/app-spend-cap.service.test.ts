@@ -17,14 +17,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - SYBIL case: many viewers each spending a little can never exceed the cap
  *   - fail-safe: a Redis error DENIES (no spend), rolling back a partial reserve
  *   - pinned-key refund on the throw path
+ *   - 🔴 PER-APP LIMITS: the ceilings come from `resolveAppCapLimits` (the app's
+ *     trustTier + any moderator override), NOT from one global constant. Every
+ *     path that fails to resolve a limit must enforce the STRICTEST ceiling —
+ *     never "uncapped".
  *
  * sysRedis is a stateful in-memory fake so the atomic INCRBY accumulation (the
- * whole point of the TOCTOU-safe design) is exercised for real.
+ * whole point of the TOCTOU-safe design) is exercised for real. The limit
+ * resolver is mocked so each case can pin the ceilings it is testing.
  */
 
 const SPEND_CAP_PREFIX = 'system:blocks:app-spend-cap';
 
-const { store, ttls, mockSysRedis } = vi.hoisted(() => {
+const { store, ttls, mockSysRedis, mockResolveAppCapLimits } = vi.hoisted(() => {
   const store = new Map<string, number>();
   const ttls = new Map<string, number>();
   const mockSysRedis = {
@@ -44,7 +49,13 @@ const { store, ttls, mockSysRedis } = vi.hoisted(() => {
     }),
     ttl: vi.fn(async (key: string) => (ttls.has(key) ? ttls.get(key)! : 1000)),
   };
-  return { store, ttls, mockSysRedis };
+  const mockResolveAppCapLimits = vi.fn(
+    async (_appBlockId: string): Promise<{ dailyBuzz: number; velocityMaxGens: number }> => ({
+      dailyBuzz: 5_000_000,
+      velocityMaxGens: 600,
+    })
+  );
+  return { store, ttls, mockSysRedis, mockResolveAppCapLimits };
 });
 
 vi.mock('~/server/redis/client', () => ({
@@ -52,18 +63,42 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { BLOCKS: { APP_SPEND_CAP: 'system:blocks:app-spend-cap' } },
 }));
 
+vi.mock('~/server/services/blocks/app-cap-limits.service', () => ({
+  resolveAppCapLimits: (appBlockId: string) => mockResolveAppCapLimits(appBlockId),
+  invalidateAppCapLimits: vi.fn(),
+  normalizeCapOverrideInput: vi.fn(),
+  __resetAppCapLimitsCacheForTests: vi.fn(),
+}));
+
+import {
+  APP_TIER_CAP_LIMITS,
+  APP_TRUST_TIERS,
+  STRICTEST_APP_CAP_LIMITS,
+  type AppCapLimits,
+} from '../app-cap-limits.constants';
 import {
   BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
   BLOCK_APP_SPEND_VELOCITY_MAX_GENS,
+  BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS,
   reserveAppSpend,
   refundAppSpend,
 } from '../app-spend-cap.service';
 
 const APP_BLOCK_ID = 'apb_test';
 
+/** Pin the ceilings the resolver hands back for this case. */
+function setLimits(limits: AppCapLimits) {
+  mockResolveAppCapLimits.mockResolvedValue(limits);
+}
+
 function dailyKey(app = APP_BLOCK_ID): string {
   const today = new Date().toISOString().slice(0, 10);
   return `${SPEND_CAP_PREFIX}:${app}:${today}`;
+}
+
+function velocityKey(app = APP_BLOCK_ID): string {
+  const bucket = Math.floor(Date.now() / 1000 / BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS);
+  return `${SPEND_CAP_PREFIX}:vel:${app}:${bucket}`;
 }
 
 beforeEach(() => {
@@ -84,17 +119,33 @@ beforeEach(() => {
     return next;
   });
   mockSysRedis.ttl.mockImplementation(async (key: string) => (ttls.has(key) ? ttls.get(key)! : 1000));
+  // 🔴 `expire` needs its implementation RE-ESTABLISHED, not just `mockClear()`ed:
+  // mockClear wipes call history but leaves any `mockRejectedValue` in place, so a
+  // fault-injection case would leak its failure into every later test in the file.
+  mockSysRedis.expire.mockImplementation(async (key: string, seconds: number) => {
+    ttls.set(key, seconds);
+    return 1;
+  });
+  mockResolveAppCapLimits.mockReset();
+  // Default: the `verified` tier (the new global default pair).
+  mockResolveAppCapLimits.mockResolvedValue(APP_TIER_CAP_LIMITS.verified);
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-describe('cap constants', () => {
+describe('cap constants (the GLOBAL BASES the tier table derives from)', () => {
   it('are positive integers with the documented defaults', () => {
     expect(Number.isInteger(BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY)).toBe(true);
     expect(BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY).toBe(5_000_000);
-    expect(BLOCK_APP_SPEND_VELOCITY_MAX_GENS).toBe(120);
+    // 🔴 RAISED 120 → 600. The daily SPEND cap is the real sybil bound
+    // (5M Buzz ÷ ~500 Buzz/gen ≈ 10k gens/day ≈ 0.12 gens/sec sustained), so
+    // velocity only has to bound a BURST and catch 0-cost/cache-hit gens — it can
+    // be generous without weakening the spend bound.
+    expect(BLOCK_APP_SPEND_VELOCITY_MAX_GENS).toBe(600);
+    expect(BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS).toBe(60);
   });
 });
 
@@ -120,7 +171,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
   });
 
   it('DENIES + REFUNDS (all-or-nothing) when the spend would exceed the daily cap', async () => {
-    const cap = BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY;
+    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
     // Pre-fill to just under the cap.
     await reserveAppSpend(APP_BLOCK_ID, cap - 10);
     mockSysRedis.decrBy.mockClear();
@@ -140,9 +191,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
   });
 
   it('SYBIL CASE: many viewers each spending a little can never exceed the per-app daily cap', async () => {
-    // Use a small env-independent expectation: drive spends of `cap/10 + 1` so
-    // the 11th is guaranteed to breach regardless of the exact default.
-    const cap = BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY;
+    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
     const chunk = Math.floor(cap / 10);
     let allowed = 0;
     let denied = 0;
@@ -170,7 +219,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
 
 describe('reserveAppSpend — VELOCITY', () => {
   it('DENIES + REFUNDS the daily reserve when the short-window gen ceiling is exceeded', async () => {
-    const max = BLOCK_APP_SPEND_VELOCITY_MAX_GENS;
+    const max = APP_TIER_CAP_LIMITS.verified.velocityMaxGens;
     // Fill the velocity window exactly to the max (each 1-Buzz spend both counts
     // toward daily + velocity).
     for (let i = 0; i < max; i++) {
@@ -190,7 +239,7 @@ describe('reserveAppSpend — VELOCITY', () => {
   });
 
   it('enforces velocity even for 0-cost gens (a burst of cache-hits is bounded)', async () => {
-    const max = BLOCK_APP_SPEND_VELOCITY_MAX_GENS;
+    const max = APP_TIER_CAP_LIMITS.verified.velocityMaxGens;
     let denied = 0;
     for (let i = 0; i < max + 5; i++) {
       const r = await reserveAppSpend(APP_BLOCK_ID, 0);
@@ -198,9 +247,150 @@ describe('reserveAppSpend — VELOCITY', () => {
     }
     expect(denied).toBe(5);
   });
+
+  it('the FIXED WINDOW rolls over at floor(now/window) — a new bucket starts fresh', async () => {
+    vi.useFakeTimers();
+    // Land mid-bucket so the rollover is unambiguous.
+    vi.setSystemTime(new Date('2026-07-31T12:00:30Z'));
+    setLimits({ dailyBuzz: 5_000_000, velocityMaxGens: 3 });
+
+    const firstBucketKey = velocityKey();
+    for (let i = 0; i < 3; i++) expect((await reserveAppSpend(APP_BLOCK_ID, 0)).allowed).toBe(true);
+    expect((await reserveAppSpend(APP_BLOCK_ID, 0)).allowed).toBe(false);
+    expect(store.get(firstBucketKey)).toBe(4); // the denied attempt still burned a slot
+
+    // +30s crosses into the next 60s bucket → a DIFFERENT key, count restarts.
+    vi.setSystemTime(new Date('2026-07-31T12:01:00Z'));
+    const secondBucketKey = velocityKey();
+    expect(secondBucketKey).not.toBe(firstBucketKey);
+    const after = await reserveAppSpend(APP_BLOCK_ID, 0);
+    expect(after.allowed).toBe(true);
+    expect(after.velocityCount).toBe(1);
+    expect(store.get(secondBucketKey)).toBe(1);
+    // The old bucket is untouched by the new window (it self-expires on its TTL).
+    expect(store.get(firstBucketKey)).toBe(4);
+  });
+
+  it('arms the velocity TTL to exactly one window on the first write of a bucket', async () => {
+    const res = await reserveAppSpend(APP_BLOCK_ID, 0);
+    expect(res.allowed).toBe(true);
+    expect(mockSysRedis.expire).toHaveBeenCalledWith(
+      velocityKey(),
+      BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS
+    );
+  });
 });
 
-describe('reserveAppSpend — fail-safe on a Redis error', () => {
+describe('reserveAppSpend — PER-APP limits from the tier/override resolver', () => {
+  it('resolves the limits for the SUBMITTING app id', async () => {
+    await reserveAppSpend('apb_specific', 1);
+    expect(mockResolveAppCapLimits).toHaveBeenCalledWith('apb_specific');
+  });
+
+  it.each(APP_TRUST_TIERS.map((t) => [t] as const))(
+    'enforces the `%s` tier ceilings, not a global constant',
+    async (tier) => {
+      const limits = APP_TIER_CAP_LIMITS[tier];
+      setLimits(limits);
+
+      // Exactly `velocityMaxGens` 0-cost gens fit; the next one is denied.
+      for (let i = 0; i < limits.velocityMaxGens; i++) {
+        expect((await reserveAppSpend(APP_BLOCK_ID, 0)).allowed).toBe(true);
+      }
+      const over = await reserveAppSpend(APP_BLOCK_ID, 0);
+      expect(over.allowed).toBe(false);
+      expect(over.reason).toBe('velocity');
+      expect(over.limits).toEqual(limits);
+    }
+  );
+
+  it('enforces the per-app DAILY ceiling from the tier (internal gets 5× the headroom)', async () => {
+    setLimits(APP_TIER_CAP_LIMITS.internal);
+    const beyondUnverified = APP_TIER_CAP_LIMITS.unverified.dailyBuzz + 1;
+    // A spend that would breach the unverified/verified daily cap fits for internal.
+    const res = await reserveAppSpend(APP_BLOCK_ID, beyondUnverified);
+    expect(res.allowed).toBe(true);
+    expect(res.limits).toEqual(APP_TIER_CAP_LIMITS.internal);
+
+    // …and internal's own ceiling still binds.
+    const over = await reserveAppSpend(APP_BLOCK_ID, APP_TIER_CAP_LIMITS.internal.dailyBuzz);
+    expect(over.allowed).toBe(false);
+    expect(over.reason).toBe('daily');
+  });
+
+  it('an ADMIN OVERRIDE (resolved per-app) is what actually binds', async () => {
+    setLimits({ dailyBuzz: 900, velocityMaxGens: 2 });
+    expect((await reserveAppSpend(APP_BLOCK_ID, 400)).allowed).toBe(true);
+    expect((await reserveAppSpend(APP_BLOCK_ID, 400)).allowed).toBe(true);
+    // 3rd gen breaches the overridden velocity of 2 (before the 900 daily bites).
+    const third = await reserveAppSpend(APP_BLOCK_ID, 1);
+    expect(third.allowed).toBe(false);
+    expect(third.reason).toBe('velocity');
+  });
+
+  it('TWO APPS with different tiers are bounded independently in the same window', async () => {
+    mockResolveAppCapLimits.mockImplementation(async (id: string) =>
+      id === 'apb_busy' ? APP_TIER_CAP_LIMITS.verified : APP_TIER_CAP_LIMITS.unverified
+    );
+    // Drive the unverified app past ITS ceiling…
+    for (let i = 0; i < APP_TIER_CAP_LIMITS.unverified.velocityMaxGens; i++) {
+      expect((await reserveAppSpend('apb_quiet', 0)).allowed).toBe(true);
+    }
+    expect((await reserveAppSpend('apb_quiet', 0)).allowed).toBe(false);
+    // …while the verified app is still comfortably inside its own, higher one.
+    for (let i = 0; i < APP_TIER_CAP_LIMITS.unverified.velocityMaxGens + 50; i++) {
+      expect((await reserveAppSpend('apb_busy', 0)).allowed).toBe(true);
+    }
+  });
+
+  it('reports the ceilings it judged against on the ALLOWED path too', async () => {
+    setLimits(APP_TIER_CAP_LIMITS.internal);
+    const res = await reserveAppSpend(APP_BLOCK_ID, 5);
+    expect(res.allowed).toBe(true);
+    expect(res.limits).toEqual(APP_TIER_CAP_LIMITS.internal);
+  });
+});
+
+describe('THE REGRESSION THIS PR FIXES — a legitimately busy app is no longer throttled', () => {
+  /**
+   * The concrete failure the old global ceiling produced: ~120 concurrent
+   * viewers each generating once a minute saturates 120 gens/60s AGGREGATE, and
+   * every viewer past that gets an abuse rejection. Platform success → user-
+   * visible failure. Same traffic, two tiers:
+   */
+  const BUSY_APP_GENS_PER_WINDOW = 300; // ~300 concurrent viewers, 1 gen/min each
+
+  it('300 gens in one window ALL succeed at the new `verified` ceiling (600)', async () => {
+    setLimits(APP_TIER_CAP_LIMITS.verified);
+    let denied = 0;
+    for (let i = 0; i < BUSY_APP_GENS_PER_WINDOW; i++) {
+      if (!(await reserveAppSpend(APP_BLOCK_ID, 100)).allowed) denied++;
+    }
+    expect(denied).toBe(0);
+  });
+
+  it('…and would have been throttled at the OLD 120 ceiling (still the `unverified` tier)', async () => {
+    setLimits(APP_TIER_CAP_LIMITS.unverified);
+    let denied = 0;
+    for (let i = 0; i < BUSY_APP_GENS_PER_WINDOW; i++) {
+      if (!(await reserveAppSpend(APP_BLOCK_ID, 100)).allowed) denied++;
+    }
+    expect(denied).toBe(BUSY_APP_GENS_PER_WINDOW - APP_TIER_CAP_LIMITS.unverified.velocityMaxGens);
+    expect(denied).toBe(180);
+  });
+
+  it('the raised velocity does NOT weaken the daily SPEND bound (the real sybil bound)', async () => {
+    // At the verified tier a ring still cannot exceed the daily Buzz ceiling,
+    // however fast it fires — the money bound is independent of the rate bound.
+    setLimits(APP_TIER_CAP_LIMITS.verified);
+    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
+    const chunk = Math.floor(cap / 4);
+    for (let i = 0; i < 10; i++) await reserveAppSpend(APP_BLOCK_ID, chunk);
+    expect(store.get(dailyKey())!).toBeLessThanOrEqual(cap);
+  });
+});
+
+describe('reserveAppSpend — FAIL-CLOSED', () => {
   it('DENIES (no spend) and rolls back a partial daily reserve when the velocity INCRBY throws', async () => {
     // Daily INCRBY succeeds, then the velocity INCRBY throws.
     let call = 0;
@@ -220,6 +410,56 @@ describe('reserveAppSpend — fail-safe on a Redis error', () => {
     // The partial daily reservation was rolled back → counter back to 0.
     expect(mockSysRedis.decrBy).toHaveBeenCalledWith(dailyKey(), 100);
     expect(store.get(dailyKey())).toBe(0);
+  });
+
+  it('DENIES when the DAILY INCRBY itself throws (nothing to roll back, no spend)', async () => {
+    mockSysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    const res = await reserveAppSpend(APP_BLOCK_ID, 100);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe('unavailable');
+    expect(res.dailyKey).toBeUndefined();
+    // Nothing was reserved, so nothing is refunded — and no spend is authorised.
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    expect(store.get(dailyKey())).toBeUndefined();
+  });
+
+  it('DENIES when the daily TTL/expire call throws mid-reserve, rolling the reserve back', async () => {
+    mockSysRedis.expire.mockRejectedValue(new Error('redis down'));
+    const res = await reserveAppSpend(APP_BLOCK_ID, 250);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe('unavailable');
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(dailyKey(), 250);
+    expect(store.get(dailyKey())).toBe(0);
+  });
+
+  it('DENIES when LIMIT RESOLUTION throws — a lookup failure can never mean "uncapped"', async () => {
+    mockResolveAppCapLimits.mockRejectedValue(new Error('resolver exploded'));
+    const res = await reserveAppSpend(APP_BLOCK_ID, 100);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe('unavailable');
+    // The resolve happens BEFORE any Redis write, so nothing was reserved…
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    // …and the reported ceilings are the strictest pair, never an absent/huge one.
+    expect(res.limits).toEqual(STRICTEST_APP_CAP_LIMITS);
+  });
+
+  it('enforces the STRICTEST ceilings when the resolver degrades (DB down → strictest, not uncapped)', async () => {
+    // This is what `resolveAppCapLimits` actually returns on a DB error.
+    setLimits(STRICTEST_APP_CAP_LIMITS);
+    for (let i = 0; i < STRICTEST_APP_CAP_LIMITS.velocityMaxGens; i++) {
+      expect((await reserveAppSpend(APP_BLOCK_ID, 0)).allowed).toBe(true);
+    }
+    const over = await reserveAppSpend(APP_BLOCK_ID, 0);
+    expect(over.allowed).toBe(false);
+    expect(over.reason).toBe('velocity');
+  });
+
+  it('a denied submit NEVER reports a dailyKey (nothing for the caller to refund)', async () => {
+    setLimits({ dailyBuzz: 10, velocityMaxGens: 600 });
+    const res = await reserveAppSpend(APP_BLOCK_ID, 50);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe('daily');
+    expect(res.dailyKey).toBeUndefined();
   });
 });
 
@@ -243,5 +483,34 @@ describe('refundAppSpend', () => {
     await expect(
       refundAppSpend(dailyKey() as `system:blocks:app-spend-cap:${string}`, 10)
     ).resolves.toBeUndefined();
+  });
+
+  it('the RESERVED key shape is unchanged — the router/settle refund sites still match it', async () => {
+    // 🔴 The throw-path refunds in blocks.router.ts and the PERSISTED
+    // `appSpendKey` on customComfy settle records hold keys minted here,
+    // including keys written by an earlier deploy. Per-app limits must not have
+    // moved the key shape.
+    const res = await reserveAppSpend(APP_BLOCK_ID, 42);
+    expect(res.dailyKey).toBe(`${SPEND_CAP_PREFIX}:${APP_BLOCK_ID}:${new Date()
+      .toISOString()
+      .slice(0, 10)}`);
+  });
+
+  it('refunds the PINNED key even when the request straddles midnight UTC', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T23:59:59Z'));
+    const res = await reserveAppSpend(APP_BLOCK_ID, 90);
+    const reservedKey = res.dailyKey!;
+    expect(reservedKey).toContain('2026-07-31');
+    expect(store.get(reservedKey)).toBe(90);
+
+    // The orchestrator submit takes seconds; the refund lands on the NEXT day.
+    vi.setSystemTime(new Date('2026-08-01T00:00:02Z'));
+    await refundAppSpend(reservedKey, 90);
+
+    // Yesterday's counter is what was decremented — today's was never touched
+    // (re-deriving the key here would have handed the app free headroom).
+    expect(store.get(reservedKey)).toBe(0);
+    expect(store.get(`${SPEND_CAP_PREFIX}:${APP_BLOCK_ID}:2026-08-01`)).toBeUndefined();
   });
 });
