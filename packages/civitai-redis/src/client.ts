@@ -2033,6 +2033,7 @@ export const REDIS_KEYS = {
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
+    PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',

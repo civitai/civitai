@@ -82,12 +82,14 @@ import {
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
+  getCachedCapTier,
   getPaidAccess,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  effectivePaidAccessPrice,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
@@ -1987,8 +1989,14 @@ export const earlyAccessPurchase = async ({
   let buzzTransactionId: string | undefined;
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
-  const amount =
-    type === 'download' ? (terms.download?.price as number) : (generationPrice(terms) as number);
+  //
+  // Charged at the OWNER's current cap, not the stored price: a lapsed membership drops what buyers pay to
+  // the free-tier cap (CU 868kj4q4j). The stored value is left alone, so re-subscribing restores it.
+  const ownerTier = await getCachedCapTier(modelVersion.model.userId);
+  const amount = effectivePaidAccessPrice(
+    type === 'download' ? terms.download?.price : generationPrice(terms),
+    ownerTier
+  );
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {

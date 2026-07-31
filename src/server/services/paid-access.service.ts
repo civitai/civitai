@@ -17,6 +17,7 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -142,6 +143,34 @@ export async function countUserPermanentAccessVersions(
       ${excludeVersionId != null ? Prisma.sql`AND mv.id <> ${excludeVersionId}` : Prisma.empty}
   `;
   return Number(rows[0]?.count ?? 0);
+}
+
+// The tier the monetization caps resolve against, per user. Read on every paid-access purchase to clamp
+// what a buyer is charged, and getCapTier is an uncached join against the PRIMARY. A null tier (no
+// good-standing subscription) is cached like any other value — it's the common case.
+//
+// Busted from clearSessionCache, which Stripe's webhook reaches via refreshSession on every subscription
+// change, so an upgrade/downgrade/lapse applies on the next read; the TTL is only a missed-webhook backstop.
+type CachedCapTier = { userId: number; tier: string | null };
+const capTierCache = createCachedObject<CachedCapTier>({
+  key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
+  idKey: 'userId',
+  ttl: CacheTTL.hour,
+  // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
+  staleWhileRevalidate: false,
+  lookupFn: async (ids) => {
+    const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
+    if (!userIds.length) return {};
+    const rows = await Promise.all(
+      userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
+    );
+    return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
+  },
+});
+
+/** The owner tier a buyer's price is clamped against. Cached — see capTierCache. */
+export async function getCachedCapTier(userId: number): Promise<string | null> {
+  return (await capTierCache.fetch([userId]))[userId]?.tier ?? null;
 }
 
 /** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */

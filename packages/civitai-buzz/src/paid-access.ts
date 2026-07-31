@@ -136,8 +136,6 @@ export const grantsGeneration = (
 //
 // The gate moved from QUANTITY to PRICE: permanent access is open to everyone, and the tier caps how much
 // you may charge. Only free keeps a count limit, so a non-member can try it without running a storefront.
-//
-// NUMBERS ARE PLACEHOLDERS pending CU 868kj4q4x (Justin + Briant to finalize).
 export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
   free: 3,
   // Legacy paid tier — allowances match bronze.
@@ -180,6 +178,19 @@ export const raisesOverCap = (
   current: number,
   cap: number
 ): boolean => next != null && next > cap && next > current;
+
+/**
+ * What a buyer is actually charged: the stored price, lowered to whatever the OWNER's current tier may
+ * charge. A lapse drops prices to the free cap without touching the stored value, so re-subscribing
+ * restores the original automatically (CU 868kj4q4j).
+ */
+export function effectivePaidAccessPrice(
+  storedPrice: number | null | undefined,
+  ownerTier: string | null | undefined
+): number {
+  if (storedPrice == null || storedPrice <= 0) return 0;
+  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier));
+}
 
 /** A gate's two chargeable prices (0 when absent). Kept separate so a cheap tier can't ride an over-cap one. */
 export function gatePrices(terms: ModelVersionTerms | undefined | null): {

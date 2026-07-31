@@ -50,8 +50,7 @@ export function suggestedFeePerImage(modelType: string | null | undefined): numb
 // Per-tier ceiling on the per-image licensing fee (CU 868kj4q49). Anyone may set a fee — including free
 // users — and the tier decides only HOW MUCH, replacing the old "Creator Program members only" gate.
 //
-// NUMBERS ARE PLACEHOLDERS pending CU 868kj4q4x (Justin + Briant to finalize). Shaped like
-// SUGGESTED_FEE_PER_IMAGE: checkpoints carry more value, everything else (LoRA et al) takes `default`.
+// Shaped like SUGGESTED_FEE_PER_IMAGE: checkpoints carry more value, everything else takes `default`.
 const BRONZE_FEE_CAP = { checkpoint: 3, default: 1 };
 export const LICENSING_FEE_CAP_BY_TIER: Record<string, { checkpoint: number; default: number }> = {
   free: { checkpoint: 1, default: 0.1 },

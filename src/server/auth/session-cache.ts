@@ -10,6 +10,9 @@ export async function clearSessionCache(userId: number) {
     // main-app-only per-user caches (not hub-owned) — cleared directly.
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
     redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
+    // Decides what buyers are charged for this user's paid access, so it must clear the moment a
+    // subscription changes — Stripe's webhook reaches here via refreshSession.
+    redis.del(`${REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER}:${userId}`),
     // orchestrator's cached civitai user — a main-app concern, fired here at the invalidation point.
     invalidateCivitaiUser({ userId }),
   ]);
