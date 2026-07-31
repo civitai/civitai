@@ -83,7 +83,10 @@ async function loadAppCapLimits(
     const { dbRead } = await import('~/server/db/client');
     const row = await dbRead.appBlock.findUnique({
       where: { id: appBlockId },
-      select: { trustTier: true, spendCapBuzzPerDay: true, spendVelocityMaxGens: true },
+      // 🔴 `trustTier` is deliberately NOT selected. It is the iframe-sandbox /
+      // renderMode axis (browser isolation), not a spend authorisation — see the
+      // constants module header. Spend reads `spendTier` and nothing else.
+      select: { spendTier: true, spendCapBuzzPerDay: true, spendVelocityMaxGens: true },
     });
     if (!row) {
       // No such app (revoked mid-session, a synthetic dev id that slipped the

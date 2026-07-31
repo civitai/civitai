@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `BlockRegistry.getAppSpendCapOverride` / `setAppSpendCapOverride` — the
- * per-app generation-cap override WRITE path (mod-gated at the router; this
- * suite pins the data-integrity rules the service enforces regardless of
+ * `BlockRegistry.getAppSpendCapConfig` / `setAppSpendCapConfig` — the per-app
+ * generation SPEND TIER + cap-override WRITE path (mod-gated at the router;
+ * this suite pins the data-integrity rules the service enforces regardless of
  * caller).
  *
  * What must hold:
+ *   - It writes `spendTier` and NEVER `trustTier`. Spend and browser-isolation
+ *     are separate axes; promoting one must not move the other.
  *   - It is a PATCH, not a full overwrite: an omitted field is untouched, an
  *     explicit null clears.
  *   - What is STORED is exactly what the READER will honour — the write goes
@@ -72,7 +74,7 @@ import { BlockRegistry } from '../block-registry.service';
 import {
   APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
   APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
-  APP_TIER_CAP_LIMITS,
+  APP_SPEND_TIER_CAP_LIMITS,
   STRICTEST_APP_CAP_LIMITS,
 } from '~/server/services/blocks/app-cap-limits.constants';
 
@@ -90,64 +92,64 @@ beforeEach(() => {
   mockDb.appBlock.findUnique.mockResolvedValue({ id: APP });
   mockDb.appBlock.update.mockResolvedValue({
     id: APP,
-    trustTier: 'verified',
+    spendTier: 'trusted',
     spendCapBuzzPerDay: null,
     spendVelocityMaxGens: null,
   });
 });
 
-describe('getAppSpendCapOverride', () => {
-  it('returns the tier, the raw override and the RESOLVED effective ceilings', async () => {
+describe('getAppSpendCapConfig', () => {
+  it('returns the SPEND tier, the raw override and the RESOLVED effective ceilings', async () => {
     mockDb.appBlock.findUnique.mockResolvedValue({
       id: APP,
-      trustTier: 'verified',
+      spendTier: 'trusted',
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: 1_500,
     });
-    await expect(BlockRegistry.getAppSpendCapOverride(APP)).resolves.toEqual({
+    await expect(BlockRegistry.getAppSpendCapConfig(APP)).resolves.toEqual({
       appBlockId: APP,
-      trustTier: 'verified',
+      spendTier: 'trusted',
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: 1_500,
       // daily falls back to the tier; velocity is the override.
-      effective: { dailyBuzz: APP_TIER_CAP_LIMITS.verified.dailyBuzz, velocityMaxGens: 1_500 },
+      effective: { dailyBuzz: APP_SPEND_TIER_CAP_LIMITS.trusted.dailyBuzz, velocityMaxGens: 1_500 },
     });
   });
 
   it('surfaces the STRICTEST ceilings for an app on an unrecognised tier', async () => {
     mockDb.appBlock.findUnique.mockResolvedValue({
       id: APP,
-      trustTier: 'platinum',
+      spendTier: 'platinum',
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: null,
     });
-    const config = await BlockRegistry.getAppSpendCapOverride(APP);
+    const config = await BlockRegistry.getAppSpendCapConfig(APP);
     expect(config?.effective).toEqual(STRICTEST_APP_CAP_LIMITS);
   });
 
   it('returns null for a missing app (the router turns that into NOT_FOUND)', async () => {
     mockDb.appBlock.findUnique.mockResolvedValue(null);
-    await expect(BlockRegistry.getAppSpendCapOverride('nope')).resolves.toBeNull();
+    await expect(BlockRegistry.getAppSpendCapConfig('nope')).resolves.toBeNull();
   });
 });
 
-describe('setAppSpendCapOverride', () => {
+describe('setAppSpendCapConfig', () => {
   it('throws NOT_FOUND for a missing app and NEVER writes', async () => {
     mockDb.appBlock.findUnique.mockResolvedValue(null);
     await expect(
-      BlockRegistry.setAppSpendCapOverride({ appBlockId: 'nope', spendCapBuzzPerDay: 5 })
+      BlockRegistry.setAppSpendCapConfig({ appBlockId: 'nope', spendCapBuzzPerDay: 5 })
     ).rejects.toBeTruthy();
     expect(mockDb.appBlock.update).not.toHaveBeenCalled();
   });
 
   it('is a PATCH — an OMITTED field is left out of the write entirely', async () => {
-    await BlockRegistry.setAppSpendCapOverride({ appBlockId: APP, spendVelocityMaxGens: 900 });
+    await BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendVelocityMaxGens: 900 });
     expect(updateData()).toEqual({ spendVelocityMaxGens: 900 });
     expect(updateData()).not.toHaveProperty('spendCapBuzzPerDay');
   });
 
   it('an explicit NULL clears the override (falls back to the tier)', async () => {
-    await BlockRegistry.setAppSpendCapOverride({
+    await BlockRegistry.setAppSpendCapConfig({
       appBlockId: APP,
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: null,
@@ -156,7 +158,7 @@ describe('setAppSpendCapOverride', () => {
   });
 
   it('CLAMPS an over-bound value to the hard maximum before storing', async () => {
-    await BlockRegistry.setAppSpendCapOverride({
+    await BlockRegistry.setAppSpendCapConfig({
       appBlockId: APP,
       spendCapBuzzPerDay: 9e15,
       spendVelocityMaxGens: 9e15,
@@ -170,7 +172,7 @@ describe('setAppSpendCapOverride', () => {
   it('stores NULL (not the raw value) for anything the READER would ignore', async () => {
     // Belt behind the zod `.min(1)`: the stored state and the ENFORCED state can
     // never disagree — a value that would be ignored at read time is not stored.
-    await BlockRegistry.setAppSpendCapOverride({
+    await BlockRegistry.setAppSpendCapConfig({
       appBlockId: APP,
       spendCapBuzzPerDay: 0 as number,
       spendVelocityMaxGens: -3 as number,
@@ -179,42 +181,84 @@ describe('setAppSpendCapOverride', () => {
   });
 
   it('INVALIDATES the resolver cache so the change is not invisible for a full TTL', async () => {
-    await BlockRegistry.setAppSpendCapOverride({ appBlockId: APP, spendVelocityMaxGens: 42 });
+    await BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendVelocityMaxGens: 42 });
     expect(mockInvalidate).toHaveBeenCalledWith(APP);
   });
 
   it('returns the newly EFFECTIVE ceilings, not just the stored columns', async () => {
     mockDb.appBlock.update.mockResolvedValue({
       id: APP,
-      trustTier: 'unverified',
+      spendTier: 'standard',
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: 42,
     });
-    const result = await BlockRegistry.setAppSpendCapOverride({
+    const result = await BlockRegistry.setAppSpendCapConfig({
       appBlockId: APP,
       spendVelocityMaxGens: 42,
     });
     expect(result).toEqual({
       appBlockId: APP,
-      trustTier: 'unverified',
+      spendTier: 'standard',
       spendCapBuzzPerDay: null,
       spendVelocityMaxGens: 42,
       effective: {
-        dailyBuzz: APP_TIER_CAP_LIMITS.unverified.dailyBuzz,
+        dailyBuzz: APP_SPEND_TIER_CAP_LIMITS.standard.dailyBuzz,
         velocityMaxGens: 42,
       },
     });
   });
 
-  it('writes ONLY the two cap columns — it is not a general app-row editor', async () => {
-    await BlockRegistry.setAppSpendCapOverride({
+  it('writes ONLY the three spend columns — it is not a general app-row editor', async () => {
+    await BlockRegistry.setAppSpendCapConfig({
       appBlockId: APP,
+      spendTier: 'trusted',
       spendCapBuzzPerDay: 100,
       spendVelocityMaxGens: 10,
     });
     expect(Object.keys(updateData()).sort()).toEqual([
       'spendCapBuzzPerDay',
+      'spendTier',
       'spendVelocityMaxGens',
     ]);
+  });
+
+  it('🔴 NEVER writes `trustTier` — promoting spend must not touch iframe privileges', async () => {
+    // The decoupling, at the only write surface that exists. A spend promotion
+    // must not hand the app `allow-same-origin` + `allow-scripts`, and it must
+    // not silently re-tier it for rendering.
+    await BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendTier: 'platform' });
+    expect(updateData()).toEqual({ spendTier: 'platform' });
+    expect(updateData()).not.toHaveProperty('trustTier');
+    expect(updateData()).not.toHaveProperty('renderMode');
+  });
+
+  it('sets the SPEND TIER alone, leaving the overrides untouched', async () => {
+    await BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendTier: 'trusted' });
+    expect(updateData()).toEqual({ spendTier: 'trusted' });
+    expect(updateData()).not.toHaveProperty('spendCapBuzzPerDay');
+    expect(updateData()).not.toHaveProperty('spendVelocityMaxGens');
+  });
+
+  it('an OMITTED spendTier is left out of the write (a tier is not reset by an override edit)', async () => {
+    await BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendCapBuzzPerDay: 1_000 });
+    expect(updateData()).not.toHaveProperty('spendTier');
+  });
+
+  it('reports the effective ceilings for the NEW tier after a promotion', async () => {
+    mockDb.appBlock.update.mockResolvedValue({
+      id: APP,
+      spendTier: 'platform',
+      spendCapBuzzPerDay: null,
+      spendVelocityMaxGens: null,
+    });
+    await expect(
+      BlockRegistry.setAppSpendCapConfig({ appBlockId: APP, spendTier: 'platform' })
+    ).resolves.toEqual({
+      appBlockId: APP,
+      spendTier: 'platform',
+      spendCapBuzzPerDay: null,
+      spendVelocityMaxGens: null,
+      effective: APP_SPEND_TIER_CAP_LIMITS.platform,
+    });
   });
 });

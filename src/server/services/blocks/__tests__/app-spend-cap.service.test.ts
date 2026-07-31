@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - fail-safe: a Redis error DENIES (no spend), rolling back a partial reserve
  *   - pinned-key refund on the throw path
  *   - 🔴 PER-APP LIMITS: the ceilings come from `resolveAppCapLimits` (the app's
- *     trustTier + any moderator override), NOT from one global constant. Every
+ *     spendTier + any moderator override), NOT from one global constant. Every
  *     path that fails to resolve a limit must enforce the STRICTEST ceiling —
  *     never "uncapped".
  *
@@ -71,8 +71,8 @@ vi.mock('~/server/services/blocks/app-cap-limits.service', () => ({
 }));
 
 import {
-  APP_TIER_CAP_LIMITS,
-  APP_TRUST_TIERS,
+  APP_SPEND_TIER_CAP_LIMITS,
+  APP_SPEND_TIERS,
   STRICTEST_APP_CAP_LIMITS,
   type AppCapLimits,
 } from '../app-cap-limits.constants';
@@ -127,8 +127,8 @@ beforeEach(() => {
     return 1;
   });
   mockResolveAppCapLimits.mockReset();
-  // Default: the `verified` tier (the new global default pair).
-  mockResolveAppCapLimits.mockResolvedValue(APP_TIER_CAP_LIMITS.verified);
+  // Default: the `trusted` tier (what review grants a busy app).
+  mockResolveAppCapLimits.mockResolvedValue(APP_SPEND_TIER_CAP_LIMITS.trusted);
 });
 
 afterEach(() => {
@@ -136,15 +136,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('cap constants (the GLOBAL BASES the tier table derives from)', () => {
+describe('cap constants (the GLOBAL CEILINGS that clamp every tier)', () => {
   it('are positive integers with the documented defaults', () => {
+    // 🔴 These are the absolute deploy-time CEILINGS, not the value any app
+    // gets. They default to the hard bound — i.e. "no additional clamp" — so an
+    // unset env changes nothing and a moderator's override means what they
+    // typed. The per-app default is the `standard` spend tier (5,000,000 / 120),
+    // asserted in app-cap-limits.constants.test.ts.
     expect(Number.isInteger(BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY)).toBe(true);
-    expect(BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY).toBe(5_000_000);
-    // 🔴 RAISED 120 → 600. The daily SPEND cap is the real sybil bound
-    // (5M Buzz ÷ ~500 Buzz/gen ≈ 10k gens/day ≈ 0.12 gens/sec sustained), so
-    // velocity only has to bound a BURST and catch 0-cost/cache-hit gens — it can
-    // be generous without weakening the spend bound.
-    expect(BLOCK_APP_SPEND_VELOCITY_MAX_GENS).toBe(600);
+    expect(BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY).toBe(1_000_000_000);
+    expect(BLOCK_APP_SPEND_VELOCITY_MAX_GENS).toBe(100_000);
     expect(BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS).toBe(60);
   });
 });
@@ -171,7 +172,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
   });
 
   it('DENIES + REFUNDS (all-or-nothing) when the spend would exceed the daily cap', async () => {
-    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
+    const cap = APP_SPEND_TIER_CAP_LIMITS.trusted.dailyBuzz;
     // Pre-fill to just under the cap.
     await reserveAppSpend(APP_BLOCK_ID, cap - 10);
     mockSysRedis.decrBy.mockClear();
@@ -191,7 +192,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
   });
 
   it('SYBIL CASE: many viewers each spending a little can never exceed the per-app daily cap', async () => {
-    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
+    const cap = APP_SPEND_TIER_CAP_LIMITS.trusted.dailyBuzz;
     const chunk = Math.floor(cap / 10);
     let allowed = 0;
     let denied = 0;
@@ -219,7 +220,7 @@ describe('reserveAppSpend — DAILY Buzz aggregate', () => {
 
 describe('reserveAppSpend — VELOCITY', () => {
   it('DENIES + REFUNDS the daily reserve when the short-window gen ceiling is exceeded', async () => {
-    const max = APP_TIER_CAP_LIMITS.verified.velocityMaxGens;
+    const max = APP_SPEND_TIER_CAP_LIMITS.trusted.velocityMaxGens;
     // Fill the velocity window exactly to the max (each 1-Buzz spend both counts
     // toward daily + velocity).
     for (let i = 0; i < max; i++) {
@@ -239,7 +240,7 @@ describe('reserveAppSpend — VELOCITY', () => {
   });
 
   it('enforces velocity even for 0-cost gens (a burst of cache-hits is bounded)', async () => {
-    const max = APP_TIER_CAP_LIMITS.verified.velocityMaxGens;
+    const max = APP_SPEND_TIER_CAP_LIMITS.trusted.velocityMaxGens;
     let denied = 0;
     for (let i = 0; i < max + 5; i++) {
       const r = await reserveAppSpend(APP_BLOCK_ID, 0);
@@ -287,10 +288,10 @@ describe('reserveAppSpend — PER-APP limits from the tier/override resolver', (
     expect(mockResolveAppCapLimits).toHaveBeenCalledWith('apb_specific');
   });
 
-  it.each(APP_TRUST_TIERS.map((t) => [t] as const))(
+  it.each(APP_SPEND_TIERS.map((t) => [t] as const))(
     'enforces the `%s` tier ceilings, not a global constant',
     async (tier) => {
-      const limits = APP_TIER_CAP_LIMITS[tier];
+      const limits = APP_SPEND_TIER_CAP_LIMITS[tier];
       setLimits(limits);
 
       // Exactly `velocityMaxGens` 0-cost gens fit; the next one is denied.
@@ -304,16 +305,16 @@ describe('reserveAppSpend — PER-APP limits from the tier/override resolver', (
     }
   );
 
-  it('enforces the per-app DAILY ceiling from the tier (internal gets 5× the headroom)', async () => {
-    setLimits(APP_TIER_CAP_LIMITS.internal);
-    const beyondUnverified = APP_TIER_CAP_LIMITS.unverified.dailyBuzz + 1;
-    // A spend that would breach the unverified/verified daily cap fits for internal.
-    const res = await reserveAppSpend(APP_BLOCK_ID, beyondUnverified);
+  it('enforces the per-app DAILY ceiling from the tier (platform gets 5× the headroom)', async () => {
+    setLimits(APP_SPEND_TIER_CAP_LIMITS.platform);
+    const beyondStandard = APP_SPEND_TIER_CAP_LIMITS.standard.dailyBuzz + 1;
+    // A spend that would breach the standard/trusted daily cap fits for platform.
+    const res = await reserveAppSpend(APP_BLOCK_ID, beyondStandard);
     expect(res.allowed).toBe(true);
-    expect(res.limits).toEqual(APP_TIER_CAP_LIMITS.internal);
+    expect(res.limits).toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
 
-    // …and internal's own ceiling still binds.
-    const over = await reserveAppSpend(APP_BLOCK_ID, APP_TIER_CAP_LIMITS.internal.dailyBuzz);
+    // …and platform's own ceiling still binds.
+    const over = await reserveAppSpend(APP_BLOCK_ID, APP_SPEND_TIER_CAP_LIMITS.platform.dailyBuzz);
     expect(over.allowed).toBe(false);
     expect(over.reason).toBe('daily');
   });
@@ -330,24 +331,24 @@ describe('reserveAppSpend — PER-APP limits from the tier/override resolver', (
 
   it('TWO APPS with different tiers are bounded independently in the same window', async () => {
     mockResolveAppCapLimits.mockImplementation(async (id: string) =>
-      id === 'apb_busy' ? APP_TIER_CAP_LIMITS.verified : APP_TIER_CAP_LIMITS.unverified
+      id === 'apb_busy' ? APP_SPEND_TIER_CAP_LIMITS.trusted : APP_SPEND_TIER_CAP_LIMITS.standard
     );
-    // Drive the unverified app past ITS ceiling…
-    for (let i = 0; i < APP_TIER_CAP_LIMITS.unverified.velocityMaxGens; i++) {
+    // Drive the standard-tier app past ITS ceiling…
+    for (let i = 0; i < APP_SPEND_TIER_CAP_LIMITS.standard.velocityMaxGens; i++) {
       expect((await reserveAppSpend('apb_quiet', 0)).allowed).toBe(true);
     }
     expect((await reserveAppSpend('apb_quiet', 0)).allowed).toBe(false);
-    // …while the verified app is still comfortably inside its own, higher one.
-    for (let i = 0; i < APP_TIER_CAP_LIMITS.unverified.velocityMaxGens + 50; i++) {
+    // …while the trusted app is still comfortably inside its own, higher one.
+    for (let i = 0; i < APP_SPEND_TIER_CAP_LIMITS.standard.velocityMaxGens + 50; i++) {
       expect((await reserveAppSpend('apb_busy', 0)).allowed).toBe(true);
     }
   });
 
   it('reports the ceilings it judged against on the ALLOWED path too', async () => {
-    setLimits(APP_TIER_CAP_LIMITS.internal);
+    setLimits(APP_SPEND_TIER_CAP_LIMITS.platform);
     const res = await reserveAppSpend(APP_BLOCK_ID, 5);
     expect(res.allowed).toBe(true);
-    expect(res.limits).toEqual(APP_TIER_CAP_LIMITS.internal);
+    expect(res.limits).toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
   });
 });
 
@@ -360,8 +361,8 @@ describe('THE REGRESSION THIS PR FIXES — a legitimately busy app is no longer 
    */
   const BUSY_APP_GENS_PER_WINDOW = 300; // ~300 concurrent viewers, 1 gen/min each
 
-  it('300 gens in one window ALL succeed at the new `verified` ceiling (600)', async () => {
-    setLimits(APP_TIER_CAP_LIMITS.verified);
+  it('300 gens in one window ALL succeed at the `trusted` ceiling (600)', async () => {
+    setLimits(APP_SPEND_TIER_CAP_LIMITS.trusted);
     let denied = 0;
     for (let i = 0; i < BUSY_APP_GENS_PER_WINDOW; i++) {
       if (!(await reserveAppSpend(APP_BLOCK_ID, 100)).allowed) denied++;
@@ -369,21 +370,21 @@ describe('THE REGRESSION THIS PR FIXES — a legitimately busy app is no longer 
     expect(denied).toBe(0);
   });
 
-  it('…and would have been throttled at the OLD 120 ceiling (still the `unverified` tier)', async () => {
-    setLimits(APP_TIER_CAP_LIMITS.unverified);
+  it('…and would have been throttled at the 120 ceiling (still the `standard` tier)', async () => {
+    setLimits(APP_SPEND_TIER_CAP_LIMITS.standard);
     let denied = 0;
     for (let i = 0; i < BUSY_APP_GENS_PER_WINDOW; i++) {
       if (!(await reserveAppSpend(APP_BLOCK_ID, 100)).allowed) denied++;
     }
-    expect(denied).toBe(BUSY_APP_GENS_PER_WINDOW - APP_TIER_CAP_LIMITS.unverified.velocityMaxGens);
+    expect(denied).toBe(BUSY_APP_GENS_PER_WINDOW - APP_SPEND_TIER_CAP_LIMITS.standard.velocityMaxGens);
     expect(denied).toBe(180);
   });
 
   it('the raised velocity does NOT weaken the daily SPEND bound (the real sybil bound)', async () => {
-    // At the verified tier a ring still cannot exceed the daily Buzz ceiling,
+    // At the trusted tier a ring still cannot exceed the daily Buzz ceiling,
     // however fast it fires — the money bound is independent of the rate bound.
-    setLimits(APP_TIER_CAP_LIMITS.verified);
-    const cap = APP_TIER_CAP_LIMITS.verified.dailyBuzz;
+    setLimits(APP_SPEND_TIER_CAP_LIMITS.trusted);
+    const cap = APP_SPEND_TIER_CAP_LIMITS.trusted.dailyBuzz;
     const chunk = Math.floor(cap / 4);
     for (let i = 0; i < 10; i++) await reserveAppSpend(APP_BLOCK_ID, chunk);
     expect(store.get(dailyKey())!).toBeLessThanOrEqual(cap);

@@ -1846,6 +1846,7 @@ export interface AppBlock {
   featuredOrder: number | null;
   screenshots: JsonValue | null;
   externalUrl: string | null;
+  spendTier: string;
   spendCapBuzzPerDay: number | null;
   spendVelocityMaxGens: number | null;
   createdAt: Date;

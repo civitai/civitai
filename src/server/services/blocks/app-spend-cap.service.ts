@@ -55,10 +55,15 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
  * ✅ PER-APP LIMITS (the non-mod-GA prerequisite this header used to flag).
  * The ceilings are no longer ONE global value applied to every app. They are
  * resolved PER APP by `resolveAppCapLimits` (`app-cap-limits.service.ts`) from
- * the app's server-owned `trustTier`, with a moderator-set per-app override on
+ * the app's server-owned `spendTier`, with a moderator-set per-app override on
  * top; `app-cap-limits.constants.ts` holds the tier→limits table, the
- * (still env-overridable) global bases those tiers derive from, and the
+ * (still env-overridable) global ceilings that clamp every tier, and the
  * fail-closed fallback rules.
+ *
+ * 🔴 `spendTier`, NOT `trustTier`. `trustTier` gates the iframe sandbox
+ * allowlist and inline/hybrid renderMode — browser isolation, not money.
+ * Deriving a spend ceiling from it would mean a moderator granting a RENDERING
+ * capability silently granted a bigger budget. See the constants module header.
  *
  * The two things that changed for enforcement, both LOCAL to this file:
  *   1. `reserveAppSpend` resolves `{ dailyBuzz, velocityMaxGens }` for the app
@@ -77,10 +82,11 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
 
 /**
  * Re-exported for callers/tests that consumed these from this module before the
- * limits moved out. They are now the GLOBAL BASES the tier table derives from —
- * `BLOCK_APP_SPEND_VELOCITY_MAX_GENS` is the `verified`-tier ceiling (raised
- * 120 → 600), NOT the ceiling every app gets. The effective per-app value is
- * whatever `resolveAppCapLimits` returns.
+ * limits moved out. 🔴 THEIR MEANING CHANGED: they are now the GLOBAL ABSOLUTE
+ * CEILINGS that clamp every tier and every override from above — not the value
+ * any particular app gets. The per-app default (the `standard` spend tier, and
+ * the DB default for every row) is still 5,000,000 / 120, exactly as before.
+ * The effective per-app value is whatever `resolveAppCapLimits` returns.
  */
 export {
   BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
@@ -164,7 +170,7 @@ export type ReserveAppSpendResult = {
  *     rate slot (standard fixed-window limiter), and the bucket self-expires.
  *
  * The ceilings are PER-APP: `resolveAppCapLimits` maps the app's server-owned
- * `trustTier` (plus any moderator override) to `{ dailyBuzz, velocityMaxGens }`.
+ * `spendTier` (plus any moderator override) to `{ dailyBuzz, velocityMaxGens }`.
  * It is resolved INSIDE the try/catch below, so a resolution failure denies
  * fail-safe exactly like a Redis error — and the resolver itself independently
  * degrades to the STRICTEST tier rather than to "uncapped", so there is no

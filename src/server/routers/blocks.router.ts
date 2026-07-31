@@ -48,13 +48,13 @@ import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   getAppDetailSchema,
-  getAppSpendCapOverrideSchema,
+  getAppSpendCapConfigSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
   listAppBlockReviewsSchema,
   listAvailableSchema,
   setAppReviewExcludedSchema,
-  setAppSpendCapOverrideSchema,
+  setAppSpendCapConfigSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
   toPublicBlockManifest,
@@ -2796,49 +2796,58 @@ export const blocksRouter = router({
     }),
 
   /**
-   * MOD-ONLY read of one app's generation-cap configuration — its trust tier,
+   * MOD-ONLY read of one app's generation-cap configuration — its SPEND tier,
    * any per-app override, and the RESOLVED ceilings the submit path enforces.
-   * Seeds the moderator override form and lets an operator confirm the effective
-   * number after a write.
+   * Seeds the moderator form and lets an operator confirm the effective number
+   * after a write (including when a deploy-time BLOCK_APP_SPEND_* clamp binds
+   * below what they set).
    *
    * 🔴 MOD-ONLY ON PURPOSE. The exact ceiling is withheld from apps themselves
    * (the submit rejection above is deliberately number-free) so a hostile app
    * cannot probe where its limit sits and tune a Sybil ring just under it.
    */
-  getAppSpendCapOverride: moderatorProcedure
+  getAppSpendCapConfig: moderatorProcedure
     .use(enforceAppBlocksFlag)
-    .input(getAppSpendCapOverrideSchema)
+    .input(getAppSpendCapConfigSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
       }
-      const config = await BlockRegistry.getAppSpendCapOverride(input.appBlockId);
+      const config = await BlockRegistry.getAppSpendCapConfig(input.appBlockId);
       if (!config) throw throwNotFoundError('App block not found');
       return config;
     }),
 
   /**
-   * MOD-ONLY write of the per-app generation spend/velocity cap OVERRIDE — the
-   * escape hatch on top of the `trustTier`-derived ceilings.
+   * MOD-ONLY write of the per-app generation SPEND TIER and the cap OVERRIDE on
+   * top of it.
+   *
+   * 🔴 SPEND IS A SEPARATE AXIS FROM `trustTier`. This procedure never touches
+   * `trustTier`, and the tier-setting mod surfaces never touch these fields.
+   * `trustTier` decides iframe-sandbox / renderMode privileges (browser
+   * isolation); `spendTier` decides money. Granting one must not grant the
+   * other — an earlier revision derived the ceilings from `trustTier`, which
+   * would have silently handed a 5x money ceiling to every app a moderator had
+   * tiered `internal` for RENDERING.
    *
    * GATING / SECURITY (mirrors setMarketplaceMeta):
    *   - `moderatorProcedure` + a re-asserted `ctx.user?.isModerator` belt. There
    *     is intentionally NO publisher path: an app must never be able to raise
-   *     its own abuse ceiling, which is also why the limits are NOT read from
-   *     the manifest.
+   *     its own abuse ceiling, which is also why none of these fields exist in
+   *     the manifest or in any developer-reachable input.
    *   - `enforceAppBlocksFlag` keeps it behind the dark mod segment.
    *   - Bounds/normalisation live in the schema AND are re-applied in the
    *     service with the reader's own rules, so a stored value can never mean
    *     something different from what the reserve path will enforce.
    */
-  setAppSpendCapOverride: moderatorProcedure
+  setAppSpendCapConfig: moderatorProcedure
     .use(enforceAppBlocksFlag)
-    .input(setAppSpendCapOverrideSchema)
+    .input(setAppSpendCapConfigSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
       }
-      return BlockRegistry.setAppSpendCapOverride(input);
+      return BlockRegistry.setAppSpendCapConfig(input);
     }),
 
   /**

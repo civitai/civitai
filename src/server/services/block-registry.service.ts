@@ -27,14 +27,17 @@ import type {
   ListAvailableInput,
   MarketplaceMeta,
   PublicAppDetail,
-  SetAppSpendCapOverrideInput,
+  SetAppSpendCapConfigInput,
   SetMarketplaceMetaInput,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { projectPublicOwner } from '~/server/services/blocks/public-owner';
-import { resolveLimitsFromRow } from '~/server/services/blocks/app-cap-limits.constants';
+import {
+  resolveLimitsFromRow,
+  type AppSpendTier,
+} from '~/server/services/blocks/app-cap-limits.constants';
 import {
   invalidateAppCapLimits,
   normalizeCapOverrideInput,
@@ -3626,10 +3629,16 @@ export class BlockRegistry {
   }
 
   /**
-   * MOD-ONLY: read one app's generation-cap configuration — the raw override
-   * columns, its trust tier, and the RESOLVED ceilings the reserve path will
+   * MOD-ONLY: read one app's generation-cap configuration — its SPEND tier, the
+   * raw override columns, and the RESOLVED ceilings the reserve path will
    * actually enforce. Seeds the moderator form and lets an operator confirm the
-   * effective number after a write without re-deriving the tier table by hand.
+   * effective number after a write without re-deriving the tier table by hand
+   * (in particular, it shows when a deploy-time `BLOCK_APP_SPEND_*` clamp is
+   * binding below the value they set).
+   *
+   * 🔴 Reads `spendTier`, NOT `trustTier`. Spend and browser-isolation are
+   * separate axes — see `app-cap-limits.constants.ts`. Surfacing the trust tier
+   * on this screen would re-suggest the coupling this field exists to break.
    *
    * The router gates this with `moderatorProcedure`; this method does NO auth
    * itself. Returns `null` for a missing app (router → NOT_FOUND).
@@ -3637,12 +3646,12 @@ export class BlockRegistry {
    * 🔴 Never wire this into an anon/publisher-facing procedure: the exact
    * ceiling is deliberately withheld from apps so a hostile one can't probe it.
    */
-  static async getAppSpendCapOverride(appBlockId: string): Promise<AppSpendCapConfig | null> {
+  static async getAppSpendCapConfig(appBlockId: string): Promise<AppSpendCapConfig | null> {
     const row = await dbRead.appBlock.findUnique({
       where: { id: appBlockId },
       select: {
         id: true,
-        trustTier: true,
+        spendTier: true,
         spendCapBuzzPerDay: true,
         spendVelocityMaxGens: true,
       },
@@ -3650,7 +3659,7 @@ export class BlockRegistry {
     if (!row) return null;
     return {
       appBlockId: row.id,
-      trustTier: row.trustTier,
+      spendTier: row.spendTier,
       spendCapBuzzPerDay: row.spendCapBuzzPerDay ?? null,
       spendVelocityMaxGens: row.spendVelocityMaxGens ?? null,
       effective: resolveLimitsFromRow(row),
@@ -3658,18 +3667,23 @@ export class BlockRegistry {
   }
 
   /**
-   * MOD-ONLY: set (or clear) the per-app override on the generation spend /
-   * velocity ceilings. The router gates this with `moderatorProcedure` + the
-   * `isModerator` belt; this method does NO auth itself.
+   * MOD-ONLY: set the app's SPEND TIER and/or the per-app override on the
+   * generation spend / velocity ceilings. The router gates this with
+   * `moderatorProcedure` + the `isModerator` belt; this method does NO auth
+   * itself.
    *
-   * 🔴 This is the ONLY write path for these columns. They are never sourced
-   * from the app manifest — a developer must not be able to raise their own
-   * abuse ceiling (the same reason `trustTier` is server-owned and forced back
-   * over any client patch in `updateManifest`).
+   * 🔴 This is the ONLY write path for these three columns. They are never
+   * sourced from the app manifest and appear in no publisher-facing input — a
+   * developer must not be able to raise their own abuse ceiling.
+   *
+   * 🔴 It writes `spendTier` and NEVER `trustTier`. Promoting an app's spend
+   * class must not touch its iframe-sandbox / renderMode privileges, and
+   * promoting its trust tier (a different mod surface) must not move its money
+   * ceiling. That independence is the whole point of the separate column.
    *
    * Semantics (identical to `setMarketplaceMeta`): an OMITTED field is left
-   * unchanged; an explicit `null` clears the override so the app falls back to
-   * its tier's limit. Values are re-normalised through
+   * unchanged; an explicit `null` clears an override so the app falls back to
+   * its tier's limit. Override values are re-normalised through
    * `normalizeCapOverrideInput` — the same floor/positive/hard-bound rules the
    * READER applies — so a value can never be stored that the reader would then
    * silently ignore or clamp differently.
@@ -3680,10 +3694,8 @@ export class BlockRegistry {
    * Throws NOT_FOUND for a missing app. Returns the resulting config, including
    * the newly-effective ceilings.
    */
-  static async setAppSpendCapOverride(
-    input: SetAppSpendCapOverrideInput
-  ): Promise<AppSpendCapConfig> {
-    const { appBlockId, spendCapBuzzPerDay, spendVelocityMaxGens } = input;
+  static async setAppSpendCapConfig(input: SetAppSpendCapConfigInput): Promise<AppSpendCapConfig> {
+    const { appBlockId, spendTier, spendCapBuzzPerDay, spendVelocityMaxGens } = input;
 
     const existing = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
@@ -3691,18 +3703,24 @@ export class BlockRegistry {
     });
     if (!existing) throwNotFoundError('App block not found');
 
-    // Build the patch from ONLY the provided fields, normalised with the exact
-    // read-side rules (positive int, floored, hard-bounded; anything that fails
-    // those rules becomes an explicit NULL = "no override" rather than a stored
-    // value the reader would ignore).
-    const data = normalizeCapOverrideInput({ spendCapBuzzPerDay, spendVelocityMaxGens });
+    // Build the patch from ONLY the provided fields. Override values are
+    // normalised with the exact read-side rules (positive int, floored,
+    // hard-bounded; anything that fails those rules becomes an explicit NULL =
+    // "no override" rather than a stored value the reader would ignore). The
+    // tier is already narrowed to the real enum by the zod input schema.
+    const data: {
+      spendTier?: AppSpendTier;
+      spendCapBuzzPerDay?: number | null;
+      spendVelocityMaxGens?: number | null;
+    } = normalizeCapOverrideInput({ spendCapBuzzPerDay, spendVelocityMaxGens });
+    if (spendTier !== undefined) data.spendTier = spendTier;
 
     const updated = await dbWrite.appBlock.update({
       where: { id: appBlockId },
       data,
       select: {
         id: true,
-        trustTier: true,
+        spendTier: true,
         spendCapBuzzPerDay: true,
         spendVelocityMaxGens: true,
       },
@@ -3712,7 +3730,7 @@ export class BlockRegistry {
 
     return {
       appBlockId: updated.id,
-      trustTier: updated.trustTier,
+      spendTier: updated.spendTier,
       spendCapBuzzPerDay: updated.spendCapBuzzPerDay ?? null,
       spendVelocityMaxGens: updated.spendVelocityMaxGens ?? null,
       effective: resolveLimitsFromRow(updated),

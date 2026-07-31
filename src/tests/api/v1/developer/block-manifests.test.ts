@@ -128,6 +128,65 @@ describe('POST /api/v1/developer/block-manifests', () => {
     expect(upsertArgs.create.renderMode).toBe('iframe');
   });
 
+  it('SPEND: a manifest-declared spendTier / cap override NEVER reaches the row (INSERT)', async () => {
+    // 🔴 A developer must not be able to raise their own abuse ceiling. The
+    // spend columns are mod-only (BlockRegistry.setAppSpendCapConfig); this
+    // endpoint's create payload is an explicit allowlist, so a hostile manifest
+    // key is simply not carried. Driving the REAL handler rather than asserting
+    // on the allowlist by inspection.
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          ...VALID_BODY,
+          manifest: {
+            ...VALID_BODY.manifest,
+            spendTier: 'platform',
+            spendCapBuzzPerDay: 1_000_000_000,
+            spendVelocityMaxGens: 100_000,
+          },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(200);
+    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    for (const key of ['spendTier', 'spendCapBuzzPerDay', 'spendVelocityMaxGens']) {
+      expect(upsertArgs.create).not.toHaveProperty(key);
+      expect(upsertArgs.update).not.toHaveProperty(key);
+    }
+  });
+
+  it('SPEND: a manifest-declared spendTier NEVER reaches the row (UPDATE branch)', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
+      id: 'ab_existing',
+      manifest: { something: 'old' },
+      status: 'approved',
+      trustTier: 'unverified',
+      renderMode: 'iframe',
+    });
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          ...VALID_BODY,
+          manifest: { ...VALID_BODY.manifest, spendTier: 'platform' },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(200);
+    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
+      update: Record<string, unknown>;
+    };
+    expect(upsertArgs.update).not.toHaveProperty('spendTier');
+  });
+
   it('M1: renderMode supplied in manifest is IGNORED on INSERT (forced iframe)', async () => {
     const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
     const res = makeRes();

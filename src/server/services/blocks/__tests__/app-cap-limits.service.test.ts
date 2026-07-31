@@ -30,8 +30,10 @@ vi.mock('~/server/db/client', () => ({
 import {
   APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
   APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
-  APP_TIER_CAP_LIMITS,
-  APP_TRUST_TIERS,
+  APP_SPEND_TIER_CAP_LIMITS,
+  APP_SPEND_TIERS,
+  BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
+  BLOCK_APP_SPEND_VELOCITY_MAX_GENS,
   STRICTEST_APP_CAP_LIMITS,
 } from '../app-cap-limits.constants';
 import {
@@ -45,7 +47,7 @@ const APP = 'apb_test';
 
 function row(over: Record<string, unknown> = {}) {
   return {
-    trustTier: 'unverified',
+    spendTier: 'standard',
     spendCapBuzzPerDay: null,
     spendVelocityMaxGens: null,
     ...over,
@@ -67,11 +69,11 @@ afterEach(() => {
 });
 
 describe('resolveAppCapLimits — tier resolution', () => {
-  it.each(APP_TRUST_TIERS.map((t) => [t] as const))(
+  it.each(APP_SPEND_TIERS.map((t) => [t] as const))(
     'resolves the `%s` tier to its table entry',
     async (tier) => {
-      mockFindUnique.mockResolvedValue(row({ trustTier: tier }));
-      await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS[tier]);
+      mockFindUnique.mockResolvedValue(row({ spendTier: tier }));
+      await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS[tier]);
     }
   );
 
@@ -79,13 +81,13 @@ describe('resolveAppCapLimits — tier resolution', () => {
     await resolveAppCapLimits(APP);
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { id: APP },
-      select: { trustTier: true, spendCapBuzzPerDay: true, spendVelocityMaxGens: true },
+      select: { spendTier: true, spendCapBuzzPerDay: true, spendVelocityMaxGens: true },
     });
   });
 
   it('an ADMIN OVERRIDE takes precedence over the tier', async () => {
     mockFindUnique.mockResolvedValue(
-      row({ trustTier: 'unverified', spendCapBuzzPerDay: 12_345, spendVelocityMaxGens: 4_321 })
+      row({ spendTier: 'standard', spendCapBuzzPerDay: 12_345, spendVelocityMaxGens: 4_321 })
     );
     await expect(resolveAppCapLimits(APP)).resolves.toEqual({
       dailyBuzz: 12_345,
@@ -94,22 +96,43 @@ describe('resolveAppCapLimits — tier resolution', () => {
   });
 
   it('an ABSENT override falls back to the tier', async () => {
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'internal' }));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.internal);
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'platform' }));
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
   });
 
-  it('an override is CLAMPED to the hard bound, never honoured unbounded', async () => {
+  it('an override is CLAMPED, never honoured unbounded', async () => {
+    // Two clamps stack: the storage bound (APP_CAP_OVERRIDE_MAX_*) and then the
+    // deploy-time global ceiling, which is the tighter of the two by default.
     mockFindUnique.mockResolvedValue(row({ spendCapBuzzPerDay: 9e15, spendVelocityMaxGens: 9e15 }));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual({
-      dailyBuzz: APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
-      velocityMaxGens: APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
+    const limits = await resolveAppCapLimits(APP);
+    expect(limits).toEqual({
+      dailyBuzz: BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
+      velocityMaxGens: BLOCK_APP_SPEND_VELOCITY_MAX_GENS,
     });
+    expect(limits.dailyBuzz).toBeLessThanOrEqual(APP_CAP_OVERRIDE_MAX_DAILY_BUZZ);
+    expect(limits.velocityMaxGens).toBeLessThanOrEqual(APP_CAP_OVERRIDE_MAX_VELOCITY_GENS);
+  });
+
+  it('🔴 a `trustTier` on the row buys NOTHING — the column is never selected', async () => {
+    // The whole decoupling, at the resolver boundary: the three live
+    // trust_tier='internal' rows resolve to the DEFAULT spend tier's ceilings.
+    mockFindUnique.mockResolvedValue({
+      trustTier: 'internal',
+      spendTier: 'standard',
+      spendCapBuzzPerDay: null,
+      spendVelocityMaxGens: null,
+    });
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.standard);
+    // …and the query never even asks for it.
+    const select = (mockFindUnique.mock.calls[0]?.[0] as { select: Record<string, boolean> })
+      .select;
+    expect(select).not.toHaveProperty('trustTier');
   });
 });
 
 describe('resolveAppCapLimits — FAIL-CLOSED', () => {
   it('an UNKNOWN tier resolves to the strictest limits, never uncapped', async () => {
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'platinum' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'platinum' }));
     await expect(resolveAppCapLimits(APP)).resolves.toEqual(STRICTEST_APP_CAP_LIMITS);
   });
 
@@ -130,8 +153,8 @@ describe('resolveAppCapLimits — FAIL-CLOSED', () => {
   it('a DB error resolves LOWER than every non-strictest tier (it cannot widen anything)', async () => {
     mockFindUnique.mockRejectedValue(new Error('db down'));
     const limits = await resolveAppCapLimits(APP);
-    expect(limits.velocityMaxGens).toBeLessThan(APP_TIER_CAP_LIMITS.internal.velocityMaxGens);
-    expect(limits.dailyBuzz).toBeLessThan(APP_TIER_CAP_LIMITS.internal.dailyBuzz);
+    expect(limits.velocityMaxGens).toBeLessThan(APP_SPEND_TIER_CAP_LIMITS.platform.velocityMaxGens);
+    expect(limits.dailyBuzz).toBeLessThan(APP_SPEND_TIER_CAP_LIMITS.platform.dailyBuzz);
   });
 
   it('the MIGRATION-NOT-YET-APPLIED case (unknown column) degrades to the strictest tier', async () => {
@@ -145,7 +168,14 @@ describe('resolveAppCapLimits — FAIL-CLOSED', () => {
   });
 
   it('never returns a non-positive or non-finite ceiling across all failure shapes', async () => {
-    const failures: unknown[] = [null, undefined, row({ trustTier: null }), row({ trustTier: 42 })];
+    const failures: unknown[] = [
+      null,
+      undefined,
+      row({ spendTier: null }),
+      row({ spendTier: 42 }),
+      // A trustTier value landing in the spend column must NOT resolve to a tier.
+      row({ spendTier: 'internal' }),
+    ];
     for (const value of failures) {
       __resetAppCapLimitsCacheForTests();
       mockFindUnique.mockResolvedValue(value);
@@ -171,7 +201,7 @@ describe('resolveAppCapLimits — hot-path cost', () => {
     const gate = new Promise((r) => (release = r));
     mockFindUnique.mockImplementation(async () => {
       await gate;
-      return row({ trustTier: 'verified' });
+      return row({ spendTier: 'trusted' });
     });
 
     const all = Promise.all(Array.from({ length: 25 }, () => resolveAppCapLimits(APP)));
@@ -179,34 +209,34 @@ describe('resolveAppCapLimits — hot-path cost', () => {
     const results = await all;
 
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
-    for (const r of results) expect(r).toEqual(APP_TIER_CAP_LIMITS.verified);
+    for (const r of results) expect(r).toEqual(APP_SPEND_TIER_CAP_LIMITS.trusted);
   });
 
   it('caches PER APP (one app cannot serve another app its limits)', async () => {
     mockFindUnique.mockImplementation(async (args: unknown) => {
       const id = (args as { where: { id: string } }).where.id;
-      return row({ trustTier: id === 'apb_a' ? 'internal' : 'unverified' });
+      return row({ spendTier: id === 'apb_a' ? 'platform' : 'standard' });
     });
-    await expect(resolveAppCapLimits('apb_a')).resolves.toEqual(APP_TIER_CAP_LIMITS.internal);
-    await expect(resolveAppCapLimits('apb_b')).resolves.toEqual(APP_TIER_CAP_LIMITS.unverified);
+    await expect(resolveAppCapLimits('apb_a')).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
+    await expect(resolveAppCapLimits('apb_b')).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.standard);
     expect(mockFindUnique).toHaveBeenCalledTimes(2);
   });
 
   it('re-reads after the TTL expires (a tier change lands without a deploy)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-31T00:00:00Z'));
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'unverified' }));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.unverified);
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'standard' }));
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.standard);
 
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'verified' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'trusted' }));
     // Still cached at +59s…
     vi.setSystemTime(new Date('2026-07-31T00:00:59Z'));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.unverified);
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.standard);
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
 
     // …refreshed past the 60s TTL.
     vi.setSystemTime(new Date('2026-07-31T00:01:01Z'));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.verified);
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.trusted);
     expect(mockFindUnique).toHaveBeenCalledTimes(2);
   });
 
@@ -221,13 +251,34 @@ describe('resolveAppCapLimits — hot-path cost', () => {
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
 
     // The short fallback TTL is well under the success TTL, so recovery is quick.
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'internal' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'platform' }));
     vi.setSystemTime(new Date('2026-07-31T00:00:06Z'));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.internal);
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
+  });
+
+  it('caches a MISSING ROW only briefly, like a failure — not for the full success TTL', async () => {
+    // Distinct path from the DB-error case above: `findUnique` SUCCEEDS and
+    // returns null. A row can appear (a race against app creation) or reappear,
+    // so this must recover on the short fallback TTL too — otherwise a newly
+    // created app is pinned to the strictest ceilings for a full minute per pod.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T00:00:00Z'));
+    mockFindUnique.mockResolvedValue(null);
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(STRICTEST_APP_CAP_LIMITS);
+
+    // Still cached a moment later — a burst does not become a burst of queries.
+    await resolveAppCapLimits(APP);
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+
+    // …but re-read well before the 60s success TTL would have expired.
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'platform' }));
+    vi.setSystemTime(new Date('2026-07-31T00:00:06Z'));
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
+    expect(mockFindUnique).toHaveBeenCalledTimes(2);
   });
 
   it('BOUNDS the cache — a huge id set cannot grow the heap without limit', async () => {
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'verified' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'trusted' }));
     for (let i = 0; i < 2_100; i++) await resolveAppCapLimits(`apb_${i}`);
     const afterFill = mockFindUnique.mock.calls.length;
     expect(afterFill).toBe(2_100);
@@ -242,17 +293,17 @@ describe('resolveAppCapLimits — hot-path cost', () => {
 
 describe('invalidateAppCapLimits', () => {
   it('drops the entry so the next resolve re-reads the row', async () => {
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'unverified' }));
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.unverified);
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'standard' }));
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.standard);
 
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'internal' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'platform' }));
     invalidateAppCapLimits(APP);
-    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_TIER_CAP_LIMITS.internal);
+    await expect(resolveAppCapLimits(APP)).resolves.toEqual(APP_SPEND_TIER_CAP_LIMITS.platform);
     expect(mockFindUnique).toHaveBeenCalledTimes(2);
   });
 
   it('only invalidates the named app', async () => {
-    mockFindUnique.mockResolvedValue(row({ trustTier: 'verified' }));
+    mockFindUnique.mockResolvedValue(row({ spendTier: 'trusted' }));
     await resolveAppCapLimits('apb_a');
     await resolveAppCapLimits('apb_b');
     expect(mockFindUnique).toHaveBeenCalledTimes(2);
