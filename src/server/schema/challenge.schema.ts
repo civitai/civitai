@@ -647,6 +647,7 @@ export type ChallengeWinnerSummary = {
 export type ChallengeWithWinnersListItem = ChallengeListItem & {
   winners: ChallengeWinnerSummary[];
   completionSummary: ChallengeCompletionSummary | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Input schema for completed challenges with winners

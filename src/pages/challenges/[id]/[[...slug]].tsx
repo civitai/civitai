@@ -1618,6 +1618,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                   isFirst={index === 1}
                   className={index === 1 ? 'z-10' : ''}
                   judgeInfo={judgeInfo}
+                  judgingCategories={challenge.judgingCategories}
                   buzzType={challenge.buzzType}
                 />
               ))}
@@ -1636,6 +1637,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     isFirst={winner.place === 1}
                     isMobile
                     judgeInfo={judgeInfo}
+                    judgingCategories={challenge.judgingCategories}
                     buzzType={challenge.buzzType}
                   />
                 ))}
@@ -1936,6 +1938,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 }}
                 disableStoreFilters
                 judgeInfo={judgeInfo}
+                judgingCategories={challenge.judgingCategories}
               />
             )}
           </Stack>
