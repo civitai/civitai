@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * The two properties that MUST hold, because getting either wrong destroys work
  * a moderator or developer is relying on:
- *  1. THE PENDING GATE — snapshots are keyed per-slug and overwritten on every
- *     submit, so a purge triggered by an old rejected request must NOT delete a
- *     snapshot a different, still-pending request for the same slug owns.
+ *  1. THE PROTECTION GATE — snapshots are keyed per-slug and overwritten on every
+ *     submit, and a terminal request does not reserve its slug, so a purge
+ *     triggered by an old rejected request must NOT delete a snapshot that a
+ *     different request for the same slug — pending OR approved, and possibly a
+ *     different owner's — currently holds.
  *  2. THE 30-DAY BOUNDARY — a request that went terminal less than
  *     REVIEW_SNAPSHOT_PURGE_AFTER_MS ago is retained, not reclaimed.
  */
@@ -42,9 +44,14 @@ vi.mock('../job', () => ({
 import {
   purgeExpiredReviewSnapshots,
   purgeReviewSnapshotsJob,
+  PURGEABLE_TERMINAL_STATUSES,
   REVIEW_SNAPSHOT_PURGE_AFTER_MS,
   REVIEW_SNAPSHOT_PURGE_BATCH_SIZE,
+  SNAPSHOT_PROTECTING_STATUSES,
 } from '../purge-review-snapshots';
+
+/** The DB pins this vocabulary: CHECK ("status" IN (…)) on the request table. */
+const ALL_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
 
 const NOW = new Date('2026-07-31T00:00:00.000Z');
 /** Terminal exactly this long ago = comfortably past the retention window. */
@@ -76,7 +83,22 @@ beforeEach(() => {
   mockDelete.mockResolvedValue('deleted');
 });
 
-describe('purgeExpiredReviewSnapshots — the pending gate', () => {
+/**
+ * A `findFirst` mock that APPLIES the gate's where-clause against a fake table.
+ * Load-bearing: a mock that returns a blocking row unconditionally would pass
+ * for ANY status filter — including one that has stopped covering a status the
+ * gate is supposed to protect — so the predicate has to be evaluated for real.
+ */
+const gateOver =
+  (table: Array<{ id: string; slug: string; status: string }>) =>
+  async (args: { where: { slug: string; status: string | { in: string[] } } }) => {
+    const { slug, status } = args.where;
+    const matches = (s: string) =>
+      typeof status === 'string' ? status === s : status.in.includes(s);
+    return table.find((r) => r.slug === slug && matches(r.status)) ?? null;
+  };
+
+describe('purgeExpiredReviewSnapshots — the protection gate', () => {
   /**
    * 🔴 THE gate. Sequence this reproduces: v1 submitted → rejected 40 days ago;
    * v2 submitted yesterday and is still pending. The snapshot repo now holds
@@ -84,48 +106,89 @@ describe('purgeExpiredReviewSnapshots — the pending gate', () => {
    */
   it('does NOT delete when a pending request exists for the same slug', async () => {
     mockFindMany.mockResolvedValue([row('gen-matrix')]);
-    mockFindFirst.mockResolvedValue({ id: 'pubreq_v2_pending' });
+    mockFindFirst.mockImplementation(
+      gateOver([{ id: 'pubreq_v2_pending', slug: 'gen-matrix', status: 'pending' }])
+    );
 
     const result = await purgeExpiredReviewSnapshots({ now: NOW });
 
     expect(mockDelete).not.toHaveBeenCalled();
-    expect(result.skippedPending).toBe(1);
+    expect(result.skippedProtected).toBe(1);
     expect(result.deleted).toBe(0);
   });
 
-  it('DOES delete when no pending request exists for the slug', async () => {
+  /**
+   * 🔴 The same gate, one status over. A terminal request does NOT reserve its
+   * slug, so after A's rejection ages out the slug can have been taken by B and
+   * approved — at which point the snapshot holds B's live source, not A's. The
+   * file-level comment says approved snapshots are out of scope for this sweep;
+   * this is the assertion that makes that true of the CODE and not just of the
+   * eligibility list (which only decides which rows TRIGGER a purge).
+   */
+  it('does NOT delete when an APPROVED request owns the slug (different-owner takeover)', async () => {
+    mockFindMany.mockResolvedValue([row('gen-matrix')]); // user A, rejected 31d ago
+    mockFindFirst.mockImplementation(
+      gateOver([{ id: 'pubreq_b_approved', slug: 'gen-matrix', status: 'approved' }])
+    );
+
+    const result = await purgeExpiredReviewSnapshots({ now: NOW });
+
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(result.skippedProtected).toBe(1);
+    expect(result.deleted).toBe(0);
+  });
+
+  it('DOES delete when only terminal requests exist for the slug', async () => {
     mockFindMany.mockResolvedValue([row('gen-matrix')]);
-    mockFindFirst.mockResolvedValue(null);
+    mockFindFirst.mockImplementation(
+      gateOver([
+        { id: 'pubreq_old_rejected', slug: 'gen-matrix', status: 'rejected' },
+        { id: 'pubreq_old_withdrawn', slug: 'gen-matrix', status: 'withdrawn' },
+      ])
+    );
 
     const result = await purgeExpiredReviewSnapshots({ now: NOW });
 
     expect(mockDelete).toHaveBeenCalledWith('gen-matrix');
     expect(result.deleted).toBe(1);
-    expect(result.skippedPending).toBe(0);
+    expect(result.skippedProtected).toBe(0);
   });
 
-  it('gates per SLUG, not per row — a pending sibling protects only its own slug', async () => {
+  it('gates per SLUG, not per row — a protecting sibling protects only its own slug', async () => {
     mockFindMany.mockResolvedValue([row('protected-app'), row('free-app')]);
-    mockFindFirst.mockImplementation(async (args: { where: { slug: string } }) =>
-      args.where.slug === 'protected-app' ? { id: 'pubreq_pending' } : null
+    mockFindFirst.mockImplementation(
+      gateOver([{ id: 'pubreq_pending', slug: 'protected-app', status: 'pending' }])
     );
 
     const result = await purgeExpiredReviewSnapshots({ now: NOW });
 
     expect(mockDelete).toHaveBeenCalledTimes(1);
     expect(mockDelete).toHaveBeenCalledWith('free-app');
-    expect(result.skippedPending).toBe(1);
+    expect(result.skippedProtected).toBe(1);
     expect(result.deleted).toBe(1);
   });
 
-  it('queries the gate with status pending on the exact slug', async () => {
+  it('queries the gate for every protecting status on the exact slug', async () => {
     mockFindMany.mockResolvedValue([row('gen-matrix')]);
 
     await purgeExpiredReviewSnapshots({ now: NOW });
 
-    expect(mockFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { slug: 'gen-matrix', status: 'pending' } })
-    );
+    const where = mockFindFirst.mock.calls[0][0].where;
+    expect(where.slug).toBe('gen-matrix');
+    expect([...where.status.in].sort()).toEqual(['approved', 'pending']);
+  });
+
+  /**
+   * The two sets are meant to PARTITION the closed status vocabulary, which is
+   * what lets the gate be read as "not terminal for this sweep". A new status
+   * (or a status moved between the lists) that breaks the partition would leave
+   * a value that is neither purgeable nor protecting — a silent gap.
+   */
+  it('the purgeable and protecting sets partition the closed status vocabulary', () => {
+    const purgeable = [...PURGEABLE_TERMINAL_STATUSES] as string[];
+    const protecting = [...SNAPSHOT_PROTECTING_STATUSES] as string[];
+    expect([...purgeable, ...protecting].sort()).toEqual([...ALL_STATUSES].sort());
+    expect(purgeable.filter((s) => protecting.includes(s))).toEqual([]);
   });
 
   /**
@@ -139,11 +202,120 @@ describe('purgeExpiredReviewSnapshots — the pending gate', () => {
 
     await purgeExpiredReviewSnapshots({ now: NOW });
 
-    // The gate's findFirst is bound to dbWrite; dbRead exposes no findFirst at all.
-    expect(mockFindFirst).toHaveBeenCalledTimes(1);
+    // Every gate read (the pre-delete gate + the post-delete re-check) is bound
+    // to dbWrite; dbRead exposes no findFirst at all.
+    expect(mockFindFirst).toHaveBeenCalledTimes(2);
     expect(
       (db.dbRead.appBlockPublishRequest as Record<string, unknown>).findFirst
     ).toBeUndefined();
+  });
+});
+
+/**
+ * The gate cannot be perfectly tight: submit writes the snapshot before it
+ * inserts the row that protects it, so a submission starting between the gate
+ * read and the delete is invisible to the gate. The re-check does not close that
+ * window — it converts a silent broken review into a loud, actionable log line.
+ */
+describe('purgeExpiredReviewSnapshots — post-delete re-check', () => {
+  /** Gate read #1 sees nothing; the re-check (call #2) sees a new pending row. */
+  const raceAfterDelete = (pendingId: string) => {
+    let call = 0;
+    mockFindFirst.mockImplementation(async () => (++call === 1 ? null : { id: pendingId }));
+  };
+
+  it('logs at error level when a pending request appears after the delete', async () => {
+    mockFindMany.mockResolvedValue([row('gen-matrix')]);
+    raceAfterDelete('pubreq_raced');
+
+    const result = await purgeExpiredReviewSnapshots({ now: NOW });
+
+    expect(result.deleted).toBe(1);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slug: 'gen-matrix',
+        outcome: 'deleted-under-new-submission',
+        pendingId: 'pubreq_raced',
+        level: 'error',
+      }),
+      'webhooks'
+    );
+  });
+
+  it('stays quiet on the normal path — no error log when nothing raced', async () => {
+    mockFindMany.mockResolvedValue([row('gen-matrix')]);
+
+    await purgeExpiredReviewSnapshots({ now: NOW });
+
+    const outcomes = mockLogToAxiom.mock.calls.map((c) => (c[0] as { outcome?: string }).outcome);
+    expect(outcomes).not.toContain('deleted-under-new-submission');
+    expect(outcomes).not.toContain('failed');
+  });
+
+  it('does not re-check (or warn) when the repo was already gone', async () => {
+    mockFindMany.mockResolvedValue([row('gen-matrix')]);
+    mockDelete.mockResolvedValue('already-gone');
+    raceAfterDelete('pubreq_raced');
+
+    const result = await purgeExpiredReviewSnapshots({ now: NOW });
+
+    // Nothing was destroyed, so there is nothing to warn about: only the gate ran.
+    expect(result.alreadyGone).toBe(1);
+    expect(mockFindFirst).toHaveBeenCalledTimes(1);
+    const outcomes = mockLogToAxiom.mock.calls.map((c) => (c[0] as { outcome?: string }).outcome);
+    expect(outcomes).not.toContain('deleted-under-new-submission');
+  });
+});
+
+describe('purgeExpiredReviewSnapshots — cancellation', () => {
+  /**
+   * The webhook drops this job's run-lock when its HTTP request closes, so the
+   * loop must stop rather than keep deleting past the lock.
+   */
+  it('stops the loop when the job context reports cancellation', async () => {
+    mockFindMany.mockResolvedValue([row('a'), row('b'), row('c')]);
+    let seen = 0;
+    const jobContext = {
+      checkIfCanceled: () => {
+        if (++seen > 1) throw new Error('Job was canceled');
+      },
+    };
+
+    await expect(purgeExpiredReviewSnapshots({ now: NOW, jobContext })).rejects.toThrow(
+      'Job was canceled'
+    );
+
+    // First slug processed, then the cancel stopped it — and because the sweep
+    // never reached the cursor write, the batch is simply re-walked next run.
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockSetCursor).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The cancel check sits OUTSIDE the per-slug try/catch. If it were inside, the
+   * per-repo "log and continue" handler would swallow it and the loop would run
+   * to completion — exactly what cancellation is supposed to prevent.
+   */
+  it('does not absorb the cancellation as a per-slug failure', async () => {
+    mockFindMany.mockResolvedValue([row('a'), row('b'), row('c')]);
+    const jobContext = {
+      checkIfCanceled: () => {
+        throw new Error('Job was canceled');
+      },
+    };
+
+    await expect(purgeExpiredReviewSnapshots({ now: NOW, jobContext })).rejects.toThrow(
+      'Job was canceled'
+    );
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('runs to completion when no job context is supplied', async () => {
+    mockFindMany.mockResolvedValue([row('a'), row('b')]);
+
+    const result = await purgeExpiredReviewSnapshots({ now: NOW });
+
+    expect(result.deleted).toBe(2);
   });
 });
 

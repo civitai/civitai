@@ -1,5 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
 
 /**
@@ -49,13 +50,31 @@ export const REVIEW_SNAPSHOT_PURGE_BATCH_SIZE = 50;
 const PURGE_CURSOR_KEY = 'purge-review-snapshots';
 
 /**
+ * The status vocabulary is closed at the DB — `CHECK ("status" IN ('pending',
+ * 'approved','rejected','withdrawn'))` — which is what lets the two sets below
+ * be written as an exact partition rather than a best-effort list.
+ *
  * Terminal statuses that make a slug's snapshot eligible for reclamation.
  *
  * 🔴 `approved` is deliberately NOT here. An approved app's snapshot is out of
  * scope for this sweep — approval is a different lifecycle with its own
- * artifacts, and reclaiming there is a separate decision.
+ * artifacts, and reclaiming there is a separate decision. That exclusion is
+ * ENFORCED by `SNAPSHOT_PROTECTING_STATUSES` below, not just by this list:
+ * eligibility is per-ROW while the snapshot is per-SLUG, so a row's status
+ * alone cannot decide whether the snapshot may go.
  */
-const PURGEABLE_TERMINAL_STATUSES = ['rejected', 'withdrawn'] as const;
+export const PURGEABLE_TERMINAL_STATUSES = ['rejected', 'withdrawn'] as const;
+
+/**
+ * Statuses whose presence on a slug PROTECTS that slug's snapshot — the exact
+ * complement of `PURGEABLE_TERMINAL_STATUSES` over the closed vocabulary, i.e.
+ * "not terminal for the purposes of this sweep".
+ *
+ * `pending` — someone is mid-review and the snapshot is the thing under review.
+ * `approved` — the snapshot belongs to a live app, which this sweep does not
+ * touch by design (see above).
+ */
+export const SNAPSHOT_PROTECTING_STATUSES = ['pending', 'approved'] as const;
 
 export type PurgeReviewSnapshotsResult = {
   /** Terminal rows examined this run. */
@@ -66,8 +85,8 @@ export type PurgeReviewSnapshotsResult = {
   deleted: number;
   /** Snapshots that were already gone — idempotent re-run, counted not failed. */
   alreadyGone: number;
-  /** Slugs held back because a pending request still owns the snapshot. */
-  skippedPending: number;
+  /** Slugs held back because a protecting request still owns the snapshot. */
+  skippedProtected: number;
   /** Per-slug failures; the sweep continued past each. */
   failed: number;
 };
@@ -80,7 +99,18 @@ const logPurge = (data: Record<string, unknown>) =>
  * thin-job-wrapper split used by the sibling reapers).
  */
 export async function purgeExpiredReviewSnapshots(
-  opts: { now?: Date; batchSize?: number } = {}
+  opts: {
+    now?: Date;
+    batchSize?: number;
+    /**
+     * Cancellation hook from the job runner. The webhook releases this job's
+     * Redis run-lock when its HTTP request closes, so without a cancel check a
+     * long batch keeps deleting after the lock is gone and a re-trigger can run
+     * beside it. Deletes are idempotent so the overlap is not destructive, but
+     * checking makes the lock mean what it looks like it means.
+     */
+    jobContext?: Pick<JobContext, 'checkIfCanceled'>;
+  } = {}
 ): Promise<PurgeReviewSnapshotsResult> {
   const now = opts.now ?? new Date();
   const batchSize = opts.batchSize ?? REVIEW_SNAPSHOT_PURGE_BATCH_SIZE;
@@ -91,15 +121,26 @@ export async function purgeExpiredReviewSnapshots(
     candidates: 0,
     deleted: 0,
     alreadyGone: 0,
-    skippedPending: 0,
+    skippedProtected: 0,
     failed: 0,
   };
 
   // Resumable cursor over the terminal-transition timestamp. `updatedAt` is the
-  // reliable "when did this row go terminal" signal: `reviewedAt` is NULL for
-  // withdrawn rows (the DB's review-pair CHECK exempts them), so it cannot be
-  // used as the sole ordering key. A terminal row is never written again, so its
-  // `updatedAt` is stable — which is what makes it safe to order and resume on.
+  // best available "when did this row go terminal" signal: `reviewedAt` is NULL
+  // for withdrawn rows (the DB's review-pair CHECK exempts them), so it cannot
+  // be used as the sole ordering key.
+  //
+  // ⚠️ `updatedAt` is NOT frozen once a row goes terminal — Prisma's `@updatedAt`
+  // bumps on any later write, and one such write exists today: the reject path
+  // clears the request's deploy-state fields right after setting the terminal
+  // status. Both directions are benign at this scale: a bump before the sweep
+  // first sees the row only restarts its 30-day clock (that one lands seconds
+  // later), and a bump after the cursor passed it re-presents the row for an
+  // idempotent re-delete. What this is NOT robust against is a future BULK write
+  // over terminal rows, which would silently reset every retention clock at
+  // once. Keying on a frozen decision timestamp is the fix if that becomes real
+  // — it changes which rows are eligible, so it is a deliberate follow-up, not
+  // something to slip in here.
   const [cursor, setCursor] = await getJobDate(PURGE_CURSOR_KEY, new Date(0));
 
   const rows = await dbRead.appBlockPublishRequest.findMany({
@@ -125,13 +166,23 @@ export async function purgeExpiredReviewSnapshots(
   const { deleteReviewRepo } = await import('~/server/services/blocks/forgejo.service');
 
   for (const slug of slugs) {
+    // Checked OUTSIDE the per-slug try on purpose: that catch exists to absorb
+    // one repo's failure and continue, and swallowing a cancellation there would
+    // do the exact opposite of stopping.
+    opts.jobContext?.checkIfCanceled();
     try {
       // 🔴 THE CORRECTNESS GATE. Snapshots are keyed per-slug and OVERWRITTEN on
-      // every submit, so the repo a 40-day-old rejection points at may today
-      // hold a brand-new, still-pending submission's source. Deleting it would
-      // destroy an in-flight review. `pending` is the only non-terminal status,
-      // so "a pending row exists for this slug" is exactly "someone still needs
-      // this snapshot" — and we hold back.
+      // every submit, and a terminal request does not reserve its slug — so the
+      // repo a 40-day-old rejected row points at may today hold an entirely
+      // different request's source, possibly a different owner's. The row that
+      // made us eligible therefore cannot decide the delete on its own; only the
+      // slug's CURRENT holder can.
+      //
+      // `SNAPSHOT_PROTECTING_STATUSES` is the complement of the purgeable set
+      // over the closed status vocabulary, so "a protecting row exists for this
+      // slug" is exactly "the snapshot is not in scope for reclamation right
+      // now" — covering both a review in flight (`pending`) and a live app
+      // (`approved`) — and we hold back.
       //
       // Read from the PRIMARY (`dbWrite`), not the replica: the row that must
       // block us can be seconds old (a developer resubmitting right now) while
@@ -139,13 +190,19 @@ export async function purgeExpiredReviewSnapshots(
       // a moment would hide exactly the row whose presence is load-bearing, and
       // the failure mode is destroying live work — so this read does not get to
       // be eventually consistent.
-      const pending = await dbWrite.appBlockPublishRequest.findFirst({
-        where: { slug, status: 'pending' },
-        select: { id: true },
+      const protectedBy = await dbWrite.appBlockPublishRequest.findFirst({
+        where: { slug, status: { in: [...SNAPSHOT_PROTECTING_STATUSES] } },
+        select: { id: true, status: true },
       });
-      if (pending) {
-        result.skippedPending += 1;
-        logPurge({ type: 'info', slug, outcome: 'skipped-pending', pendingId: pending.id });
+      if (protectedBy) {
+        result.skippedProtected += 1;
+        logPurge({
+          type: 'info',
+          slug,
+          outcome: 'skipped-protected',
+          protectedById: protectedBy.id,
+          protectedByStatus: protectedBy.status,
+        });
         continue;
       }
 
@@ -153,6 +210,34 @@ export async function purgeExpiredReviewSnapshots(
       if (outcome === 'deleted') result.deleted += 1;
       else result.alreadyGone += 1;
       logPurge({ type: 'info', slug, outcome });
+
+      // POST-DELETE RE-CHECK — the gate above cannot be perfectly tight, because
+      // submit writes the snapshot BEFORE it inserts the row that protects it
+      // (`ensureReviewRepo` + `commitFiles` run first, the `create` last). A
+      // submission that begins between this slug's gate read and this delete is
+      // therefore invisible to the gate. The window is one round-trip, and the
+      // outcome is a live request whose snapshot is missing: the in-app diff
+      // still renders (it reads object storage), but the review preview cannot
+      // start. Re-reading here does not close the race — it makes it LOUD, so
+      // the mod-facing failure has an explanation and the developer can simply
+      // resubmit. Reordering the submit path so the row lands before the
+      // snapshot push is the real fix; that is a user-facing write path and is
+      // deliberately out of scope for this sweep.
+      if (outcome === 'deleted') {
+        const raced = await dbWrite.appBlockPublishRequest.findFirst({
+          where: { slug, status: 'pending' },
+          select: { id: true },
+        });
+        if (raced) {
+          logPurge({
+            type: 'error',
+            level: 'error',
+            slug,
+            outcome: 'deleted-under-new-submission',
+            pendingId: raced.id,
+          });
+        }
+      }
     } catch (error) {
       result.failed += 1;
       logPurge({
@@ -174,6 +259,14 @@ export async function purgeExpiredReviewSnapshots(
   // and a held-back slug re-enters the queue the next time it goes terminal.
   // Rows are ordered ascending and every row is < cutoff, so this can never
   // advance past something that was not yet due.
+  //
+  // ACCEPTED LIMITATION: because the next run resumes with `gt`, a row sharing
+  // the last row's exact `updatedAt` that fell outside this batch's `take` is
+  // never revisited. The column is `timestamptz(6)` and the rows are
+  // independent moderator/developer actions, so colliding at microsecond
+  // resolution is vanishingly unlikely, and the cost if it happens is one
+  // snapshot that is never reclaimed — storage, never a wrong delete. Accepted
+  // rather than paid for with a composite `(updatedAt, id)` keyset cursor.
   const maxUpdatedAt = rows[rows.length - 1].updatedAt;
   await setCursor(maxUpdatedAt);
 
@@ -191,9 +284,9 @@ export async function purgeExpiredReviewSnapshots(
 export const purgeReviewSnapshotsJob = createJob(
   'purge-review-snapshots',
   '20 * * * *',
-  async () => {
+  async (jobContext) => {
     try {
-      const result = await purgeExpiredReviewSnapshots();
+      const result = await purgeExpiredReviewSnapshots({ jobContext });
       // Stay silent on a no-op run; only report when the sweep did something.
       if (result.scanned > 0) logPurge({ type: 'info', outcome: 'summary', ...result });
       return result;
@@ -210,7 +303,7 @@ export const purgeReviewSnapshotsJob = createJob(
         candidates: 0,
         deleted: 0,
         alreadyGone: 0,
-        skippedPending: 0,
+        skippedProtected: 0,
         failed: 0,
         error: true as const,
       };
