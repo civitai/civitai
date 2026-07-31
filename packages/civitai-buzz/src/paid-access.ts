@@ -61,14 +61,22 @@ export function buildModelVersionTerms({
   generationPrice,
   freePreviewGenerations,
   genOnly = false,
+  freeGeneration = false,
 }: {
   accessPrice: number;
   generationPrice?: number;
   freePreviewGenerations?: number;
   genOnly?: boolean;
+  /**
+   * Gate the download but leave generation open to everyone — for creators who earn per generation
+   * through a licensing fee and don't want to charge on top. Ignored when `genOnly`, where generation
+   * IS the paid tier. A free grant carries no price or trial limit: there's nothing to sample toward.
+   */
+  freeGeneration?: boolean;
 }): ModelVersionTerms {
   const trial = freePreviewGenerations != null ? { trialLimit: freePreviewGenerations } : {};
   if (genOnly) return { generation: { price: accessPrice, ...trial } };
+  if (freeGeneration) return { download: { price: accessPrice }, generation: { free: true } };
   return {
     download: { price: accessPrice },
     generation: { ...(generationPrice != null ? { price: generationPrice } : {}), ...trial },
@@ -159,12 +167,16 @@ export const PAID_ACCESS_PRICE_CAP_BY_TIER: Record<string, number> = {
  * allowance rather than 0: a lapse must never take a gated model back to free/public (CU 868kj4q4j).
  */
 export function maxPermanentAccessModels(tier: string | null | undefined): number {
-  return (tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] : undefined) ?? PERMANENT_ACCESS_LIMIT_BY_TIER.free;
+  return (
+    (tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] : undefined) ?? PERMANENT_ACCESS_LIMIT_BY_TIER.free
+  );
 }
 
 /** Highest price a tier may charge for paid access. Unknown/lapsed tiers get the FREE cap (see above). */
 export function maxPaidAccessPrice(tier: string | null | undefined): number {
-  return (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
+  return (
+    (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free
+  );
 }
 
 /**
@@ -192,6 +204,29 @@ export function effectivePaidAccessPrice(
   return Math.min(storedPrice, maxPaidAccessPrice(ownerTier));
 }
 
+/**
+ * Terms priced at the owner's current cap — what a buyer is billed. Show these to buyers; show the STORED
+ * terms to the owner, whose editors write them back. A generation tier with no price of its own must keep
+ * falling back to the download price, which is already capped here.
+ */
+export function cappedTerms(terms: ModelVersionTerms, ownerTier: string | null): ModelVersionTerms {
+  const paidGen = paidGenerationGrant(terms);
+  return {
+    ...terms,
+    ...(terms.download
+      ? {
+          download: {
+            ...terms.download,
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier),
+          },
+        }
+      : {}),
+    ...(paidGen?.price != null
+      ? { generation: { ...paidGen, price: effectivePaidAccessPrice(paidGen.price, ownerTier) } }
+      : {}),
+  };
+}
+
 /** A gate's two chargeable prices (0 when absent). Kept separate so a cheap tier can't ride an over-cap one. */
 export function gatePrices(terms: ModelVersionTerms | undefined | null): {
   download: number;
@@ -200,4 +235,3 @@ export function gatePrices(terms: ModelVersionTerms | undefined | null): {
   const gen = terms?.generation && !('free' in terms.generation) ? terms.generation : undefined;
   return { download: terms?.download?.price ?? 0, generation: gen?.price ?? 0 };
 }
-

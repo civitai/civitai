@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
+import { DEFAULT_GENERATION_TRIAL_LIMIT, effectiveLicensingFee } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
@@ -12,6 +12,7 @@ import {
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { getCapTiers } from '~/server/services/paid-access.service';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
@@ -70,6 +71,7 @@ type VersionRow = {
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
+  sourceModelType: string | null;
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -125,6 +127,7 @@ export default MixedAuthEndpoint(async function handler(
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
+      lsm."type" AS "sourceModelType",
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
@@ -319,6 +322,16 @@ export default MixedAuthEndpoint(async function handler(
   // `recipientUserId` is the owner of `recipientModelVersionId` at request time, so
   // payouts and the orchestrator's ResourceCompensation records follow ownership
   // transfers instead of crediting a past owner.
+  // Each component is capped against ITS OWN recipient's tier — the two can be different creators — so
+  // both are looked up. Amounts only: the orchestrator's contract is this response shape, and a positive
+  // fee can never clamp to 0 (the lowest cap of any tier is 0.1), so no entry ever drops out.
+  const capTiers = await getCapTiers([
+    isLicensingRoot || hasOwnFee ? modelVersion.modelUserId : null,
+    hasSourceRule ? modelVersion.sourceLicensingFeeRecipientUserId : null,
+  ]);
+  const ownFeeTier = capTiers.get(modelVersion.modelUserId) ?? null;
+  const sourceFeeTier = capTiers.get(modelVersion.sourceLicensingFeeRecipientUserId!) ?? null;
+
   const fees: Array<{
     role: 'baseModel' | 'version';
     amount: number;
@@ -330,7 +343,7 @@ export default MixedAuthEndpoint(async function handler(
   if (isLicensingRoot) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.licensingFee!,
+      amount: effectiveLicensingFee(modelVersion.licensingFee, ownFeeTier, modelVersion.type),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
@@ -339,7 +352,11 @@ export default MixedAuthEndpoint(async function handler(
   } else if (hasSourceRule) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.sourceLicensingFee!,
+      amount: effectiveLicensingFee(
+        modelVersion.sourceLicensingFee,
+        sourceFeeTier,
+        modelVersion.sourceModelType
+      ),
       type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
@@ -349,7 +366,7 @@ export default MixedAuthEndpoint(async function handler(
   if (hasOwnFee) {
     fees.push({
       role: 'version',
-      amount: modelVersion.licensingFee!,
+      amount: effectiveLicensingFee(modelVersion.licensingFee, ownFeeTier, modelVersion.type),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,

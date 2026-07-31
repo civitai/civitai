@@ -92,7 +92,7 @@
 
   // The access badge for a scan row — folds the Buzz access price into the label so the price is visible on
   // mobile without opening the drawer. accessPrice is undefined for a free grant, so the price is omitted then.
-  function accessBadge(config: NonNullable<CreatorModelVersion['earlyAccessConfig']>): {
+  function accessBadge(config: NonNullable<CreatorModelVersion['paidAccessConfig']>): {
     label: string;
     cls: string;
     title: string;
@@ -197,7 +197,7 @@
     new Set(
       data.models
         .flatMap((m) => m.versions)
-        .filter((v) => v.earlyAccessConfig?.permanent)
+        .filter((v) => v.paidAccessConfig?.permanent)
         .map((v) => v.id)
     )
   );
@@ -365,7 +365,7 @@
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
-  // editor (EarlyAccessEditor) owns its own state, seeded from the version on mount.
+  // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     const r = feeToRatio(version.licensingFee);
@@ -770,8 +770,8 @@
                         </Badge>
                       </span>
                       <span class="flex shrink-0 items-center gap-2">
-                        {#if version.earlyAccessConfig}
-                          {@const ab = accessBadge(version.earlyAccessConfig)}
+                        {#if version.paidAccessConfig}
+                          {@const ab = accessBadge(version.paidAccessConfig)}
                           <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge
                           >
                         {/if}

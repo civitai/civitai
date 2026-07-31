@@ -66,6 +66,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { decreaseDate } from '~/utils/date-helpers';
+import { withRetries } from '~/utils/errorHandling';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -331,11 +332,28 @@ export async function processImageScanWorkflow({
 
   await applyIngestionSideEffects({ image, outcome });
 
-  await signalClient.send({
-    target: SignalMessages.ImageIngestionStatus,
-    data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
-    userId: image.userId,
-  });
+  // Last step, after everything is committed — throwing here would 400 a finished webhook
+  // and make the orchestrator re-run it.
+  await signalClient
+    .send({
+      target: SignalMessages.ImageIngestionStatus,
+      data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
+      userId: image.userId,
+    })
+    .catch((error) =>
+      logToAxiom(
+        {
+          name: 'image-scan-result',
+          type: 'warning',
+          message: `signal send failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          imageId: image.id,
+          source: 'image-scan-result.service',
+        },
+        'webhooks'
+      ).catch(() => null)
+    );
 }
 
 // Step parsing
@@ -367,22 +385,29 @@ function computePerceptualHash(perceptual?: string) {
   return BigInt.asIntN(64, BigInt('0x' + perceptual));
 }
 
+// All-or-nothing, not a filter: nsfwLevel aggregates as a max and isBlocked as an OR, so
+// dropping a frame can only ever under-rate the video.
+function hasEveryFrameOutput(frames: Array<{ output?: unknown }>) {
+  return frames.length > 0 && frames.every((x) => isDefined(x?.output));
+}
+
 function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
   const step = steps.find(
-    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'wdTagging'
-  ) as RepeatStep;
+    (x) => x.$type === 'repeat' && x.output?.steps?.[0]?.$type === 'wdTagging'
+  ) as RepeatStep | undefined;
   if (!step) return;
 
   const wdTaggingSteps = step.output.steps as WdTaggingStep[];
+  if (!hasEveryFrameOutput(wdTaggingSteps)) return;
 
   return wdTaggingSteps.reduce<WdTaggingStep['output']>(
     (acc, step) => {
-      for (const [tag, confidence] of Object.entries(step.output.tags)) {
+      for (const [tag, confidence] of Object.entries(step.output.tags ?? {})) {
         const current = acc.tags[tag];
         if (!current) acc.tags[tag] = confidence;
         else if (confidence > current) acc.tags[tag] = confidence;
       }
-      for (const [rating, confidence] of Object.entries(step.output.rating)) {
+      for (const [rating, confidence] of Object.entries(step.output.rating ?? {})) {
         const current = acc.rating[rating];
         if (!current) acc.rating[rating] = confidence;
         else if (confidence > current) acc.rating[rating] = confidence;
@@ -395,11 +420,12 @@ function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
 
 function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
   const step = steps.find(
-    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'mediaRating'
-  ) as RepeatStep;
+    (x) => x.$type === 'repeat' && x.output?.steps?.[0]?.$type === 'mediaRating'
+  ) as RepeatStep | undefined;
   if (!step) return;
 
   const mediaRatingSteps = step.output.steps as MediaRatingStep[];
+  if (!hasEveryFrameOutput(mediaRatingSteps)) return;
 
   return mediaRatingSteps.reduce<MediaRatingStep['output']>(
     (acc, step) => {
@@ -450,17 +476,38 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
 async function getIsImageBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  const [{ count }] = await clickhouse.$query<{ count: number }>`
-    SELECT cast(count() as int) as count
-    FROM blocked_images
-    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-  `;
+  const client = clickhouse;
+  // $query has no retry of its own, and the observed failure is a dropped socket.
+  const rows = await withRetries(
+    () => client.$query<{ count: number }>`
+      SELECT cast(count() as int) as count
+      FROM blocked_images
+      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
+    `,
+    2,
+    250
+  );
 
-  return count > 0;
+  return (rows?.[0]?.count ?? 0) > 0;
 }
 
 async function logPerceptualHashMatch({ imageId, pHash }: { imageId: number; pHash: bigint }) {
-  const pHashBlocked = await getIsImageBlocked(pHash);
+  // Nothing branches on this result, so an exhausted retry must not fail the webhook and
+  // discard a scan that already produced tags and a rating.
+  const pHashBlocked = await getIsImageBlocked(pHash).catch((error) => {
+    logToAxiom(
+      {
+        name: 'image-phash-match',
+        type: 'warning',
+        message: 'pHash blocklist check failed',
+        imageId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        source: 'image-scan-result.service',
+      },
+      'webhooks'
+    ).catch(() => null);
+    return false;
+  });
   if (!pHashBlocked) return;
 
   // blockedReason = 'Similar to blocked content';

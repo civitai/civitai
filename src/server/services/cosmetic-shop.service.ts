@@ -7,6 +7,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticShopItemMeta,
+  CosmeticShopSectionMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetPreviewImagesInput,
@@ -498,12 +499,17 @@ export const getShopSectionsWithItems = async ({
       },
     },
     where: {
-      items: {
-        some: {},
-      },
+      // Community-hub sections carry no curated items — their feed is queried
+      // separately by the client — so they skip the has-items requirement. The
+      // feed itself is flag-gated, so hide the hub from unflagged viewers.
+      OR: [
+        { items: { some: {} } },
+        ...(isModerator || creatorShopEnabled
+          ? [{ meta: { path: ['communityHub'], equals: true } }]
+          : []),
+      ],
       published: true,
       ...(sectionId ? { id: sectionId } : undefined),
-      // id: sectionId ? { equals: sectionId } : undefined,
     },
     orderBy: {
       placement: 'asc',
@@ -512,8 +518,8 @@ export const getShopSectionsWithItems = async ({
 
   return (
     sections
-      // Ensures we don't return empty sections
-      .filter((s) => s.items.length > 0)
+      // Ensures we don't return empty sections (except the community hub)
+      .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
         image: !!section.image

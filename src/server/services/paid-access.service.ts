@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
-  effectivePaidAccessPrice,
+  cappedTerms,
+  effectiveLicensingFee,
   gatePrices,
   isPaidAccessActive,
   maxPaidAccessPrice,
@@ -153,25 +154,124 @@ export async function countUserPermanentAccessVersions(
 // Busted from clearSessionCache, which Stripe's webhook reaches via refreshSession on every subscription
 // change, so an upgrade/downgrade/lapse applies on the next read; the TTL is only a missed-webhook backstop.
 type CachedCapTier = { userId: number; tier: string | null };
-const capTierCache = createCachedObject<CachedCapTier>({
-  key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
-  idKey: 'userId',
-  ttl: CacheTTL.hour,
-  // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
-  staleWhileRevalidate: false,
-  lookupFn: async (ids) => {
-    const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
-    if (!userIds.length) return {};
-    const rows = await Promise.all(
-      userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
-    );
-    return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
-  },
-});
+// Lazily created (on first use) rather than at module load, for exactly the reason the
+// paidAccessCaches comment above gives: a top-level createCachedObject() runs during module
+// evaluation, so ANY test that wholesale-mocks `~/server/utils/cache-helpers` or
+// `~/server/redis/client` and merely imports this service transitively fails at COLLECTION —
+// before a single test runs — with "No createCachedObject export is defined on the mock" or
+// "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')". ~130 suites mock
+// those modules wholesale, so this is a broad tripwire, not a hypothetical.
+function createCapTierCache() {
+  return createCachedObject<CachedCapTier>({
+    key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
+    idKey: 'userId',
+    ttl: CacheTTL.hour,
+    // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
+      if (!userIds.length) return {};
+      const rows = await Promise.all(
+        userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
+      );
+      return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
+    },
+  });
+}
+
+let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
+function capTierCache() {
+  return (capTierCacheInstance ??= createCapTierCache());
+}
+
+/**
+ * Cap tiers for a set of users in ONE cache read. Prefer this over awaiting getCachedCapTier per user:
+ * capTierCache.fetch batches, a loop of single fetches is N sequential round-trips.
+ */
+export async function getCapTiers(
+  userIds: (number | null | undefined)[]
+): Promise<Map<number, string | null>> {
+  const unique = [...new Set(userIds.filter((id): id is number => id != null))];
+  if (!unique.length) return new Map();
+  const cached = await capTierCache().fetch(unique);
+  return new Map(unique.map((id) => [id, cached[id]?.tier ?? null]));
+}
 
 /** The owner tier a buyer's price is clamped against. Cached — see capTierCache. */
 export async function getCachedCapTier(userId: number): Promise<string | null> {
-  return (await capTierCache.fetch([userId]))[userId]?.tier ?? null;
+  return (await getCapTiers([userId])).get(userId) ?? null;
+}
+
+export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
+
+const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
+  (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
+
+const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
+  const { download, generation } = gatePrices(terms as ModelVersionTerms | undefined);
+  return download > 0 || generation > 0;
+};
+
+export type ViewerMonetization = {
+  paidAccess: PaidAccessRow | undefined;
+  licensingFee: number | null;
+};
+
+/**
+ * Every amount a viewer would be charged for a set of versions — the paid-access gate and the licensing
+ * fee — capped against the owner's current tier in one batched lookup. They're capped together because
+ * capping them apart, against separately-fetched tiers, is how the two drift.
+ *
+ * An owner/mod gets the STORED values instead: their edit forms initialize from these and would save a
+ * capped value back over the original. Pass `ownerId` (the Model's owner, not PaidAccess.ownerId, so a
+ * transferred model reprices off whoever holds it now); it's required for `licensingFee` to be capped,
+ * and falls back to the gate's owner when omitted.
+ */
+export async function getViewerMonetization({
+  versions,
+  viewer,
+}: {
+  versions: {
+    id: number;
+    ownerId?: number;
+    licensingFee?: number | null;
+    modelType?: string | null;
+  }[];
+  viewer: PaidAccessViewer;
+}): Promise<Record<number, ViewerMonetization>> {
+  const rows = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  const ownerOf = (v: { id: number; ownerId?: number }) => v.ownerId ?? rows[v.id]?.ownerId;
+  const cappable = versions.filter((v) => {
+    const ownerId = ownerOf(v);
+    return (
+      ownerId != null &&
+      !isOwnerOrModView(viewer, ownerId) &&
+      (hasChargeablePrice(rows[v.id]?.terms) || (v.licensingFee ?? 0) > 0)
+    );
+  });
+  const capTiers = await getCapTiers(cappable.map(ownerOf));
+  const cappableIds = new Set(cappable.map((v) => v.id));
+
+  const out: Record<number, ViewerMonetization> = {};
+  for (const v of versions) {
+    const row = rows[v.id];
+    const storedFee = v.licensingFee ?? null;
+    if (!cappableIds.has(v.id)) {
+      out[v.id] = { paidAccess: row, licensingFee: storedFee };
+      continue;
+    }
+    const tier = capTiers.get(ownerOf(v) as number) ?? null;
+    out[v.id] = {
+      paidAccess: row
+        ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier) }
+        : undefined,
+      licensingFee: storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType) : null,
+    };
+  }
+  return out;
 }
 
 /** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
@@ -222,39 +322,19 @@ export async function assertPaidAccessCaps({
   }
 }
 
-/** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */
+/**
+ * Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). Pricing is
+ * already settled by then — pass a row from getViewerMonetization, not a raw one, or the viewer gets
+ * whatever the owner stored.
+ */
 export function toModelVersionPaidAccessDto(
-  row: PaidAccessRow | undefined,
-  ownerTier?: string | null
+  row: PaidAccessRow | undefined
 ): ModelVersionPaidAccessDto | null {
   if (!row) return null;
   return {
     endsAt: row.endsAt,
     timeframeDays: row.timeframeDays ?? null,
-    // Shown at the same price the buyer will actually be charged (earlyAccessPurchase clamps to the same
-    // cap), so a lapsed owner's gate can't advertise more than it bills. Callers that can't resolve the
-    // owner's tier pass nothing and get the stored terms — the charge is still clamped either way.
-    terms: ownerTier === undefined ? (row.terms as ModelVersionTerms) : cappedTerms(row, ownerTier),
-  };
-}
-
-/** Terms with every chargeable price lowered to the owner's current cap. */
-function cappedTerms(row: PaidAccessRow, ownerTier: string | null): ModelVersionTerms {
-  const terms = row.terms as ModelVersionTerms;
-  const paidGen = terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
-  return {
-    ...terms,
-    ...(terms.download
-      ? {
-          download: {
-            ...terms.download,
-            price: effectivePaidAccessPrice(terms.download.price, ownerTier),
-          },
-        }
-      : {}),
-    ...(paidGen?.price != null
-      ? { generation: { ...paidGen, price: effectivePaidAccessPrice(paidGen.price, ownerTier) } }
-      : {}),
+    terms: row.terms as ModelVersionTerms,
   };
 }
 

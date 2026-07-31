@@ -58,6 +58,7 @@ import type {
   AutoCheck,
   CosmeticImageMeta,
   CosmeticOffsets,
+  GetCommunityCosmeticsInput,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
@@ -67,8 +68,8 @@ import type {
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import { effectivePaidAccessPrice, type ModelVersionTerms } from '@civitai/buzz';
-import { getCachedCapTier, getPaidAccess } from '~/server/services/paid-access.service';
+import { type ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -744,6 +745,50 @@ export const getCreatorShop = async ({
   };
 };
 
+// Site-wide hub feed of every published community cosmetic (creator-submitted
+// items from public shops), newest first. Powers the /shop marketplace section.
+export const getCommunityCosmetics = async ({
+  viewerId,
+  limit,
+  cursor,
+  cosmeticTypes,
+}: GetCommunityCosmeticsInput & { viewerId?: number }) => {
+  const now = new Date();
+  // A block between viewer and a cosmetic's creator (either direction) hides
+  // that creator's items from the feed.
+  const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  const raw = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      // Creator-submitted only (official cosmetics have no creator).
+      cosmetic: {
+        createdById: { not: null },
+        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
+      },
+      // Only items whose owner's shop is public.
+      addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+      AND: [
+        { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+        { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+      ],
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor } } : {}),
+    orderBy: { id: 'desc' },
+    // addedById lets the client attribute the purchase to the owner's shop.
+    select: { ...creatorStorefrontItemSelect, addedById: true },
+  });
+  let nextCursor: number | undefined;
+  if (raw.length > limit) nextCursor = raw.pop()?.id;
+  // Same meta sanitation as the storefront — cards only need the purchase count.
+  const items = raw.map((item) => ({
+    ...item,
+    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+  }));
+  return { items, nextCursor };
+};
+
 // Early Access download prices for the shop's Models section, keyed by model
 // version id (the model feed doesn't carry earlyAccessConfig).
 export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAccessPricesInput) => {
@@ -753,22 +798,20 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
   if (!gatedIds.length) return prices;
 
-  // Priced at the owner's current cap, matching what earlyAccessPurchase charges and what the model page
-  // shows. Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever
-  // owns it now.
+  // Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever owns
+  // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
   const owners = await dbRead.modelVersion.findMany({
     where: { id: { in: gatedIds } },
     select: { id: true, model: { select: { userId: true } } },
   });
-  const capTierByVersion = Object.fromEntries(
-    await Promise.all(
-      owners.map(async (v) => [v.id, await getCachedCapTier(v.model.userId)] as const)
-    )
-  );
+  const monetization = await getViewerMonetization({
+    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId })),
+    viewer: {},
+  });
 
   for (const id of gatedIds) {
-    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
-    const price = effectivePaidAccessPrice(terms?.download?.price, capTierByVersion[id]);
+    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
+    const price = terms?.download?.price ?? 0;
     if (price > 0) prices[id] = price;
   }
   return prices;
