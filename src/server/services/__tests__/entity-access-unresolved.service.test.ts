@@ -187,6 +187,22 @@ describe('hasEntityAccess — ModelVersion id the availability cache could not r
     expect(access.availability).toBe('Public');
   });
 
+  // The cache-vs-DB reconciliation is ModelVersion-only. Every other entity type already runs a live
+  // $queryRaw, and none of that path may change.
+  it.each(['Article', 'Post', 'Model', 'Collection', 'Bounty', 'ComicChapter'] as const)(
+    'leaves the %s path on its live query, untouched',
+    async (entityType) => {
+      dbReadQueryRaw.mockResolvedValue([{ entityId: 7, userId: 8319364, availability: 'Public' }]);
+
+      const [access] = await hasEntityAccess({ entityType, entityIds: [7], userId: 1290051 });
+
+      expect(dbReadQueryRaw).toHaveBeenCalledTimes(1);
+      expect(modelVersionAccessFetch).not.toHaveBeenCalled();
+      expect(lookupModelVersionAccessMock).not.toHaveBeenCalled();
+      expect(access.hasAccess).toBe(true);
+    }
+  );
+
   it('a still-gated version stays gated when the DB has to resolve it', async () => {
     modelVersionAccessFetch.mockResolvedValue({});
     lookupModelVersionAccessMock.mockResolvedValue(byId(PUBLIC_VERSION));

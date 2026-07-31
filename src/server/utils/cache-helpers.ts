@@ -626,7 +626,9 @@ export function createCachedArray<T extends object>({
       // Honor dontCacheFn exactly as fetch() and the degraded path do. A cache that uses it as a
       // correctness guard ("only hold values that are safe to serve stale") otherwise loses that
       // guard entirely, because refresh() is what every bust-and-repopulate helper calls.
-      const cacheable = Object.entries(results).filter(([, x]) => !dontCacheFn?.(x));
+      // `x &&` keeps a falsy lookupFn value classified as "no row" (matching the prior
+      // `!results[x]` reading) rather than writing it.
+      const cacheable = Object.entries(results).filter(([, x]) => x && !dontCacheFn?.(x));
       await Promise.all(
         cacheable.map(([rid, x]) => redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX }))
       );

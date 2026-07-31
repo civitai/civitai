@@ -56,6 +56,16 @@ function makeCache(lookup: (ids: number[]) => Record<string, Row>) {
   });
 }
 
+// Same cache with NO dontCacheFn — the shape all but three caches in the repo use.
+function makePlainCache(lookup: (ids: number[]) => Record<string, Row>) {
+  return createCachedObject<Row>({
+    key: KEY as never,
+    idKey: 'id',
+    ttl: 60,
+    lookupFn: async (ids) => lookup(ids as number[]),
+  });
+}
+
 const setKeys = () => setMock.mock.calls.map((c) => c[0] as string);
 const delKeys = () => delMock.mock.calls.flatMap((c) => (Array.isArray(c[0]) ? c[0] : [c[0]]));
 
@@ -101,5 +111,51 @@ describe('createCachedArray.refresh — dontCacheFn', () => {
     expect(setKeys()).toEqual([`${KEY}:1`]);
     // 2 was rejected by dontCacheFn, 3 had no row at all — both must end up absent.
     expect(delKeys()).toEqual(expect.arrayContaining([`${KEY}:2`, `${KEY}:3`]));
+  });
+
+  it('never touches an id that was not asked for', async () => {
+    const cache = makeCache(() => ({
+      '1': { id: 1, availability: 'Public' },
+      '99': { id: 99, availability: 'Private' },
+    }));
+
+    await cache.refresh([1]);
+
+    expect(delKeys()).not.toContain(`${KEY}:99`);
+  });
+});
+
+// The change is scoped to caches that opt into dontCacheFn. Every other cache in the repo must
+// keep the exact refresh() semantics it had: write every row, delete only the ids with no row.
+describe('createCachedArray.refresh — caches without dontCacheFn are unchanged', () => {
+  it('writes every returned record', async () => {
+    const cache = makePlainCache(() => ({
+      '1': { id: 1, availability: 'Public' },
+      '2': { id: 2, availability: 'Private' },
+      '3': { id: 3, availability: 'EarlyAccess' },
+    }));
+
+    await cache.refresh([1, 2, 3]);
+
+    expect(setKeys()).toEqual([`${KEY}:1`, `${KEY}:2`, `${KEY}:3`]);
+    expect(delKeys()).toEqual([]);
+  });
+
+  it('deletes only the ids the lookup had no row for', async () => {
+    const cache = makePlainCache(() => ({ '1': { id: 1, availability: 'Private' } }));
+
+    await cache.refresh([1, 2]);
+
+    expect(setKeys()).toEqual([`${KEY}:1`]);
+    expect(delKeys()).toEqual([`${KEY}:2`]);
+  });
+
+  it('treats a falsy lookup value as no row — deleted, never written', async () => {
+    const cache = makePlainCache(() => ({ '1': undefined } as unknown as Record<string, Row>));
+
+    await cache.refresh([1]);
+
+    expect(setKeys()).toEqual([]);
+    expect(delKeys()).toEqual([`${KEY}:1`]);
   });
 });
