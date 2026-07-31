@@ -1032,8 +1032,13 @@ describe('MySubmissionsList — P4 Open-live run-page branching (graceful, no de
     );
     const open = page.getByTestId('apps-submissions-open-live-app');
     await expect.element(open).toBeInTheDocument();
-    // Not the standalone origin — it links to the block detail (install lives there).
-    expect(open.element().getAttribute('href')).not.toBe('https://live-app.civit.ai/');
+    // 🔴 NO href at all — not the standalone origin, and (post-#3493) not the
+    // retired `/apps/<appBlockId>` detail either. That route now 302s to
+    // `/apps/store-preview/<slug>` or 404s, so `getDetailPrimaryAction`'s
+    // model-slot branch returns informational copy with no target and this
+    // renders as plain text. Asserting `toBeNull` rather than `not.toBe(origin)`
+    // because the latter also passes for a null href — it could not fail here.
+    expect(open.element().getAttribute('href')).toBeNull();
     await expect.element(page.getByText('Runs on model pages', { exact: false })).toBeInTheDocument();
   });
 });
