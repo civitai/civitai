@@ -20,7 +20,14 @@ vi.mock('@prisma/client', () => {
   const join = (values: unknown[], separator = ',') => ({ values, separator });
   const empty = { sql: '', values: [] };
   class Sql {}
-  const known: Record<string, unknown> = { sql, raw, join, empty, Sql, validator: () => (x: unknown) => x };
+  const known: Record<string, unknown> = {
+    sql,
+    raw,
+    join,
+    empty,
+    Sql,
+    validator: () => (x: unknown) => x,
+  };
   const Prisma = new Proxy(known, {
     get: (target, prop: string) => (prop in target ? target[prop] : {}),
   });
@@ -65,7 +72,7 @@ const PUBLIC_VERSION = {
   status: 'Published',
 };
 
-const byId = (...rows: typeof PUBLIC_VERSION[]) =>
+const byId = (...rows: (typeof PUBLIC_VERSION)[]) =>
   Object.fromEntries(rows.map((r) => [String(r.entityId), r]));
 
 beforeEach(() => {
@@ -164,7 +171,9 @@ describe('hasEntityAccess — ModelVersion id the availability cache could not r
   it('re-reads instead of trusting a cached record that would deny', async () => {
     // A value this cache is not allowed to hold in the first place (dontCacheFn refuses non-Public),
     // so it can only be legacy poison — the exact state that made Public models undownloadable.
-    modelVersionAccessFetch.mockResolvedValue(byId({ ...PUBLIC_VERSION, availability: 'EarlyAccess' }));
+    modelVersionAccessFetch.mockResolvedValue(
+      byId({ ...PUBLIC_VERSION, availability: 'EarlyAccess' })
+    );
     lookupModelVersionAccessMock.mockResolvedValue(byId(PUBLIC_VERSION));
 
     const [access] = await hasEntityAccess({
