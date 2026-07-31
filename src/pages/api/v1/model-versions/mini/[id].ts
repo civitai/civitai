@@ -156,7 +156,7 @@ export default MixedAuthEndpoint(async function handler(
           WHEN pa."terms"->'generation' IS NOT NULL
             AND COALESCE(pa."terms"->'generation'->>'free', '') <> 'true'
         THEN
-          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})
+          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})::int
         ELSE
           NULL
         END
