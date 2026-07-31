@@ -54,6 +54,7 @@ import {
   listingAssetSnapshot,
   revisionApplyScope,
   screenshotDriftSummary,
+  uncomparedApplyFieldsSentence,
   type AssetSlotDrift,
 } from '~/components/Apps/listingRevisionDrift';
 import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
@@ -1027,8 +1028,7 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
       <Text size="xs" c="dimmed">
         This is a revision of a LIVE listing. Approving REPLACES the media below — screenshots are
         replaced wholesale, not merged.
-        {applyScope === 'assets-and-scalars' &&
-          ' Approving ALSO copies this revision’s name, tagline, description, category, link and requested OAuth scopes onto the live listing; those are not compared here.'}
+        {applyScope === 'assets-and-scalars' && uncomparedApplyFieldsSentence()}
       </Text>
 
       {panelState === 'error' ? (

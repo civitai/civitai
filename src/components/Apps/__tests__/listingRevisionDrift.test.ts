@@ -9,6 +9,8 @@ import {
   listingAssetSnapshot,
   revisionApplyScope,
   screenshotDriftSummary,
+  uncomparedApplyFieldsSentence,
+  OFFSITE_UNCOMPARED_APPLY_FIELDS,
   type ListingAssetSnapshot,
 } from '~/components/Apps/listingRevisionDrift';
 
@@ -339,5 +341,30 @@ describe('driftPanelState', () => {
   it('no error + both sides loaded → ready', () => {
     const d = computeListingRevisionDrift(snap(), snap(), ONSITE);
     expect(driftPanelState({ hasError: false, drift: d })).toBe('ready');
+  });
+});
+
+describe('uncomparedApplyFieldsSentence', () => {
+  it('🔴 names EVERY field an offsite approve copies — no hand-maintained second copy', () => {
+    const sentence = uncomparedApplyFieldsSentence();
+    // The review header used to hard-code its own list, and it had already drifted:
+    // `scope justifications` was missing, so the panel implied the justifications were
+    // not part of the apply. Deriving it makes that unrepresentable — this assertion
+    // fails the moment a field is added to the constant and the prose is not derived.
+    for (const field of OFFSITE_UNCOMPARED_APPLY_FIELDS) {
+      expect(sentence).toContain(field);
+    }
+    expect(sentence).toContain('scope justifications');
+  });
+
+  it('reads as a list — the last field is joined with “and”, not a comma', () => {
+    expect(uncomparedApplyFieldsSentence(['name', 'tagline', 'link'])).toContain(
+      'name, tagline and link'
+    );
+  });
+
+  it('degrades sanely for a one-field and an empty list', () => {
+    expect(uncomparedApplyFieldsSentence(['name'])).toContain('revision’s name onto');
+    expect(() => uncomparedApplyFieldsSentence([])).not.toThrow();
   });
 });

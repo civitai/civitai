@@ -79,6 +79,24 @@ export const OFFSITE_UNCOMPARED_APPLY_FIELDS = [
 ] as const;
 
 /**
+ * The review panel's HEADER sentence naming what an offsite approve also copies.
+ *
+ * 🔴 DERIVED from {@link OFFSITE_UNCOMPARED_APPLY_FIELDS} rather than written out.
+ * The header used to hard-code its own copy of the list, which had already drifted:
+ * it omitted `scope justifications`. A moderator reading "name, tagline, description,
+ * category, link and requested OAuth scopes" would conclude the justifications were
+ * NOT part of the apply — in the one surface whose whole job is to not imply that.
+ * Single-sourcing it makes the drift unrepresentable instead of merely fixed.
+ */
+export function uncomparedApplyFieldsSentence(
+  fields: readonly string[] = OFFSITE_UNCOMPARED_APPLY_FIELDS
+): string {
+  const last = fields[fields.length - 1] ?? '';
+  const list = fields.length > 1 ? `${fields.slice(0, -1).join(', ')} and ${last}` : last;
+  return ` Approving ALSO copies this revision’s ${list} onto the live listing; those are not compared here.`;
+}
+
+/**
  * The apply scope for a review row's listing kind.
  *
  * 🔴 UNKNOWN kind → `'assets-and-scalars'`, the CONSERVATIVE answer. `kind` is
