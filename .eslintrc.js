@@ -44,6 +44,26 @@ module.exports = {
     // ready to gate on it.
     'local-rules/no-io-in-transaction': 'warn',
 
+    // Flags a `vi.mock('~/utils/trpc', () => ({ ... }))` whose factory hand-writes
+    // the module instead of spreading the real one via `importOriginal`. A
+    // wholesale factory breaks the whole test FILE the day the module gains an
+    // export it omits — and a file that fails to load collects 0 tests rather
+    // than failing an assertion, so nothing turns red. See eslint-local-rules.js
+    // for the full write-up and the canonical fix.
+    //
+    // Deliberately scoped to `~/utils/trpc` (the module with the widest
+    // transitive reach and the one that actually bit us) rather than every
+    // wholesale mock in the repo: mocking a narrow leaf module wholesale is a
+    // normal, safe thing to do, and flagging it would make the rule noisy enough
+    // to get switched off. Extend `modules` if another hub module starts biting.
+    //
+    // 'warn', matching no-io-in-transaction above: there is a pre-existing
+    // backlog of ~66 wholesale trpc mocks, and converting them in bulk without
+    // being able to run the browser suite risks re-creating the very
+    // 0-tests-collected failure this rule exists to catch. Escalate to 'error'
+    // once that backlog is burned down.
+    'local-rules/no-wholesale-module-mock': ['warn', { modules: ['~/utils/trpc'] }],
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 

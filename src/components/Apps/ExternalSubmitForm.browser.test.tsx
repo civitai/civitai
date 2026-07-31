@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+// Type-only: gives the `importOriginal` spread below the real module's type
+// without an `import()` type annotation (banned by consistent-type-imports).
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 — /apps/submit external-app WIZARD (redesigned, MERGED external+connect model).
@@ -46,9 +49,16 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
-vi.mock('~/utils/trpc', () => {
+// Only the `trpc` client itself is overridden — every other `~/utils/trpc` export
+// (trpcVanilla, queryClient, setTrpcBatchingEnabled, ...) is kept real via
+// importOriginal. A wholesale factory silently breaks this whole FILE (0 tests
+// collected, no failing assertion) the day the module gains an export some other
+// file in this test's graph imports. See local-rules/no-wholesale-module-mock.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
+    ...actual,
     trpc: {
       // ListingAssetStep (reached on the Assets step) calls `trpc.useUtils()` and
       // `utils.appListings.getAssetScanStatuses.fetch` on an accept — stub both.

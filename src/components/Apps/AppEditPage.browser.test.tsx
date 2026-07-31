@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useRouter } from 'next/router';
+// Type-only: gives the `importOriginal` spread below the real module's type
+// without an `import()` type annotation (banned by consistent-type-imports).
+import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -42,7 +45,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // is the established idiom (see `src/tests/pages/payment/success.browser.test.tsx`).
 const router = useRouter();
 
-vi.mock('~/utils/trpc', () => ({
+// Only the `trpc` client itself is overridden — every other `~/utils/trpc` export
+// (trpcVanilla, queryClient, setTrpcBatchingEnabled, ...) is kept real via
+// importOriginal. A wholesale factory silently breaks this whole FILE (0 tests
+// collected, no failing assertion) the day the module gains an export some other
+// file in this test's graph imports. See local-rules/no-wholesale-module-mock.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     blocks: {
       getMyAppManifest: {
