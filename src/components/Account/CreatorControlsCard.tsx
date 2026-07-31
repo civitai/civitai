@@ -76,7 +76,6 @@ export function CreatorControlsCard() {
               {[
                 'Hide your model metrics and donation goals',
                 'Earn real cash from your creations',
-                'Open your own creator shop',
               ].map((perk) => (
                 <Group key={perk} gap={8} wrap="nowrap">
                   <IconCircleCheck
@@ -93,7 +92,9 @@ export function CreatorControlsCard() {
               href={membershipLapsed ? renewUrl : '/creator-program'}
               variant="filled"
               size="sm"
-              leftSection={membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />}
+              leftSection={
+                membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />
+              }
               className="w-fit"
             >
               {membershipLapsed ? 'Renew membership' : 'Join the Creator Program'}

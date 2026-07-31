@@ -6,12 +6,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { createNotification } from '~/server/services/notification.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
-import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import { NotificationCategory } from '~/server/common/enums';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -212,25 +210,6 @@ const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
 
-// The shop is gated on Creator Program *membership* — i.e. the creator has
-// joined (OnboardingSteps.CreatorProgram), which requires a valid subscription,
-// the minimum creator score, and not being banned. A qualifying-but-not-joined
-// subscription is not enough.
-const assertCreatorProgramMember = async (userId: number) => {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { onboarding: true },
-  });
-  const joined = !!user && Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram);
-  if (!joined)
-    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
-  // Membership must still be active — a lapsed membership loses shop access.
-  if (!(await hasValidCreatorMembership(userId)))
-    throw throwAuthorizationError(
-      'An active Creator Program membership is required. Renew your membership to use your shop.'
-    );
-};
-
 export const submitCreatorShopItem = async ({
   userId,
   cosmeticType,
@@ -245,9 +224,6 @@ export const submitCreatorShopItem = async ({
   sellerShare,
   offsets,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
-  // The Creator Shop is a Creator Program member benefit.
-  await assertCreatorProgramMember(userId);
-
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
@@ -616,23 +592,9 @@ export const getCreatorShop = async ({
   preview?: boolean;
 }) => {
   const settings = await getCreatorShopSettings({ userId });
-  // A shop is only public if it's enabled AND the owner still has an active
-  // Creator Program membership. Query membership only for enabled shops (draft
-  // shops are hidden regardless).
-  const membershipActive =
-    settings.enabled !== true ? true : await hasValidCreatorMembership(userId);
-  // Enabled but hidden because the owner's membership lapsed — surfaced to the
-  // owner so they know to renew.
-  const membershipLapsed = !preview && settings.enabled === true && !membershipActive;
-
-  // Owners and moderators can always see the shop (to renew / moderate); a
-  // lapsed membership shutters it for everyone else.
-  if (
-    !preview &&
-    viewerId !== userId &&
-    !isModerator &&
-    (settings.enabled !== true || !membershipActive)
-  )
+  // Owners and moderators can always see the shop (to edit / moderate); a
+  // disabled shop is hidden from everyone else.
+  if (!preview && viewerId !== userId && !isModerator && settings.enabled !== true)
     throw throwNotFoundError('Shop not found');
 
   // A block between viewer and shop owner (either direction) hides the whole
@@ -741,7 +703,6 @@ export const getCreatorShop = async ({
     resold,
     settings: effectiveSettings,
     earlyAccessModelCount,
-    membershipLapsed,
   };
 };
 
@@ -917,7 +878,6 @@ export const addResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  await assertCreatorProgramMember(userId);
   await getResellableItemOrThrow(shopItemId, userId);
   const settings = await getCreatorShopSettings({ userId });
   const resoldItemIds = settings.resoldItemIds ?? [];
@@ -1146,11 +1106,6 @@ export const updateCreatorShopSettings = async ({
   // Read-merge-write the JSON blob so we only touch the creatorShop key.
   return dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
-      // Can't (re)open a shop without an active Creator Program membership.
-      if (!(await hasValidCreatorMembership(userId)))
-        throw throwBadRequestError(
-          'An active Creator Program membership is required to open your shop.'
-        );
       // Don't let a creator publish an empty shop — there'd be nothing to show.
       const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
       if (itemCount === 0)
