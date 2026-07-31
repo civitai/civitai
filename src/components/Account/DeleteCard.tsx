@@ -9,6 +9,7 @@ import {
   Modal,
   Group,
   List,
+  Radio,
   ThemeIcon,
   Alert,
 } from '@mantine/core';
@@ -36,54 +37,53 @@ export function DeleteCard() {
     },
   });
 
-  // Separate state for each modal
   const [membershipWarningModalOpen, setMembershipWarningModalOpen] = useState(false);
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [wipeModalOpen, setWipeModalOpen] = useState(false);
-  const [imagesModalOpen, setImagesModalOpen] = useState(false);
-  const [wipeModels, setWipeModels] = useState(false);
+  const [contentModalOpen, setContentModalOpen] = useState(false);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [modelsChoice, setModelsChoice] = useState('');
+  const [imagesChoice, setImagesChoice] = useState('');
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
 
   const handleDeleteClick = () => {
     if (hasActiveMembership) {
       setMembershipWarningModalOpen(true);
     } else {
-      setDeleteModalOpen(true);
+      setContentModalOpen(true);
     }
   };
 
   const handleMembershipWarningConfirm = () => {
     setMembershipWarningModalOpen(false);
-    setTimeout(() => setDeleteModalOpen(true), 200);
+    setTimeout(() => setContentModalOpen(true), 200);
   };
 
-  const handleConfirmDelete = () => {
-    setDeleteModalOpen(false); // Close first modal
-    setTimeout(() => setWipeModalOpen(true), 200); // Ensure it doesn't re-trigger same modal
+  const handleContinue = () => {
+    setContentModalOpen(false);
+    setTimeout(() => setConfirmModalOpen(true), 200);
   };
 
-  const handleWipeDecision = (wipe: boolean) => {
-    setWipeModels(wipe);
-    setWipeModalOpen(false);
-    setTimeout(() => setImagesModalOpen(true), 200);
-  };
-
-  const handleImageDecision = (removeImages: boolean) => {
-    setImagesModalOpen(false);
-    if (currentUser) {
-      deleteAccountMutation.mutateAsync({
-        id: currentUser.id,
-        removeModels: wipeModels,
-        removeImages,
-      });
-    }
+  const handleBack = () => {
+    setConfirmModalOpen(false);
+    setTimeout(() => setContentModalOpen(true), 200);
   };
 
   const handleCancelAll = () => {
-    setWipeModalOpen(false); // Fully cancels the process
-    setImagesModalOpen(false);
-    setWipeModels(false);
-    setConfirmDeleteInput(''); // Reset input field
+    setContentModalOpen(false);
+    setConfirmModalOpen(false);
+    setModelsChoice('');
+    setImagesChoice('');
+    setConfirmDeleteInput('');
+  };
+
+  const handleConfirmDeletion = () => {
+    setConfirmModalOpen(false);
+    if (currentUser) {
+      deleteAccountMutation.mutateAsync({
+        id: currentUser.id,
+        removeModels: modelsChoice === 'delete',
+        removeImages: imagesChoice === 'now',
+      });
+    }
   };
 
   return (
@@ -140,17 +140,63 @@ export function DeleteCard() {
         </Stack>
       </Modal>
 
-      {/* SECOND MODAL: Confirm account deletion */}
       <Modal
-        opened={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
-        title="Delete your account"
+        opened={contentModalOpen}
+        onClose={handleCancelAll}
+        title="What happens to your content?"
         centered
       >
         <Stack>
-          <Text>
-            Are you sure you want to delete your account? All data will be permanently lost.
-          </Text>
+          <Radio.Group label="Your models" value={modelsChoice} onChange={setModelsChoice}>
+            <Stack gap="sm" mt="xs">
+              <Radio value="delete" label="Delete them" />
+              <Radio
+                value="keep"
+                label="Keep them public"
+                description="Transferred to an anonymous owner"
+              />
+            </Stack>
+          </Radio.Group>
+          <Radio.Group label="Your images" value={imagesChoice} onChange={setImagesChoice}>
+            <Stack gap="sm" mt="xs">
+              <Radio
+                value="now"
+                label="Delete now"
+                description="Starts deleting right away; a large gallery can take a while to clear"
+              />
+              <Radio
+                value="later"
+                label="Delete after 7 days"
+                description="Hides them immediately and deletes them automatically when the window closes"
+              />
+            </Stack>
+          </Radio.Group>
+          <Group justify="flex-end">
+            <Button variant="outline" onClick={handleCancelAll}>
+              Cancel
+            </Button>
+            <Button color="red" disabled={!modelsChoice || !imagesChoice} onClick={handleContinue}>
+              Continue
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal opened={confirmModalOpen} onClose={handleCancelAll} title="Confirm" centered>
+        <Stack>
+          <Text>This cannot be undone.</Text>
+          <List spacing="xs" size="sm">
+            <List.Item>
+              {modelsChoice === 'delete'
+                ? 'Your models will be deleted'
+                : 'Your models will stay public under an anonymous owner'}
+            </List.Item>
+            <List.Item>
+              {imagesChoice === 'now'
+                ? 'Your images will be deleted now'
+                : 'Your images will be hidden now and deleted after 7 days'}
+            </List.Item>
+          </List>
           <Text>
             Please type <b>DELETE</b> in the box below to confirm:
           </Text>
@@ -159,70 +205,17 @@ export function DeleteCard() {
             value={confirmDeleteInput}
             onChange={(event) => setConfirmDeleteInput(event.currentTarget.value)}
           />
-          {/* Buttons */}
           <Group justify="flex-end">
-            <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>
-              Cancel
+            <Button variant="outline" onClick={handleBack}>
+              Back
             </Button>
             <Button
               color="red"
               disabled={confirmDeleteInput.trim().toUpperCase() !== 'DELETE'}
-              onClick={handleConfirmDelete}
+              onClick={handleConfirmDeletion}
             >
-              Yes, I am sure
+              Delete my account
             </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      {/* SECOND MODAL: Ask about wiping models */}
-      <Modal
-        opened={wipeModalOpen}
-        onClose={() => setWipeModalOpen(false)}
-        title="Wipe your models?"
-        centered
-      >
-        <Stack>
-          <Text>
-            Do you want to delete all the models you have created along with your account?
-          </Text>
-          <Group justify="space-between">
-            <Button variant="default" onClick={handleCancelAll}>
-              Stop! Go back!
-            </Button>
-            <Group>
-              <Button color="red" onClick={() => handleWipeDecision(true)}>
-                Yes
-              </Button>
-              <Button color="red" onClick={() => handleWipeDecision(false)}>
-                No
-              </Button>
-            </Group>
-          </Group>
-        </Stack>
-      </Modal>
-
-      <Modal opened={imagesModalOpen} onClose={handleCancelAll} title="Your images" centered>
-        <Stack>
-          <Text>
-            Your images will be deleted either way — this choice only controls when. Delete now
-            starts deleting them right away and works through them in the background, so a large
-            gallery can take a while to clear. Delete after 7 days hides them all right away and
-            deletes them automatically once the window closes; until then, a moderator can still
-            restore them.
-          </Text>
-          <Group justify="space-between">
-            <Button variant="default" onClick={handleCancelAll}>
-              Stop! Go back!
-            </Button>
-            <Group>
-              <Button color="red" variant="outline" onClick={() => handleImageDecision(true)}>
-                Delete now
-              </Button>
-              <Button color="red" onClick={() => handleImageDecision(false)}>
-                Delete after 7 days
-              </Button>
-            </Group>
           </Group>
         </Stack>
       </Modal>

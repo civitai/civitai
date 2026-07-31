@@ -28,51 +28,111 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 import { DeleteCard } from '~/components/Account/DeleteCard';
 
-/** Walks the flow up to the images question, which is the last step before the mutation fires. */
-async function openImagesModal() {
+/** Renders the card and opens the "what happens to your content?" step. */
+async function openContentModal() {
+  renderWithProviders(<DeleteCard />);
   await userEvent.click(page.getByRole('button', { name: 'Delete your account' }));
+  await expect.element(page.getByRole('radio', { name: 'Delete them' })).toBeInTheDocument();
+}
+
+/** Walks the full flow end to end, choosing the given radio options on the content step. */
+async function completeFlow(modelsLabel: string, imagesLabel: string) {
+  await openContentModal();
+  await userEvent.click(page.getByLabelText(modelsLabel));
+  await userEvent.click(page.getByLabelText(imagesLabel));
+  await userEvent.click(page.getByRole('button', { name: 'Continue' }));
   await userEvent.fill(page.getByPlaceholder('Type DELETE to confirm'), 'DELETE');
-  await userEvent.click(page.getByRole('button', { name: 'Yes, I am sure' }));
-  await userEvent.click(page.getByRole('button', { name: 'No' }));
-  await expect.element(page.getByRole('button', { name: 'Delete now' })).toBeInTheDocument();
+  await userEvent.click(page.getByRole('button', { name: 'Delete my account' }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DeleteCard images question', () => {
-  test('dismissing it resets the flow instead of stranding the typed confirmation', async () => {
-    renderWithProviders(<DeleteCard />);
-    await openImagesModal();
+describe('DeleteCard content step', () => {
+  test('neither radio group has a default, so Continue starts disabled', async () => {
+    await openContentModal();
 
+    await expect.element(page.getByRole('radio', { name: 'Delete them' })).not.toBeChecked();
+    await expect.element(page.getByRole('radio', { name: 'Delete now' })).not.toBeChecked();
+    await expect.element(page.getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+    await userEvent.click(page.getByLabelText('Delete them'));
+    await expect.element(page.getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+    await userEvent.click(page.getByLabelText('Delete now'));
+    await expect.element(page.getByRole('button', { name: 'Continue' })).toBeEnabled();
+  });
+
+  test('cancelling resets both radio selections and the typed confirmation', async () => {
+    await openContentModal();
+    await userEvent.click(page.getByLabelText('Delete them'));
+    await userEvent.click(page.getByLabelText('Delete now'));
+    await userEvent.click(page.getByRole('button', { name: 'Continue' }));
+    await userEvent.fill(page.getByPlaceholder('Type DELETE to confirm'), 'DELETE');
+
+    // Dismissing the confirm step (rather than cancelling from it) must still count
+    // as cancelling the whole flow, or the typed DELETE strands in the box.
     await userEvent.keyboard('{Escape}');
     await userEvent.click(page.getByRole('button', { name: 'Delete your account' }));
 
-    // A bare `setImagesModalOpen(false)` leaves DELETE in the box, so the next visit to the
-    // settings page is one click away from deleting the account.
+    await expect.element(page.getByRole('radio', { name: 'Delete them' })).not.toBeChecked();
+    await expect.element(page.getByRole('radio', { name: 'Delete now' })).not.toBeChecked();
+
+    await userEvent.click(page.getByLabelText('Keep them public'));
+    await userEvent.click(page.getByLabelText('Delete after 7 days'));
+    await userEvent.click(page.getByRole('button', { name: 'Continue' }));
+
     await expect.element(page.getByPlaceholder('Type DELETE to confirm')).toHaveValue('');
-    await expect.element(page.getByRole('button', { name: 'Yes, I am sure' })).toBeDisabled();
+    await expect.element(page.getByRole('button', { name: 'Delete my account' })).toBeDisabled();
     expect(mutateAsync).not.toHaveBeenCalled();
   });
+});
 
-  test('gives the reversible choice the emphasis, not the irreversible one', async () => {
-    renderWithProviders(<DeleteCard />);
-    await openImagesModal();
+describe('DeleteCard confirm step summary', () => {
+  test('restates deletion choices as deletion', async () => {
+    await openContentModal();
+    await userEvent.click(page.getByLabelText('Delete them'));
+    await userEvent.click(page.getByLabelText('Delete now'));
+    await userEvent.click(page.getByRole('button', { name: 'Continue' }));
 
-    // Delete now is the branch a moderator cannot undo, so it must not be the filled default.
-    const deleteNow = page.getByRole('button', { name: 'Delete now' }).element();
-    const afterSevenDays = page.getByRole('button', { name: 'Delete after 7 days' }).element();
-    expect(deleteNow.getAttribute('data-variant')).toBe('outline');
-    expect(afterSevenDays.getAttribute('data-variant')).not.toBe('outline');
+    await expect.element(page.getByText('Your models will be deleted')).toBeInTheDocument();
+    await expect.element(page.getByText('Your images will be deleted now')).toBeInTheDocument();
   });
 
-  test('still records each branch choice', async () => {
-    renderWithProviders(<DeleteCard />);
-    await openImagesModal();
+  test('restates keep-it choices without deletion phrasing', async () => {
+    await openContentModal();
+    await userEvent.click(page.getByLabelText('Keep them public'));
+    await userEvent.click(page.getByLabelText('Delete after 7 days'));
+    await userEvent.click(page.getByRole('button', { name: 'Continue' }));
 
-    await userEvent.click(page.getByRole('button', { name: 'Delete after 7 days' }));
+    await expect
+      .element(page.getByText('Your models will stay public under an anonymous owner'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Your images will be hidden now and deleted after 7 days'))
+      .toBeInTheDocument();
+  });
+});
 
+describe('DeleteCard mutation polarity', () => {
+  test('Delete them + Delete now -> removeModels: true, removeImages: true', async () => {
+    await completeFlow('Delete them', 'Delete now');
+    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: true, removeImages: true });
+  });
+
+  test('Delete them + Delete after 7 days -> removeModels: true, removeImages: false', async () => {
+    await completeFlow('Delete them', 'Delete after 7 days');
+    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: true, removeImages: false });
+  });
+
+  test('Keep them public + Delete now -> removeModels: false, removeImages: true', async () => {
+    await completeFlow('Keep them public', 'Delete now');
+    expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: false, removeImages: true });
+  });
+
+  test('Keep them public + Delete after 7 days -> removeModels: false, removeImages: false', async () => {
+    await completeFlow('Keep them public', 'Delete after 7 days');
     expect(mutateAsync).toHaveBeenCalledWith({ id: 7, removeModels: false, removeImages: false });
   });
 });
