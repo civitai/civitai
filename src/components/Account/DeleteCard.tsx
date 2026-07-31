@@ -202,27 +202,24 @@ export function DeleteCard() {
         </Stack>
       </Modal>
 
-      <Modal
-        opened={imagesModalOpen}
-        onClose={() => setImagesModalOpen(false)}
-        title="Your images"
-        centered
-      >
+      <Modal opened={imagesModalOpen} onClose={handleCancelAll} title="Your images" centered>
         <Stack>
           <Text>
             Your images will be deleted either way — this choice only controls when. Delete now
-            removes them immediately. Delete after 7 days hides them right away and deletes them
-            automatically once the window closes; until then, a moderator can still restore them.
+            starts deleting them right away and works through them in the background, so a large
+            gallery can take a while to clear. Delete after 7 days hides them all right away and
+            deletes them automatically once the window closes; until then, a moderator can still
+            restore them.
           </Text>
           <Group justify="space-between">
             <Button variant="default" onClick={handleCancelAll}>
               Stop! Go back!
             </Button>
             <Group>
-              <Button color="red" onClick={() => handleImageDecision(true)}>
+              <Button color="red" variant="outline" onClick={() => handleImageDecision(true)}>
                 Delete now
               </Button>
-              <Button color="red" variant="outline" onClick={() => handleImageDecision(false)}>
+              <Button color="red" onClick={() => handleImageDecision(false)}>
                 Delete after 7 days
               </Button>
             </Group>
