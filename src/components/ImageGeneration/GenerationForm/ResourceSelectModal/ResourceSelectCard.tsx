@@ -133,7 +133,9 @@ export function ResourceSelectCard({
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
-  const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
+  // `image` is optional — the featured podium renders raw items, bypassing the
+  // hidden-preferences pass that drops zero-image models everywhere else.
+  const originalAspectRatio = image?.width && image?.height ? image.width / image.height : 1;
   const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
 
   return (
