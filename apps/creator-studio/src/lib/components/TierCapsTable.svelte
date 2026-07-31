@@ -25,7 +25,7 @@
 <div class={className}>
   <div class="mb-4 overflow-x-auto">
     <p class="mb-1 text-xs font-medium text-white">
-      Licensing fees <span class="font-normal text-dark-3">— earned per generation</span>
+      Licensing fees <span class="font-normal text-dark-2">— earned per generation</span>
     </p>
     <table class="w-full min-w-152 border-collapse text-left text-xs">
       <thead>
@@ -38,7 +38,7 @@
             >Every other model type</th
           >
         </tr>
-        <tr class="text-dark-3">
+        <tr class="text-dark-2">
           <th class="py-1.5 pr-3 font-medium">Tier</th>
           <th class="border-l border-dark-5 py-1.5 pl-2 pr-3 text-right font-medium">Image</th>
           <th class={headCls}>Video</th>
@@ -69,11 +69,11 @@
 
   <div class="mb-3 overflow-x-auto">
     <p class="mb-1 text-xs font-medium text-white">
-      Paid access <span class="font-normal text-dark-3">— one-time price to unlock a version</span>
+      Paid access <span class="font-normal text-dark-2">— one-time price to unlock a version</span>
     </p>
     <table class="w-full min-w-104 border-collapse text-left text-xs">
       <thead>
-        <tr class="text-dark-3">
+        <tr class="text-dark-2">
           <th class="py-1.5 pr-3 font-medium">Tier</th>
           <th class={headCls}>Image models</th>
           <th class={headCls}>Video models</th>
@@ -96,11 +96,11 @@
     </table>
   </div>
 
-  <p class="text-xs text-dark-3">
+  <p class="text-xs text-dark-2">
     A version's base model decides whether it prices as image or video — video allows more because
     it costs more to generate.
   </p>
-  <p class="mt-1 text-xs text-dark-3">
+  <p class="mt-1 text-xs text-dark-2">
     Caps limit how much you can charge, not whether you can charge. An existing price above your cap
     keeps earning at the cap and is restored in full if you upgrade — it's never rewritten.
   </p>

@@ -114,7 +114,7 @@
           ? `${selected.size} selected`
           : `Select ${bulkGenOnly ? 'generation-only' : 'downloadable'} versions`}
       </span>
-      <span class="text-xs text-dark-3">
+      <span class="text-xs text-dark-2">
         {#if permanentCap === null}
           {permanentUsed} permanent · unlimited on your tier
         {:else}

@@ -8,8 +8,9 @@ import {
   type ModelVersionTerms,
 } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
-import { dbRead } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
+import { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetization/paid-access';
 import type { PaidAccessConfig } from '$lib/monetization/paid-access';
 
 // Paid access is written through the MAIN APP, not kysely: the write has real
@@ -22,6 +23,7 @@ const ENDPOINT = '/api/v1/model-versions/early-access';
 
 export type { PaidAccessConfig } from '$lib/monetization/paid-access';
 export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/paid-access';
+export { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetization/paid-access';
 
 export type PaidAccessResult = { ok: true } | { ok: false; status: number; error: string };
 
@@ -211,6 +213,34 @@ export async function bulkSetPermanentAccess(
 // Whether a version currently has a permanent gate (timeframeDays IS NULL). Lets the save action skip
 // the membership/cap gates when re-saving an already-permanent version, so a lapsed or at-cap creator
 // can't be locked out of editing their own version (mirrors the main-app carve-out).
+/**
+ * Set a version's usage control. Ownership is enforced in the WHERE rather than a prior read, so a
+ * version the caller doesn't own simply updates 0 rows — same shape as the licensing-fee writes.
+ *
+ * Must run BEFORE the paid-access write: the main-app endpoint validates the gate against the STORED
+ * usage control, so persisting it second would have it reject a gen-only save for still carrying a
+ * download tier (or accept one it shouldn't).
+ */
+export async function setUsageControl(
+  userId: number,
+  versionId: number,
+  usageControl: CreatorUsageControl
+): Promise<boolean> {
+  const result = await dbWrite
+    .updateTable('ModelVersion')
+    .set({ usageControl })
+    .where('id', '=', versionId)
+    .where('modelId', 'in', (eb) =>
+      eb
+        .selectFrom('Model')
+        .select('id')
+        .where('userId', '=', userId)
+        .where('deletedAt', 'is', null)
+    )
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
 export async function isVersionPermanent(versionId: number): Promise<boolean> {
   const row = await dbRead
     .selectFrom('PaidAccess')

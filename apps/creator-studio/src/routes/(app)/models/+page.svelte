@@ -73,7 +73,7 @@
     modelType: string,
     baseModel: string
   ): { label: string; cls: string } {
-    if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-3' };
+    if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-2' };
     return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
       ? { label: 'Over cap', cls: 'text-yellow-5' }
       : { label: 'Active', cls: 'text-green-5' };
@@ -85,7 +85,7 @@
     modelType: string,
     baseModel: string
   ): { label: string; cls: string } {
-    if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
+    if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-2' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
     return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
@@ -135,7 +135,7 @@
   function statusBadgeCls(status: string): string {
     return status === 'Published'
       ? 'border-green-5/30 bg-green-5/10 text-green-5'
-      : 'border-dark-4 bg-dark-6 text-dark-3';
+      : 'border-dark-4 bg-dark-6 text-dark-2';
   }
 
   // Filter popover options (M3). Empty status = the default "hide drafts" view.
@@ -416,7 +416,7 @@
     <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
     <span class="text-dark-2">Permanent access</span>
     {#if data.caps.permanentCap === 0}
-      <span class="font-medium text-dark-3">Not available on your tier</span>
+      <span class="font-medium text-dark-2">Not available on your tier</span>
     {:else if data.caps.permanentCap === null}
       <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
     {:else}
@@ -431,19 +431,19 @@
     <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
     <span class="text-dark-2">Early access</span>
     {#if data.caps.earlyAccessCap === 0}
-      <span class="font-medium text-dark-3">Not unlocked yet — grows with your creator score</span>
+      <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span>
     {:else}
       <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
         {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
           ? ' · limit reached'
           : ''}
       </span>
-      <span class="text-dark-3">· up to {data.caps.maxEarlyAccessDays} days</span>
+      <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
     {/if}
   </span>
   <details class="w-full">
     <summary
-      class="cursor-pointer select-none text-dark-2 marker:text-dark-3 hover:text-white"
+      class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
       data-testid="tier-caps-toggle"
     >
       Pricing limits · {data.caps.tier}
@@ -476,7 +476,7 @@
     <Popover.Trigger
       class="flex h-8 items-center gap-1.5 rounded-lg border border-input bg-transparent px-2.5 text-sm text-white transition-colors hover:bg-dark-6 dark:bg-input/30"
     >
-      <IconFilter size={16} class="text-dark-3" />
+      <IconFilter size={16} class="text-dark-2" />
       Filters
       {#if activeFilterCount > 0}
         <Badge class="px-1.5">{activeFilterCount}</Badge>
@@ -645,8 +645,8 @@
 </div>
 
 <div class="mb-4 flex items-center justify-between gap-2">
-  <p class="text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</p>
-  <label class="flex items-center gap-1.5 text-xs text-dark-3">
+  <p class="text-xs text-dark-2">{data.total} model{data.total === 1 ? '' : 's'}</p>
+  <label class="flex items-center gap-1.5 text-xs text-dark-2">
     Per page
     <Select.Root
       type="single"
@@ -738,7 +738,7 @@
                 rel="noopener noreferrer"
                 title="View on Civitai"
                 aria-label="View {model.name} on Civitai"
-                class="shrink-0 rounded-md p-1 text-dark-3 hover:bg-dark-6 hover:text-white"
+                class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
               >
                 <IconExternalLink size={16} />
               </a>
@@ -747,7 +747,7 @@
         </CardHeader>
         <CardContent class="p-0">
           {#if model.versions.length === 0}
-            <p class="px-5 py-4 text-sm text-dark-3">No versions.</p>
+            <p class="px-5 py-4 text-sm text-dark-2">No versions.</p>
           {:else}
             <ul class="divide-y divide-dark-4 border-t border-dark-4">
               {#each model.versions as version (version.id)}
@@ -807,7 +807,7 @@
                           >
                         {/if}
                         <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
-                        <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-3 sm:ml-0" />
+                        <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-2 sm:ml-0" />
                       </span>
                     </button>
                   {/if}
@@ -876,7 +876,7 @@
     {#if (preview?.changes.length ?? 0) > 0}
       <div class="max-h-72 overflow-y-auto rounded-lg border border-dark-4">
         <table class="w-full text-sm">
-          <thead class="sticky top-0 bg-dark-7 text-xs uppercase tracking-wide text-dark-3">
+          <thead class="sticky top-0 bg-dark-7 text-xs uppercase tracking-wide text-dark-2">
             <tr>
               <th class="px-3 py-2 text-left font-medium">Version</th>
               <th class="px-3 py-2 text-right font-medium">Current</th>
@@ -888,9 +888,9 @@
               <tr class="border-t border-dark-4">
                 <td class="px-3 py-1.5 text-dark-1">
                   <span class="text-white">{c.modelName}</span>
-                  <span class="text-dark-3">· {c.versionName} · {c.baseModel}</span>
+                  <span class="text-dark-2">· {c.versionName} · {c.baseModel}</span>
                 </td>
-                <td class="px-3 py-1.5 text-right tabular-nums text-dark-3"
+                <td class="px-3 py-1.5 text-right tabular-nums text-dark-2"
                   >{formatFeeRatio(c.current)}</td
                 >
                 <td class="px-3 py-1.5 text-right tabular-nums font-medium text-white"
@@ -902,7 +902,7 @@
         </table>
       </div>
       {#if (preview?.changes.length ?? 0) > 100}
-        <p class="text-xs text-dark-3">
+        <p class="text-xs text-dark-2">
           Showing the first 100 of {preview?.changes.length} changes — all will be applied.
         </p>
       {/if}
@@ -917,7 +917,7 @@
         >
         <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto text-dark-1">
           {#each preview?.skipped ?? [] as s (s.row)}
-            <li><span class="text-dark-3">Row {s.row}:</span> {s.reason}</li>
+            <li><span class="text-dark-2">Row {s.row}:</span> {s.reason}</li>
           {/each}
         </ul>
       </details>
@@ -996,7 +996,7 @@
               aria-label="Buzz for {editing.name}"
               class="w-16 py-1"
             />
-            <span class="text-xs text-dark-3">⚡ per</span>
+            <span class="text-xs text-dark-2">⚡ per</span>
             <input type="hidden" name="images" value={feeImages} />
             <Select.Root
               type="single"
@@ -1018,9 +1018,9 @@
                 {/each}
               </Select.Content>
             </Select.Root>
-            <span class="text-xs text-dark-3">generations</span>
+            <span class="text-xs text-dark-2">generations</span>
             <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
-            <p class="w-full text-xs text-dark-3">
+            <p class="w-full text-xs text-dark-2">
               Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
                 ? 'generation'
                 : `${suggested.images} generations`}
@@ -1035,7 +1035,7 @@
                 Use this
               </button>
             </p>
-            <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
+            <span class="w-full text-xs text-dark-2">Leave empty to clear the fee.</span>
           </form>
         </section>
 

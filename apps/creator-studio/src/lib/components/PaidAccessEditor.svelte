@@ -15,7 +15,10 @@
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
     maxPaidAccessPrice,
+    CREATOR_USAGE_CONTROLS,
+    type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
+
   import { capMediaType } from '$lib/monetization/fee';
   import type { CreatorModelVersion } from '$lib/server/models';
   import type { CreatorCaps } from '$lib/server/membership';
@@ -110,13 +113,34 @@
   const tierLabel = $derived(tier ? tier[0].toUpperCase() + tier.slice(1) : '');
   // Usage control gates paid access: Download (download + gen) and Generation (on-site gen only, no
   // download charge) can be gated; other controls can't. Undefined defaults to Download.
-  const usageControl = $derived(version.usageControl);
+  // The STORED control decides whether this version is editable here at all: the two API-only modes are
+  // moderator territory, so we show a banner rather than a picker that would silently downgrade them.
   const paidAccessUsageOk = $derived(
-    !usageControl || usageControl === 'Download' || usageControl === 'Generation'
+    !version.usageControl ||
+      version.usageControl === 'Download' ||
+      version.usageControl === 'Generation'
   );
+  // Editable (remounted per version by the parent's {#key}), so the pricing fields re-shape as soon as the
+  // creator switches — a gen-only version has no download tier to charge for.
+  // Captured once: the parent remounts this component per version ({#key version.id}), so the stored
+  // value can't change underneath us. Drives both the dirty check and Cancel.
+  const storedUsageControl: CreatorUsageControl = untrack(() =>
+    version.usageControl === 'Generation' ? 'Generation' : 'Download'
+  );
+  let usageControl = $state<CreatorUsageControl>(storedUsageControl);
   const isGenOnly = $derived(usageControl === 'Generation');
-  // Shown in the pricing card so the creator knows why the fields differ (gen-only has no download tier).
-  const usageLabel = $derived(isGenOnly ? 'Generation only' : 'Download + generation');
+
+  const usageEnhance =
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+      await event.update({ reset: false });
+      if (event.result.type === 'success') {
+        toast.success('Usage control saved');
+        await invalidateAll();
+      } else if (event.result.type === 'failure') {
+        usageControl = storedUsageControl;
+        toast.error(String(event.result.data?.error ?? 'Failed to save usage control'));
+      }
+    };
 
   const eaEnhance =
     () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -132,6 +156,46 @@
       }
     };
 </script>
+
+{#if paidAccessUsageOk}
+  <section class="flex flex-col gap-4 border-t border-dark-4 pt-6">
+    <div class="flex flex-col gap-1">
+      <span class="text-sm font-medium text-white">How this version can be used</span>
+      <span class="text-xs text-dark-2">
+        Whether buyers get the files, or on-site generation only.
+      </span>
+    </div>
+    <form method="POST" action="?/setUsageControl" use:enhance={usageEnhance}>
+      <input type="hidden" name="versionId" value={version.id} />
+      <input type="hidden" name="usageControl" value={usageControl} />
+      <div class="grid grid-cols-2 gap-2">
+        {#each CREATOR_USAGE_CONTROLS as opt (opt.value)}
+          <button
+            type="button"
+            onclick={() => (usageControl = opt.value)}
+            class="flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors {usageControl ===
+            opt.value
+              ? 'border-blue-4 bg-blue-4/10'
+              : 'border-dark-4 hover:border-dark-3'}"
+          >
+            <span class="text-sm font-semibold text-white">{opt.label}</span>
+            <span class="text-xs text-dark-2">{opt.hint}</span>
+          </button>
+        {/each}
+      </div>
+      {#if usageControl !== storedUsageControl}
+        <div class="mt-3 flex items-center gap-3">
+          <Button type="submit" size="sm">Save usage control</Button>
+          <button
+            type="button"
+            class="text-xs text-dark-2 hover:text-white"
+            onclick={() => (usageControl = storedUsageControl)}>Cancel</button
+          >
+        </div>
+      {/if}
+    </form>
+  </section>
+{/if}
 
 <section class="flex flex-col gap-4 border-t border-dark-4 pt-6">
   <div class="flex flex-col gap-1">
@@ -164,7 +228,7 @@
       class="flex flex-col gap-4"
     >
       <input type="hidden" name="versionId" value={version.id} />
-      <input type="hidden" name="usageControl" value={usageControl ?? 'Download'} />
+      <input type="hidden" name="usageControl" value={usageControl} />
 
       <input type="hidden" name="permanent" value={ea.permanent ? 'true' : 'false'} />
       <div class="flex flex-col gap-2">
@@ -184,7 +248,7 @@
               >Timed</span
             >
             <span class="text-sm font-semibold text-white">Early Access</span>
-            <span class="text-xs text-dark-3">Becomes free when the window ends.</span>
+            <span class="text-xs text-dark-2">Becomes free when the window ends.</span>
           </button>
           <button
             type="button"
@@ -201,17 +265,17 @@
               >Permanent</span
             >
             <span class="text-sm font-semibold text-white">Paid Access</span>
-            <span class="text-xs text-dark-3">Always requires purchase.</span>
+            <span class="text-xs text-dark-2">Always requires purchase.</span>
           </button>
         </div>
         {#if !canChooseTimed && version.status === 'Published'}
-          <span class="text-xs text-dark-3">
+          <span class="text-xs text-dark-2">
             Early access can't be started after a version is published — use permanent paid access
             instead.
           </span>
         {/if}
         {#if !canChoosePermanent}
-          <span class="text-xs text-dark-3">
+          <span class="text-xs text-dark-2">
             You've reached your permanent paid-access limit ({permanentUsed} of {permanentCap}) —
             upgrade your membership for more.
           </span>
@@ -220,7 +284,7 @@
 
       {#if ea.permanent}
         <input type="hidden" name="timeframe" value="0" />
-        <div class="text-xs {permBlocked ? 'text-yellow-5' : 'text-dark-3'}">
+        <div class="text-xs {permBlocked ? 'text-yellow-5' : 'text-dark-2'}">
           {#if permanentCap === null}
             Paid access {permanentUsed} set · unlimited{tierLabel ? ` · ${tierLabel} tier` : ''}
           {:else}
@@ -239,12 +303,12 @@
             bind:value={ea.timeframe}
             class="w-32"
           />
-          <span class="text-xs text-dark-3">
+          <span class="text-xs text-dark-2">
             Up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'} at your creator level
             — set 0 to turn early access off.
           </span>
         </label>
-        <div class="text-xs text-dark-3">
+        <div class="text-xs text-dark-2">
           Early access {earlyAccessUsed} of {earlyAccessCap} active · up to {maxEarlyAccessDays} day{maxEarlyAccessDays ===
           1
             ? ''
@@ -253,15 +317,7 @@
       {/if}
 
       <div class="flex flex-col gap-3 rounded-lg border border-dark-4 p-3">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-sm font-semibold text-white">Pricing</span>
-          <span
-            class="rounded-full border border-dark-4 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-dark-2"
-            title="This version's usage control determines what buyers can purchase."
-          >
-            {usageLabel}
-          </span>
-        </div>
+        <span class="text-sm font-semibold text-white">Pricing</span>
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Price for access <span class="text-red-6">*</span></span>
           <NumberInput
@@ -271,7 +327,7 @@
             bind:value={ea.accessPrice}
             class="w-40"
           />
-          <span class="text-xs text-dark-3">
+          <span class="text-xs text-dark-2">
             {isGenOnly
               ? 'What buyers pay to generate with this version on-site.'
               : 'Buyers unlock download + generation.'}{#if priceCap != null}
@@ -314,7 +370,7 @@
               </div>
             </RadioGroup>
             {#if genMode === 'free'}
-              <span class="text-xs text-dark-3">
+              <span class="text-xs text-dark-2">
                 Anyone can generate on-site without buying; only the download is gated. Earn per
                 generation with a licensing fee instead.
               </span>
@@ -328,7 +384,7 @@
                   bind:value={ea.generationPrice}
                   class="w-40"
                 />
-                <span class="text-xs text-dark-3">
+                <span class="text-xs text-dark-2">
                   What buyers pay to generate on-site without unlocking the download. Can't exceed
                   the access price.
                 </span>
@@ -349,7 +405,7 @@
               placeholder="0"
               class="w-32"
             />
-            <span class="text-xs text-dark-3">
+            <span class="text-xs text-dark-2">
               Free test generations before purchase is required — clear or set 0 for none.
             </span>
           </label>
@@ -369,7 +425,7 @@
               Let the community unlock this early
             </Label>
           </div>
-          <span class="text-xs text-dark-3">
+          <span class="text-xs text-dark-2">
             If the goal is met before the window ends, early access ends and the version becomes
             free for everyone.
           </span>
@@ -385,7 +441,7 @@
               />
             </label>
             {#if hadDonationGoal}
-              <span class="text-xs text-dark-3">
+              <span class="text-xs text-dark-2">
                 This goal is already set and can't be changed here — manage it on civitai.com.
               </span>
             {/if}
@@ -398,7 +454,7 @@
           Set a price for access to turn on {ea.permanent ? 'paid' : 'early'} access.
         </p>
       {:else if !ea.permanent && !ea.timeframe}
-        <p class="text-xs text-dark-3">A duration of 0 turns early access off when you save.</p>
+        <p class="text-xs text-dark-2">A duration of 0 turns early access off when you save.</p>
       {/if}
 
       <SheetFooter class="flex-col gap-2 p-0">

@@ -69,3 +69,23 @@ export type PaidAccessConfig = {
   donationGoalEnabled: boolean;
   donationGoal?: number;
 };
+
+// The two usage controls a creator may choose for a version. InternalGeneration/ExternalGeneration are
+// moderator-only in the main app, so a version already on one of those is shown read-only instead.
+export const CREATOR_USAGE_CONTROLS = [
+  {
+    value: 'Download',
+    label: 'Download + generation',
+    hint: 'Buyers can download the files and generate on-site.',
+  },
+  {
+    value: 'Generation',
+    label: 'Generation only',
+    hint: 'On-site generation only — the files are never downloadable.',
+  },
+] as const;
+
+export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
+
+export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
+  CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

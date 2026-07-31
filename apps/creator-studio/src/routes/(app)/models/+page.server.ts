@@ -22,6 +22,7 @@ import {
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
 import { parseFeeCsv } from '$lib/server/monetization/fee-csv';
+import { bustVersionCache } from '$lib/server/monetization/bust-cache';
 import {
   setPaidAccessConfig,
   paidAccessFormSchema,
@@ -31,6 +32,8 @@ import {
   isVersionPermanent,
   currentAccessPrices,
   strictestCapMediaType,
+  isCreatorUsageControl,
+  setUsageControl,
   bulkSetPermanentAccess,
 } from '$lib/server/monetization/paid-access';
 import {
@@ -177,6 +180,7 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
     const result = await setLicensingFee(locals.user.id, membership, versionId.data, fee.data);
+    if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
     return { versionId: versionId.data };
@@ -236,6 +240,11 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
     const result = await bulkSetLicensingFeeVaried(locals.user.id, membership, entries);
+    if (result.ok)
+      await bustVersionCache(
+        request.headers.get('cookie') ?? '',
+        entries.map((e) => e.versionId)
+      );
     if (!result.ok) return fail(result.status, { apply: true, error: result.error });
     return { apply: true, updated: result.updated, skippedCount: result.skipped.length };
   },
@@ -253,6 +262,7 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
     const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, fee.data);
+    if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', versionIds.data);
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
 
     return { bulk: true, updated: result.updated };
@@ -314,6 +324,37 @@ export const actions: Actions = {
 
   // Paid access is written through the main app (see monetization/paid-access.ts). Not member-gated;
   // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
+  // Usage control is a property of the VERSION, not of its gate, so it saves on its own — a creator can
+  // flip a version to generation-only without also filling in pricing, and it stays reachable when paid
+  // access isn't available to them at all.
+  setUsageControl: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
+
+    const usageControl = form.get('usageControl');
+    if (!isCreatorUsageControl(usageControl))
+      return fail(400, { versionId: versionId.data, error: 'Invalid usage control.' });
+
+    // Mirrors the main app's rule: a version that isn't downloadable can't be charging for downloads.
+    // Writing directly means nothing else enforces it, so it has to be checked here.
+    if (usageControl === 'Generation') {
+      const prices = await currentAccessPrices(versionId.data);
+      if (prices.download > 0)
+        return fail(400, {
+          versionId: versionId.data,
+          error:
+            'This version charges for downloads. Clear the download price before switching to generation-only.',
+        });
+    }
+
+    const updated = await setUsageControl(locals.user.id, versionId.data, usageControl);
+    if (updated) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
+    if (!updated)
+      return fail(404, { versionId: versionId.data, error: 'Version not found or not yours.' });
+    return { versionId: versionId.data, usageControlSaved: true };
+  },
+
   setPaidAccess: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionId = versionIdSchema.safeParse(form.get('versionId'));
@@ -329,6 +370,9 @@ export const actions: Actions = {
       checkbox.parse(form.get('clear')) ||
       (!permanent && (!Number.isFinite(rawTimeframe) || rawTimeframe <= 0));
     if (turnOff) {
+      const usageOnly = form.get('usageControl');
+      if (isCreatorUsageControl(usageOnly))
+        await setUsageControl(locals.user.id, versionId.data, usageOnly);
       const result = await setPaidAccessConfig(cookie, versionId.data, null);
       if (!result.ok)
         return fail(result.status, { versionId: versionId.data, error: result.error });
@@ -360,12 +404,16 @@ export const actions: Actions = {
 
     // Only downloadable / on-site-generation versions can be gated (the endpoint also enforces this).
     const usageControl = config.data.usageControl;
-    if (usageControl && usageControl !== 'Download' && usageControl !== 'Generation')
+    if (usageControl && !isCreatorUsageControl(usageControl))
       return fail(400, {
         versionId: versionId.data,
         error: "Paid access isn't available for this version's usage control.",
       });
     const genOnly = usageControl === 'Generation';
+    // Persisted BEFORE the gate write: the main-app endpoint validates the terms against the STORED
+    // usage control, so a gen-only save would otherwise be judged against the old Download value.
+    if (isCreatorUsageControl(usageControl))
+      await setUsageControl(locals.user.id, versionId.data, usageControl);
 
     // Price cap applies to timed and permanent alike — the charge is what's capped, not the duration. Only an
     // INCREASE is rejected: the editor resubmits the stored price on every save, so capping the submitted
