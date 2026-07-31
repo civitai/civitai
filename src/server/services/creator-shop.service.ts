@@ -7,8 +7,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
-import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   throwAuthorizationError,
@@ -599,21 +598,21 @@ export const getCreatorShop = async ({
 
   // A block between viewer and shop owner (either direction) hides the whole
   // shop — same NotFound as a private shop so the block isn't revealed.
-  if (
-    !preview &&
-    !isModerator &&
-    viewerId &&
-    viewerId !== userId &&
-    (await getBlockedPairIds(viewerId)).includes(userId)
-  )
-    throw throwNotFoundError('Shop not found');
+  const viewerPairIds =
+    !preview && !isModerator && viewerId && viewerId !== userId
+      ? await getBlockedPairIds(viewerId)
+      : [];
+  if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
 
   const now = new Date();
   const resoldIds = settings.resoldItemIds ?? [];
-  // A block between the shop owner and an item's creator (either direction,
-  // possibly after the listing was added) removes it from the storefront; the
-  // owner still sees it in their manage list so they can remove it.
-  const blockedPairIds = preview ? [] : await getBlockedPairIds(userId);
+  // Blocks remove a resold item from the storefront: owner↔item-creator (the
+  // block forbids the resale pairing; the owner still sees it in their manage
+  // list so they can remove it) and viewer↔item-creator (a creator who blocked
+  // the viewer shouldn't surface in any shop the viewer browses).
+  const blockedPairIds = preview
+    ? []
+    : [...new Set([...(await getBlockedPairIds(userId)), ...viewerPairIds])];
   const [items, resoldItems, earlyAccessModelCount] = await Promise.all([
     dbRead.cosmeticShopItem.findMany({
       where: {
@@ -721,9 +720,14 @@ export const getCommunityCosmetics = async ({
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
-      // Creator-submitted only (official cosmetics have no creator).
+      // Creator-submitted only (official cosmetics have no creator). Blocks
+      // filter both the original creator and the lister — they can differ on
+      // cross-listed items.
       cosmetic: {
-        createdById: { not: null },
+        createdById: {
+          not: null,
+          ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+        },
         ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
       },
       // Only items whose owner's shop is public.
@@ -838,20 +842,6 @@ export const getPublicShopItemsForResale = async ({
     isResold: alreadyResold.includes(i.id),
   }));
   return { items, nextCursor };
-};
-
-// User ids the given user has a block relationship with, in either direction —
-// a block forbids resale pairings between the two users.
-const getBlockedPairIds = async (userId: number) => {
-  const [blockedBy, blocked] = await Promise.all([
-    BlockedByUsers.getCached({ userId }),
-    BlockedUsers.getCached({ userId }),
-  ]);
-  return boundExcludedUserIds(
-    [],
-    blockedBy.map((u) => u.id),
-    blocked.map((u) => u.id)
-  );
 };
 
 // Load + validate a sellable shop item the caller may resell.
