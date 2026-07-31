@@ -93,15 +93,40 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
         return;
       }
 
-      // Merge into existing metadata
-      const existingMetadata = parseChallengeMetadata(challenge.metadata);
-      const newMetadata = { ...existingMetadata, themeElements: elements };
-
-      await dbWrite.$executeRaw`
+      // Merge server-side rather than writing back the snapshot read before the (multi-second)
+      // generation call above. Two separate reasons, both load-bearing:
+      //
+      // 1. STATUS PREDICATE. The SELECT ran on the read replica and only filtered
+      //    Active/Scheduled. `claimChallengeForCompletion` can flip this challenge to Completing
+      //    while `generateThemeElements` is in flight, stamping metadata.completingClaimedAt as it
+      //    goes. An unpredicated write would then restore the PRE-CLAIM snapshot on top of the
+      //    fresh stamp, leaving status=Completing with no completingClaimedAt — a state the
+      //    NULL-propagating stuck-challenge reset never selects, so the challenge wedges
+      //    permanently. `?force=true` widens the exposure to every themed Active/Scheduled
+      //    challenge at once. Same guard shape (and same reasoning) as the conditional updateMany
+      //    in upsertChallenge.
+      // 2. JSONB MERGE. Even inside Active/Scheduled, writing the whole column clobbers any other
+      //    metadata field written during the generation window. Concatenating onto the CURRENT
+      //    stored value touches only themeElements. The CASE normalises a NULL/non-object metadata
+      //    to {} so the result stays an object (`||` would otherwise concatenate arrays).
+      const themeElementsPatch = JSON.stringify({ themeElements: elements });
+      const updatedRows = await dbWrite.$executeRaw`
         UPDATE "Challenge"
-        SET metadata = ${JSON.stringify(newMetadata)}::jsonb
+        SET metadata =
+          CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata ELSE '{}'::jsonb END
+          || ${themeElementsPatch}::jsonb
         WHERE id = ${challenge.id}
+          AND status IN ('Active', 'Scheduled')
       `;
+
+      if (updatedRows === 0) {
+        results.push({
+          id: challenge.id,
+          theme: challenge.theme,
+          status: 'skipped: no longer Active/Scheduled',
+        });
+        return;
+      }
 
       successes++;
       results.push({

@@ -1417,9 +1417,15 @@ export async function upsertChallenge({
 
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
-      // Update the challenge
-      const updated = await tx.challenge.update({
-        where: { id },
+      // Conditional on the status we VALIDATED, for the same reason as the Scheduled-only edit
+      // path below: the findUnique above ran on the read replica, and `tryGenerateThemeElements`
+      // can spend seconds in an LLM call before we get here. `claimChallengeForCompletion` may
+      // have flipped the challenge to Completing in that window. An unconditional update would
+      // then write `data.status` (pinned back to the pre-read Active) and the stale metadata
+      // snapshot over the fresh claim — un-claiming a challenge mid-completion and dropping the
+      // completingClaimedAt stamp the stuck-challenge reset keys off.
+      const { count } = await tx.challenge.updateMany({
+        where: { id, status: challenge.status },
         data: {
           ...data,
           nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
@@ -1438,6 +1444,12 @@ export async function upsertChallenge({
           }),
         },
       });
+      if (count === 0)
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Challenge status changed while saving. Reload and try again.',
+        });
+      const updated = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       // Sync collection metadata if challenge has a collection
       if (challenge.collectionId) {

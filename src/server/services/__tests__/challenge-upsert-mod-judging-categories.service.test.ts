@@ -15,7 +15,10 @@ const { mockDbRead, mockDbWrite, mockTx, mockCreateImage, mockGetChallengeConfig
   () => {
     const tx = {
       challenge: {
-        update: vi.fn().mockResolvedValue({ id: 1 }),
+        // The update path writes through a status-predicated `updateMany` (so a challenge claimed
+        // for completion mid-save is not silently un-claimed), then re-reads the row to return it.
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 1 }),
         create: vi.fn().mockResolvedValue({ id: 2 }),
       },
       collection: {
@@ -192,7 +195,8 @@ const baseInput = {
 describe('upsertChallenge (moderator path) — judgingCategories', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockTx.challenge.update.mockResolvedValue({ id: 1 });
+    mockTx.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockTx.challenge.findUniqueOrThrow.mockResolvedValue({ id: 1 });
     mockTx.challenge.create.mockResolvedValue({ id: 2 });
     mockTx.collection.create.mockResolvedValue({ id: 10 });
     mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockTx));
@@ -250,8 +254,8 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
       judgingCategories: VALID_CATEGORIES,
     } as never);
 
-    expect(mockTx.challenge.update).toHaveBeenCalledTimes(1);
-    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    expect(mockTx.challenge.updateMany).toHaveBeenCalledTimes(1);
+    const callArg = mockTx.challenge.updateMany.mock.calls[0][0];
     expect(callArg.data.judgingCategories).toEqual(RESOLVED_CATEGORIES);
     expect(callArg.data.judgingPrompt).toBe('Custom AI persona prompt');
   });
@@ -277,7 +281,7 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
 
     await upsertChallenge({ ...baseInput, id: 1, judgingCategories: null } as never);
 
-    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    const callArg = mockTx.challenge.updateMany.mock.calls[0][0];
     expect(callArg.data.judgingCategories).toBe(Prisma.JsonNull);
   });
 
@@ -311,7 +315,7 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
       judgingCategories: VALID_CATEGORIES,
     } as never);
 
-    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    const callArg = mockTx.challenge.updateMany.mock.calls[0][0];
     expect(callArg.data.judgingCategories).toEqual(stored);
   });
 
@@ -342,7 +346,7 @@ describe('upsertChallenge (moderator path) — judgingCategories', () => {
       judgingCategories: VALID_CATEGORIES,
     } as never);
 
-    const callArg = mockTx.challenge.update.mock.calls[0][0];
+    const callArg = mockTx.challenge.updateMany.mock.calls[0][0];
     expect(callArg.data.judgingCategories).toBe(Prisma.JsonNull);
   });
 });
