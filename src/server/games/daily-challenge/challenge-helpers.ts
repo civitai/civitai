@@ -21,7 +21,6 @@ import {
 import {
   CHALLENGE_JOB_BATCH_SIZE,
   DEFAULT_CATEGORY_ROWS,
-  isDefaultJudgingRubric,
 } from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
@@ -992,10 +991,9 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
 
 /**
  * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
- * A challenge with a custom rubric is judged by it; a default-split or malformed/corrupt rubric
- * resolves to `undefined`, which keeps the fixed theme/wittiness/humor/aesthetic scoring schema
- * (see isDefaultJudgingRubric). Mirrors reviewEntriesForChallenge
- * (~/server/jobs/daily-challenge-processing.ts).
+ * Every challenge is judged by its stored rubric; only a malformed/corrupt value resolves to
+ * `undefined`, which falls back to the fixed theme/wittiness/humor/aesthetic scoring schema.
+ * Mirrors reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts).
  */
 export async function resolveChallengeReviewInputs(challenge: {
   source: ChallengeSource;
@@ -1008,10 +1006,9 @@ export async function resolveChallengeReviewInputs(challenge: {
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
     challenge.judgingCategories
   );
-  const parsedCategories: ChallengeJudgingCategory[] | undefined = userJudgingCategories.success
+  const userCategories: ChallengeJudgingCategory[] | undefined = userJudgingCategories.success
     ? userJudgingCategories.data
     : undefined;
-  const userCategories = isDefaultJudgingRubric(parsedCategories) ? undefined : parsedCategories;
 
   return {
     categories: userCategories?.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria })),

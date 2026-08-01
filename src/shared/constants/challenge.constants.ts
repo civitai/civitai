@@ -167,21 +167,6 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
   { ...makeRow('aesthetic'), weight: 20 },
 ];
 
-/**
- * True when a rubric is the default split, ignoring row order. Callers pass `undefined` categories
- * to `generateReview` for these so the review keeps emitting the fixed lowercase score keys — every
- * challenge now stores judgingCategories, and flipping the default ones to label-cased keys would
- * split the historical note data for no scoring benefit (the rubric text sent to the judge is the
- * same either way).
- */
-export function isDefaultJudgingRubric(
-  categories?: { key: string; weight: number }[] | null
-): boolean {
-  if (!categories?.length || categories.length !== DEFAULT_CATEGORY_ROWS.length) return false;
-  const byKey = new Map(categories.map((c) => [c.key, c.weight]));
-  return DEFAULT_CATEGORY_ROWS.every((row) => byKey.get(row.key) === row.weight);
-}
-
 // Judges a public-challenge creator may pick. Keyed on NAME (env-stable). "CivChan NSFW" is
 // excluded even though user challenges can allow NSFW levels — it shares CivChan's userId, and
 // NSFW entries are judged with the standard rubrics for now (product call pending).
