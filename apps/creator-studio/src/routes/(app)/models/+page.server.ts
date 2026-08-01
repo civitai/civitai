@@ -413,10 +413,9 @@ export const actions: Actions = {
     if (isCreatorUsageControl(usageControl))
       await setUsageControl(locals.user.id, versionId.data, usageControl);
 
-    // Price cap applies to timed and permanent alike — the charge is what's capped, not the duration. Only an
-    // INCREASE is rejected: the editor resubmits the stored price on every save, so capping the submitted
-    // value outright would make an over-cap version uneditable after a lapse (the same class of bug that
-    // 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
+    // Only an INCREASE is rejected: the editor resubmits the stored price on every save, so capping the
+    // submitted value outright would make an over-cap version uneditable after a lapse (the same class of
+    // bug that 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
     // Permanent gates only: a timed early-access window has no price ceiling, because the version becomes
     // free when the window closes. Mirrors assertPaidAccessCaps in the main app.
     if (!locals.user.isModerator && permanent) {

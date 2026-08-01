@@ -2019,7 +2019,9 @@ export const earlyAccessPurchase = async ({
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
-      description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
+        modelVersion.model.name
+      } - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],

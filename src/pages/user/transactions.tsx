@@ -16,7 +16,8 @@ import {
   Title,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
-import { IconBolt, IconDownload } from '@tabler/icons-react';
+import { IconDownload } from '@tabler/icons-react';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -265,6 +266,9 @@ export default function UserTransactions() {
               let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
               const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
+              // The bolt is colored by buzz type, never by direction: green already NAMES a buzz type,
+              // so tinting credits green labelled every yellow gain as green buzz (CU 868kk3aw1).
+              const spendType = buzzSpendTypes.find((t) => t === accountType);
               const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
@@ -286,10 +290,11 @@ export default function UserTransactions() {
                           </Badge>
                         )}
                       </Group>
-                      <Text c={isDebit ? 'red' : 'green'}>
+                      <Text c={isDebit ? 'red' : undefined}>
                         <Group gap={4}>
-                          <IconBolt size={16} fill="currentColor" />
+                          <CurrencyIcon currency="BUZZ" size={16} type={spendType} />
                           <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
+                            {isDebit ? '' : '+'}
                             {amount.toLocaleString()}
                           </Text>
                         </Group>
