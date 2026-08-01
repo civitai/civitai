@@ -171,6 +171,20 @@ const blockSourceImageSchema = z.object({
   height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
 });
 
+export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
+
+// ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
+// ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
+// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
+// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
+// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
+// Grok 7). This constant only stops an untrusted iframe from posting an
+// unbounded array before the body is even parsed — it is set ABOVE the largest
+// per-ecosystem cap on purpose so a future ecosystem raising its own limit is
+// not silently clamped here. Every element is validated individually against
+// `blockSourceImageSchema` (Civitai-host + dimension bounds), never just [0].
+export const BLOCK_SOURCE_IMAGES_WIRE_MAX = 10;
+
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
   modelId: z.number().int().positive(),
@@ -195,7 +209,34 @@ const blockTextToImageBodySchema = z.object({
   // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
   // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
   // never relying on the graph's safeParse auto-correction).
+  //
+  // 🔴 DEPRECATED ALIAS — kept working indefinitely. The published developer
+  // docs and `@civitai/app-sdk` both ship `sourceImage` today, so removing it
+  // would break every deployed block. `sourceImages` (below) is the current
+  // field; the server normalizes the singular into a 1-element array
+  // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
+  // Multi-image conditioning. The graph layer has always supported N images
+  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
+  // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
+  // per-image posture as the singular one, with no "first element only" gap.
+  //
+  // Bounds: `.min(1)` — an EMPTY array is REJECTED rather than silently treated
+  // as "no source image". A caller that sends `sourceImages: []` computed an
+  // empty list and meant to send images; quietly downgrading that to a txt2img
+  // generation would bill them for something they did not ask for, which is the
+  // silent-wrong-answer failure mode this bridge has already been bitten by.
+  // Omit the field entirely for txt2img. `.max()` is the absolute wire bound —
+  // the REAL cap is per-ecosystem and enforced in buildImageWorkflowInput.
+  //
+  // Supplying BOTH `sourceImage` and `sourceImages` is rejected as ambiguous
+  // (see the union-level check below) rather than picking a winner.
+  sourceImages: z
+    .array(blockSourceImageSchema)
+    .min(1, 'sourceImages must not be empty — omit the field for text-to-image')
+    .max(BLOCK_SOURCE_IMAGES_WIRE_MAX)
+    .optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
   // present, blocks.router moves it to the FRONT of the domain-allowed currency
@@ -232,6 +273,21 @@ const blockTextToImageBodySchema = z.object({
   }),
 });
 
+// Supplying BOTH the deprecated `sourceImage` and the current `sourceImages` is
+// AMBIGUOUS — we refuse rather than pick a winner. Silently preferring one is
+// exactly how a caller ends up conditioning on an image it thought it had
+// replaced. Enforced at the WIRE schema so both `estimateWorkflow` and
+// `submitWorkflow` inherit it from the single parse, with no way to reach the
+// translator holding both.
+const blockTextToImageBodySchemaChecked = blockTextToImageBodySchema.refine(
+  (body) => !(body.sourceImage && body.sourceImages),
+  {
+    path: ['sourceImages'],
+    message:
+      'send either `sourceImage` (deprecated) or `sourceImages`, not both — they are ambiguous together',
+  }
+);
+
 // App Blocks customComfy bridge (v1). Coarse fail-closed wire gate only:
 //  - `recipe` MUST be a REGISTERED recipe id (derived from the recipe registry
 //    keys) — an unregistered id is rejected at the union, before any translator
@@ -251,7 +307,7 @@ export const blockCustomComfyBodySchema = z
 
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
-  blockTextToImageBodySchema,
+  blockTextToImageBodySchemaChecked,
   blockCustomComfyBodySchema,
 ]);
 
