@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "Cosmetic" ADD COLUMN "pHash" BIGINT;
+ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS "pHash" BIGINT;
