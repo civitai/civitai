@@ -117,6 +117,13 @@ export const isTimedGateActive = (
 ): boolean => row.endsAt != null && row.endsAt > now;
 
 /**
+ * Permanent <=> the gate carries no window length. `endsAt` can't answer this: a timed gate on an
+ * unpublished version also has `endsAt` NULL until publish materializes it.
+ */
+export const isPermanentGate = (row: Pick<PaidAccessRow, 'timeframeDays'>): boolean =>
+  row.timeframeDays == null;
+
+/**
  * Free trial generations a paid generation-only tier grants before purchase (absent → default,
  * matching mini/[id].ts's COALESCE so the two endpoints agree; 0 = none).
  */
@@ -174,7 +181,10 @@ export function maxPermanentAccessModels(tier: string | null | undefined): numbe
   );
 }
 
-/** Highest price a tier may charge for paid access. Unknown/lapsed tiers get the FREE cap (see above). */
+/**
+ * Highest price a tier may charge for PERMANENT paid access. Unknown/lapsed tiers get the FREE cap
+ * (see above). Timed Early Access is not bound by it — use `paidAccessPriceCap` for a specific gate.
+ */
 export function maxPaidAccessPrice(
   tier: string | null | undefined,
   mediaType?: CapMediaType
@@ -182,6 +192,22 @@ export function maxPaidAccessPrice(
   const base =
     (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
   return mediaType === 'video' ? base * VIDEO_CAP_MULTIPLIER : base;
+}
+
+/** Which side of the cap rule a gate falls on. Derive it with `isPermanentGate` when you hold a row. */
+export type GateKind = { permanent: boolean };
+
+/**
+ * The price ceiling for ONE gate. Membership caps bind PERMANENT paid access only: a timed Early
+ * Access window charges the creator's stored price at every tier, as it did before the caps existed.
+ * Applying the tier cap to timed windows charged buyers 500 on 10k windows (CU 868kk3avk).
+ */
+export function paidAccessPriceCap(
+  { permanent }: GateKind,
+  tier: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  return permanent ? maxPaidAccessPrice(tier, mediaType) : Infinity;
 }
 
 // Tiers a creator can actually be shown, cheapest first. `founder` is omitted deliberately: it's a legacy
@@ -300,17 +326,18 @@ export const raisesOverCap = (
 ): boolean => next != null && next > cap && next > current;
 
 /**
- * What a buyer is actually charged: the stored price, lowered to whatever the OWNER's current tier may
- * charge. A lapse drops prices to the free cap without touching the stored value, so re-subscribing
- * restores the original automatically (CU 868kj4q4j).
+ * What a buyer is actually charged on a PERMANENT gate: the stored price, lowered to whatever the
+ * OWNER's current tier may charge. A lapse drops prices to the free cap without touching the stored
+ * value, so re-subscribing restores the original automatically (CU 868kj4q4j). A timed gate passes
+ * `permanent: false` and keeps the stored price at every tier.
  */
 export function effectivePaidAccessPrice(
   storedPrice: number | null | undefined,
   ownerTier: string | null | undefined,
-  mediaType?: CapMediaType
+  opts: GateKind & { mediaType?: CapMediaType }
 ): number {
   if (storedPrice == null || storedPrice <= 0) return 0;
-  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, mediaType));
+  return Math.min(storedPrice, paidAccessPriceCap(opts, ownerTier, opts.mediaType));
 }
 
 /**
@@ -321,7 +348,7 @@ export function effectivePaidAccessPrice(
 export function cappedTerms(
   terms: ModelVersionTerms,
   ownerTier: string | null,
-  mediaType?: CapMediaType
+  opts: GateKind & { mediaType?: CapMediaType }
 ): ModelVersionTerms {
   const paidGen = paidGenerationGrant(terms);
   return {
@@ -330,7 +357,7 @@ export function cappedTerms(
       ? {
           download: {
             ...terms.download,
-            price: effectivePaidAccessPrice(terms.download.price, ownerTier, mediaType),
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier, opts),
           },
         }
       : {}),
@@ -338,7 +365,7 @@ export function cappedTerms(
       ? {
           generation: {
             ...paidGen,
-            price: effectivePaidAccessPrice(paidGen.price, ownerTier, mediaType),
+            price: effectivePaidAccessPrice(paidGen.price, ownerTier, opts),
           },
         }
       : {}),

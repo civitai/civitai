@@ -88,6 +88,7 @@ import {
   maxLicensingFeeCeiling,
   capMediaType,
   maxPaidAccessPrice,
+  paidAccessPriceCap,
   ratioToFee,
   suggestedFeePerImage,
 } from '@civitai/buzz';
@@ -436,7 +437,12 @@ export function ModelVersionUpsertForm({
     ? [...FEE_IMAGE_OPTIONS]
     : feeImageOptionsForCap(feeCapTier, model?.type, feeMediaType);
   // Infinity (gold/moderator) falls back to MAX_DONATION_GOAL: an infinite `max` renders as no cap at all.
-  const tierPriceCap = maxPaidAccessPrice(feeCapTier, feeMediaType);
+  // A timed Early Access window is uncapped too, so switching Access mode moves the ceiling with it.
+  const tierPriceCap = paidAccessPriceCap(
+    { permanent: paidAccessConfig?.permanent ?? false },
+    feeCapTier,
+    feeMediaType
+  );
   const paidAccessCap =
     currentUser?.isModerator || !Number.isFinite(tierPriceCap) ? MAX_DONATION_GOAL : tierPriceCap;
   const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;

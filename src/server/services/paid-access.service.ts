@@ -6,6 +6,7 @@ import {
   effectiveLicensingFee,
   gatePrices,
   isPaidAccessActive,
+  isPermanentGate,
   maxPaidAccessPrice,
   maxPermanentAccessModels,
   raisesOverCap,
@@ -247,12 +248,16 @@ export async function getViewerMonetization({
     versions.map((v) => v.id)
   );
   const ownerOf = (v: { id: number; ownerId?: number }) => v.ownerId ?? rows[v.id]?.ownerId;
+  // A timed gate's price isn't tier-capped, so it needs no tier lookup on its own account — only a
+  // permanent gate's price or a licensing fee does.
   const cappable = versions.filter((v) => {
     const ownerId = ownerOf(v);
+    const row = rows[v.id];
+    const cappablePrice = !!row && isPermanentGate(row) && hasChargeablePrice(row.terms);
     return (
       ownerId != null &&
       !isOwnerOrModView(viewer, ownerId) &&
-      (hasChargeablePrice(rows[v.id]?.terms) || (v.licensingFee ?? 0) > 0)
+      (cappablePrice || (v.licensingFee ?? 0) > 0)
     );
   });
   const capTiers = await getCapTiers(cappable.map(ownerOf));
@@ -270,7 +275,13 @@ export async function getViewerMonetization({
     const mediaType = capMediaType(v.baseModel);
     out[v.id] = {
       paidAccess: row
-        ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier, mediaType) }
+        ? {
+            ...row,
+            terms: cappedTerms(row.terms as ModelVersionTerms, tier, {
+              mediaType,
+              permanent: isPermanentGate(row),
+            }),
+          }
         : undefined,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
@@ -296,6 +307,9 @@ export async function assertPaidAccessCaps({
   baseModel?: string | null;
 }) {
   if (isModerator || !paidAccess) return;
+  // Both caps bind PERMANENT paid access only — a timed Early Access window may be priced freely at any
+  // tier, as it was before the caps existed (CU 868kk3avk).
+  if (!paidAccess.permanent) return;
 
   const existing = versionId
     ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
@@ -314,18 +328,16 @@ export async function assertPaidAccessCaps({
     );
 
   // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
-  if (paidAccess.permanent) {
-    const alreadyPermanent = existing != null && existing.timeframeDays == null;
-    const limit = maxPermanentAccessModels(tier);
-    if (!alreadyPermanent && Number.isFinite(limit)) {
-      const used = await countUserPermanentAccessVersions(userId, versionId);
-      if (used + 1 > limit)
-        throw throwBadRequestError(
-          `Your tier allows up to ${limit} permanent paid-access model${
-            limit === 1 ? '' : 's'
-          }. Upgrade your membership for more.`
-        );
-    }
+  const alreadyPermanent = existing != null && existing.timeframeDays == null;
+  const limit = maxPermanentAccessModels(tier);
+  if (!alreadyPermanent && Number.isFinite(limit)) {
+    const used = await countUserPermanentAccessVersions(userId, versionId);
+    if (used + 1 > limit)
+      throw throwBadRequestError(
+        `Your tier allows up to ${limit} permanent paid-access model${
+          limit === 1 ? '' : 's'
+        }. Upgrade your membership for more.`
+      );
   }
 }
 

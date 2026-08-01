@@ -73,11 +73,15 @@
   // Seed once from the version at mount (the parent remounts via `{#key version.id}` on open).
   let ea = $state(untrack(() => seed(version)));
 
+  // Membership caps bind PERMANENT paid access; a timed early-access window is priced freely at every
+  // tier (CU 868kk3avk), so the ceiling moves with the Access mode toggle.
+  const effectiveCap = $derived(ea.permanent ? priceCap : null);
+
   // max never drops below the stored price: the server blocks only RAISES, so clamping down would silently
   // cut a grandfathered price on any unrelated edit.
   const storedAccess = $derived(version.paidAccessConfig?.accessPrice ?? 0);
-  const accessMax = $derived(priceCap == null ? undefined : Math.max(priceCap, storedAccess));
-  const overCap = $derived(priceCap != null && (ea.accessPrice ?? 0) > priceCap);
+  const accessMax = $derived(effectiveCap == null ? undefined : Math.max(effectiveCap, storedAccess));
+  const overCap = $derived(effectiveCap != null && (ea.accessPrice ?? 0) > effectiveCap);
   // The generation-only tier can't exceed the access price, and neither may exceed the tier's ceiling.
   const genPriceMax = $derived(
     accessMax == null ? ea.accessPrice : Math.min(ea.accessPrice ?? accessMax, accessMax)
@@ -331,14 +335,14 @@
           <span class="text-xs text-dark-2">
             {isGenOnly
               ? 'What buyers pay to generate with this version on-site.'
-              : 'Buyers unlock download + generation.'}{#if priceCap != null}
-              Your membership allows up to {priceCap.toLocaleString()} ⚡.
+              : 'Buyers unlock download + generation.'}{#if effectiveCap != null}
+              Your membership allows up to {effectiveCap.toLocaleString()} ⚡.
             {/if}
           </span>
           <div>
             <CapUpsell
               value={ea.accessPrice}
-              cap={priceCap ?? Infinity}
+              cap={effectiveCap ?? Infinity}
               capTier={caps.capTier}
               capFor={(t) => maxPaidAccessPrice(t, capMediaType(version.baseModel))}
               title="Price for access"

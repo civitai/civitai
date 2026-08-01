@@ -415,11 +415,11 @@ export const actions: Actions = {
     if (isCreatorUsageControl(usageControl))
       await setUsageControl(locals.user.id, versionId.data, usageControl);
 
-    // Price cap applies to timed and permanent alike — the charge is what's capped, not the duration. Only an
-    // INCREASE is rejected: the editor resubmits the stored price on every save, so capping the submitted
-    // value outright would make an over-cap version uneditable after a lapse (the same class of bug that
-    // 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
-    if (!locals.user.isModerator) {
+    // Price cap binds PERMANENT paid access only — a timed early-access window is priced freely at every
+    // tier (CU 868kk3avk). Only an INCREASE is rejected: the editor resubmits the stored price on every
+    // save, so capping the submitted value outright would make an over-cap version uneditable after a lapse
+    // (the same class of bug that 82f64846ba had to hot-fix in the main app).
+    if (permanent && !locals.user.isModerator) {
       const priceCap = maxPaidAccessPrice(
         cappedTier(membership),
         await strictestCapMediaType([versionId.data])

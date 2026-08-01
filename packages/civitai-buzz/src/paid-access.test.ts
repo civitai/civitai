@@ -8,13 +8,16 @@ import {
   grantsGeneration,
   isFreeGeneration,
   isPaidAccessActive,
+  isPermanentGate,
   isTimedGateActive,
   paidGenerationGrant,
   CAP_TIERS,
   nextCapTier,
   shouldUpsellCap,
   cappedTerms,
+  effectivePaidAccessPrice,
   maxPaidAccessPrice,
+  paidAccessPriceCap,
   maxPermanentAccessModels,
   tierCapRows,
   type ModelVersionTerms,
@@ -220,8 +223,46 @@ describe('video pricing — every ceiling is 5x on a video model', () => {
 
   it('prices gate terms against the video cap', () => {
     const terms = { download: { price: 5000 } };
-    expect(cappedTerms(terms, 'free', 'image')).toEqual({ download: { price: 500 } });
-    expect(cappedTerms(terms, 'free', 'video')).toEqual({ download: { price: 2500 } });
+    expect(cappedTerms(terms, 'free', { mediaType: 'image', permanent: true })).toEqual({
+      download: { price: 500 },
+    });
+    expect(cappedTerms(terms, 'free', { mediaType: 'video', permanent: true })).toEqual({
+      download: { price: 2500 },
+    });
+  });
+});
+
+describe('the cap binds permanent gates only (CU 868kk3avk)', () => {
+  it('leaves a timed gate at its stored price on the free tier', () => {
+    expect(effectivePaidAccessPrice(10000, null, { permanent: false })).toBe(10000);
+    expect(effectivePaidAccessPrice(10000, 'free', { permanent: false })).toBe(10000);
+    expect(effectivePaidAccessPrice(10000, 'bronze', { mediaType: 'video', permanent: false })).toBe(
+      10000
+    );
+  });
+
+  it('still caps a permanent gate at the owner tier', () => {
+    expect(effectivePaidAccessPrice(10000, null, { permanent: true })).toBe(500);
+    expect(effectivePaidAccessPrice(10000, 'free', { permanent: true })).toBe(500);
+    expect(effectivePaidAccessPrice(10000, 'silver', { permanent: true })).toBe(5000);
+    expect(effectivePaidAccessPrice(10000, 'gold', { permanent: true })).toBe(10000);
+  });
+
+  it('leaves both tiers of a timed gate uncapped', () => {
+    const terms = { download: { price: 15000 }, generation: { price: 9000, trialLimit: 10 } };
+    expect(cappedTerms(terms, 'free', { mediaType: 'image', permanent: false })).toEqual(terms);
+  });
+
+  it('reports Infinity as the ceiling for a timed gate', () => {
+    expect(paidAccessPriceCap({ permanent: false }, 'free')).toBe(Infinity);
+    expect(paidAccessPriceCap({ permanent: true }, 'free')).toBe(500);
+  });
+
+  it('reads permanence off timeframeDays — endsAt cannot tell a pending window apart', () => {
+    // A timed gate on an unpublished version also carries endsAt NULL until publish materializes it.
+    expect(isPermanentGate({ timeframeDays: null })).toBe(true);
+    expect(isPermanentGate({ timeframeDays: undefined })).toBe(true);
+    expect(isPermanentGate({ timeframeDays: 15 })).toBe(false);
   });
 });
 
