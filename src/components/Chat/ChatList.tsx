@@ -53,6 +53,7 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { BlurText } from '~/components/BlurText/BlurText';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { stripEmojiTokens } from '~/shared/utils/emoji-token';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -430,7 +431,7 @@ export function ChatList() {
                           }}
                           blur={replaceBadWords || domainColor === 'green'}
                         >
-                          {d.messages[0].content}
+                          {stripEmojiTokens(d.messages[0].content)}
                         </BlurText>
                       )}
                     </Stack>

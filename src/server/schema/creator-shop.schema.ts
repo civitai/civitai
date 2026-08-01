@@ -43,6 +43,10 @@ export const creatorCosmeticTypes = [
   CosmeticType.ProfileBackground,
 ] as const;
 
+export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
+export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
+  (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
+
 // Per-type artwork requirements. `exact` = dimensions must match exactly,
 // otherwise width/height are treated as minimums.
 export type CosmeticImageRequirement = {
@@ -131,7 +135,7 @@ export const cosmeticOffsetsSchema = z.object({
 
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z.object({
-  cosmeticType: z.enum(CosmeticType),
+  cosmeticType: z.enum(creatorCosmeticTypes),
   name: z.string().min(1).max(255),
   description: z.string().max(1000).nullish(),
   // CF image id from the upload. The server builds the cosmetic `data` from this

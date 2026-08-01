@@ -10,6 +10,9 @@ export type ResolvedEmoji = {
   animated?: boolean;
 };
 
+/** Matches the `ids` cap on `getEmojiCosmeticsSchema`. */
+const EMOJI_FETCH_CHUNK = 100;
+
 const obtainedTime = (value?: Date) => {
   const time = value ? new Date(value).getTime() : NaN;
   return Number.isNaN(time) ? 0 : time;
@@ -46,11 +49,33 @@ export function useOwnedEmoji() {
   return { emoji, bySlug, isLoading };
 }
 
-export function useEmojiCosmetic(cosmeticId: number) {
-  const { data, isLoading } = trpc.cosmetic.getEmoji.useQuery(
-    { ids: [cosmeticId] },
-    { enabled: cosmeticId > 0, staleTime: Infinity, gcTime: Infinity }
+/**
+ * One request per 100 distinct ids for a whole surface, rather than one per
+ * rendered emoji — tRPC request batching sits behind a feature flag that is off
+ * by default, so per-component queries would be per-component HTTP requests.
+ */
+export function useEmojiCosmetics(ids: number[]) {
+  const chunks = useMemo(() => {
+    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    const result: number[][] = [];
+    for (let i = 0; i < unique.length; i += EMOJI_FETCH_CHUNK)
+      result.push(unique.slice(i, i + EMOJI_FETCH_CHUNK));
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(',')]);
+
+  const queries = trpc.useQueries((t) =>
+    chunks.map((chunk) =>
+      t.cosmetic.getEmoji({ ids: chunk }, { staleTime: Infinity, gcTime: Infinity })
+    )
   );
 
-  return { emoji: data?.[0], isLoading };
+  const emoji = useMemo(() => {
+    const map = new Map<number, ResolvedEmoji>();
+    for (const query of queries) for (const item of query.data ?? []) map.set(item.id, item);
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
+
+  return { emoji, isLoading: queries.some((q) => q.isLoading) };
 }

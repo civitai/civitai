@@ -63,11 +63,17 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
-import { BlurText } from '~/components/BlurText/BlurText';
 import { Emoji } from '~/components/Emoji/Emoji';
 import { EmojiPicker } from '~/components/Emoji/EmojiPicker';
+import { EmojiProvider } from '~/components/Emoji/EmojiProvider';
 import { useOwnedEmoji } from '~/components/Emoji/emoji.util';
-import { parseEmojiContent, resolveEmojiTokens } from '~/shared/utils/emoji-token';
+import { useCleanText } from '~/hooks/useCheckProfanity';
+import {
+  parseEmojiContent,
+  parseEmojiIds,
+  resolveEmojiTokens,
+  stripEmojiTokens,
+} from '~/shared/utils/emoji-token';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -538,14 +544,10 @@ export function ExistingChat() {
               <ScamWarningContent chatId={existingChatId!} />
             </Alert>
             {messagesChronological.length > 0 && (
-              <Text
-                mb="md"
-                p="sm"
-                size="xs"
-                italic
-                align="center"
-              >{`"${messagesChronological[0].content.slice(0, 70)}${
-                messagesChronological[0].content.length > 70 ? '...' : ''
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${stripEmojiTokens(
+                messagesChronological[0].content
+              ).slice(0, 70)}${
+                stripEmojiTokens(messagesChronological[0].content).length > 70 ? '...' : ''
               }"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
@@ -719,7 +721,9 @@ function ChatInputBox({
     setIsSending(true);
     mutate({
       chatId: existingChatId!,
-      content: resolveEmojiTokens(strippedMessage, (slug) => ownedEmoji.bySlug.get(slug)?.id),
+      content: resolveEmojiTokens(strippedMessage, {
+        resolveSlug: (slug) => ownedEmoji.bySlug.get(slug)?.id,
+      }),
       referenceMessageId: replyId,
     });
   };
@@ -872,156 +876,209 @@ function DisplayMessages({
     replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
   );
 
+  const emojiIds = useMemo(
+    () => [
+      ...new Set([
+        ...chats.flatMap((c) => parseEmojiIds(c.content)),
+        ...replyData.flatMap((r) => (r.data ? parseEmojiIds(r.data.content) : [])),
+      ]),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chats, replyData.map((r) => r.dataUpdatedAt).join(',')]
+  );
+
   let loopMsgDate = new Date(1970);
   let loopPreviousChatter = 0;
 
   return (
-    <LazyMotion features={loadMotion}>
-      {chats.map((c, idx) => {
-        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
-        const sameChatter = loopPreviousChatter === c.userId;
-        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+    <EmojiProvider ids={emojiIds}>
+      <LazyMotion features={loadMotion}>
+        {chats.map((c, idx) => {
+          const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
+          const sameChatter = loopPreviousChatter === c.userId;
+          const shouldShowInfo = hourDiff >= 1 || !sameChatter;
 
-        loopMsgDate = c.createdAt;
-        loopPreviousChatter = c.userId;
+          loopMsgDate = c.createdAt;
+          loopPreviousChatter = c.userId;
 
-        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
-        const isMe = c.userId === currentUser?.id;
+          const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+          const isMe = c.userId === currentUser?.id;
 
-        const tReplyData =
-          !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
-            ? replyData[replyIds.indexOf(c.referenceMessageId)]
-            : undefined;
+          const tReplyData =
+            !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
+              ? replyData[replyIds.indexOf(c.referenceMessageId)]
+              : undefined;
 
-        const isSystemChat = c.userId === -1;
+          const isSystemChat = c.userId === -1;
 
-        return (
-          <PStack
-            component={div}
-            // ref={c.id === lastReadId ? lastReadRef : undefined}
-            key={c.id}
-            gap={12}
-            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ type: 'spring', duration: 0.4 }}
-          >
-            {isSystemChat && c.contentType === ChatMessageType.Embed ? (
-              <EmbedMessage content={c.content} />
-            ) : isSystemChat ? (
-              // <Group align="center" justify="center">
-              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-              //   ...Text (below)
-              // </Group>
-              <Text
-                className={clsx(classes.chatMessage)}
-                component="div"
-                size="xs"
-                py={0}
-                style={{
-                  alignSelf: 'center',
-                  border: '1px solid gray',
-                }}
-              >
-                <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                  {c.content.replace(currentUser?.username ?? '', 'You')}
-                </CustomMarkdown>
-              </Text>
-            ) : (
-              <>
-                {shouldShowInfo && (
-                  <Group className={clsx({ [classes.myDetails]: isMe })}>
-                    {!!cachedUser ? (
-                      <UserAvatar user={cachedUser} withUsername />
-                    ) : (
-                      <UserAvatar userId={c.userId} withUsername />
-                    )}
-                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-                  </Group>
-                )}
-                {/* TODO this needs better styling and click -> message */}
-                {!!c.referenceMessageId && (
+          return (
+            <PStack
+              component={div}
+              // ref={c.id === lastReadId ? lastReadRef : undefined}
+              key={c.id}
+              gap={12}
+              style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ type: 'spring', duration: 0.4 }}
+            >
+              {isSystemChat && c.contentType === ChatMessageType.Embed ? (
+                <EmbedMessage content={c.content} />
+              ) : isSystemChat ? (
+                // <Group align="center" justify="center">
+                //   <Text size="xs">{formatDate(c.createdAt)}</Text>
+                //   ...Text (below)
+                // </Group>
+                <Text
+                  className={clsx(classes.chatMessage)}
+                  component="div"
+                  size="xs"
+                  py={0}
+                  style={{
+                    alignSelf: 'center',
+                    border: '1px solid gray',
+                  }}
+                >
+                  <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
+                    {c.content.replace(currentUser?.username ?? '', 'You')}
+                  </CustomMarkdown>
+                </Text>
+              ) : (
+                <>
+                  {shouldShowInfo && (
+                    <Group className={clsx({ [classes.myDetails]: isMe })}>
+                      {!!cachedUser ? (
+                        <UserAvatar user={cachedUser} withUsername />
+                      ) : (
+                        <UserAvatar userId={c.userId} withUsername />
+                      )}
+                      <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                    </Group>
+                  )}
+                  {/* TODO this needs better styling and click -> message */}
+                  {!!c.referenceMessageId && (
+                    <Group
+                      gap={6}
+                      justify="flex-end"
+                      style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
+                    >
+                      <IconArrowBack size={14} />
+                      {!!tReplyData?.data?.user && (
+                        <Tooltip label={tReplyData.data.user.username}>
+                          <Box>
+                            <UserAvatar user={tReplyData.data.user} size="xs" />
+                          </Box>
+                        </Tooltip>
+                      )}
+                      <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
+                        {!tReplyData || tReplyData.isError ? (
+                          <em>Could not load message.</em>
+                        ) : tReplyData.isLoading ? (
+                          <em>Loading content...</em>
+                        ) : (
+                          <ChatMessageContent
+                            content={tReplyData.data?.content ?? ''}
+                            blur={replaceBadWords || domainColor === 'green'}
+                            emojiSize={16}
+                            fallback={<em>Could not load message.</em>}
+                          />
+                        )}
+                      </Text>
+                    </Group>
+                  )}
                   <Group
-                    gap={6}
                     justify="flex-end"
+                    className={classes.highlightRow}
                     style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
                   >
-                    <IconArrowBack size={14} />
-                    {!!tReplyData?.data?.user && (
-                      <Tooltip label={tReplyData.data.user.username}>
-                        <Box>
-                          <UserAvatar user={tReplyData.data.user} size="xs" />
-                        </Box>
-                      </Tooltip>
-                    )}
-                    <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
-                      {!tReplyData || tReplyData.isError ? (
-                        <em>Could not load message.</em>
-                      ) : tReplyData.isLoading ? (
-                        <em>Loading content...</em>
-                      ) : (
-                        tReplyData.data?.content ?? <em>Could not load message.</em>
-                      )}
-                    </Text>
-                  </Group>
-                )}
-                <Group
-                  justify="flex-end"
-                  className={classes.highlightRow}
-                  style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                >
-                  <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
-                    <Menu.Target>
-                      <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
-                        <IconDotsVertical />
-                      </LegacyActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        leftSection={<IconArrowBack size={14} />}
-                        onClick={() => setReplyId(c.id)}
-                      >
-                        Reply
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                  <Tooltip
-                    label={
-                      !shouldShowInfo
-                        ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
-                        : undefined
-                    }
-                    disabled={shouldShowInfo}
-                    style={{ opacity: 0.85 }}
-                    openDelay={350}
-                    position={isMe ? 'top-end' : 'top-start'}
-                    withArrow
-                  >
-                    <div
-                      className={clsx(classes.chatMessage, {
-                        [classes.otherMessage]: !isMe,
-                        [classes.myMessage]: isMe,
-                      })}
+                    <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
+                      <Menu.Target>
+                        <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
+                          <IconDotsVertical />
+                        </LegacyActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          leftSection={<IconArrowBack size={14} />}
+                          onClick={() => setReplyId(c.id)}
+                        >
+                          Reply
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                    <Tooltip
+                      label={
+                        !shouldShowInfo
+                          ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
+                          : undefined
+                      }
+                      disabled={shouldShowInfo}
+                      style={{ opacity: 0.85 }}
+                      openDelay={350}
+                      position={isMe ? 'top-end' : 'top-start'}
+                      withArrow
                     >
-                      {parseEmojiContent(c.content).map((part, partIdx) =>
-                        part.type === 'emoji' ? (
-                          <Emoji key={partIdx} cosmeticId={part.cosmeticId} />
-                        ) : (
-                          <Linkify key={partIdx} options={linkifyOptions}>
-                            <BlurText blur={replaceBadWords || domainColor === 'green'}>
-                              {part.value}
-                            </BlurText>
-                          </Linkify>
-                        )
-                      )}
-                    </div>
-                  </Tooltip>
-                </Group>
-              </>
-            )}
-          </PStack>
-        );
-      })}
-    </LazyMotion>
+                      <div
+                        className={clsx(classes.chatMessage, {
+                          [classes.otherMessage]: !isMe,
+                          [classes.myMessage]: isMe,
+                        })}
+                      >
+                        <ChatMessageContent
+                          content={c.content}
+                          blur={replaceBadWords || domainColor === 'green'}
+                        />
+                      </div>
+                    </Tooltip>
+                  </Group>
+                </>
+              )}
+            </PStack>
+          );
+        })}
+      </LazyMotion>
+    </EmojiProvider>
+  );
+}
+
+/**
+ * Profanity is checked once over the whole message with emoji tokens removed —
+ * splitting first would let `fu:emoji:1:ck` past the filter as two clean runs.
+ */
+function ChatMessageContent({
+  content,
+  blur,
+  emojiSize,
+  fallback,
+}: {
+  content: string;
+  blur: boolean;
+  emojiSize?: number;
+  fallback?: React.ReactNode;
+}) {
+  const scannable = stripEmojiTokens(content);
+  const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+
+  if (!content.length) return <>{fallback ?? null}</>;
+
+  if (cleaned !== scannable)
+    return (
+      <Text component="span">
+        <Linkify options={linkifyOptions}>{cleaned}</Linkify>
+      </Text>
+    );
+
+  return (
+    <>
+      {parseEmojiContent(content).map((part, idx) =>
+        part.type === 'emoji' ? (
+          <Emoji key={idx} cosmeticId={part.cosmeticId} size={emojiSize} />
+        ) : (
+          <Text component="span" key={idx}>
+            <Linkify options={linkifyOptions}>{part.value}</Linkify>
+          </Text>
+        )
+      )}
+    </>
   );
 }

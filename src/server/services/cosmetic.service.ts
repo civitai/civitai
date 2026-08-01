@@ -43,6 +43,14 @@ export async function getEmojiCosmetics({ ids }: GetEmojiCosmeticsInput) {
     .filter((emoji) => !!emoji.slug && !!emoji.url);
 }
 
+export async function getOwnedEmojiCosmetics(userId: number) {
+  const userCosmetics = await userCosmeticCache.fetch([userId]);
+  const ids = [...new Set(userCosmetics[userId]?.cosmetics.map((x) => x.cosmeticId) ?? [])];
+  if (!ids.length) return [];
+
+  return getEmojiCosmetics({ ids });
+}
+
 export async function isCosmeticAvailable(id: number, userId?: number) {
   const cosmetic = await dbRead.cosmetic.findUnique({
     where: { id },

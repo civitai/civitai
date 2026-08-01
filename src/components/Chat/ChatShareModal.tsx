@@ -35,6 +35,7 @@ import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
+import { stripEmojiTokens } from '~/shared/utils/emoji-token';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -84,7 +85,7 @@ export default function ChatShareModal(props: { message: string }) {
         produce((old) => {
           if (!old) return old;
 
-          // The backend returns messages grouped in chunks (pages). 
+          // The backend returns messages grouped in chunks (pages).
           // `old.pages[0]` contains the newest chunk of messages.
           const newestPage = old.pages[0];
           newestPage.items.push(data);
@@ -219,7 +220,7 @@ export default function ChatShareModal(props: { message: string }) {
                             minWidth: 0,
                           }}
                         >
-                          {d.messages[0].content}
+                          {stripEmojiTokens(d.messages[0].content)}
                         </Text>
                       )}
                     </Stack>

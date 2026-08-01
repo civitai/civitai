@@ -1,2 +1,2 @@
 -- AlterEnum
-ALTER TYPE "CosmeticType" ADD VALUE 'Emoji';
+ALTER TYPE "CosmeticType" ADD VALUE IF NOT EXISTS 'Emoji';

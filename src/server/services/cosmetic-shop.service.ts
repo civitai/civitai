@@ -34,7 +34,8 @@ import {
   getAllImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
-import { withRetries } from '~/server/utils/errorHandling';
+import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import { isValidEmojiSlug } from '~/shared/utils/emoji-token';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -100,10 +101,51 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
 };
 
+const validateEmojiCosmetic = async ({
+  id,
+  type,
+  data,
+}: {
+  id?: number;
+  type?: CosmeticType | null;
+  data?: unknown;
+}) => {
+  if (type !== CosmeticType.Emoji) return;
+
+  const slug = (data as { slug?: unknown } | null | undefined)?.slug;
+  if (typeof slug !== 'string' || !isValidEmojiSlug(slug)) {
+    throw throwBadRequestError(
+      'Emoji cosmetics need a slug of 2-32 lowercase letters, numbers or underscores, and it cannot be all digits'
+    );
+  }
+
+  const conflict = await dbWrite.cosmetic.findFirst({
+    where: {
+      type: CosmeticType.Emoji,
+      data: { path: ['slug'], equals: slug },
+      ...(id ? { id: { not: id } } : {}),
+    },
+    select: { id: true },
+  });
+  if (conflict) {
+    throw throwBadRequestError(`The emoji slug ":${slug}:" is already in use`);
+  }
+};
+
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   const { id, videoUrl, name, description, type, source, permanentUnlock, data } = input;
 
   if (id) {
+    const existing = await dbWrite.cosmetic.findUnique({
+      where: { id },
+      select: { type: true, data: true },
+    });
+    await validateEmojiCosmetic({
+      id,
+      type: type ?? existing?.type,
+      data: data ?? existing?.data,
+    });
+
     return dbWrite.cosmetic.update({
       where: { id },
       data: {
@@ -122,6 +164,8 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   if (!name || !type || !source) {
     throw new Error('name, type, and source are required to create a cosmetic');
   }
+
+  await validateEmojiCosmetic({ type, data });
 
   return dbWrite.cosmetic.create({
     data: {

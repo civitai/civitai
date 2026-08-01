@@ -1,26 +1,47 @@
 export const EMOJI_SLUG_PATTERN = '[a-z0-9_]{2,32}';
 
-const EMOJI_TOKEN = /:emoji:(\d+):/;
-const EMOJI_TOKEN_OR_SLUG = new RegExp(`:emoji:\\d+:|:(${EMOJI_SLUG_PATTERN}):`, 'g');
+const EMOJI_TOKEN = /:emoji:(\d{1,9}):/g;
+// The lookahead keeps `12:30:` from reading as a slug — a slug needs a non-digit.
+const EMOJI_TOKEN_OR_SLUG = new RegExp(
+  `:emoji:(\\d{1,9}):|:(?![0-9]+:)(${EMOJI_SLUG_PATTERN}):`,
+  'g'
+);
 
 export function isValidEmojiSlug(slug: string) {
-  return new RegExp(`^${EMOJI_SLUG_PATTERN}$`).test(slug);
+  return new RegExp(`^${EMOJI_SLUG_PATTERN}$`).test(slug) && !/^\d+$/.test(slug);
 }
 
 export function formatEmojiToken(cosmeticId: number) {
   return `:emoji:${cosmeticId}:`;
 }
 
-/**
- * Rewrites `:slug:` to `:emoji:<id>:` against the sender's inventory, so the
- * stored message never depends on the reader's.
- */
-export function resolveEmojiTokens(content: string, resolve: (slug: string) => number | undefined) {
-  return content.replace(EMOJI_TOKEN_OR_SLUG, (match, slug?: string) => {
-    if (!slug) return match;
-    const cosmeticId = resolve(slug);
-    return cosmeticId ? formatEmojiToken(cosmeticId) : match;
+export type ResolveEmojiOptions = {
+  /** Maps a `:slug:` to the cosmetic id it should become. */
+  resolveSlug: (slug: string) => number | undefined;
+  /**
+   * Server-side ownership gate. When supplied, a `:emoji:<id>:` the sender
+   * doesn't own is deleted outright — neutralizing it in place would let
+   * `fu:emoji:9999:ck` slip a blocked word past the content scanners.
+   */
+  isOwnedId?: (cosmeticId: number) => boolean;
+};
+
+export function resolveEmojiTokens(content: string, options: ResolveEmojiOptions) {
+  const { resolveSlug, isOwnedId } = options;
+
+  return content.replace(EMOJI_TOKEN_OR_SLUG, (match, tokenId?: string, slug?: string) => {
+    if (slug) {
+      const cosmeticId = resolveSlug(slug);
+      return cosmeticId ? formatEmojiToken(cosmeticId) : match;
+    }
+    if (!isOwnedId) return match;
+    return isOwnedId(Number(tokenId)) ? match : '';
   });
+}
+
+/** Content as the blocklists and the profanity filter should see it. */
+export function stripEmojiTokens(content: string) {
+  return content.replace(EMOJI_TOKEN, '');
 }
 
 export type EmojiContentPart =
@@ -42,4 +63,12 @@ export function parseEmojiContent(content: string): EmojiContentPart[] {
   if (lastIndex < content.length) parts.push({ type: 'text', value: content.slice(lastIndex) });
 
   return parts;
+}
+
+export function parseEmojiIds(content: string) {
+  return [
+    ...new Set(
+      parseEmojiContent(content).flatMap((p) => (p.type === 'emoji' ? [p.cosmeticId] : []))
+    ),
+  ];
 }

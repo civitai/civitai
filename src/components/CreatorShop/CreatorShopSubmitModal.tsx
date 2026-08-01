@@ -33,6 +33,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
   computeCreatorShopSplit,
+  isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -153,7 +154,10 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               label="Cosmetic type"
               data={cosmeticTypeOptions}
               value={type}
-              onChange={(v) => v && form.setType(v as CosmeticType)}
+              onChange={(v) => {
+                const next = v as CosmeticType | null;
+                if (next && isCreatorCosmeticType(next)) form.setType(next);
+              }}
               allowDeselect={false}
               withAsterisk
               disabled={isEdit}

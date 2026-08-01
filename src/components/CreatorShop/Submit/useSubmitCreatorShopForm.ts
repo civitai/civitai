@@ -14,12 +14,14 @@ import { constants } from '~/server/common/constants';
 import type {
   AutoCheck,
   CosmeticOffsets,
+  CreatorCosmeticType,
   UpdateCreatorShopItemInput,
 } from '~/server/schema/creator-shop.schema';
 import {
   COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
+  isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
@@ -39,7 +41,11 @@ export function useSubmitCreatorShopForm({
   const { submitItem, updateItem } = useMutateCreatorShop();
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
-  const [type, setTypeState] = useState<CosmeticType>(item?.cosmetic.type ?? CosmeticType.Badge);
+  const [type, setTypeState] = useState<CreatorCosmeticType>(
+    item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
+      ? item.cosmetic.type
+      : CosmeticType.Badge
+  );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [price, setPrice] = useState<number>(item?.unitAmount ?? COSMETIC_PRICE_FLOOR);
@@ -102,7 +108,7 @@ export function useSubmitCreatorShopForm({
     setChecks([]);
   };
 
-  const setType = (next: CosmeticType) => {
+  const setType = (next: CreatorCosmeticType) => {
     setTypeState(next);
     clearArt();
     setArtReplaced(true);

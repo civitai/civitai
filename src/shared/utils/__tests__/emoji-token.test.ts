@@ -3,16 +3,20 @@ import {
   formatEmojiToken,
   isValidEmojiSlug,
   parseEmojiContent,
+  parseEmojiIds,
   resolveEmojiTokens,
+  stripEmojiTokens,
 } from '~/shared/utils/emoji-token';
 
 const owned: Record<string, number> = { party_cat: 12, wave: 34 };
-const resolve = (slug: string) => owned[slug];
+const resolveSlug = (slug: string) => owned[slug];
+const isOwnedId = (id: number) => Object.values(owned).includes(id);
 
 describe('isValidEmojiSlug', () => {
   it('accepts lowercase alphanumeric + underscore, 2-32 chars', () => {
     expect(isValidEmojiSlug('party_cat')).toBe(true);
     expect(isValidEmojiSlug('a1')).toBe(true);
+    expect(isValidEmojiSlug('123abc')).toBe(true);
   });
 
   it('rejects everything else', () => {
@@ -21,29 +25,60 @@ describe('isValidEmojiSlug', () => {
     expect(isValidEmojiSlug('party-cat')).toBe(false);
     expect(isValidEmojiSlug('x'.repeat(33))).toBe(false);
   });
+
+  it('rejects all-digit slugs so clock times are not emoji', () => {
+    expect(isValidEmojiSlug('30')).toBe(false);
+    expect(isValidEmojiSlug('1234')).toBe(false);
+  });
 });
 
 describe('resolveEmojiTokens', () => {
   it('rewrites owned slugs to id tokens', () => {
-    expect(resolveEmojiTokens('hi :party_cat: there', resolve)).toBe('hi :emoji:12: there');
+    expect(resolveEmojiTokens('hi :party_cat: there', { resolveSlug })).toBe('hi :emoji:12: there');
   });
 
   it('leaves unowned slugs alone', () => {
-    expect(resolveEmojiTokens('hi :nope: there', resolve)).toBe('hi :nope: there');
+    expect(resolveEmojiTokens('hi :nope: there', { resolveSlug })).toBe('hi :nope: there');
   });
 
   it('resolves multiple slugs including repeats', () => {
-    expect(resolveEmojiTokens(':wave::wave::party_cat:', resolve)).toBe(
+    expect(resolveEmojiTokens(':wave::wave::party_cat:', { resolveSlug })).toBe(
       ':emoji:34::emoji:34::emoji:12:'
     );
   });
 
-  it('passes through already-resolved tokens', () => {
-    expect(resolveEmojiTokens('a :emoji:99: b', resolve)).toBe('a :emoji:99: b');
+  it('leaves clock times untouched', () => {
+    expect(resolveEmojiTokens('Meeting at 12:30: see you', { resolveSlug })).toBe(
+      'Meeting at 12:30: see you'
+    );
   });
 
-  it('leaves plain text with colons untouched', () => {
-    expect(resolveEmojiTokens('12:30 - meeting', resolve)).toBe('12:30 - meeting');
+  it('without an ownership gate, passes raw tokens through for optimistic render', () => {
+    expect(resolveEmojiTokens('a :emoji:99: b', { resolveSlug })).toBe('a :emoji:99: b');
+  });
+
+  it('deletes tokens the sender does not own', () => {
+    expect(resolveEmojiTokens('a :emoji:99: b', { resolveSlug, isOwnedId })).toBe('a  b');
+  });
+
+  it('keeps tokens the sender owns', () => {
+    expect(resolveEmojiTokens('a :emoji:12: b', { resolveSlug, isOwnedId })).toBe('a :emoji:12: b');
+  });
+
+  it('deleting an unowned token rejoins the text so blocklists still match', () => {
+    expect(stripEmojiTokens(resolveEmojiTokens('fu:emoji:99:ck', { resolveSlug, isOwnedId }))).toBe(
+      'fuck'
+    );
+  });
+});
+
+describe('stripEmojiTokens', () => {
+  it('rejoins text split by an owned token', () => {
+    expect(stripEmojiTokens('fu:emoji:12:ck')).toBe('fuck');
+  });
+
+  it('leaves token-free text untouched', () => {
+    expect(stripEmojiTokens('hello there')).toBe('hello there');
   });
 });
 
@@ -65,5 +100,21 @@ describe('parseEmojiContent', () => {
       { type: 'emoji', cosmeticId: 1 },
       { type: 'emoji', cosmeticId: 2 },
     ]);
+  });
+
+  it('ignores ids too long to be a real cosmetic id', () => {
+    expect(parseEmojiContent(':emoji:999999999999999999999:')).toEqual([
+      { type: 'text', value: ':emoji:999999999999999999999:' },
+    ]);
+  });
+});
+
+describe('parseEmojiIds', () => {
+  it('returns each id once', () => {
+    expect(parseEmojiIds('a :emoji:3: b :emoji:3: c :emoji:4:')).toEqual([3, 4]);
+  });
+
+  it('returns nothing for token-free text', () => {
+    expect(parseEmojiIds('nothing here')).toEqual([]);
   });
 });
