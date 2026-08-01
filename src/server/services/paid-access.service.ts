@@ -6,6 +6,7 @@ import {
   effectiveLicensingFee,
   gatePrices,
   isPaidAccessActive,
+  isPermanentGate,
   maxPaidAccessPrice,
   maxPermanentAccessModels,
   raisesOverCap,
@@ -268,15 +269,19 @@ export async function getViewerMonetization({
     }
     const tier = capTiers.get(ownerOf(v) as number) ?? null;
     const mediaType = capMediaType(v.baseModel);
-    // Gate prices are capped only for a PERMANENT gate (timeframeDays null). A timed early-access window
-    // isn't ceilinged, so its stored price is also what buyers pay. The licensing fee is capped either
-    // way — it's charged per generation forever, not for the length of a window.
-    const capsGatePrice = row != null && row.timeframeDays == null;
+    // cappedTerms no-ops for a timed window: its price isn't ceilinged, so what's stored is what buyers
+    // pay. The licensing fee below is capped either way — charged per generation forever, not for the
+    // length of a window.
     out[v.id] = {
-      paidAccess:
-        row && capsGatePrice
-          ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier, mediaType) }
-          : row,
+      paidAccess: row
+        ? {
+            ...row,
+            terms: cappedTerms(row.terms as ModelVersionTerms, tier, {
+              permanent: isPermanentGate(row),
+              mediaType,
+            }),
+          }
+        : undefined,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
     };

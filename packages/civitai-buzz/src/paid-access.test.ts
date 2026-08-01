@@ -220,8 +220,14 @@ describe('video pricing — every ceiling is 5x on a video model', () => {
 
   it('prices gate terms against the video cap', () => {
     const terms = { download: { price: 5000 } };
-    expect(cappedTerms(terms, 'free', 'image')).toEqual({ download: { price: 500 } });
-    expect(cappedTerms(terms, 'free', 'video')).toEqual({ download: { price: 2500 } });
+    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'image' })).toEqual({
+      download: { price: 500 },
+    });
+    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'video' })).toEqual({
+      download: { price: 2500 },
+    });
+    // A timed early-access window has no ceiling — stored is what buyers pay.
+    expect(cappedTerms(terms, 'free', { permanent: false, mediaType: 'image' })).toEqual(terms);
   });
 });
 

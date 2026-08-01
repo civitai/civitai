@@ -32,6 +32,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 }));
 
 import {
+  assertPaidAccessCaps,
   assertPaidAccessInput,
   getViewerMonetization,
   materializePaidAccessEndsAt,
@@ -467,5 +468,50 @@ describe('getViewerMonetization — the price ceiling is permanent-only', () => 
     });
 
     expect(out[1].licensingFee).toBe(1);
+  });
+});
+
+// The write guard, both directions. The cap shipping without this distinction didn't only under-charge
+// buyers — it also stopped a free-tier creator SETTING a 10k early-access price at all (CU 868kk3avk).
+describe('assertPaidAccessCaps — the price ceiling is permanent-only', () => {
+  const gate = (over: Record<string, unknown>) => ({
+    terms: { download: { price: 10000 } },
+    ...over,
+  });
+  const noExistingGate = () =>
+    mockCacheFetch.mockImplementation(async () => ({} as Record<string, unknown>));
+
+  it('rejects an over-cap PERMANENT price', async () => {
+    noExistingGate();
+    await expect(
+      assertPaidAccessCaps({
+        userId: 1,
+        paidAccess: gate({ permanent: true }) as never,
+        tier: 'free',
+      })
+    ).rejects.toThrow(/permanent paid-access price/);
+  });
+
+  it('allows the same price on a TIMED early-access window', async () => {
+    noExistingGate();
+    await expect(
+      assertPaidAccessCaps({
+        userId: 1,
+        paidAccess: gate({ permanent: false, timeframeDays: 7 }) as never,
+        tier: 'free',
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('never blocks a moderator', async () => {
+    noExistingGate();
+    await expect(
+      assertPaidAccessCaps({
+        userId: 1,
+        isModerator: true,
+        paidAccess: gate({ permanent: true }) as never,
+        tier: 'free',
+      })
+    ).resolves.toBeUndefined();
   });
 });

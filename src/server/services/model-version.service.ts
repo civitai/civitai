@@ -91,6 +91,7 @@ import {
   type ModelVersionTerms,
   capMediaType,
   effectivePaidAccessPrice,
+  isPermanentGate,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
@@ -1994,11 +1995,13 @@ export const earlyAccessPurchase = async ({
   // re-subscribing restores it. A TIMED early-access window has no ceiling, so it charges as stored —
   // this must mirror getViewerMonetization, or buyers see one price and get billed another.
   const storedPrice = type === 'download' ? terms.download?.price : generationPrice(terms);
-  const isPermanentGate = paidAccess.timeframeDays == null;
-  const ownerTier = isPermanentGate ? await getCachedCapTier(modelVersion.model.userId) : null;
-  const amount = isPermanentGate
-    ? effectivePaidAccessPrice(storedPrice, ownerTier, capMediaType(modelVersion.baseModel))
-    : storedPrice ?? 0;
+  const permanent = isPermanentGate(paidAccess);
+  // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
+  const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
+  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
+    permanent,
+    mediaType: capMediaType(modelVersion.baseModel),
+  });
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {

@@ -105,6 +105,16 @@ export type PaidAccessRow = {
   terms: PaidAccessTerms;
 };
 
+/**
+ * A gate that never expires. Reads timeframeDays, NOT endsAt: a timed gate on an unpublished version also
+ * carries endsAt null until publish materializes it, so endsAt cannot tell the two kinds apart.
+ *
+ * The price ceiling turns on this — a timed early-access window prices itself out when the window closes,
+ * so only a permanent gate is capped.
+ */
+export const isPermanentGate = (row: Pick<PaidAccessRow, 'timeframeDays'>): boolean =>
+  row.timeframeDays == null;
+
 /** Active <=> permanent (no window) or the timed window is still open. */
 export const isPaidAccessActive = (
   row: Pick<PaidAccessRow, 'endsAt'>,
@@ -296,10 +306,13 @@ export const raisesOverCap = (
 export function effectivePaidAccessPrice(
   storedPrice: number | null | undefined,
   ownerTier: string | null | undefined,
-  mediaType?: CapMediaType
+  gate: { permanent: boolean; mediaType?: CapMediaType }
 ): number {
   if (storedPrice == null || storedPrice <= 0) return 0;
-  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, mediaType));
+  // Required rather than optional so the compiler makes every call site decide. The cap shipping without
+  // this distinction is what charged 10k early-access windows at 500 (CU 868kk3avk).
+  if (!gate.permanent) return storedPrice;
+  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, gate.mediaType));
 }
 
 /**
@@ -310,8 +323,9 @@ export function effectivePaidAccessPrice(
 export function cappedTerms(
   terms: ModelVersionTerms,
   ownerTier: string | null,
-  mediaType?: CapMediaType
+  gate: { permanent: boolean; mediaType?: CapMediaType }
 ): ModelVersionTerms {
+  if (!gate.permanent) return terms;
   const paidGen = paidGenerationGrant(terms);
   return {
     ...terms,
@@ -319,7 +333,7 @@ export function cappedTerms(
       ? {
           download: {
             ...terms.download,
-            price: effectivePaidAccessPrice(terms.download.price, ownerTier, mediaType),
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier, gate),
           },
         }
       : {}),
@@ -327,7 +341,7 @@ export function cappedTerms(
       ? {
           generation: {
             ...paidGen,
-            price: effectivePaidAccessPrice(paidGen.price, ownerTier, mediaType),
+            price: effectivePaidAccessPrice(paidGen.price, ownerTier, gate),
           },
         }
       : {}),
