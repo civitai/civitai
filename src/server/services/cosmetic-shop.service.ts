@@ -516,8 +516,9 @@ export const getShopSectionsWithItems = async ({
             },
             archivedAt: null,
             // Creator items in official sections can lose their Published
-            // status after being featured (revert/reject) — hide those.
-            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published }),
+            // status after being featured (revert/reject), or be delisted by
+            // their creator while staying Published — hide both.
+            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published, listed: true }),
             OR: isModerator
               ? undefined
               : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
@@ -576,6 +577,7 @@ export const purchaseCosmeticShopItem = async ({
     select: {
       id: true,
       status: true,
+      listed: true,
       cosmeticId: true,
       availableQuantity: true,
       availableFrom: true,
@@ -607,6 +609,11 @@ export const purchaseCosmeticShopItem = async ({
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
+    throw new Error('Cosmetic is not available');
+  }
+
+  // Delisted: still Published so it stays bundlable, but off individual sale.
+  if (!shopItem.listed) {
     throw new Error('Cosmetic is not available');
   }
 

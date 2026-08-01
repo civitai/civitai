@@ -153,6 +153,14 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to archive item'),
   });
 
+  const setItemListed = trpc.creatorShop.setItemListed.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+    },
+    onError: onError('Failed to update listing'),
+  });
+
   const unarchiveItem = trpc.creatorShop.unarchiveItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
@@ -223,6 +231,7 @@ export const useMutateCreatorShop = () => {
     submitItem,
     updateItem,
     archiveItem,
+    setItemListed,
     unarchiveItem,
     deleteItem,
     addResoldItem,

@@ -79,6 +79,7 @@ const shopItemRow = ({
 } = {}) => ({
   id: SHOP_ITEM_ID,
   status: 'Published',
+  listed: true,
   cosmeticId: 7,
   availableQuantity: null,
   availableFrom: null,

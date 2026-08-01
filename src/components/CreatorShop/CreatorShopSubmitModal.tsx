@@ -28,7 +28,6 @@ import { CosmeticStandardsModal } from '~/components/CreatorShop/CosmeticStandar
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
-  COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
@@ -51,6 +50,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     setSlug,
     slugError,
     slugLocked,
+    priceFloor,
     name,
     description,
     price,
@@ -93,7 +93,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const isDirty = isEdit
     ? name !== (item?.title ?? '') ||
       description !== (item?.description ?? '') ||
-      price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
+      price !== (item?.unitAmount ?? priceFloor) ||
       offsetsChanged ||
       form.acceptsBlueBuzzChanged ||
       !!localUrl
@@ -272,9 +272,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           <NumberInput
             label="Sell price"
             withAsterisk
-            min={COSMETIC_PRICE_FLOOR}
+            min={priceFloor}
             value={price}
-            onChange={(v) => form.setPrice(typeof v === 'number' ? v : COSMETIC_PRICE_FLOOR)}
+            onChange={(v) => form.setPrice(typeof v === 'number' ? v : priceFloor)}
             leftSection={<IconBolt size={16} />}
           />
           <NumberInput
@@ -287,8 +287,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
         </Group>
         <Group justify="space-between">
           <Text size="xs" c="dimmed">
-            Minimum {COSMETIC_PRICE_FLOOR} Buzz · You keep{' '}
-            {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
+            Minimum {priceFloor} Buzz · You keep {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
           </Text>
           <Text size="xs" fw={600} c="green">
             You earn ≈ {numberWithCommas(earn)} Buzz per sale

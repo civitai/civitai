@@ -18,7 +18,7 @@ import type {
   UpdateCreatorShopItemInput,
 } from '~/server/schema/creator-shop.schema';
 import {
-  COSMETIC_PRICE_FLOOR,
+  cosmeticPriceFloor,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
@@ -52,7 +52,7 @@ export function useSubmitCreatorShopForm({
   );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
-  const [price, setPrice] = useState<number>(item?.unitAmount ?? COSMETIC_PRICE_FLOOR);
+  const [price, setPrice] = useState<number>(item?.unitAmount ?? cosmeticPriceFloor(type));
   const [quantity, setQuantity] = useState<number | undefined>(
     item?.availableQuantity ?? undefined
   );
@@ -90,6 +90,9 @@ export function useSubmitCreatorShopForm({
     type === CosmeticType.ProfileDecoration ||
     type === CosmeticType.ProfileBackground ||
     type === CosmeticType.Emoji;
+
+  // Mirrors the server's authoritative floor so a creator sees it before submit.
+  const priceFloor = cosmeticPriceFloor(type);
 
   const isEmoji = type === CosmeticType.Emoji;
   // Same normalization the server applies, so what's validated here is what's saved.
@@ -167,7 +170,7 @@ export function useSubmitCreatorShopForm({
   const canSubmit =
     artOk &&
     !!name.trim() &&
-    price >= COSMETIC_PRICE_FLOOR &&
+    price >= priceFloor &&
     canAffordFee &&
     (!isEmoji || isValidEmojiSlug(normalizedSlug));
 
@@ -256,6 +259,7 @@ export function useSubmitCreatorShopForm({
     isEdit,
     type,
     setType,
+    priceFloor,
     isEmoji,
     slug,
     setSlug,

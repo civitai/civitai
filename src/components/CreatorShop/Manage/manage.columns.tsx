@@ -1,6 +1,14 @@
 import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconArchive, IconArchiveOff, IconDots, IconEdit, IconTrash } from '@tabler/icons-react';
+import {
+  IconArchive,
+  IconArchiveOff,
+  IconDots,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
+  IconTrash,
+} from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
@@ -16,6 +24,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type ArchiveMutation = ReturnType<typeof useMutateCreatorShop>['archiveItem'];
+type SetListedMutation = ReturnType<typeof useMutateCreatorShop>['setItemListed'];
 type UnarchiveMutation = ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
 type DeleteMutation = ReturnType<typeof useMutateCreatorShop>['deleteItem'];
 
@@ -61,11 +70,13 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
 function ItemActionsMenu({
   item,
   archiveItem,
+  setItemListed,
   unarchiveItem,
   deleteItem,
 }: {
   item: CreatorShopManageItem;
   archiveItem: ArchiveMutation;
+  setItemListed: SetListedMutation;
   unarchiveItem: UnarchiveMutation;
   deleteItem: DeleteMutation;
 }) {
@@ -125,11 +136,30 @@ function ItemActionsMenu({
               {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}
             </Menu.Item>
             <Menu.Item
+              leftSection={item.listed ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+              disabled={setItemListed.isPending}
+              onClick={() => setItemListed.mutate({ id: item.id, listed: !item.listed })}
+            >
+              <Stack gap={2}>
+                <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
+                <Text size="xs" c="dimmed">
+                  {item.listed
+                    ? 'Stops your own sales. Other creators can still bundle it.'
+                    : 'Put it back on sale in your shop.'}
+                </Text>
+              </Stack>
+            </Menu.Item>
+            <Menu.Item
               leftSection={<IconArchive size={16} />}
               disabled={archiveItem.isPending}
               onClick={() => archiveItem.mutate({ id: item.id })}
             >
-              Archive
+              <Stack gap={2}>
+                <Text size="sm">Archive</Text>
+                <Text size="xs" c="dimmed">
+                  Withdraws it completely — no sales, no bundling.
+                </Text>
+              </Stack>
             </Menu.Item>
           </>
         )}
@@ -151,6 +181,7 @@ function ItemActionsMenu({
 
 export function useManageColumns(
   archiveItem: ArchiveMutation,
+  setItemListed: SetListedMutation,
   unarchiveItem: UnarchiveMutation,
   deleteItem: DeleteMutation
 ): ManageColumn[] {
@@ -216,12 +247,13 @@ export function useManageColumns(
           <ItemActionsMenu
             item={item}
             archiveItem={archiveItem}
+            setItemListed={setItemListed}
             unarchiveItem={unarchiveItem}
             deleteItem={deleteItem}
           />
         ),
       },
     ],
-    [archiveItem, unarchiveItem, deleteItem]
+    [archiveItem, setItemListed, unarchiveItem, deleteItem]
   );
 }

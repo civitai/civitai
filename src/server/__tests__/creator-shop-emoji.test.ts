@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
 import {
+  COSMETIC_PRICE_FLOOR_MIN,
   cosmeticImageRequirements,
+  cosmeticPriceFloor,
   creatorCosmeticTypes,
   isCreatorCosmeticType,
+  packItemFloor,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -77,5 +80,30 @@ describe('creator-shop emoji update — data patching', () => {
 
   it('writes nothing when neither slug nor offsets changed', () => {
     expect(patchCosmeticData({ existingData: { url: 'img', slug: 'party_cat' } })).toBeUndefined();
+  });
+});
+
+// Every type is seeded at the same value today, so these pin the *shape* — the
+// zod gate must never be able to reject something the real floor would allow.
+describe('creator-shop price floors', () => {
+  const allTypes = Object.values(CosmeticType);
+
+  it('gives every cosmetic type a listing floor', () => {
+    for (const type of allTypes) expect(cosmeticPriceFloor(type)).toBeGreaterThan(0);
+  });
+
+  it('keeps the zod gate at or below every per-type floor', () => {
+    for (const type of allTypes)
+      expect(COSMETIC_PRICE_FLOOR_MIN).toBeLessThanOrEqual(cosmeticPriceFloor(type));
+  });
+
+  it('gives every cosmetic type a pack-member floor', () => {
+    for (const type of allTypes) expect(packItemFloor(type)).toBeGreaterThan(0);
+  });
+
+  it('sums per member, so a 10-emoji pack floors at 10x', () => {
+    const members = Array.from({ length: 10 }, () => CosmeticType.Emoji);
+    const floor = members.reduce((sum, type) => sum + packItemFloor(type), 0);
+    expect(floor).toBe(10 * packItemFloor(CosmeticType.Emoji));
   });
 });

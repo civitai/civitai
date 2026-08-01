@@ -7,7 +7,46 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
  */
 
 // Business rules (shared by client + server).
-export const COSMETIC_PRICE_FLOOR = 500;
+// Every type is seeded at the same value today; the point of the lookup is that
+// emoji economics can be tuned later without touching badges.
+const PRICE_FLOOR_DEFAULT = 500;
+
+/** Minimum Buzz a creator may list this cosmetic type for individually. */
+export const cosmeticPriceFloor = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Emoji:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return PRICE_FLOOR_DEFAULT;
+  }
+};
+
+/**
+ * Per-member contribution a pack must clear for this type. Summed per member
+ * rather than multiplied, so a mixed-type pack prices correctly once these
+ * diverge; it degenerates to `count × floor` while they're all equal.
+ */
+export const packItemFloor = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Emoji:
+    case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+    default:
+      return PRICE_FLOOR_DEFAULT;
+  }
+};
+
+/**
+ * Cheap zod gate only — the floor is type-dependent, so the authoritative check
+ * is `cosmeticPriceFloor(type)` in the service. This is the minimum across all
+ * types, so it can never reject something the real floor would allow.
+ */
+export const COSMETIC_PRICE_FLOOR_MIN = PRICE_FLOOR_DEFAULT;
 export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
@@ -148,7 +187,7 @@ export const submitCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   // Emoji only — the `:slug:` users type. Required for Emoji, ignored otherwise.
   slug: z.string().optional(),
-  price: z.number().int().min(COSMETIC_PRICE_FLOOR),
+  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
   availableQuantity: z.number().int().positive().nullish(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
   // Allow other creators to list this cosmetic, giving the seller this % of the
@@ -170,7 +209,7 @@ export const updateCreatorShopItemSchema = z.object({
   // Only present when replacing artwork (blocked once the item is published).
   imageUrl: z.string().optional(),
   animated: z.boolean().optional(),
-  price: z.number().int().min(COSMETIC_PRICE_FLOOR).optional(),
+  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN).optional(),
   availableQuantity: z.number().int().positive().nullish(),
   // Payment term like price/quantity — editable on published items, no re-review.
   acceptsBlueBuzz: z.boolean().optional(),
@@ -180,6 +219,12 @@ export const updateCreatorShopItemSchema = z.object({
   // Emoji only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
+});
+
+export type SetCreatorShopItemListedInput = z.infer<typeof setCreatorShopItemListedSchema>;
+export const setCreatorShopItemListedSchema = z.object({
+  id: z.number(),
+  listed: z.boolean(),
 });
 
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;

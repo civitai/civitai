@@ -3977,6 +3977,7 @@ model CosmeticShopItem {
   reviewedById      Int?
   reviewedAt        DateTime?
   rejectionReason   String?
+  listed            Boolean   @default(true)
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]

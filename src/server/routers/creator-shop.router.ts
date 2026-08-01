@@ -9,12 +9,14 @@ import {
   getReviewQueueSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
+  setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
 } from '~/server/schema/creator-shop.schema';
 import {
   archiveCreatorShopItem,
+  setCreatorShopItemListed,
   deleteCreatorShopItem,
   getCommunityCosmetics,
   getCreatorShop,
@@ -64,6 +66,16 @@ export const creatorShopRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+  setItemListed: creatorShopProcedure
+    .input(setCreatorShopItemListedSchema)
+    .mutation(({ input, ctx }) =>
+      setCreatorShopItemListed({
+        id: input.id,
+        listed: input.listed,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   unarchiveItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
     unarchiveCreatorShopItem({
       id: input.id,

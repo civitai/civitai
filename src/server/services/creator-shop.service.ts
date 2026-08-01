@@ -46,6 +46,7 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
+  cosmeticPriceFloor,
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
@@ -81,6 +82,7 @@ const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()(
   availableFrom: true,
   availableTo: true,
   status: true,
+  listed: true,
   rejectionReason: true,
   reviewedAt: true,
   createdAt: true,
@@ -214,6 +216,11 @@ export const submitCreatorShopItem = async ({
   offsets,
   slug,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
+  // The zod floor is the cross-type minimum; this is the real, type-dependent one.
+  const priceFloor = cosmeticPriceFloor(cosmeticType);
+  if (price < priceFloor)
+    throw throwBadRequestError(`This cosmetic type must be listed for at least ${priceFloor} Buzz`);
+
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
@@ -375,6 +382,14 @@ export const updateCreatorShopItem = async ({
       "You can only change price and quantity for another creator's cosmetic"
     );
 
+  if (price != null) {
+    const priceFloor = cosmeticPriceFloor(existing.cosmetic.type);
+    if (price < priceFloor)
+      throw throwBadRequestError(
+        `This cosmetic type must be listed for at least ${priceFloor} Buzz`
+      );
+  }
+
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
   // A live item may already have buyers — creators may only change price &
@@ -535,6 +550,45 @@ export const archiveCreatorShopItem = async ({
   return updated;
 };
 
+/**
+ * Delisting withdraws an item from individual sale while leaving it Published,
+ * so other creators can still bundle it. Archiving removes it from both.
+ */
+export const setCreatorShopItemListed = async ({
+  userId,
+  isModerator,
+  id,
+  listed,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+  listed: boolean;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (existing.status === CosmeticShopItemStatus.Archived)
+    throw throwBadRequestError('Restore this item before changing its listing');
+
+  const updated = await dbWrite.cosmeticShopItem.update({
+    where: { id },
+    data: { listed },
+    select: creatorShopItemSelect,
+  });
+
+  // A delisted item can't sit in a featured slot, same as an archived one.
+  if (!listed && existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
+};
+
 export const unarchiveCreatorShopItem = async ({
   userId,
   isModerator,
@@ -649,6 +703,7 @@ export const getCreatorShop = async ({
     dbRead.cosmeticShopItem.findMany({
       where: {
         status: CosmeticShopItemStatus.Published,
+        listed: true,
         // Preview draws cosmetics from every creator so the section is populated
         // regardless of whose (possibly empty) shop is being viewed.
         ...(preview ? {} : { addedById: userId }),
@@ -670,6 +725,9 @@ export const getCreatorShop = async ({
       where: {
         ...(preview ? {} : { id: { in: resoldIds } }),
         status: CosmeticShopItemStatus.Published,
+        // Delisted items stay Published (still bundlable) but are off sale, so
+        // no individual-sale surface may show them — resale included.
+        listed: true,
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
@@ -756,6 +814,9 @@ export const getCommunityCosmetics = async ({
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
+      // Discovery surface that leads straight to checkout — a delisted item
+      // here would be a dead end.
+      listed: true,
       // Creator-submitted only (official cosmetics have no creator). Blocks
       // filter both the original creator and the lister — they can differ on
       // cross-listed items.

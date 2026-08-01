@@ -2662,6 +2662,7 @@ export interface CosmeticShopItem {
   reviewedById: number | null;
   reviewedAt: Date | null;
   rejectionReason: string | null;
+  listed: boolean;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
 }

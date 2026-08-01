@@ -1938,6 +1938,7 @@ export type CosmeticShopItem = {
   reviewedById: number | null;
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
+  listed: Generated<boolean>;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
