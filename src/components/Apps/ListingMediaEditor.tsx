@@ -16,16 +16,26 @@ import { trpc } from '~/utils/trpc';
  * of the unified `/apps/[appBlockId]/edit` page (and reused anywhere else).
  *
  * Owner gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
- * FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound.
+ * NOT_OWNED→FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound.
+ * 🔴 That owner check has NO moderator branch, so this editor is only ever reachable
+ * for the caller's OWN listing — including for a moderator (the production incident
+ * behind the notice below was an owner-AND-moderator editing their own live apps).
  *
- * 🔴 TWO DIFFERENT WRITE SEMANTICS, and the copy MUST match the caller's:
- *   - OWNER (non-mod), approved listing → the first asset mutation mints a SHADOW
- *     revision server-side; the live listing keeps serving until a mod re-approves.
- *   - MODERATOR → `resolveOwnerAssetEditTarget` / `assertOwnerAssetEditable` both
- *     short-circuit on `user.isModerator`, so NO shadow is minted and the write lands
- *     DIRECTLY on the live approved listing (the deliberate curation bypass). Telling
- *     a mod their edits are "staged for re-approval" is simply false — observed in
- *     production, where mod screenshot adds on live listings created zero revisions.
+ * 🔴 THREE WRITE SEMANTICS on an APPROVED listing, and the copy MUST match. The
+ * discriminator is `isModerator && !shadowId` — NOT `isModerator` alone:
+ *   - OWNER (non-mod) → the first asset mutation mints a SHADOW revision server-side;
+ *     the live listing keeps serving until a mod re-approves. STAGED.
+ *   - MODERATOR, NO shadow yet → `editTargetId` is the live parent, and
+ *     `resolveOwnerAssetEditTarget` / `assertOwnerAssetEditable` both short-circuit on
+ *     `user.isModerator`, so no shadow is minted and the write lands DIRECTLY on the
+ *     live listing (the deliberate curation bypass). IMMEDIATE.
+ *   - MODERATOR, shadow ALREADY exists → 🔴 STAGED, same as an owner.
+ *     `getMyListingForApp` resolves `editTargetId` to an existing shadow with no
+ *     moderator branch of its own, and the asset step is hosted against that id. The
+ *     mod bypass then does nothing (the target already has `revisionOfId != null`), so
+ *     the write applies to the SHADOW and only goes live on re-approval. Gating the
+ *     "applies immediately" copy on `isModerator` alone lies to exactly this case —
+ *     and it is common, not theoretical (see the 78% figure in the note below).
  *
  * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
  * page has a single back control), not here.
@@ -34,9 +44,10 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const router = useRouter();
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  // Drives WHICH live-app notice renders — see the 🔴 note above. Read from the
-  // session hook (the established client idiom, e.g. `ExternalSubmitForm`) rather
-  // than threaded as a prop, so every host of this editor is correct by default.
+  // Read from the session hook (the established client idiom, e.g.
+  // `ExternalSubmitForm`) rather than threaded as a prop, so every host of this
+  // editor is correct by default. NOT sufficient on its own as the copy
+  // discriminator — see `modDirectLiveEdit` below.
   const isModerator = !!currentUser?.isModerator;
 
   // 1) Owner-gated resolve of the backing listing id for this app block. A non-owner
@@ -65,6 +76,14 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const shadowId = listing?.shadowId ?? null;
   const editBlockedReason = listing?.editBlockedReason ?? null;
   const isApproved = listing?.status === 'approved';
+
+  // 🔴 THE ONE DISCRIMINATOR for "this edit goes live immediately" — see the header.
+  // `!shadowId` is what makes it correct: it is exactly `editTargetId === appListingId`
+  // (the server sets `shadowId` and redirects `editTargetId` together, or neither), so
+  // it says "the asset step is hosted against the LIVE parent". A moderator whose
+  // listing already carries a shadow is editing that shadow and IS staged — they must
+  // get the owner copy. `isModerator` alone would tell them the opposite.
+  const modDirectLiveEdit = isModerator && isApproved && !shadowId;
 
   // 3) Re-pull the projected assets after EVERY successful asset mutation.
   //
@@ -144,11 +163,14 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
         !listingError &&
         isApproved &&
         !editBlockedReason &&
-        (isModerator ? (
-          // 🔴 MODERATOR variant. The server's curation bypass writes straight to the
-          // live listing — no shadow, no re-approval — so this must NOT repeat the
-          // owner copy's "staged as a revision" claim. Own testid so a test can tell
-          // the two variants apart (and so the owner testid keeps meaning "owner").
+        (modDirectLiveEdit ? (
+          // 🔴 MODERATOR-ON-THE-LIVE-PARENT variant (`isModerator && !shadowId`). The
+          // server's curation bypass writes straight to the live listing — no shadow,
+          // no re-approval — so this must NOT repeat the owner copy's "staged as a
+          // revision" claim. A moderator WITH a shadow falls through to the owner copy
+          // below, which is correct for them: that write goes to the shadow. Own testid
+          // so a test can tell the variants apart (and so the owner testid keeps
+          // meaning "the staged-revision copy").
           <Alert
             icon={<IconAlertTriangle size={16} />}
             color="orange"
@@ -238,7 +260,14 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               onCompletenessChange={handleCompletenessChange}
             />
           </div>
-          {isApproved && (
+          {/* 🔴 Same discriminator as the notice above, deliberately. For a moderator
+              editing the LIVE parent, no edit will ever mint a shadow, so "Change an
+              image to stage a revision" is false and `disabled={… || !shadowId}` makes
+              Submit permanently dead — a broken control contradicting the notice four
+              lines above it. There is nothing to submit: their change is already live.
+              🔴 Do NOT widen this to `isModerator` — a moderator WITH a shadow has a
+              real revision that still needs submitting for re-approval. */}
+          {isApproved && !modDirectLiveEdit && (
             <Group justify="flex-end" align="center">
               {!shadowId && (
                 <Text size="xs" c="dimmed" data-testid="apps-listing-media-no-changes">
