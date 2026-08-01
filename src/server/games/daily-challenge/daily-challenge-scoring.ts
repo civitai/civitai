@@ -16,6 +16,9 @@ export type Score = {
 /** Alias for Score — used in client-facing contexts (image cards, winner displays). */
 export type JudgeScore = Score;
 
+/** A challenge's creator-defined judging category. `weight` is a percentage and must total 100. */
+export type JudgingCategory = { key: string; label: string; weight: number };
+
 /** Weights for combining score categories into a final ranking score (must sum to 1.0). */
 export const SCORE_WEIGHTS = {
   theme: 0.5,
@@ -32,25 +35,25 @@ export const THEME_GATE_THRESHOLD = 4;
 export const THEME_GATE_MAX_SCORE = 5.0;
 
 /**
- * Calculates the weighted score for a challenge entry, applying the theme gate rules:
- * - Theme < THEME_DISQUALIFY_THRESHOLD → returns null (auto-disqualified)
- * - Theme < THEME_GATE_THRESHOLD → weighted score capped at THEME_GATE_MAX_SCORE
- * - Otherwise → weighted score (0-10 range)
+ * The fixed rubric as judging categories, so daily challenges and creator-defined challenges
+ * run through one scoring path. Weights must stay in step with `DEFAULT_CATEGORY_ROWS` — the
+ * rows seeded onto new challenges — or a seeded challenge would score differently from an
+ * unseeded one (asserted in daily-challenge-scoring.test.ts).
+ */
+export const FIXED_JUDGING_CATEGORIES: JudgingCategory[] = [
+  { key: 'theme', label: 'Theme', weight: SCORE_WEIGHTS.theme * 100 },
+  { key: 'wittiness', label: 'Wittiness', weight: SCORE_WEIGHTS.wittiness * 100 },
+  { key: 'humor', label: 'Humor', weight: SCORE_WEIGHTS.humor * 100 },
+  { key: 'aesthetic', label: 'Aesthetic', weight: SCORE_WEIGHTS.aesthetic * 100 },
+];
+
+/**
+ * Weighted score for an entry judged against the fixed daily rubric, applying the theme gate:
+ * - Theme < THEME_DISQUALIFY_THRESHOLD → null (auto-disqualified)
+ * - Theme < THEME_GATE_THRESHOLD → capped at THEME_GATE_MAX_SCORE
  */
 export function calculateWeightedScore(score: Score): number | null {
-  if (score.theme < THEME_DISQUALIFY_THRESHOLD) return null;
-
-  const weighted =
-    score.theme * SCORE_WEIGHTS.theme +
-    score.aesthetic * SCORE_WEIGHTS.aesthetic +
-    score.humor * SCORE_WEIGHTS.humor +
-    score.wittiness * SCORE_WEIGHTS.wittiness;
-
-  if (score.theme < THEME_GATE_THRESHOLD) {
-    return Math.min(weighted, THEME_GATE_MAX_SCORE);
-  }
-
-  return weighted;
+  return calculateWeightedCategoryScore(score, FIXED_JUDGING_CATEGORIES);
 }
 
 /**
@@ -67,6 +70,21 @@ export function calculateCategoryScore(scores: Record<string, number>): number |
   return clamped.reduce((a, b) => a + b, 0) / clamped.length;
 }
 
+const clampScore = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
+
+/**
+ * Read one category's score out of an AI review result. The review echoes category labels back
+ * as JSON keys, so normalize both sides — minor case/whitespace drift from the LLM must not read
+ * back as a 0 (which would disqualify every entry via the theme gate).
+ */
+export function lookupCategoryScore(scores: Record<string, number>, label: string): number {
+  const target = sanitizeCategoryLabel(label).toLowerCase();
+  for (const [key, value] of Object.entries(scores)) {
+    if (sanitizeCategoryLabel(key).toLowerCase() === target) return clampScore(value);
+  }
+  return 0;
+}
+
 /**
  * Ranking score for user-created challenges with weighted, creator-defined categories.
  * Scores are keyed by category LABEL (the key the AI review schema emits). Theme is mandatory,
@@ -74,18 +92,9 @@ export function calculateCategoryScore(scores: Record<string, number>): number |
  */
 export function calculateWeightedCategoryScore(
   scores: Record<string, number>,
-  categories: { key: string; label: string; weight: number }[]
+  categories: JudgingCategory[]
 ): number | null {
-  const clamp = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
-  // The AI review echoes category labels back as JSON keys; normalize both sides so minor
-  // case/whitespace drift from the LLM doesn't silently read back as a 0 (which would
-  // disqualify every entry via the theme gate below).
-  const normalizedScores: Record<string, number> = {};
-  for (const [key, value] of Object.entries(scores)) {
-    normalizedScores[sanitizeCategoryLabel(key).toLowerCase()] = value;
-  }
-  const scoreFor = (label: string) =>
-    clamp(normalizedScores[sanitizeCategoryLabel(label).toLowerCase()]);
+  const scoreFor = (label: string) => lookupCategoryScore(scores, label);
 
   const theme = categories.find((c) => c.key === 'theme');
   const themeScore = theme ? scoreFor(theme.label) : undefined;
@@ -94,4 +103,24 @@ export function calculateWeightedCategoryScore(
   if (themeScore !== undefined && themeScore < THEME_GATE_THRESHOLD)
     return Math.min(weighted, THEME_GATE_MAX_SCORE);
   return weighted;
+}
+
+const FIXED_SCORE_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
+
+/** True when a review result uses the fixed daily key set rather than creator-defined labels. */
+export function isFixedJudgeScore(score: Score | Record<string, number>): score is Score {
+  return FIXED_SCORE_KEYS.every((key) => typeof score[key] === 'number');
+}
+
+/**
+ * The score shown next to an entry. Must stay identical to how `getJudgedEntries` ranks that
+ * same entry, or the displayed leaderboard contradicts who actually wins.
+ */
+export function resolveDisplayScore(
+  score: Score | Record<string, number>,
+  categories?: JudgingCategory[] | null
+): number | null {
+  if (categories?.length) return calculateWeightedCategoryScore(score, categories);
+  if (isFixedJudgeScore(score)) return calculateWeightedScore(score);
+  return calculateCategoryScore(score);
 }

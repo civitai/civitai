@@ -18,7 +18,10 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
+import {
+  CHALLENGE_JOB_BATCH_SIZE,
+  DEFAULT_CATEGORY_ROWS,
+} from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -432,6 +435,7 @@ export type CreateChallengeInput = {
   source?: ChallengeSource;
   status?: ChallengeStatus;
   metadata?: Record<string, unknown>;
+  judgingCategories?: ChallengeJudgingCategory[];
 };
 
 /**
@@ -511,6 +515,11 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,
       metadata: input.metadata as Prisma.InputJsonValue,
+      // Every challenge stores a rubric so scoring and display have exactly one path. Uses the
+      // static rows rather than resolveJudgingCategories so an unseeded ChallengeCategory table
+      // can't fail the nightly creation cron.
+      judgingCategories: (input.judgingCategories ??
+        DEFAULT_CATEGORY_ROWS) as unknown as Prisma.InputJsonValue,
     },
     select: { id: true },
   });
@@ -982,11 +991,9 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
 
 /**
  * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
- * Any challenge that stores judgingCategories is judged by them; those without fall back to the
- * default rubric (generateReview resolves DEFAULT_CATEGORY_ROWS from the DB). Parse defensively —
- * a malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring schema
- * instead of failing the review. Mirrors reviewEntriesForChallenge
- * (~/server/jobs/daily-challenge-processing.ts).
+ * Every challenge is judged by its stored rubric; only a malformed/corrupt value resolves to
+ * `undefined`, which falls back to the fixed theme/wittiness/humor/aesthetic scoring schema.
+ * Mirrors reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts).
  */
 export async function resolveChallengeReviewInputs(challenge: {
   source: ChallengeSource;

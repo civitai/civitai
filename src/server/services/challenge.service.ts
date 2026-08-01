@@ -3809,6 +3809,7 @@ export async function getCompletedChallengesWithWinners(
       judgeImage: string | null;
       judgeDeletedAt: Date | null;
       metadata: Record<string, unknown> | null;
+      judgingCategories: unknown;
     }>
   >`
     SELECT
@@ -3840,7 +3841,8 @@ export async function getCompletedChallengesWithWinners(
       ju.username as "judgeUsername",
       ju.image as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt",
-      c.metadata
+      c.metadata,
+      c."judgingCategories"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
@@ -3953,9 +3955,11 @@ export async function getCompletedChallengesWithWinners(
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
     const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
     const metadata = parseChallengeMetadata(item.metadata);
+    const parsedCategories = challengeJudgingCategoriesSchema.safeParse(item.judgingCategories);
 
     return {
       id: item.id,
+      judgingCategories: parsedCategories.success ? parsedCategories.data : null,
       title: item.title,
       theme: item.theme,
       invitation: item.invitation,

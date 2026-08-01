@@ -161,6 +161,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         score={image.judgeScore}
                         imageId={image.id}
                         judgeInfo={contextProps.judgeInfo}
+                        judgingCategories={contextProps.judgingCategories}
                       />
                     )}
                     {isModerator && image.poi && (

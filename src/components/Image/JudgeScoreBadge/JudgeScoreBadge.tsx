@@ -7,29 +7,12 @@ import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { trpc } from '~/utils/trpc';
 import {
   type JudgeScore,
-  SCORE_WEIGHTS,
-  calculateWeightedScore,
-  calculateCategoryScore,
+  type JudgingCategory,
+  FIXED_JUDGING_CATEGORIES,
+  isFixedJudgeScore,
+  lookupCategoryScore,
+  resolveDisplayScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
-
-const categories: { key: keyof JudgeScore; label: string; weight: number }[] = [
-  { key: 'theme', label: 'Theme', weight: SCORE_WEIGHTS.theme },
-  { key: 'wittiness', label: 'Wittiness', weight: SCORE_WEIGHTS.wittiness },
-  { key: 'humor', label: 'Humor', weight: SCORE_WEIGHTS.humor },
-  { key: 'aesthetic', label: 'Aesthetic', weight: SCORE_WEIGHTS.aesthetic },
-];
-
-const FIXED_SCORE_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
-
-/**
- * User-created challenges score against arbitrary creator-defined categories
- * (`Record<categoryLabel, number>`) instead of the fixed set above. Detect which
- * shape we got so we don't feed category-keyed scores into `calculateWeightedScore`
- * (it assumes the fixed keys and would return NaN).
- */
-function isFixedJudgeScore(score: JudgeScore | Record<string, number>): score is JudgeScore {
-  return FIXED_SCORE_KEYS.every((key) => typeof score[key] === 'number');
-}
 
 const CIVCHAN_USER_ID = 7665867;
 
@@ -50,18 +33,22 @@ export function JudgeScoreBadge({
   score,
   imageId,
   judgeInfo,
+  judgingCategories,
   size = 'sm',
 }: {
   score: JudgeScore | Record<string, number>;
   imageId?: number;
   judgeInfo?: JudgeInfo;
+  judgingCategories?: JudgingCategory[] | null;
   size?: 'xs' | 'sm';
 }) {
   const [opened, setOpened] = useState(false);
-  const fixedScore = isFixedJudgeScore(score) ? score : null;
-  const weighted = fixedScore
-    ? calculateWeightedScore(fixedScore) ?? 0
-    : calculateCategoryScore(score) ?? 0;
+  const rubric = judgingCategories?.length
+    ? judgingCategories
+    : isFixedJudgeScore(score)
+    ? FIXED_JUDGING_CATEGORIES
+    : null;
+  const weighted = resolveDisplayScore(score, judgingCategories) ?? 0;
   const weightedRounded = Math.round(weighted * 10) / 10;
 
   const hasJudge = !!imageId && !!judgeInfo;
@@ -128,27 +115,26 @@ export function JudgeScoreBadge({
           <Text size="sm" fw={600}>
             {hasJudge ? 'Scores' : 'Judge Scores'}
           </Text>
-          {fixedScore
-            ? categories.map(({ key, label, weight }) => (
-                <div key={key}>
-                  <Group justify="space-between" mb={2}>
-                    <Text size="xs">
-                      {label}{' '}
-                      <Text span size="xs" c="dimmed">
-                        ({Math.round(weight * 100)}%)
+          {rubric
+            ? rubric.map(({ key, label, weight }) => {
+                const value = lookupCategoryScore(score, label);
+                return (
+                  <div key={key}>
+                    <Group justify="space-between" mb={2}>
+                      <Text size="xs">
+                        {label}{' '}
+                        <Text span size="xs" c="dimmed">
+                          ({Math.round(weight)}%)
+                        </Text>
                       </Text>
-                    </Text>
-                    <Text size="xs" fw={600}>
-                      {fixedScore[key]}/10
-                    </Text>
-                  </Group>
-                  <Progress
-                    value={fixedScore[key] * 10}
-                    color={getScoreColor(fixedScore[key], vibrant)}
-                    size="sm"
-                  />
-                </div>
-              ))
+                      <Text size="xs" fw={600}>
+                        {value}/10
+                      </Text>
+                    </Group>
+                    <Progress value={value * 10} color={getScoreColor(value, vibrant)} size="sm" />
+                  </div>
+                );
+              })
             : Object.entries(score).map(([key, value]) => (
                 <div key={key}>
                   <Group justify="space-between" mb={2}>
@@ -167,7 +153,7 @@ export function JudgeScoreBadge({
             pt={4}
           >
             <Text size="xs" fw={600}>
-              {fixedScore ? 'Weighted Score' : 'Average Score'}
+              {rubric ? 'Weighted Score' : 'Average Score'}
             </Text>
             <Text size="xs" fw={700} c={getScoreColor(weighted, vibrant)}>
               {weightedRounded.toFixed(1)}/10
