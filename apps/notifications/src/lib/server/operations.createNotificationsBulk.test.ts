@@ -116,3 +116,30 @@ describe('createNotificationsBulk dedupeKey passthrough', () => {
     expect(columns).toHaveLength(7);
   });
 });
+
+describe('createNotificationsBulk dedupeKey on the UPDATE-first path', () => {
+  it('back-fills dedupeKey onto a pending row that predates the column', async () => {
+    // A row queued by the previous build carries NULL; without this it fans out un-deduped.
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([{ ...row('comment:1', [11]), dedupeKey: 'comment:v2:1' }]);
+
+    const upd = updateCall()!;
+    expect(upd.sql).toContain('"dedupeKey" = COALESCE(pn."dedupeKey", u."dedupeKey")');
+    expect(upd.sql).toContain("'comment:v2:1'");
+  });
+
+  it('never overwrites an existing dedupeKey (same key always means the same source event)', async () => {
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([{ ...row('comment:1', [11]), dedupeKey: 'comment:v2:1' }]);
+
+    // COALESCE(existing, incoming) — not a bare assign, which would let a later batch retarget the row.
+    expect(updateCall()!.sql).not.toMatch(/"dedupeKey"\s*=\s*u\."dedupeKey"\s*[,\n]/);
+  });
+
+  it('VALUES tuples still line up with the aliased column list', async () => {
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([row('comment:1', [11])]);
+
+    expect(updateCall()!.sql).toContain('AS u(key, users, "dedupeKey")');
+  });
+});

@@ -184,11 +184,12 @@ export const handleDebounce = async (
     respId = insRes.rows[0]?.id;
   }
 
-  // Debounced rows deliberately leave "dedupeKey" NULL (the column default). This INSERT targets ONE
-  // constraint so it can re-surface a debounced notification (createdAt/viewed reset); a row that also
-  // carried a dedupeKey could violate the OTHER unique index, which a targeted ON CONFLICT cannot absorb
-  // — it would abort the transaction. Cross-type dedup is a normal-path concern only (no debounced type
-  // shares a source event with another type today); revisit here before setting dedupeKey on one.
+  // This INSERT omits "dedupeKey" entirely, so a debounced row writes NULL and is excluded from the
+  // partial unique index — a dedupeKey on a debounced row is silently DROPPED, not honored. That is
+  // deliberate: the targeted ON CONFLICT below is what lets a debounce re-surface a notification
+  // (createdAt/viewed reset), and it could not absorb a violation of the other index. The producer
+  // contract rejects the combination outright (see createNotificationPendingRow), so this is
+  // unreachable — belt and braces. Teaching debounced types to dedup means reworking this INSERT.
   if (respId) {
     const userMappedData = users.map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {

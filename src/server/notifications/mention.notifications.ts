@@ -55,6 +55,8 @@ export const mentionNotifications = createNotificationProcessor({
                 root."articleId",
                 root."bountyId",
                 root."bountyEntryId",
+                root."challengeId",
+                root."model3dId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -63,7 +65,9 @@ export const mentionNotifications = createNotificationProcessor({
                 t."reviewId",
                 t."articleId",
                 t."bountyId",
-                t."bountyEntryId"
+                t."bountyEntryId",
+                t."challengeId",
+                t."model3dId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -75,6 +79,8 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
+              WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               ELSE 'comment'
             END,
              'commentParentId', COALESCE(
@@ -87,6 +93,8 @@ export const mentionNotifications = createNotificationProcessor({
                 t."articleId",
                 t."bountyId",
                 t."bountyEntryId",
+                t."challengeId",
+                t."model3dId",
                 t."commentId"
              ),
              'commentParentType', CASE
@@ -99,6 +107,8 @@ export const mentionNotifications = createNotificationProcessor({
                 WHEN t."articleId" IS NOT NULL THEN 'article'
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
             'username', u.username
@@ -112,6 +122,10 @@ export const mentionNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
+          -- Same appListing exclusion the reply processors carry: those threads are addressed by SLUG,
+          -- so threadUrlMap can't build a URL for them yet.
+          AND root."appListingId" IS NULL
+          AND t."appListingId" IS NULL
 
         UNION
 
@@ -152,9 +166,21 @@ export const mentionNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
-        -- Only comment mentions share a source event with the comment.notifications types. A mention in a
-        -- model DESCRIPTION has no commentId and stays NULL (opted out of dedup).
-        case when details->>'mentionedIn' = 'comment' then ${commentDedupeKeyByVersion} end "dedupeKey",
+        -- Claiming the dedupe key SUPPRESSES every other notification for this comment, so only claim it
+        -- when this mention is a worthy replacement — i.e. prepareMessage above yields a message AND a
+        -- working URL. Three ways it doesn't:
+        --   * mentionedIn = 'model' — a model DESCRIPTION mention, no comment behind it at all
+        --   * v2 threadType 'comment' — the fallback for a thread entity threadUrlMap can't address
+        --     (comicProject, clubPost, ...), which renders a dead link
+        --   * v1 parentType 'review' — prepareMessage bails and returns undefined, so the row renders as
+        --     NOTHING. Left unguarded this silently swallows the new-comment the user should have got.
+        -- Anything excluded here still delivers as its own (lower-priority) notification, unchanged.
+        case
+          when details->>'mentionedIn' <> 'comment' then null
+          when details->>'version' is not null then
+            case when details->>'threadType' <> 'comment' then ${commentDedupeKeyByVersion} end
+          when details->>'parentType' = 'comment' then ${commentDedupeKeyByVersion}
+        end "dedupeKey",
         "ownerId"    "userId",
         'new-mention' "type",
         details

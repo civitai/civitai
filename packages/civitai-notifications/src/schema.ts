@@ -42,6 +42,13 @@ export const createNotificationPendingRow = notificationSingleRowFull
     userId: z.number().optional(),
     userIds: z.array(z.number()).optional(),
     debounceSeconds: z.number().optional(),
+  })
+  // The debounce fan-out path writes UserNotification with a TARGETED ON CONFLICT that cannot absorb a
+  // violation of the dedupe index, so it never writes "dedupeKey" — a row asking for both would have its
+  // dedupeKey silently dropped. Reject it here instead of failing quietly at fan-out.
+  .refine((row) => !(row.dedupeKey && row.debounceSeconds !== undefined), {
+    message: 'dedupeKey is not supported on debounced notifications',
+    path: ['dedupeKey'],
   });
 export type CreateNotificationPendingRow = z.infer<typeof createNotificationPendingRow>;
 

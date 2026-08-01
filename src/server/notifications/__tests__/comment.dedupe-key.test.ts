@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CommentNotificationPriority,
+  commentDedupeKeyByVersion,
   commentNotifications,
 } from '~/server/notifications/comment.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
@@ -60,10 +61,10 @@ describe('comment notifications — shared dedupe key', () => {
 
   it('new-mention dedupes comment mentions but leaves model-description mentions alone', () => {
     const sql = sqlFor('new-mention');
-    // Comment mentions share the source event with the comment.notifications types...
-    expect(sql).toContain(`case when details->>'mentionedIn' = 'comment' then`);
-    // ...a mention in a model description has no commentId, so it must stay opted out (NULL).
-    expect(sql).toContain(`details->>'commentId') end "dedupeKey"`);
+    // A mention in a model description has no comment behind it, so it must stay opted out (NULL).
+    expect(sql).toContain(`when details->>'mentionedIn' <> 'comment' then null`);
+    // Comment mentions share the source event with the comment.notifications types.
+    expect(sql).toContain(commentDedupeKeyByVersion);
   });
 
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
@@ -98,9 +99,15 @@ describe('comment notifications — priority decides which duplicate survives', 
   });
 
   it('every processor that emits a dedupeKey also declares a priority', () => {
-    // Without one it lands in batch 0 and could beat the mention to the shared key.
-    for (const [type, def] of Object.entries(defs)) {
-      if (!def.prepareQuery?.({ lastSent: '2026-01-01' }).includes('"dedupeKey"')) continue;
+    // Without one it lands in batch 0 and could beat the mention to the shared key. Iterate the FULL
+    // registry, not just the comment family — a dedupe key added in any other file has the same problem.
+    for (const [type, def] of Object.entries(notificationProcessors)) {
+      const query = def.prepareQuery?.({
+        lastSent: '2026-01-01',
+        lastSentDate: new Date('2026-01-01'),
+        clickhouse: undefined,
+      });
+      if (typeof query !== 'string' || !query.includes('"dedupeKey"')) continue;
       expect(def.priority, `${type} declares a priority`).toBeGreaterThan(0);
     }
   });
@@ -117,5 +124,127 @@ describe('comment notifications — priority decides which duplicate survives', 
     expect(batchIndex('new-mention')).toBeLessThan(batchIndex('new-thread-response'));
     expect(batchIndex('new-thread-response')).toBeLessThan(batchIndex('new-comment-nested'));
     expect(priorityOf('new-mention')).toBeLessThan(priorityOf('new-comment-nested'));
+  });
+});
+
+/**
+ * Claiming the dedupe key SUPPRESSES the other notifications for that comment, so a type that claims it
+ * had better render. `NotificationList` drops any notification whose `prepareMessage` returns undefined,
+ * and `threadUrlMap` returns undefined for a thread type it can't address — either one turns a
+ * suppressed-but-working notification into a blank row or a dead link.
+ */
+describe('a type that claims the dedupe key must render', () => {
+  const detailsFor = (type: string): Record<string, any>[] => {
+    const base = { username: 'someone', commentId: 42 };
+    switch (type) {
+      case 'new-mention':
+        return [
+          // Only the shapes that still claim the key — see the CASE in new-mention's SQL.
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'model',
+            threadParentId: 1,
+          },
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'challenge',
+            threadParentId: 1,
+          },
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'model3d',
+            threadParentId: 1,
+          },
+          {
+            ...base,
+            mentionedIn: 'comment',
+            parentType: 'comment',
+            parentId: 5,
+            modelId: 1,
+            modelName: 'M',
+          },
+        ];
+      // Unions both comment tables, so it must render for both detail shapes.
+      case 'new-thread-response':
+        return [
+          { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          { ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' },
+        ];
+      // CommentV2 only — its SQL always stamps version 2.
+      case 'new-comment-reply':
+        return [{ ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 }];
+      case 'new-review-response':
+        return [{ ...base, version: 2, reviewId: 3, modelId: 1, modelName: 'M' }];
+      case 'new-image-comment':
+        return [{ ...base, version: 2, imageId: 9, modelName: 'M', modelId: 1 }];
+      case 'new-article-comment':
+        return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
+      case 'new-bounty-comment':
+        return [{ ...base, version: 2, bountyId: 4, bountyTitle: 'B' }];
+      case 'new-challenge-comment':
+        return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
+      case 'new-comment':
+      case 'new-comment-response':
+      case 'new-comment-nested':
+        return [{ ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' }];
+      default:
+        return [{ ...base, version: 2, model3dId: 8, model3dName: '3D', parentId: 5 }];
+    }
+  };
+
+  const claimants = Object.keys(defs).filter((type) =>
+    defs[type].prepareQuery?.({ lastSent: '2026-01-01' }).includes('"dedupeKey"')
+  );
+
+  it.each(claimants)(
+    '%s produces a message and a URL for every shape that claims the key',
+    (type) => {
+      for (const details of detailsFor(type)) {
+        const msg = notificationProcessors[type].prepareMessage({ type, details });
+        expect(msg, `${type} renders for ${JSON.stringify(details)}`).toBeDefined();
+        expect(msg!.message).toBeTruthy();
+        // A dead link is the failure mode threadUrlMap produces for an unhandled thread type.
+        expect(msg!.url, `${type} has a URL for ${JSON.stringify(details)}`).toBeDefined();
+      }
+    }
+  );
+
+  it('new-mention does NOT claim the key for the shapes it cannot render', () => {
+    const sql = defs['new-mention'].prepareQuery!({ lastSent: '2026-01-01' });
+    // A model-description mention has no comment behind it.
+    expect(sql).toContain(`when details->>'mentionedIn' <> 'comment' then null`);
+    // The v2 'comment' fallback means threadUrlMap can't address the entity → dead link.
+    expect(sql).toContain(`when details->>'threadType' <> 'comment' then`);
+    // The v1 'review' shape makes prepareMessage return undefined → the row renders as nothing.
+    expect(sql).toContain(`when details->>'parentType' = 'comment' then`);
+
+    // Prove the bail-out those guards exist for is real, so this can't rot into a no-op.
+    const mention = notificationProcessors['new-mention'];
+    expect(
+      mention.prepareMessage({
+        type: 'new-mention',
+        details: { mentionedIn: 'comment', parentType: 'review', username: 'x', commentId: 1 },
+      })
+    ).toBeUndefined();
+  });
+
+  it('new-mention resolves the same thread entities as the types it outranks', () => {
+    // It suppresses new-thread-response, so anything that one can address, this one must address too.
+    const mention = defs['new-mention'].prepareQuery!({ lastSent: '2026-01-01' });
+    for (const entity of ['challengeId', 'model3dId']) {
+      expect(mention, `new-mention resolves ${entity}`).toContain(`t."${entity}"`);
+    }
+    // ...and it skips appListing threads for the same reason the reply processors do.
+    expect(mention).toContain('root."appListingId" IS NULL');
+    expect(mention).toContain('t."appListingId" IS NULL');
   });
 });

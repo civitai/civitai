@@ -29,12 +29,17 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
     // calls nextval() for every VALUES row before the conflict check, so an all-conflict batch burns one
     // id per row. UPDATE the existing keys, then INSERT only the misses.
     const updateValues = batch
-      .map((d) => format('(%L, %L)', d.key, `{${d.users.join(',')}}`))
+      .map((d) => format('(%L, %L, %L)', d.key, `{${d.users.join(',')}}`, d.dedupeKey ?? null))
       .join(',');
+    // COALESCE, not a bare assign: the queued row may predate this column (a pending row written by the
+    // previous build carries NULL), and re-claiming it here is what keeps that deploy window deduped.
+    // An existing key is never overwritten — the same `key` always implies the same source event.
     const updateResp = await write.cancellableQuery<{ key: string }>(`
       UPDATE "PendingNotification" pn
-      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])), "lastTriggered" = NOW()
-      FROM (VALUES ${updateValues}) AS u(key, users)
+      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])),
+          "lastTriggered" = NOW(),
+          "dedupeKey" = COALESCE(pn."dedupeKey", u."dedupeKey")
+      FROM (VALUES ${updateValues}) AS u(key, users, "dedupeKey")
       WHERE pn."key" = u.key
       RETURNING pn."key"
     `);
