@@ -23,6 +23,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
+import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
@@ -45,6 +46,9 @@ export function useSubmitCreatorShopForm({
     item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
       ? item.cosmetic.type
       : CosmeticType.Badge
+  );
+  const [slug, setSlug] = useState<string>(
+    ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
   );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -84,7 +88,11 @@ export function useSubmitCreatorShopForm({
   const supportsAnimated =
     type === CosmeticType.Badge ||
     type === CosmeticType.ProfileDecoration ||
-    type === CosmeticType.ProfileBackground;
+    type === CosmeticType.ProfileBackground ||
+    type === CosmeticType.Emoji;
+
+  const isEmoji = type === CosmeticType.Emoji;
+  const slugError = isEmoji && slug.length > 0 && !isValidEmojiSlug(slug) ? EMOJI_SLUG_ERROR : null;
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
@@ -148,7 +156,12 @@ export function useSubmitCreatorShopForm({
     resetFiles();
   };
 
-  const canSubmit = artOk && !!name.trim() && price >= COSMETIC_PRICE_FLOOR && canAffordFee;
+  const canSubmit =
+    artOk &&
+    !!name.trim() &&
+    price >= COSMETIC_PRICE_FLOOR &&
+    canAffordFee &&
+    (!isEmoji || isValidEmojiSlug(slug));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -184,6 +197,13 @@ export function useSubmitCreatorShopForm({
           payload.animated = animated;
         }
         if (offsetsChanged) payload.offsets = normalizedOffsets;
+        // Send the slug on any artwork swap too: the server rebuilds `data`
+        // from scratch and would otherwise fall back to the stored value.
+        if (
+          isEmoji &&
+          (artReplaced || slug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
+        )
+          payload.slug = slug;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
@@ -200,6 +220,7 @@ export function useSubmitCreatorShopForm({
           sellerShare: sellableByOthers ? sellerShare : 0,
           acceptsBlueBuzz,
           offsets: normalizedOffsets,
+          slug: isEmoji ? slug : undefined,
         });
       }
       resetFiles();
@@ -215,7 +236,7 @@ export function useSubmitCreatorShopForm({
     type,
     source: CosmeticSource.Purchase,
     description: description || null,
-    data: imageId ? buildData(type, imageId, animated, normalizedOffsets) : {},
+    data: imageId ? buildData(type, imageId, animated, normalizedOffsets, slug) : {},
   } as unknown as PreviewCosmetic;
 
   const earn = Math.floor(price * CREATOR_SHOP_CREATOR_SHARE);
@@ -226,6 +247,10 @@ export function useSubmitCreatorShopForm({
     isEdit,
     type,
     setType,
+    isEmoji,
+    slug,
+    setSlug,
+    slugError,
     name,
     setName,
     description,

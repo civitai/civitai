@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedEmojiCache } from '~/server/redis/caches';
+import { validateEmojiCosmetic } from '~/server/services/cosmetic.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -113,8 +114,10 @@ const buildCosmeticData = (
   type: CosmeticType,
   imageUrl: string,
   animated?: boolean,
-  offsets?: CosmeticOffsets | null
+  offsets?: CosmeticOffsets | null,
+  slug?: string
 ) => {
+  if (type === CosmeticType.Emoji) return { url: imageUrl, slug, animated: !!animated };
   if (type === CosmeticType.ProfileBackground)
     return { url: imageUrl, type: MediaType.image, animated: !!animated };
   if (type === CosmeticType.ProfileDecoration)
@@ -224,6 +227,7 @@ export const submitCreatorShopItem = async ({
   sellerShare,
   acceptsBlueBuzz,
   offsets,
+  slug,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -234,6 +238,10 @@ export const submitCreatorShopItem = async ({
   if (await findDuplicateArtwork(imageHash))
     throw throwBadRequestError('This artwork has already been submitted to the shop.');
   checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
+
+  // Slug format + collision, also before charging: finding out your slug is
+  // taken after paying a non-refundable fee is the worst version of this.
+  await validateEmojiCosmetic({ type: cosmeticType, data: { slug } });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const feeTx = await createBuzzTransaction({
@@ -261,7 +269,8 @@ export const submitCreatorShopItem = async ({
             cosmeticType,
             imageUrl,
             animated,
-            offsets
+            offsets,
+            slug
           ) as Prisma.InputJsonValue,
           createdById: userId,
         },
@@ -307,7 +316,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, type: true, data: true } },
+      cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
   });
@@ -331,6 +340,7 @@ export const updateCreatorShopItem = async ({
   availableQuantity,
   acceptsBlueBuzz,
   offsets,
+  slug,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Rejected is terminal; archived items must be restored before editing.
@@ -381,6 +391,17 @@ export const updateCreatorShopItem = async ({
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
 
+  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
+  // owners' `:slug:` text depends on it — so carry the existing one forward.
+  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
+  const nextSlug = slug ?? existingSlug;
+  if (slug !== undefined && slug !== existingSlug)
+    await validateEmojiCosmetic({
+      id: existing.cosmetic.id,
+      type: existing.cosmetic.type,
+      data: { slug: nextSlug },
+    });
+
   // Validate + build replaced artwork server-side.
   let artwork:
     | {
@@ -405,7 +426,8 @@ export const updateCreatorShopItem = async ({
         existing.cosmetic.type,
         imageUrl,
         animated,
-        nextOffsets
+        nextOffsets,
+        nextSlug
       ) as Prisma.InputJsonValue,
       checks,
       imageMeta,

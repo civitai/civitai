@@ -233,6 +233,12 @@ function CreatorShopReviewPage() {
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  // The slug is user-visible text in its own right, so it needs reviewing
+  // alongside the artwork — not just the image.
+  const emojiSlug =
+    selected?.cosmetic.type === CosmeticType.Emoji
+      ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+      : undefined;
 
   // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
   // offsets and see the in-context preview update live before saving.
@@ -560,6 +566,11 @@ function CreatorShopReviewPage() {
                       Submitted artwork
                       {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
                     </Text>
+                    {!!emojiSlug && (
+                      <Text size="xs" c="dimmed" ta="center">
+                        Typed as <b>:{emojiSlug}:</b>
+                      </Text>
+                    )}
                     <div>
                       <Text size="sm" fw={600} mb={4}>
                         In-context preview

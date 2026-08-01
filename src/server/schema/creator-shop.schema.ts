@@ -41,6 +41,7 @@ export const creatorCosmeticTypes = [
   CosmeticType.ProfileDecoration,
   CosmeticType.ContentDecoration,
   CosmeticType.ProfileBackground,
+  CosmeticType.Emoji,
 ] as const;
 
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
@@ -145,6 +146,8 @@ export const submitCreatorShopItemSchema = z.object({
   // and validates the artwork itself (format/dimensions/transparency).
   imageUrl: z.string().min(1),
   animated: z.boolean().optional(),
+  // Emoji only — the `:slug:` users type. Required for Emoji, ignored otherwise.
+  slug: z.string().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR),
   availableQuantity: z.number().int().positive().nullish(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
@@ -174,6 +177,9 @@ export const updateCreatorShopItemSchema = z.object({
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
+  // Emoji only. Omitted leaves the existing slug alone — replacing artwork must
+  // not silently drop it, since owners' `:slug:` text depends on it.
+  slug: z.string().optional(),
 });
 
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;

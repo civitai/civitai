@@ -5,10 +5,11 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 type CosmeticStandard = {
   requirements: { key: string; label: string }[];
   // Starter template served from /public (exact spec shape with correct alpha).
-  template: { url: string; downloadName: string };
+  // Omitted for types that don't have one authored yet.
+  template?: { url: string; downloadName: string };
 };
 
-// Only the three creator-listable cosmetic types have standards.
+// Standards for each creator-listable cosmetic type.
 export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>> = {
   [CosmeticType.Badge]: {
     requirements: [
@@ -48,6 +49,30 @@ export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>>
       url: '/images/cosmetic-templates/avatar-frame.png',
       downloadName: 'civitai-avatar-frame-template.png',
     },
+  },
+  [CosmeticType.Emoji]: {
+    requirements: [
+      {
+        key: 'reads-small',
+        label:
+          'Must read at 22px. Emoji are usually rendered inline with text — fine detail disappears at that size.',
+      },
+      {
+        key: 'square-transparent',
+        label:
+          'Exactly 128x128 with a transparent background. Square keeps it aligned with the text line.',
+      },
+      {
+        key: 'no-text',
+        label:
+          'Avoid words and small text. A shape or face reads at emoji size; a sentence does not.',
+      },
+      {
+        key: 'slug',
+        label:
+          'Pick a slug people will actually type. It is what they enter between colons to use your emoji.',
+      },
+    ],
   },
   [CosmeticType.ProfileBackground]: {
     requirements: [

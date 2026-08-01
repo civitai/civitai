@@ -46,6 +46,10 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const {
     isEdit,
     type,
+    isEmoji,
+    slug,
+    setSlug,
+    slugError,
     name,
     description,
     price,
@@ -163,6 +167,18 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               disabled={isEdit}
               description={isEdit ? 'Type cannot be changed after submission' : undefined}
             />
+
+            {isEmoji && (
+              <TextInput
+                label="Slug"
+                description="What people type between colons to use your emoji, e.g. :party_cat:"
+                placeholder="party_cat"
+                value={slug}
+                onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+                error={slugError}
+                withAsterisk
+              />
+            )}
 
             {!artLocked && !localUrl && !imageId && <CosmeticStudioCallout />}
 
