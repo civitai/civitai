@@ -43,10 +43,13 @@ export const packItemFloor = (type: CosmeticType): number => {
 
 /**
  * Cheap zod gate only — the floor is type-dependent, so the authoritative check
- * is `cosmeticPriceFloor(type)` in the service. This is the minimum across all
- * types, so it can never reject something the real floor would allow.
+ * is `cosmeticPriceFloor(type)` in the service. Computed rather than aliased, so
+ * it stays the true minimum across all types once these diverge and can never
+ * reject something the real floor would allow.
  */
-export const COSMETIC_PRICE_FLOOR_MIN = PRICE_FLOOR_DEFAULT;
+export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
+  ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
+);
 export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.

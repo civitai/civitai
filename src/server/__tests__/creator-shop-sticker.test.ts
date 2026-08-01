@@ -103,9 +103,26 @@ describe('creator-shop price floors', () => {
     for (const type of allTypes) expect(packItemFloor(type)).toBeGreaterThan(0);
   });
 
-  it('sums per member, so a 10-sticker pack floors at 10x', () => {
+  // Summing per member is what makes a MIXED-type pack price correctly. Asserting
+  // it against a uniform pack would hold for `count x oneFloor` too, so this pins
+  // it against a stubbed lookup where the types genuinely differ.
+  it('sums each member type rather than multiplying one of them', () => {
+    const stub: Partial<Record<CosmeticType, number>> = {
+      [CosmeticType.Sticker]: 100,
+      [CosmeticType.Badge]: 700,
+    };
+    const floorOf = (type: CosmeticType) => stub[type] ?? 500;
+    const members = [CosmeticType.Sticker, CosmeticType.Sticker, CosmeticType.Badge];
+
+    const summed = members.reduce((sum, type) => sum + floorOf(type), 0);
+    expect(summed).toBe(900);
+    // What `count x oneFloor` would have produced, using the first member.
+    expect(summed).not.toBe(members.length * floorOf(members[0]));
+  });
+
+  it('degenerates to count x floor while every type shares a value', () => {
     const members = Array.from({ length: 10 }, () => CosmeticType.Sticker);
-    const floor = members.reduce((sum, type) => sum + packItemFloor(type), 0);
-    expect(floor).toBe(10 * packItemFloor(CosmeticType.Sticker));
+    const summed = members.reduce((sum, type) => sum + packItemFloor(type), 0);
+    expect(summed).toBe(10 * packItemFloor(CosmeticType.Sticker));
   });
 });

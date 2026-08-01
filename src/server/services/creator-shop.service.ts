@@ -927,6 +927,7 @@ export const getPublicShopItemsForResale = async ({
       unitAmount: true,
       availableQuantity: true,
       meta: true,
+      listed: true,
       cosmetic: { select: { id: true, name: true, type: true, data: true } },
       addedBy: { select: { id: true, username: true, image: true } },
     },
@@ -938,6 +939,10 @@ export const getPublicShopItemsForResale = async ({
     sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
     // Already in this creator's shop — the picker shows it as added/removable.
     isResold: alreadyResold.includes(i.id),
+    // Delisted items stay in the picker, badged. Resale is by reference, so one
+    // that's temporarily off sale starts working again when its creator relists
+    // — hiding it would just make the reseller find it again later.
+    listed: i.listed,
   }));
   return { items, nextCursor };
 };

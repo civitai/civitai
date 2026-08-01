@@ -129,6 +129,9 @@ export function useSubmitCreatorShopForm({
 
   const setType = (next: CreatorCosmeticType) => {
     setTypeState(next);
+    // Floors are per-type: a price valid for the old type can be below the new
+    // one's. Harmless while every type is 500, wrong the moment they diverge.
+    setPrice((current) => Math.max(current, cosmeticPriceFloor(next)));
     clearArt();
     setArtReplaced(true);
   };

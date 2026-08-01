@@ -135,20 +135,23 @@ function ItemActionsMenu({
             >
               {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}
             </Menu.Item>
-            <Menu.Item
-              leftSection={item.listed ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-              disabled={setItemListed.isPending}
-              onClick={() => setItemListed.mutate({ id: item.id, listed: !item.listed })}
-            >
-              <Stack gap={2}>
-                <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
-                <Text size="xs" c="dimmed">
-                  {item.listed
-                    ? 'Stops your own sales. Other creators can still bundle it.'
-                    : 'Put it back on sale in your shop.'}
-                </Text>
-              </Stack>
-            </Menu.Item>
+            {/* Only a live item has a listing to withdraw. */}
+            {item.status === CosmeticShopItemStatus.Published && (
+              <Menu.Item
+                leftSection={item.listed ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                disabled={setItemListed.isPending}
+                onClick={() => setItemListed.mutate({ id: item.id, listed: !item.listed })}
+              >
+                <Stack gap={2}>
+                  <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
+                  <Text size="xs" c="dimmed">
+                    {item.listed
+                      ? 'Stops your own sales. Other creators can still bundle it.'
+                      : 'Put it back on sale in your shop.'}
+                  </Text>
+                </Stack>
+              </Menu.Item>
+            )}
             <Menu.Item
               leftSection={<IconArchive size={16} />}
               disabled={archiveItem.isPending}
