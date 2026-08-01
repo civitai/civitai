@@ -18,6 +18,7 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
   appBlockTag,
+  assertCheckpointVersionSupportsWorkflow,
   buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
   buildTextToImageInput,
@@ -1367,6 +1368,377 @@ describe('buildImageWorkflowInput img2img variant selection + ecosystem guard', 
     const out = buildImageWorkflowInput(txtBody as never, resolved('Flux.1 D'));
     expect(out.workflow).toBe('txt2img');
     expect(out.ecosystem).toBe('Flux1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit-only checkpoint version submitted with NO sourceImage
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The bridge chooses its workflow purely from `sourceImage` presence, so naming
+// an EDIT-ONLY checkpoint version and omitting `sourceImage` resolves to
+// `txt2img`. What the graph does with that then depends on whether the
+// ecosystem is `modelLocked`:
+//
+//   modelLocked (Qwen, MageFlow, 23 of 35 image ecosystems)
+//     The `checkpointInputSchema` clamp in common.ts replaces the id with the
+//     workflow's `defaultModelId` and returns SUCCESS. The caller is billed and
+//     gets images from a checkpoint it never asked for, with nothing in the
+//     response or the `block_workflows` read-model revealing the swap.
+//   not modelLocked (Boogu, SDXL, Flux1, …)
+//     The id survives, the mode discriminator routes to the edit subgraph, and
+//     validation then FAILS on the missing image. A plain error, not a swap.
+//
+// So this guard is a correctness fix on the first group and an
+// earlier/clearer error on the second. Both are covered below.
+//
+// The version lists are real config (qwen-graph / boogu-graph / mage-flow-graph
+// `workflowVersions`), read through `workflow-capability`'s graph probe — no
+// hardcoded id table lives in the guard.
+describe('edit-only checkpoint version + no sourceImage', () => {
+  // Qwen (modelLocked, txt2img default 2552908). Model 2268063 hosts BOTH:
+  // 2558804 is "Image Edit 2511" (img2img:edit only), 2552908 is v2512 (txt2img
+  // only). Same model, disjoint workflows.
+  const QWEN_EDIT_V2511 = 2558804;
+  const QWEN_TXT_V2512 = 2552908;
+  // The INDEX-0 members of each list — the discriminator pair. Index-mapping
+  // would send QWEN_EDIT_V2509 to QWEN_TXT_V2509; the clamp sends it to the
+  // default, QWEN_TXT_V2512.
+  const QWEN_EDIT_V2509 = 2133258;
+  const QWEN_TXT_V2509 = 2110043;
+  // Boogu: Edit / Edit Turbo are img2img:edit-only; Base / Turbo are
+  // txt2img-only. NOT modelLocked — see the characterization test below.
+  const BOOGU_EDIT = 3049824;
+  const BOOGU_BASE = 3049541;
+  // MageFlow (modelLocked, txt2img default 3172038): Standard(edit) vs
+  // Standard(txt2img).
+  const MAGEFLOW_EDIT_STANDARD = 3172043;
+  const MAGEFLOW_TXT_STANDARD = 3172038;
+  // MageFlow's INDEX-1 pair, the second discriminator: index-mapping would send
+  // edit_turbo to txt2img_turbo (3172039); the clamp sends it to 3172038.
+  const MAGEFLOW_EDIT_TURBO = 3172044;
+  const MAGEFLOW_TXT_TURBO = 3172039;
+
+  const body = (over: Record<string, unknown> = {}) => ({
+    kind: 'textToImage' as const,
+    modelId: 2268063,
+    modelVersionId: QWEN_EDIT_V2511,
+    params: { prompt: 'a cat', quantity: 1 },
+    ...over,
+  });
+  const resolved = (checkpointVersionId: number, checkpointBaseModel = 'Qwen') => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId,
+    checkpointBaseModel,
+  });
+  const sourceImage = {
+    url: 'https://image.civitai.com/abc/def.jpeg',
+    width: 1024,
+    height: 1024,
+  };
+
+  function catchError(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // ── WHAT THE GUARD REJECTS ─────────────────────────────────────────────────
+  //
+  // Qwen and MageFlow are the SILENT-SWAP cases (`modelLocked`) — those are the
+  // correctness fix. Boogu is NOT `modelLocked`: it already failed loudly with
+  // "An image is required", so the guard only moves that error earlier and
+  // makes it name the remedy. Rejecting all three uniformly is the point; the
+  // difference is in what was happening before, not in what happens now.
+  it.each([
+    ['Qwen', QWEN_EDIT_V2511, 'Qwen'],
+    ['Boogu', BOOGU_EDIT, 'Boogu'],
+    ['MageFlow', MAGEFLOW_EDIT_STANDARD, 'MageFlow'],
+  ])(
+    'rejects an edit-only %s version submitted with no sourceImage',
+    (_eco, versionId, baseModel) => {
+      const caught = catchError(() =>
+        buildImageWorkflowInput(
+          body({ modelVersionId: versionId }) as never,
+          resolved(versionId, baseModel)
+        )
+      );
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    }
+  );
+
+  it('names the actual fix in the error message', () => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body() as never, resolved(QWEN_EDIT_V2511))
+    ) as TRPCError;
+    // Points at the offending version, the workflow it IS for, the sourceImage
+    // remedy, AND the concrete txt2img version to use instead.
+    expect(caught.message).toContain(String(QWEN_EDIT_V2511));
+    expect(caught.message).toContain('img2img:edit');
+    expect(caught.message).toContain('sourceImage');
+    expect(caught.message).toContain(String(QWEN_TXT_V2512));
+  });
+
+  // NOTE: same-position is the GUARD's own suggestion policy (it reads the
+  // graph's `buildVersionMappings` pairing to name a useful alternative in the
+  // error). It is NOT what the graph does when it substitutes — that is the
+  // default-clamp, pinned by the characterization tests at the bottom.
+  it.each([
+    [BOOGU_EDIT, 'Boogu', BOOGU_BASE],
+    [MAGEFLOW_EDIT_STANDARD, 'MageFlow', MAGEFLOW_TXT_STANDARD],
+  ])(
+    'suggests the same-position txt2img sibling for version %s',
+    (versionId, baseModel, expectedSuggestion) => {
+      const caught = catchError(() =>
+        buildImageWorkflowInput(
+          body({ modelVersionId: versionId }) as never,
+          resolved(versionId, baseModel)
+        )
+      ) as TRPCError;
+      expect(caught.message).toContain(String(expectedSuggestion));
+    }
+  );
+
+  it('guards the RESOLVED CHECKPOINT version, not body.modelVersionId (LoRA install)', () => {
+    // A LoRA-bound install: the body names the LoRA, the resolver picked the
+    // edit-only checkpoint. The guard must fire on the checkpoint.
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ modelVersionId: 555001 }) as never, {
+        baseModel: 'Qwen',
+        modelType: 'LORA',
+        checkpointVersionId: QWEN_EDIT_V2511,
+        checkpointBaseModel: 'Qwen',
+      })
+    );
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── NO REGRESSION ──────────────────────────────────────────────────────────
+  it('still accepts an edit-only version WITH a sourceImage (img2img:edit)', () => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImage }) as never,
+      resolved(QWEN_EDIT_V2511)
+    );
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.ecosystem).toBe('Qwen');
+    // The version the caller asked for is the one that anchors the graph.
+    expect(out.model).toEqual({ id: QWEN_EDIT_V2511 });
+  });
+
+  it.each([
+    [QWEN_TXT_V2512, 'Qwen'],
+    [BOOGU_BASE, 'Boogu'],
+    [MAGEFLOW_TXT_STANDARD, 'MageFlow'],
+  ])('still accepts a txt2img-capable version %s with no sourceImage', (versionId, baseModel) => {
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: versionId }) as never,
+      resolved(versionId, baseModel)
+    );
+    expect(out.workflow).toBe('txt2img');
+    expect(out.model).toEqual({ id: versionId });
+  });
+
+  // An ecosystem whose txt2img and img2img:edit offer the SAME version list is
+  // not workflow-scoped at all — both modes must keep working on one version.
+  it.each([
+    ['Flux.2 D', 'Flux2', 2439067],
+    ['OpenAI', 'OpenAI', 1733399],
+  ])(
+    'keeps BOTH modes working for the dual-capable ecosystem %s',
+    (baseModel, ecoKey, versionId) => {
+      const txt = buildImageWorkflowInput(
+        body({ modelVersionId: versionId }) as never,
+        resolved(versionId, baseModel)
+      );
+      expect(txt.workflow).toBe('txt2img');
+      expect(txt.ecosystem).toBe(ecoKey);
+      expect(txt.model).toEqual({ id: versionId });
+
+      const edit = buildImageWorkflowInput(
+        body({ modelVersionId: versionId, sourceImage }) as never,
+        resolved(versionId, baseModel)
+      );
+      expect(edit.workflow).toBe('img2img:edit');
+      expect(edit.ecosystem).toBe(ecoKey);
+      expect(edit.model).toEqual({ id: versionId });
+    }
+  );
+
+  it('leaves an UNLISTED community checkpoint of a scoped ecosystem alone', () => {
+    // Not in ANY of Qwen's workflow version lists → the graph would not have
+    // substituted it, so the guard must not invent a rejection.
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: 987654321 }) as never,
+      resolved(987654321)
+    );
+    expect(out.workflow).toBe('txt2img');
+    expect(out.model).toEqual({ id: 987654321 });
+  });
+
+  it('leaves an ecosystem with no version scoping alone (SDXL)', () => {
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: 128078 }) as never,
+      resolved(128078, 'SDXL 1.0')
+    );
+    expect(out.workflow).toBe('txt2img');
+  });
+
+  // ── REVERSE DIRECTION UNCHANGED ────────────────────────────────────────────
+  it('leaves the pre-existing "neither img2img variant" rejection unchanged', () => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ sourceImage }) as never, resolved(99, 'SD 3.5'))
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught.message).toMatch(/img2img \(source image\) is not supported/);
+  });
+
+  // ── THE UNDERLYING PLATFORM BEHAVIOUR THIS DEFENDS AGAINST ─────────────────
+  //
+  // Characterization tests, run against the REAL graph: this is what used to
+  // happen — and still happens to anything that reaches the graph with this
+  // shape. If the graph ever starts rejecting instead of substituting, or
+  // starts substituting by a DIFFERENT rule, these fail and tell us the guard's
+  // premise changed.
+  //
+  // The mechanism is the `modelLocked` clamp in `createCheckpointGraph`'s
+  // `checkpointInputSchema` (`shared/data-graph/generation/common.ts`): on a
+  // `modelLocked` ecosystem, any id not in the CURRENT workflow's visible list
+  // is replaced with that workflow's `defaultModelId`. It is NOT
+  // `buildModelTransform`'s same-index sibling mapping: that transform is gated
+  // on `!isDirectUpdate`, and a one-shot `safeParse` passing `model` explicitly
+  // is a direct update, so it never runs on this path at all.
+  //
+  // Naming the right mechanism is load-bearing, so these cases are chosen to
+  // DISCRIMINATE between the two candidates rather than merely to observe that
+  // "some substitution happens". The two hypotheses agree only where the input's
+  // same-index sibling happens to BE the workflow default (Qwen's index-1 pair,
+  // the row the original test used); every other row below is a case where they
+  // predict different ids, and the graph picks the default every time.
+  const graphCtx: GenerationCtx = {
+    limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+    user: { isMember: false, tier: 'free' },
+    flags: {},
+    selfHostedDisabledEcosystems: [],
+    selfHostedMode: 'enabled',
+    gateRules: [],
+  };
+  // The exact input the bridge used to emit for "edit version, no sourceImage".
+  const parseGraph = (over: Record<string, unknown>) =>
+    generationGraph.safeParse(
+      {
+        workflow: 'txt2img',
+        resources: [],
+        prompt: 'a cat',
+        sampler: 'Euler',
+        steps: 25,
+        quantity: 1,
+        priority: 'low',
+        aspectRatio: { value: '1024:1024', width: 1024, height: 1024 },
+        ...over,
+      },
+      graphCtx
+    );
+  const parsedModelId = (r: ReturnType<typeof parseGraph>) =>
+    (r.data as { model?: { id?: number } } | undefined)?.model?.id;
+
+  it.each([
+    // label                                  | eco        | input             | index-map predicts | actual
+    ['index 1 — both hypotheses agree', 'Qwen', QWEN_EDIT_V2511, QWEN_TXT_V2512, QWEN_TXT_V2512],
+    // ↓ THE DISCRIMINATOR. Index-mapping predicts QWEN_TXT_V2509 (2110043);
+    //   the default-clamp predicts QWEN_TXT_V2512 (2552908). The graph returns
+    //   the default. Delete the clamp and this case changes answer.
+    ['index 0 — DISCRIMINATOR', 'Qwen', QWEN_EDIT_V2509, QWEN_TXT_V2509, QWEN_TXT_V2512],
+    // ↓ MageFlow's index-1 pair is a second, independent discriminator:
+    //   index-mapping predicts txt2img_turbo (3172039), the clamp predicts the
+    //   ecosystem default txt2img_standard (3172038).
+    [
+      'index 1 — DISCRIMINATOR',
+      'MageFlow',
+      MAGEFLOW_EDIT_TURBO,
+      MAGEFLOW_TXT_TURBO,
+      MAGEFLOW_TXT_STANDARD,
+    ],
+  ])(
+    'graph SILENTLY SUBSTITUTES to the workflow DEFAULT, not the same-index sibling (%s, %s)',
+    (_label, ecosystem, inputId, sameIndexSibling, expected) => {
+      const result = parseGraph({ ecosystem, model: { id: inputId } });
+      expect(result.success).toBe(true);
+      // Success — with a DIFFERENT checkpoint than the one that was asked for.
+      expect(parsedModelId(result)).toBe(expected);
+      // …and specifically NOT the same-index sibling, wherever the two differ.
+      // This is the assertion that makes the test mechanism-specific: without
+      // it, an index-mapping implementation would pass the row above too.
+      if (sameIndexSibling !== expected) {
+        expect(parsedModelId(result)).not.toBe(sameIndexSibling);
+      }
+    }
+  );
+
+  // The wider class the guard does NOT close, pinned so #3520's scope is a
+  // measured fact rather than a description. An id the ecosystem has never
+  // heard of is substituted just the same on a `modelLocked` ecosystem — it is
+  // NOT "left alone".
+  it.each([
+    ['Qwen', QWEN_TXT_V2512],
+    ['MageFlow', MAGEFLOW_TXT_STANDARD],
+  ])(
+    'graph substitutes even an UNRECOGNIZED id on modelLocked %s (tracked in #3520)',
+    (ecosystem, expectedDefault) => {
+      const result = parseGraph({ ecosystem, model: { id: 987654321 } });
+      expect(result.success).toBe(true);
+      expect(parsedModelId(result)).toBe(expectedDefault);
+    }
+  );
+
+  // The contrast case that proves the clamp — not the workflow routing — is
+  // what does the substituting. Boogu ships the same per-workflow version
+  // scoping but is NOT `modelLocked`, so an unrecognized id survives untouched
+  // and an edit-only id fails loudly instead of being swapped.
+  it('does NOT substitute on a NON-modelLocked ecosystem (Boogu)', () => {
+    const unknown = parseGraph({ ecosystem: 'Boogu', model: { id: 987654321 } });
+    expect(unknown.success).toBe(true);
+    expect(parsedModelId(unknown)).toBe(987654321);
+
+    // The edit-only version resolves to the edit subgraph and then trips on the
+    // missing image — a plain error, never a silent swap. So for Boogu this
+    // PR's guard is an earlier, better-worded error, not a correctness fix.
+    const editOnly = parseGraph({ ecosystem: 'Boogu', model: { id: BOOGU_EDIT } });
+    expect(editOnly.success).toBe(false);
+  });
+
+  // The reverse direction is the same substitution, and is deliberately NOT
+  // rejected by this PR (see #3520 / the guard's SCOPE docblock).
+  it('graph substitutes in the REVERSE direction too (txt2img-only version + images)', () => {
+    const result = parseGraph({
+      workflow: 'img2img:edit',
+      ecosystem: 'Qwen',
+      model: { id: QWEN_TXT_V2512 },
+      images: [sourceImage],
+    });
+    expect(result.success).toBe(true);
+    expect(parsedModelId(result)).toBe(QWEN_EDIT_V2511);
+  });
+
+  // ── The exported helper itself ─────────────────────────────────────────────
+  it('assertCheckpointVersionSupportsWorkflow is direction-agnostic', () => {
+    // The txt2img-only version offered on img2img:edit is equally wrong; the
+    // helper reports it even though the bridge only calls it for txt2img today.
+    const caught = catchError(() =>
+      assertCheckpointVersionSupportsWorkflow({
+        ecosystem: 'Qwen',
+        ecosystemId: ECO.Qwen,
+        workflow: 'img2img:edit',
+        checkpointVersionId: QWEN_TXT_V2512,
+      })
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught.message).toContain('txt2img');
+    expect(caught.message).toContain(String(QWEN_EDIT_V2511));
   });
 });
 
