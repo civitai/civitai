@@ -303,10 +303,14 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
   // listing.)
   //
   // 🔴 But `getMyListingForApp` redirects `editTargetId` to an EXISTING shadow with no
-  // moderator branch of its own. A moderator whose listing already carries a shadow is
-  // therefore editing the SHADOW — the bypass is a no-op there (`revisionOfId != null`)
-  // — and IS staged. Gating on `isModerator` alone replaces one false banner with
-  // another, for a case that is common rather than theoretical.
+  // moderator branch of its own, so the step is hosted against the SHADOW's id — and
+  // `resolveOwnerAssetEditTarget` returns its target UNCHANGED for a moderator (the
+  // `isModerator` early return is its FIRST line; the `revisionOfId` check below it is
+  // the OWNER branch and is never reached for a mod). "Unchanged" is the shadow, so
+  // that write IS staged. Gating on `isModerator` alone replaces one false banner with
+  // another. How OFTEN a mod hits that state is unmeasured and the gate does not depend
+  // on it — see the header comment in `ListingMediaEditor` before reaching for the 78%
+  // figure quoted above, which measured a pre-fix condition that no longer holds.
   //
   // The four states below are the whole matrix; each has a test.
   // -------------------------------------------------------------------------

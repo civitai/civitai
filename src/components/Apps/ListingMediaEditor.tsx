@@ -31,11 +31,24 @@ import { trpc } from '~/utils/trpc';
  *     live listing (the deliberate curation bypass). IMMEDIATE.
  *   - MODERATOR, shadow ALREADY exists → 🔴 STAGED, same as an owner.
  *     `getMyListingForApp` resolves `editTargetId` to an existing shadow with no
- *     moderator branch of its own, and the asset step is hosted against that id. The
- *     mod bypass then does nothing (the target already has `revisionOfId != null`), so
- *     the write applies to the SHADOW and only goes live on re-approval. Gating the
- *     "applies immediately" copy on `isModerator` alone lies to exactly this case —
- *     and it is common, not theoretical (see the 78% figure in the note below).
+ *     moderator branch of its own, so the asset step is hosted against the SHADOW's id
+ *     — and `resolveOwnerAssetEditTarget` returns its target UNCHANGED for a moderator
+ *     (`if (user.isModerator) return listing;` is the first line; the `revisionOfId`
+ *     check below it is never reached for a mod, and describes the OWNER branch). Here
+ *     "unchanged" means the shadow, so the write applies to the shadow and only goes
+ *     live on re-approval. Gating the "applies immediately" copy on `isModerator`
+ *     alone lies to exactly this case.
+ *
+ *     🔴 HOW OFTEN this state occurs is UNMEASURED — and the gate's correctness does
+ *     not depend on it, which is the only reason not to go measure it. Do NOT justify
+ *     this branch with the 78%-of-approved-parents-carry-a-shadow figure in the note
+ *     below: that counted the PRE-fix prevalence manufactured by the write-on-view bug
+ *     lazy creation removed, under preconditions that no longer hold. Post-fix a shadow
+ *     exists only after a real owner edit, and a moderator's own asset edits never mint
+ *     one — so the rate could be near zero, or still high if those legacy never-edited
+ *     shadows were never purged (no cleanup migration is known to have run). Citing a
+ *     measurement taken under different preconditions is the exact error that produced
+ *     the first, wrong version of this gate. If you need the number, go count it.
  *
  * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
  * page has a single back control), not here.
@@ -83,7 +96,14 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   // it says "the asset step is hosted against the LIVE parent". A moderator whose
   // listing already carries a shadow is editing that shadow and IS staged — they must
   // get the owner copy. `isModerator` alone would tell them the opposite.
-  const modDirectLiveEdit = isModerator && isApproved && !shadowId;
+  //
+  // Deliberately NOT `&& isApproved`: both consumers already sit inside an `isApproved`
+  // gate, so the conjunct flipped no state while making the expression read as a
+  // different rule from the one the comments state. Keep this identical to the header's
+  // `isModerator && !shadowId`. 🔴 If you ever consume it OUTSIDE an `isApproved` gate,
+  // add the approval check THERE — a draft/pending listing has no shadow, so this alone
+  // would be true for a moderator on one.
+  const modDirectLiveEdit = isModerator && !shadowId;
 
   // 3) Re-pull the projected assets after EVERY successful asset mutation.
   //
