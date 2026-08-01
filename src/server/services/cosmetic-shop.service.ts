@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userOwnedEmojiCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -34,8 +35,8 @@ import {
   getAllImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
-import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
-import { isValidEmojiSlug } from '~/shared/utils/emoji-token';
+import { validateEmojiCosmetic } from '~/server/services/cosmetic.service';
+import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -99,37 +100,6 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const count = await dbRead.cosmeticShopItem.count({ where });
 
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
-};
-
-const validateEmojiCosmetic = async ({
-  id,
-  type,
-  data,
-}: {
-  id?: number;
-  type?: CosmeticType | null;
-  data?: unknown;
-}) => {
-  if (type !== CosmeticType.Emoji) return;
-
-  const slug = (data as { slug?: unknown } | null | undefined)?.slug;
-  if (typeof slug !== 'string' || !isValidEmojiSlug(slug)) {
-    throw throwBadRequestError(
-      'Emoji cosmetics need a slug of 2-32 lowercase letters, numbers or underscores, and it cannot be all digits'
-    );
-  }
-
-  const conflict = await dbWrite.cosmetic.findFirst({
-    where: {
-      type: CosmeticType.Emoji,
-      data: { path: ['slug'], equals: slug },
-      ...(id ? { id: { not: id } } : {}),
-    },
-    select: { id: true },
-  });
-  if (conflict) {
-    throw throwBadRequestError(`The emoji slug ":${slug}:" is already in use`);
-  }
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
@@ -775,6 +745,8 @@ export const purchaseCosmeticShopItem = async ({
 
       return userCosmetic;
     });
+
+    await userOwnedEmojiCache.refresh([userId]);
 
     try {
       await withRetries(async () => {

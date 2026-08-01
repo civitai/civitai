@@ -55,8 +55,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  CosmeticType,
+  ModelStatus,
+  TagSource,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -164,6 +170,37 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     }, {} as Record<number, UserCosmeticLookup>);
     return results;
   },
+  ttl: CacheTTL.day,
+});
+
+type UserOwnedEmojiLookup = {
+  userId: number;
+  cosmeticIds: number[];
+};
+/**
+ * Emoji are owned, never equipped, so `userCosmeticCache` — which only holds
+ * equipped cosmetics — can't answer "may this user send this emoji".
+ */
+export const lookupOwnedEmoji = async (ids: number[], fromWrite?: boolean) => {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const owned = await db.userCosmetic.findMany({
+    where: { userId: { in: goodIds }, cosmetic: { type: CosmeticType.Emoji } },
+    select: { userId: true, cosmeticId: true },
+  });
+  return owned.reduce((acc, { userId, cosmeticId }) => {
+    acc[userId] ??= { userId, cosmeticIds: [] };
+    if (!acc[userId].cosmeticIds.includes(cosmeticId)) acc[userId].cosmeticIds.push(cosmeticId);
+    return acc;
+  }, {} as Record<number, UserOwnedEmojiLookup>);
+};
+
+export const userOwnedEmojiCache = createCachedObject<UserOwnedEmojiLookup>({
+  key: REDIS_KEYS.CACHES.USER_OWNED_EMOJI,
+  idKey: 'userId',
+  staleWhileRevalidate: false,
+  lookupFn: lookupOwnedEmoji,
   ttl: CacheTTL.day,
 });
 

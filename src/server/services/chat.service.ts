@@ -296,9 +296,9 @@ export const createMessage = async ({
     content = resolveEmojiTokens(content, {
       resolveSlug: (slug) => ownedBySlug.get(slug),
       isOwnedId: (id) => ownedIds.has(id),
-    });
+    }).trim();
 
-    if (!content.trim().length) {
+    if (!content.length) {
       throw throwBadRequestError('Message cannot be empty');
     }
   }

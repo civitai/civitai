@@ -1061,6 +1061,8 @@ function ChatMessageContent({
 
   if (!content.length) return <>{fallback ?? null}</>;
 
+  // A censored message renders as flat text, losing its emoji: re-inserting them
+  // means splitting again, which is the bypass this component exists to close.
   if (cleaned !== scannable)
     return (
       <Text component="span">

@@ -4,7 +4,12 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { cosmeticCache, cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
+import {
+  cosmeticCache,
+  cosmeticEntityCaches,
+  userCosmeticCache,
+  userOwnedEmojiCache,
+} from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
@@ -18,6 +23,8 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
 import type { EmojiCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -44,8 +51,8 @@ export async function getEmojiCosmetics({ ids }: GetEmojiCosmeticsInput) {
 }
 
 export async function getOwnedEmojiCosmetics(userId: number) {
-  const userCosmetics = await userCosmeticCache.fetch([userId]);
-  const ids = [...new Set(userCosmetics[userId]?.cosmetics.map((x) => x.cosmeticId) ?? [])];
+  const owned = await userOwnedEmojiCache.fetch([userId]);
+  const ids = owned[userId]?.cosmeticIds ?? [];
   if (!ids.length) return [];
 
   return getEmojiCosmetics({ ids });
@@ -224,6 +231,8 @@ export const grantCosmetics = async ({
     WHERE c.id IN (${Prisma.join(cosmeticIds)})
     ON CONFLICT DO NOTHING;
   `;
+
+  await userOwnedEmojiCache.refresh([userId]);
 };
 
 /**
@@ -302,6 +311,7 @@ export async function revokeCosmeticsFromUsers({
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);
+  await userOwnedEmojiCache.refresh(uniqueUserIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -407,7 +417,41 @@ export async function unassignCosmetic({
   return { count: result.count };
 }
 
+/**
+ * Emoji slugs are the send-time lookup key, so format and uniqueness are
+ * enforced here — every write path (tRPC upsert, Retool) routes through it.
+ */
+export async function validateEmojiCosmetic({
+  id,
+  type,
+  data,
+}: {
+  id?: number;
+  type?: CosmeticType | null;
+  data?: unknown;
+}) {
+  if (type !== CosmeticType.Emoji) return;
+
+  const slug = (data as { slug?: unknown } | null | undefined)?.slug;
+  if (typeof slug !== 'string' || !isValidEmojiSlug(slug)) {
+    throw throwBadRequestError(EMOJI_SLUG_ERROR);
+  }
+
+  const conflict = await dbWrite.cosmetic.findFirst({
+    where: {
+      type: CosmeticType.Emoji,
+      data: { path: ['slug'], equals: slug },
+      ...(id ? { id: { not: id } } : {}),
+    },
+    select: { id: true },
+  });
+  if (conflict) {
+    throw throwBadRequestError(`The emoji slug ":${slug}:" is already in use`);
+  }
+}
+
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
+  await validateEmojiCosmetic({ type: data.type, data: data.data });
   const cosmetic = await dbWrite.cosmetic.create({ data });
   return cosmetic;
 }
@@ -419,6 +463,16 @@ export async function updateCosmetic({
   id: number;
   data: Prisma.CosmeticUncheckedUpdateInput;
 }) {
+  const existing = await dbWrite.cosmetic.findUnique({
+    where: { id },
+    select: { type: true, data: true },
+  });
+  await validateEmojiCosmetic({
+    id,
+    type: (data.type as CosmeticType | undefined) ?? existing?.type,
+    data: data.data ?? existing?.data,
+  });
+
   const cosmetic = await dbWrite.cosmetic.update({ where: { id }, data });
   return cosmetic;
 }

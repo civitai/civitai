@@ -7,6 +7,9 @@ const EMOJI_TOKEN_OR_SLUG = new RegExp(
   'g'
 );
 
+export const EMOJI_SLUG_ERROR =
+  'Emoji slugs must be 2-32 lowercase letters, numbers or underscores, and cannot be all digits';
+
 export function isValidEmojiSlug(slug: string) {
   return new RegExp(`^${EMOJI_SLUG_PATTERN}$`).test(slug) && !/^\d+$/.test(slug);
 }

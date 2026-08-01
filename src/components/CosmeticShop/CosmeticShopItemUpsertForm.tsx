@@ -52,7 +52,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { isValidEmojiSlug } from '~/shared/utils/emoji-token';
+import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
 import { CosmeticSource, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
@@ -172,7 +172,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
     if (type === CosmeticType.Emoji && !isValidEmojiSlug(slug)) {
       showErrorNotification({
         title: 'Invalid slug',
-        error: new Error('Use 2-32 lowercase letters, numbers or underscores'),
+        error: new Error(EMOJI_SLUG_ERROR),
       });
       return;
     }
@@ -264,11 +264,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
             value={slug}
             onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
             placeholder="e.g. party_cat"
-            error={
-              slug.length > 0 && !isValidEmojiSlug(slug)
-                ? 'Use 2-32 lowercase letters, numbers or underscores'
-                : undefined
-            }
+            error={slug.length > 0 && !isValidEmojiSlug(slug) ? EMOJI_SLUG_ERROR : undefined}
             withAsterisk
           />
         )}

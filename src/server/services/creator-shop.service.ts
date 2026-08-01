@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userOwnedEmojiCache } from '~/server/redis/caches';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -1048,6 +1049,7 @@ export const reviewCreatorShopItem = async ({
       ],
       skipDuplicates: true,
     });
+    await userOwnedEmojiCache.refresh([item.cosmetic.createdById]);
   }
 
   // An unpublished item can't stay featured — free up its slot.
