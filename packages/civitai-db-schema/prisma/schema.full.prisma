@@ -2405,6 +2405,40 @@ model AppBlock {
   // migration 20260629120000_add_appblock_external_url). NULL until applied.
   externalUrl        String?   @map("external_url")
 
+  // PER-APP generation SPEND CLASS — drives the daily-Buzz + velocity ceilings
+  // enforced by app-spend-cap.service.ts. 'standard' (the default, and every row
+  // that exists today) is byte-identical to the pre-change global ceilings.
+  //
+  // 🔴 A DEDICATED AXIS, NOT `trust_tier`. `trust_tier` is a BROWSER-ISOLATION
+  // decision — it gates the iframe sandbox allowlist (allow-same-origin +
+  // allow-scripts) and inline/hybrid renderMode. Deriving spend from it would
+  // mean a moderator granting a RENDERING capability silently granted a 5x money
+  // ceiling; production already carries rows tiered `internal` for rendering
+  // that were never a spend decision. The two vocabularies deliberately share no
+  // value, so one can never be silently written into the other's column.
+  //
+  // 🔴 PLATFORM-CONTROLLED, mod-only write (BlockRegistry.setAppSpendCapConfig
+  // behind moderatorProcedure). Never publisher-declared and never sourced from
+  // the manifest: a developer must not be able to raise their own abuse ceiling.
+  // Same posture as trust_tier / category / featured above.
+  spendTier          String    @default("standard") @map("spend_tier")
+
+  // PER-APP generation-cap OVERRIDE — the moderator escape hatch on top of the
+  // `spend_tier`-derived ceilings. NULL = no override, use the tier's limits. A
+  // non-NULL value REPLACES that one field only (they are independent), and may
+  // TIGHTEN as well as loosen — clamping a single abusive app without demoting
+  // its tier. Bounded 1..1e9 / 1..100_000 by CHECK constraints matching the code
+  // bounds exactly, so a hand-written value cannot mean one thing in the row and
+  // another at enforcement.
+  //
+  // ADDITIVE + MANUALLY APPLIED (migration
+  // 20260731120000_app_block_spend_tier_and_cap_override; CNPG nvme0 does not
+  // auto-apply). Apply BEFORE the deploy: the cap resolver itself degrades to
+  // the strictest tier (= the pre-change ceilings, never "uncapped"), but any
+  // `appBlock` query without an explicit `select` raises P2022 until it lands.
+  spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
+  spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

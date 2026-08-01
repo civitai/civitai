@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
+import {
+  APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
+  APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
+  APP_SPEND_TIERS,
+} from '~/server/services/blocks/app-cap-limits.constants';
 
 /**
  * Two user-controlled install scopes. Both live in the same
@@ -310,6 +315,89 @@ export const getMarketplaceMetaSchema = z.object({
   appBlockId: z.string().min(1).max(64),
 });
 export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
+
+// ---------------------------------------------------------------------------
+// PER-APP generation SPEND CAP CONFIG (mod-only) — schemas.
+// ---------------------------------------------------------------------------
+
+/**
+ * MOD-ONLY: set the app's SPEND TIER and/or the per-app override on the
+ * generation spend/velocity ceilings enforced by `app-spend-cap.service.ts`.
+ *
+ * 🔴 SPEND IS ITS OWN AXIS. `spendTier` is NOT `trustTier`. `trustTier` gates
+ * the iframe sandbox allowlist and inline/hybrid renderMode — a browser-isolation
+ * decision that says nothing about money. They are set through different fields,
+ * carry disjoint vocabularies, and moving one never moves the other.
+ *
+ * Semantics, mirroring `setMarketplaceMetaSchema`: a field OMITTED (undefined) is
+ * left unchanged; an explicit `null` CLEARS an override so the app falls back
+ * to its spend tier's limit. A positive integer replaces that field's ceiling
+ * for this app only, and may tighten as well as loosen.
+ *
+ * 🔴 `.min(1)` is deliberate — 0 is NOT accepted. "Cannot generate at all" is a
+ * DISABLE decision whose surface is the app's `status`, not a cap of zero (which
+ * would present to users as a permanent, unexplained rate-limit rejection).
+ * The maxima are `APP_CAP_OVERRIDE_MAX_*` from `app-cap-limits.constants.ts`
+ * ITSELF (not re-typed literals), which is also where the migration's CHECK
+ * constraints and the read-time clamp get them — one number, three enforcement
+ * points, no drift.
+ *
+ * 🔴 There is deliberately NO publisher-facing counterpart to this schema. An
+ * app must never be able to raise its own abuse ceiling, which is why none of
+ * these fields exist in the manifest or in any developer-reachable input.
+ */
+export const setAppSpendCapConfigSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  /** The app's spend class. Omitted = unchanged. */
+  spendTier: z.enum(APP_SPEND_TIERS).optional(),
+  /** Per-UTC-day aggregate Buzz ceiling for this app. Max 1e9 Buzz ≈ $1M/day. */
+  spendCapBuzzPerDay: z
+    .number()
+    .int()
+    .min(1)
+    .max(APP_CAP_OVERRIDE_MAX_DAILY_BUZZ)
+    .nullable()
+    .optional(),
+  /** Gens per velocity window for this app. Max 100k ≈ 1,666/sec at the 60s window. */
+  spendVelocityMaxGens: z
+    .number()
+    .int()
+    .min(1)
+    .max(APP_CAP_OVERRIDE_MAX_VELOCITY_GENS)
+    .nullable()
+    .optional(),
+});
+export type SetAppSpendCapConfigInput = z.infer<typeof setAppSpendCapConfigSchema>;
+
+/** Input for the MOD-ONLY `blocks.getAppSpendCapConfig` (seeds the mod form). */
+export const getAppSpendCapConfigSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type GetAppSpendCapConfigInput = z.infer<typeof getAppSpendCapConfigSchema>;
+
+/**
+ * MOD-ONLY view of one app's cap configuration: the spend tier, the raw override
+ * columns, and the RESOLVED ceilings actually enforced — so a moderator can see
+ * the effective number without re-deriving the tier table by hand (and can see
+ * when a deploy-time `BLOCK_APP_SPEND_*` clamp is overriding their value).
+ *
+ * 🔴 `trustTier` is deliberately absent: surfacing it here would re-suggest the
+ * coupling this field exists to break.
+ *
+ * 🔴 Mod surface only. Never returned by an anon/publisher-facing procedure: the
+ * exact ceiling is withheld from apps on purpose (`blocks.router.ts` returns a
+ * no-number rejection) so a hostile app can't probe where its limit sits.
+ */
+export type AppSpendCapConfig = {
+  appBlockId: string;
+  /** The app's server-owned SPEND tier (the source of the default limits). */
+  spendTier: string;
+  /** NULL when no override is set for that field. */
+  spendCapBuzzPerDay: number | null;
+  spendVelocityMaxGens: number | null;
+  /** What the reserve path will actually enforce (global clamp ∘ (override ?? tier)). */
+  effective: { dailyBuzz: number; velocityMaxGens: number };
+};
 
 // ---------------------------------------------------------------------------
 // F-E marketplace REVIEWS (5-star) — schemas.

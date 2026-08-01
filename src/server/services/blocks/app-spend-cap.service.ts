@@ -1,4 +1,10 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS,
+  STRICTEST_APP_CAP_LIMITS,
+  type AppCapLimits,
+} from '~/server/services/blocks/app-cap-limits.constants';
+import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.service';
 
 /**
  * Per-APP aggregate generation-SPEND + VELOCITY cap (G8 — generic per-app
@@ -46,64 +52,47 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
  */
 
 /**
- * ⚠️ GLOBAL DEFAULTS (follow-up before non-mod GA): the ceilings below are ONE
- * value applied to EVERY app (env-overridable, but not PER-app). Fine while App
- * Blocks is mod/developer-gated — but a modestly popular app would brush the
- * velocity ceiling (120 gens / 60s ≈ 2 gens/sec AGGREGATE across all its
- * viewers). Before App Blocks opens to non-moderators, either (a) make these
- * limits per-app configurable (e.g. from the app manifest / an admin-set
- * override keyed on appBlockId), or (b) raise the global defaults to a level a
- * genuinely popular app won't hit — the guardrail's job is to bound a SYBIL
- * RING, not to throttle a legitimately busy app. Tracked as the non-mod-GA
- * prerequisite alongside the payout-rate sign-off.
+ * ✅ PER-APP LIMITS (the non-mod-GA prerequisite this header used to flag).
+ * The ceilings are no longer ONE global value applied to every app. They are
+ * resolved PER APP by `resolveAppCapLimits` (`app-cap-limits.service.ts`) from
+ * the app's server-owned `spendTier`, with a moderator-set per-app override on
+ * top; `app-cap-limits.constants.ts` holds the tier→limits table, the
+ * (still env-overridable) global ceilings that clamp every tier, and the
+ * fail-closed fallback rules.
+ *
+ * 🔴 `spendTier`, NOT `trustTier`. `trustTier` gates the iframe sandbox
+ * allowlist and inline/hybrid renderMode — browser isolation, not money.
+ * Deriving a spend ceiling from it would mean a moderator granting a RENDERING
+ * capability silently granted a bigger budget. See the constants module header.
+ *
+ * The two things that changed for enforcement, both LOCAL to this file:
+ *   1. `reserveAppSpend` resolves `{ dailyBuzz, velocityMaxGens }` for the app
+ *      before reserving, instead of reading two module constants.
+ *   2. A resolve failure is inside the SAME try/catch as the Redis work, so it
+ *      denies fail-safe exactly like a Redis error would — and the resolver
+ *      itself independently degrades to the strictest tier rather than throwing.
+ *
+ * Everything else — the key shapes, the atomic INCRBY reserve/refund, the
+ * all-or-nothing daily semantics, the pinned-key refund contract — is unchanged.
+ * 🔴 `AppSpendDailyKey`'s shape in particular is load-bearing: the throw-path
+ * refunds in `blocks.router.ts` and the PERSISTED `appSpendKey` on customComfy
+ * settle records (`custom-comfy-settle.service.ts`) both hold keys minted here,
+ * including keys written by an earlier deploy.
  */
 
 /**
- * Per-app daily ceiling on block-initiated generation SPEND, in Buzz.
- *
- * Reasoning for the default (relative to the per-user cap):
- *   - The per-user cap is `BLOCK_BUZZ_CAP_PER_DAY = 50_000` Buzz/day ≈ $50/day
- *     of spend per user (yellow Buzz at 1000 Buzz = $1).
- *   - One app serves MANY users, so the per-app aggregate must be a generous
- *     multiple. `5_000_000` Buzz/day ≈ $5,000/day ≈ the aggregate spend of ~100
- *     fully-maxed legitimate users through one app — ample headroom for a
- *     genuinely popular app, while still bounding a Sybil ring (which would
- *     otherwise be UNCAPPED per app) to a fixed daily spend per app.
- *
- * Override at deploy time with `BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY` (an integer
- * count of Buzz) to tighten or loosen without a code change. An unset /
- * unparseable / non-positive value falls back to the default (fail-safe: a sane
- * positive cap is always in force).
+ * Re-exported for callers/tests that consumed these from this module before the
+ * limits moved out. 🔴 THEIR MEANING CHANGED: they are now the GLOBAL ABSOLUTE
+ * CEILINGS that clamp every tier and every override from above — not the value
+ * any particular app gets. The per-app default (the `standard` spend tier, and
+ * the DB default for every row) is still 5,000,000 / 120, exactly as before.
+ * The effective per-app value is whatever `resolveAppCapLimits` returns.
  */
-export const BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY: number = (() => {
-  const fromEnv = Number(process.env.BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : 5_000_000;
-})();
-
-/**
- * Per-app generation VELOCITY ceiling: at most this many block-initiated
- * generations per app per `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`. Bounds a
- * burst/DoS where one app fans out many rapid submits (incl. 0-cost / cache-hit
- * gens the Buzz total wouldn't catch). Default 120 gens / 60s ≈ 2 gens/sec
- * sustained per app — well above any real single app's interactive rate.
- *
- * Override with `BLOCK_APP_SPEND_VELOCITY_MAX_GENS`. Non-positive/unparseable →
- * default (fail-safe).
- */
-export const BLOCK_APP_SPEND_VELOCITY_MAX_GENS: number = (() => {
-  const fromEnv = Number(process.env.BLOCK_APP_SPEND_VELOCITY_MAX_GENS);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : 120;
-})();
-
-/**
- * The rolling window (seconds) the velocity ceiling is measured over. Fixed
- * bucket: `floor(now/window)` — the standard fixed-window limiter. Default 60s.
- * Override with `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`.
- */
-export const BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS: number = (() => {
-  const fromEnv = Number(process.env.BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : 60;
-})();
+export {
+  BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
+  BLOCK_APP_SPEND_VELOCITY_MAX_GENS,
+  BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS,
+} from '~/server/services/blocks/app-cap-limits.constants';
 
 // 25h TTL on the daily key: comfortably covers a UTC-day window plus clock
 // skew; the key is re-derived per day so a stale counter never bleeds into the
@@ -154,6 +143,15 @@ export type ReserveAppSpendResult = {
    * reservation was actually made (cost > 0 and allowed).
    */
   dailyKey?: AppSpendDailyKey;
+  /**
+   * The ceilings this reservation was actually judged against (per-app, from
+   * `resolveAppCapLimits`). Exposed for logging/telemetry so a rejection can be
+   * attributed to the app's ACTUAL tier/override rather than guessed from a
+   * global constant. 🔴 NOT surfaced to the app itself — `blocks.router.ts`
+   * deliberately returns a no-number rejection so a hostile app can't probe its
+   * exact ceiling. On a fail-closed path this is the strictest-tier pair.
+   */
+  limits: AppCapLimits;
 };
 
 /**
@@ -171,6 +169,13 @@ export type ReserveAppSpendResult = {
  *     is NOT refunded on a velocity-deny — a denied ATTEMPT still consumed a
  *     rate slot (standard fixed-window limiter), and the bucket self-expires.
  *
+ * The ceilings are PER-APP: `resolveAppCapLimits` maps the app's server-owned
+ * `spendTier` (plus any moderator override) to `{ dailyBuzz, velocityMaxGens }`.
+ * It is resolved INSIDE the try/catch below, so a resolution failure denies
+ * fail-safe exactly like a Redis error — and the resolver itself independently
+ * degrades to the STRICTEST tier rather than to "uncapped", so there is no
+ * ordering in which a lookup problem widens a ceiling.
+ *
  * On a Redis error anywhere, best-effort roll back any partial daily
  * reservation and deny (`reason: 'unavailable'`) — fail-safe, no spend.
  */
@@ -183,7 +188,15 @@ export async function reserveAppSpend(
 
   let dailyReserved = 0;
   let dailyTotal = 0;
+  // Pre-seeded with the strictest ceilings so EVERY exit path (including a throw
+  // before resolution completes) reports a real, bounded pair — never a
+  // partially-initialised or absent one.
+  let limits: AppCapLimits = STRICTEST_APP_CAP_LIMITS;
   try {
+    // 0) Resolve THIS app's ceilings. Cheap: an in-process TTL cache hit on the
+    //    hot path, one PK lookup per app per TTL window on a miss.
+    limits = await resolveAppCapLimits(appBlockId);
+
     // 1) DAILY Buzz reserve (skip the Redis round-trip for a 0-cost gen; it
     //    would only INCRBY 0 and needlessly arm a TTL on an empty key).
     if (want > 0) {
@@ -195,10 +208,10 @@ export async function reserveAppSpend(
         const ttl = await sysRedis.ttl(dailyKey);
         if (ttl < 0) await sysRedis.expire(dailyKey, DAILY_CAP_TTL_SECONDS);
       }
-      if (dailyTotal > BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY) {
+      if (dailyTotal > limits.dailyBuzz) {
         // Over the daily cap → refund the full cost (all-or-nothing) and deny.
         await refundAppSpend(dailyKey, want);
-        return { allowed: false, reason: 'daily', dailyTotal, velocityCount: 0 };
+        return { allowed: false, reason: 'daily', dailyTotal, velocityCount: 0, limits };
       }
     }
 
@@ -211,26 +224,27 @@ export async function reserveAppSpend(
       const ttl = await sysRedis.ttl(velocityKey);
       if (ttl < 0) await sysRedis.expire(velocityKey, BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS);
     }
-    if (velocityCount > BLOCK_APP_SPEND_VELOCITY_MAX_GENS) {
+    if (velocityCount > limits.velocityMaxGens) {
       // Over the velocity ceiling → refund the daily reservation and deny. The
       // velocity counter itself is left incremented (a rejected attempt still
       // consumed a rate slot; the bucket self-expires).
       if (dailyReserved > 0) await refundAppSpend(dailyKey, dailyReserved);
-      return { allowed: false, reason: 'velocity', dailyTotal, velocityCount };
+      return { allowed: false, reason: 'velocity', dailyTotal, velocityCount, limits };
     }
 
     return {
       allowed: true,
       dailyTotal,
       velocityCount,
+      limits,
       ...(dailyReserved > 0 ? { dailyKey } : {}),
     };
   } catch {
-    // Redis error → fail closed. Best-effort roll back any daily reservation we
-    // managed to make so the counter doesn't over-count a denied submit, then
-    // deny with no spend.
+    // Redis error (or a limit-resolution throw) → fail closed. Best-effort roll
+    // back any daily reservation we managed to make so the counter doesn't
+    // over-count a denied submit, then deny with no spend.
     if (dailyReserved > 0) await refundAppSpend(dailyKey, dailyReserved);
-    return { allowed: false, reason: 'unavailable', dailyTotal, velocityCount: 0 };
+    return { allowed: false, reason: 'unavailable', dailyTotal, velocityCount: 0, limits };
   }
 }
 
