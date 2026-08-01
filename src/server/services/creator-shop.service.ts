@@ -376,6 +376,12 @@ export const updateCreatorShopItem = async ({
       "You can only change price and quantity for another creator's cosmetic"
     );
 
+  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
+  // owners' `:slug:` text depends on it — so carry the existing one forward.
+  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
+  const nextSlug = slug ?? existingSlug;
+  const slugChange = slug !== undefined && slug !== existingSlug;
+
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
   // A live item may already have buyers — creators may only change price &
@@ -387,15 +393,17 @@ export const updateCreatorShopItem = async ({
     (name !== undefined || description !== undefined || artChanged || offsetsChange)
   )
     throw throwBadRequestError('Published items can only change price and quantity');
+  // The slug is the token owners type, not metadata. Renaming it breaks every
+  // owner's muscle memory and their picker search, while already-sent messages
+  // keep working off the id — so the creator gets no signal they broke anything.
+  // Mods can still fix a genuine typo.
+  if (isPublished && !isModerator && slugChange)
+    throw throwBadRequestError('The emoji slug cannot be changed once published');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
 
-  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
-  // owners' `:slug:` text depends on it — so carry the existing one forward.
-  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
-  const nextSlug = slug ?? existingSlug;
-  if (slug !== undefined && slug !== existingSlug)
+  if (slugChange)
     await validateEmojiCosmetic({
       id: existing.cosmetic.id,
       type: existing.cosmetic.type,

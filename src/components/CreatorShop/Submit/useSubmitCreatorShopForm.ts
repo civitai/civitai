@@ -92,6 +92,9 @@ export function useSubmitCreatorShopForm({
     type === CosmeticType.Emoji;
 
   const isEmoji = type === CosmeticType.Emoji;
+  // Matches the server rule: the slug is the token owners type, so it's fixed
+  // once the emoji is live.
+  const slugLocked = isEdit && item?.status === CosmeticShopItemStatus.Published;
   const slugError = isEmoji && slug.length > 0 && !isValidEmojiSlug(slug) ? EMOJI_SLUG_ERROR : null;
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
@@ -251,6 +254,7 @@ export function useSubmitCreatorShopForm({
     slug,
     setSlug,
     slugError,
+    slugLocked,
     name,
     setName,
     description,

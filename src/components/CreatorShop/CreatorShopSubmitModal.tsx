@@ -50,6 +50,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     slug,
     setSlug,
     slugError,
+    slugLocked,
     name,
     description,
     price,
@@ -171,11 +172,16 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             {isEmoji && (
               <TextInput
                 label="Slug"
-                description="What people type between colons to use your emoji, e.g. :party_cat:"
                 placeholder="party_cat"
                 value={slug}
                 onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
                 error={slugError}
+                disabled={slugLocked}
+                description={
+                  slugLocked
+                    ? 'Locked once published — owners already type this to use your emoji'
+                    : 'What people type between colons to use your emoji, e.g. :party_cat:'
+                }
                 withAsterisk
               />
             )}
