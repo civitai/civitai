@@ -45,7 +45,10 @@ vi.mock('~/server/redis/client', () => ({
     get: vi.fn(async () => null),
     set: vi.fn(async () => undefined),
     del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
+    // Yields nothing — this fake holds no keys.
+    scanIterator: async function* () {
+      return;
+    },
   },
   sysRedis: { sMembers: vi.fn(async () => []) },
   REDIS_KEYS: {
@@ -61,9 +64,9 @@ vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }
 vi.mock('~/server/services/blocks/app-cap-limits.service', async () => {
   // Keep the REAL normalisation (it is the contract under test); only the cache
   // side-effect is observed.
-  const actual = await vi.importActual<
-    typeof import('~/server/services/blocks/app-cap-limits.service')
-  >('~/server/services/blocks/app-cap-limits.service');
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '~/server/services/blocks/app-cap-limits.service'
+  );
   return {
     ...actual,
     invalidateAppCapLimits: (...a: unknown[]) => mockInvalidate(...a),

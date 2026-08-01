@@ -75,9 +75,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
 vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
+  const actual = await vi.importActual<Record<string, unknown>>('@civitai/redis/client');
   return {
     ...actual,
     redis: { get: vi.fn(), set: vi.fn() },
