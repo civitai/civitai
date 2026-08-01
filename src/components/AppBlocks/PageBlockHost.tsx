@@ -15,6 +15,7 @@ import {
   buildReviewConsentNotification,
   grantedPageScopes,
   INITIAL_REVIEW_CONSENT_LATCH,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
@@ -23,6 +24,7 @@ import {
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
+  shouldEmitMidSessionLossBeacon,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -373,10 +375,91 @@ export function PageBlockHost({
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
 
+  // 🔴 A SEPARATE at-most-once latch for the MID-SESSION credential-loss beacon,
+  // and it MUST NOT be `blockRenderEmittedRef`.
+  //
+  // `blockRenderEmittedRef` encodes an ANALYTICS invariant — exactly ONE
+  // impression per host mount — that the `blockRenders` denominator and the
+  // BlockRenderFailureRate alert both depend on. Reusing it here would be wrong
+  // in both directions: a `ready` host has already consumed it (so the beacon
+  // would never fire — the precise reason a real prod revocation recorded zero
+  // error beacons on 2026-07-31), and clearing/relaxing it to make room would
+  // retroactively change what the already-sent `ok` impression means.
+  //
+  // The teardown is a genuinely DIFFERENT event from the page load, so it gets a
+  // different latch. Net effect on the wire for a revoked session: `ok` (the load
+  // really did succeed) followed by ONE
+  // `error{error_class="token_lost_midsession"}` (it was later revoked). Bounded
+  // per mount by this ref; the impression accounting above is untouched.
+  const midSessionLossEmittedRef = useRef<boolean>(false);
+  // Latches on the first committed `ready`. This is what tells a `ready → error`
+  // teardown apart from a `loading → error` launch failure — `status === 'error'`
+  // alone cannot (both transitions land on it). A ref, not state: it must not
+  // cause a render, and `handleRetry` deliberately does not clear it (a mount
+  // that ever launched has launched).
+  const reachedReadyRef = useRef<boolean>(false);
+
+  // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
+  //
+  // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
+  // `_app.tsx` renders <Component> with no key either — so a SOFT navigation
+  // between two apps (appA → appB, e.g. via the "Recently run" menu) reuses this
+  // component instance: same mount, different `blockInstanceId`.
+  //
+  // Left alone, app A's latches would leak onto app B and produce a WRONG,
+  // MISATTRIBUTED signal: B's launch failure would inherit `reachedReady === true`
+  // and be reported as `token_lost_midsession` for an app that never launched —
+  // exactly the launch-vs-teardown confusion this whole feature exists to avoid.
+  // (Conversely a spent emit-latch would silently swallow B's genuine loss.)
+  //
+  // So the latches are scoped to the block INSTANCE, not the React mount.
+  //
+  // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
+  // from `status`, because under host reuse `status` is itself STALE (it is still
+  // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
+  //
+  // Be precise about the cost, because it is NOT an edge case. `status` inherited
+  // from app A can still move FORWARD out of 'ready' (→ 'error' on a terminal
+  // token, → 'fatal' on BLOCK_ERROR) — it is not frozen. What it cannot do is go
+  // BACK: every `setStatus` here is gated on the current value, and the only
+  // unconditional reset to 'loading' is `performRetry`. Since re-reaching 'ready'
+  // requires passing through 'loading', app B can never earn a genuine `ready`
+  // after a soft nav, so the latch re-arms only via a manual or automatic Retry.
+  //
+  // That costs nothing real TODAY, because on the same path app B never gets a
+  // working session to lose: `shouldStartInit` returns false for any non-'loading'
+  // status, so BLOCK_INIT is never sent and app B cannot reach a genuine ready
+  // state. The missed beacon is therefore unreachable — it describes a state the
+  // pre-existing host-reuse bug already prevents. Net vs. before this reset:
+  // strictly better (we traded a FALSE POSITIVE on app B's launch failure for a
+  // beacon that could not have fired anyway). Under-reporting, never
+  // mis-reporting — the right side to err on for an alerting signal.
+  //
+  // 🔴 The DECLARATION ORDER below is load-bearing: this effect must be declared
+  // BEFORE the status-sync effect that sets `reachedReadyRef`, so that a commit
+  // changing both `blockInstanceId` and `status` resets first and latches second.
+  // No current test detects a swap (no reachable case distinguishes them today) —
+  // so if you reorder these, reason it through rather than trusting the suite.
+  //
+  // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
+  // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
+  // impression) both predate this change. The real fix is `key={blockInstanceId}`
+  // on the run page, which would also change impression COUNTS, so it belongs in
+  // its own PR rather than riding along on an observability change.
+  useEffect(() => {
+    reachedReadyRef.current = false;
+    midSessionLossEmittedRef.current = false;
+  }, [blockInstanceId]);
+
   // Keep statusRef tracking the live status so handleRetry can branch on the
   // prior terminal state without reading it inside the setStatus updater.
   useEffect(() => {
     statusRef.current = status;
+    // Latch "this mount reached ready" off the COMMITTED status, for the same
+    // reason the impression beacon does (see its comment): keying off a
+    // setStatus updater's side effect silently drops the observation whenever
+    // another state update is already queued on this component.
+    if (status === 'ready') reachedReadyRef.current = true;
   }, [status]);
 
   // BOUNDED AUTO-RETRY — the single decision both consumers read (the scheduling
@@ -581,14 +664,65 @@ export function PageBlockHost({
   // (an `error` status is an AUTH terminal, so its one automatic attempt spends a
   // re-mint) and surfaces the prominent manual Retry once that settles too.
   //
-  // 🔴 NO SECOND BEACON. A host that reached `ready` already fired its ONE `ok`
-  // impression, and `blockRenderEmittedRef` is per-mount — so the failure beacon
-  // below is inert here by construction. The episode stays one beacon, reporting
-  // that the page load itself succeeded (which it did).
+  // 🔴 THE IMPRESSION BEACON IS STILL EXACTLY ONE. A host that reached `ready`
+  // already fired its ONE `ok` impression, and `blockRenderEmittedRef` is
+  // per-mount — so the launch-failure beacon below remains inert here by
+  // construction, and the `ok` already sent still means what it always meant
+  // (the page load succeeded — which it did). The teardown is reported by the
+  // SEPARATE mid-session beacon effect immediately after this one, on its own
+  // latch, so observability is gained without touching impression accounting.
   useEffect(() => {
     if (!tokenTerminal || token) return;
     setStatus((current) => (current === 'ready' ? 'error' : current));
   }, [tokenTerminal, token]);
+
+  // MID-SESSION credential-loss render beacon — the observability half of the
+  // teardown above.
+  //
+  // 🔴 WHY THIS EXISTS AT ALL (measured on production 2026-07-31): a real
+  // revocation teardown was driven end-to-end against a live app and the
+  // platform recorded ZERO error beacons for it. The only trace of the incident
+  // was the earlier successful `ok` impression, so every render metric said the
+  // app was healthy while it was dead in the viewer's tab. A mid-session
+  // teardown is exactly the failure mode a third-party app platform must be able
+  // to see — it is what a delist/suspend/revoke looks like from the runtime.
+  //
+  // Keys off the COMMITTED `status` (not a setStatus updater's side effect) for
+  // the same batching reason documented on the impression beacon below. The full
+  // decision — including WHY it is gated on `reachedReady` and on the settled
+  // `tokenTerminal` rather than a bare `tokenError` — lives in the pure,
+  // unit-tested `shouldEmitMidSessionLossBeacon`.
+  useEffect(() => {
+    if (
+      !shouldEmitMidSessionLossBeacon({
+        status,
+        reachedReady: reachedReadyRef.current,
+        tokenTerminal,
+        hasToken: !!token,
+        alreadyEmitted: midSessionLossEmittedRef.current,
+      })
+    )
+      return;
+    midSessionLossEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op. `errorClass` is a member of
+    // the server-side KNOWN_ERROR_CLASSES allowlist, so it survives as a real
+    // `error_class` prom label instead of collapsing into 'other'.
+    //
+    // 🔴 `secondary: true` is REQUIRED here, not decorative. This mount already
+    // sent its `ok` impression, and the `blockRenders` CH row carries no status —
+    // so without this flag the follow-up would write a SECOND byte-identical row
+    // for one mount, un-de-duplicatable, inflating every CH-derived impression
+    // figure for exactly the sessions that were revoked. The flag keeps the prom
+    // counter firing (that is what the alert reads) while skipping the insert.
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      status: 'error',
+      errorClass: MID_SESSION_LOSS_ERROR_CLASS,
+      secondary: true,
+    });
+  }, [status, tokenTerminal, token, appBlockId, blockInstanceId]);
 
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.

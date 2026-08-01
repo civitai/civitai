@@ -10,7 +10,10 @@ import {
   isAutoRetryableStatus,
   MAX_AUTO_REMINTS,
   MAX_AUTO_RETRIES,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  shouldEmitMidSessionLossBeacon,
+  type MidSessionLossBeaconArgs,
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
@@ -761,5 +764,111 @@ describe('decideAutoRetry — the bounded automatic recovery loop', () => {
     // A shorter table would silently reuse the last delay; assert they line up so
     // a future bump of MAX_AUTO_RETRIES has to extend the table deliberately.
     expect(AUTO_RETRY_BACKOFF_MS.length).toBeGreaterThanOrEqual(MAX_AUTO_RETRIES);
+  });
+});
+
+/**
+ * MID-SESSION credential-loss beacon.
+ *
+ * 🔴 THE MEASURED DEFECT (production, 2026-07-31): a real revocation teardown was
+ * driven against a live app and the platform recorded ZERO error beacons. The
+ * host's single emit-once ref had already been spent on the `ok` impression when
+ * it reached `ready`, so the launch-failure beacon was inert by construction and
+ * the incident's only trace was a record saying the app rendered fine.
+ *
+ * These cases pin the four conditions that make the replacement signal both
+ * REACHABLE (a real teardown emits) and HONEST (nothing else does).
+ */
+describe('shouldEmitMidSessionLossBeacon', () => {
+  /** A host that launched, then had its credential settle as permanently gone. */
+  const teardown: MidSessionLossBeaconArgs = {
+    status: 'error',
+    reachedReady: true,
+    tokenTerminal: true,
+    hasToken: false,
+    alreadyEmitted: false,
+  };
+
+  it('🔴 EMITS on the real mid-session teardown (the case that recorded nothing)', () => {
+    expect(shouldEmitMidSessionLossBeacon(teardown)).toBe(true);
+  });
+
+  it('🔴 does NOT emit for a LAUNCH failure — that is the existing beacon’s job', () => {
+    // `loading → error` (mint hard-failed before the block ever rendered). The
+    // launch-failure beacon covers it with errorClass 'error'; emitting here too
+    // would double-count one failed page load as two failures.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, reachedReady: false })).toBe(false);
+  });
+
+  it('🔴 does NOT emit while recovery is still pending (transient blip)', () => {
+    // The upstream hook retries a failed refresh on a bounded backoff. Reporting
+    // a teardown that the platform then recovers from would inflate the failure
+    // signal with events no user ever saw.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, tokenTerminal: false })).toBe(false);
+  });
+
+  it('🔴 does NOT emit while a usable token remains', () => {
+    // `terminal` with a token still in hand is not a teardown — the host is not
+    // torn down either (the effect gates on `!token` identically).
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, hasToken: true })).toBe(false);
+  });
+
+  it('🔴 is at-most-once per mount', () => {
+    // The effect re-runs on token/status/prop churn; without this latch each
+    // re-render would fire another beacon for one incident.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, alreadyEmitted: true })).toBe(false);
+  });
+
+  it('does NOT re-tag a BLOCK failure as a credential loss', () => {
+    // A block that reached ready and then crashed / stopped acking is a different
+    // failure with its own class. Only the `error` status is a credential loss.
+    for (const status of ['fatal', 'timeout', 'no_token', 'ready', 'loading'] as PageHostStatus[]) {
+      expect(shouldEmitMidSessionLossBeacon({ ...teardown, status })).toBe(false);
+    }
+  });
+
+  it('requires EVERY condition — no single one is sufficient', () => {
+    // Guards against a future simplification that collapses the conjunction.
+    const off: MidSessionLossBeaconArgs = {
+      status: 'loading',
+      reachedReady: false,
+      tokenTerminal: false,
+      hasToken: true,
+      alreadyEmitted: true,
+    };
+    expect(shouldEmitMidSessionLossBeacon(off)).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, status: 'error' })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, reachedReady: true })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, tokenTerminal: true })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, hasToken: false })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, alreadyEmitted: false })).toBe(false);
+  });
+
+  it('🔴 uses a class that is DISTINCT from every launch-failure class', () => {
+    // If it collided with one of these, the whole point (telling "never launched"
+    // apart from "launched, then revoked") would be lost.
+    expect(['timeout', 'fatal', 'no_token', 'error', 'error_boundary']).not.toContain(
+      MID_SESSION_LOSS_ERROR_CLASS
+    );
+  });
+});
+
+/**
+ * 🔴 CROSS-MODULE CONTRACT. The beacon route clamps `errorClass` to a code-owned
+ * server-side allowlist; anything outside it collapses to 'other'. A client class
+ * that is not on that list is therefore INERT — it reaches the server, is
+ * accepted, and then silently merges into the generic bucket, which is exactly
+ * the "computed, sent, bounded, then dropped" failure this work exists to fix.
+ * This test fails if the two halves ever drift apart.
+ */
+describe('MID_SESSION_LOSS_ERROR_CLASS survives the server-side allowlist', () => {
+  it('is preserved as its own error_class label, not bucketed to "other"', async () => {
+    const { normalizeErrorClass } = await import('~/server/metrics/app-block-runtime.metrics');
+    expect(normalizeErrorClass('error', MID_SESSION_LOSS_ERROR_CLASS)).toBe(
+      MID_SESSION_LOSS_ERROR_CLASS
+    );
+    // Control: an unknown class really does collapse, so the assertion above is
+    // proving membership rather than proving normalizeErrorClass is a no-op.
+    expect(normalizeErrorClass('error', 'not_a_real_class')).toBe('other');
   });
 });

@@ -122,6 +122,45 @@ describe('track.blockRender', () => {
     expect(mockBlockRender.mock.calls[0][0].isAnon).toBe(true);
   });
 
+  /**
+   * 🔴 The `secondary` (follow-up) beacon must NOT write a `blockRenders` row on
+   * THIS path either. `blockRenders` counts IMPRESSIONS — one row per host mount
+   * — and its rows carry no status, so a duplicate would be byte-identical and
+   * undedupable. The REST beacon route gates this; if the tRPC procedure did not,
+   * a bearer/API-key caller could reintroduce exactly the double-count the beacon
+   * route prevents. That makes this the security-relevant branch, so it is pinned
+   * here rather than left to the REST tests.
+   */
+  it('🔴 suppresses the Tracker insert for a `secondary` follow-up beacon', async () => {
+    const caller = trackRouter.createCaller(fakeCtx({ id: 1 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      status: 'error',
+      errorClass: 'token_lost_midsession',
+      secondary: true,
+    } as never);
+
+    expect(mockBlockRender).not.toHaveBeenCalled();
+  });
+
+  it('🔴 still writes the row for a LAUNCH failure (secondary defaults to false)', async () => {
+    // The discriminator is the FLAG, not `status === 'error'`. A mount's only
+    // beacon represents a real attempted render and must keep being recorded.
+    const caller = trackRouter.createCaller(fakeCtx({ id: 1 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      status: 'error',
+      errorClass: 'no_token',
+    } as never);
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    // status/errorClass/secondary are all stripped — none is a ClickHouse column.
+    expect(arg).not.toHaveProperty('status');
+    expect(arg).not.toHaveProperty('errorClass');
+    expect(arg).not.toHaveProperty('secondary');
+  });
+
   it('rejects a missing identifier with a BAD_REQUEST and no Tracker call', async () => {
     const caller = trackRouter.createCaller(fakeCtx({ id: 1 }) as never);
     await expect(

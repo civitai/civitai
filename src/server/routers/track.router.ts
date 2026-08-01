@@ -26,11 +26,19 @@ export const trackRouter = router({
   // for any bearer/API-key (non-cookie) caller, consistent with `addView`.
   blockRender: publicProcedure
     .input(blockRenderSchema)
-    // `status`/`errorClass` are consumed only by the /api/track/block-render
-    // beacon (prom render counter); this legacy tRPC path keeps the CH insert
-    // byte-identical by stripping them before dispatch.
+    // `status`/`errorClass`/`secondary` are consumed only by the
+    // /api/track/block-render beacon (prom render counter); this legacy tRPC path
+    // keeps the CH insert byte-identical by stripping them before dispatch.
+    //
+    // 🔴 `secondary` additionally SUPPRESSES the insert, matching the beacon route
+    // exactly. `blockRenders` counts IMPRESSIONS (one row per host mount) and its
+    // rows carry no status, so a follow-up beacon for an already-reported mount
+    // would write an undedupable duplicate. Both writers must agree on this or a
+    // bearer/API-key caller could reintroduce the double-count the beacon route
+    // prevents.
     .mutation(({ input, ctx }) => {
-      const { status: _status, errorClass: _errorClass, ...renderData } = input;
+      const { status: _status, errorClass: _errorClass, secondary, ...renderData } = input;
+      if (secondary) return;
       return ctx.track.blockRender({ ...renderData, isAnon: !ctx.user });
     }),
   trackShare: publicProcedure
