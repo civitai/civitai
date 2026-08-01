@@ -1,7 +1,6 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import {
   subscriptionProductMetadataSchema,
   type GetUserSubscriptionInput,
@@ -382,9 +381,10 @@ export const deliverMonthlyCosmetics = async ({
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
-  // Only the targeted call knows who it touched; the daily all-subs sweep
-  // relies on the cache's short TTL instead.
-  await refreshOwnedEmojiCache(userIds);
+  // No owned-emoji cache bust here on purpose: this delivers membership badges
+  // (joined on Cosmetic.productId), importing ~/server/redis/caches pulls the
+  // redis client into this module's whole dependency tree, and the cache's
+  // 5-minute TTL covers the case anyway.
 };
 
 /**
