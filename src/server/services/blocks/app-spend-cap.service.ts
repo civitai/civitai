@@ -87,9 +87,18 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
  * any particular app gets. The per-app default (the `standard` spend tier, and
  * the DB default for every row) is still 5,000,000 / 120, exactly as before.
  * The effective per-app value is whatever `resolveAppCapLimits` returns.
+ *
+ * The `..._ABSOLUTE_MAX_...` names say that; the older `..._CAP_BUZZ_PER_DAY` /
+ * `..._VELOCITY_MAX_GENS` names read as "the limit" and are DEPRECATED (both the
+ * exports and the env vars — the legacy env names are still honoured, with a
+ * deprecation warning; see `app-cap-limits.constants.ts`).
  */
 export {
+  BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY,
+  BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW,
+  /** @deprecated Use `BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY`. */
   BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY,
+  /** @deprecated Use `BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW`. */
   BLOCK_APP_SPEND_VELOCITY_MAX_GENS,
   BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS,
 } from '~/server/services/blocks/app-cap-limits.constants';
