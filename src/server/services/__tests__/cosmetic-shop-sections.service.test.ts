@@ -1,3 +1,4 @@
+import type * as PromClient from '~/server/prom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => ({
@@ -19,7 +20,12 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() } }));
+// `importOriginal` keeps the rest of the prom surface real — the import graph
+// reaches several of its registrars transitively via ~/server/redis/caches.
+vi.mock('~/server/prom/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromClient>()),
+  dbReadFallbackCounter: { inc: vi.fn() },
+}));
 vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,
 }));

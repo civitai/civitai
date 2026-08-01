@@ -980,7 +980,7 @@ function DisplayMessages({
                           <ChatMessageContent
                             content={tReplyData.data?.content ?? ''}
                             blur={replaceBadWords || domainColor === 'green'}
-                            emojiSize={16}
+                            emojiSize={EMOJI_SIZE.preview}
                             fallback={<em>Could not load message.</em>}
                           />
                         )}

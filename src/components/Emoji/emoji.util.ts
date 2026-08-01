@@ -19,8 +19,9 @@ const obtainedTime = (value?: Date) => {
 };
 
 /**
- * Owned emoji, most-recently-obtained first — the order that decides which
- * cosmetic a duplicated `:slug:` resolves to at send time.
+ * Owned emoji, most-recently-obtained first — newest purchases surface at the
+ * top of the picker. Slugs are unique per cosmetic, so `bySlug` can't collide;
+ * first-wins is just how the map is built, not a tie-break rule.
  */
 export function useOwnedEmoji() {
   const { data, isLoading } = useQueryUserCosmetics();

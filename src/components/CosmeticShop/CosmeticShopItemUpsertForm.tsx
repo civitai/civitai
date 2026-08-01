@@ -142,8 +142,8 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       return;
     }
 
-    // Mod-authored emoji are the only ones that exist until the creator flow
-    // (P4) opens, so the artwork requirements have to be enforced here.
+    // Client-side only, like every other cosmetic type — this catches the
+    // mistake, it doesn't guarantee the artwork.
     if (type === CosmeticType.Emoji) {
       const { checks, allRequiredPassed } = await validateCosmeticImage(file, type, maxSize);
       if (!allRequiredPassed) {
@@ -358,7 +358,11 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           type === CosmeticType.Emoji) && (
           <Switch
             label="Animated"
-            description="Toggle on for animated GIF/APNG sources"
+            description={
+              type === CosmeticType.Emoji
+                ? 'Toggle on for animated WebP sources. Animated PNG is accepted but its frame count and rate are not checked.'
+                : 'Toggle on for animated GIF/APNG sources'
+            }
             checked={animated}
             onChange={(e) => setAnimated(e.currentTarget.checked)}
           />

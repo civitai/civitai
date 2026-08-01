@@ -217,7 +217,9 @@ export const userOwnedEmojiCache = createCachedObject<UserOwnedEmojiLookup>({
 export async function refreshOwnedEmojiCache(userIds: (number | null | undefined)[]) {
   const ids = [...new Set(userIds.filter(isDefined))];
   if (!ids.length) return;
-  await userOwnedEmojiCache.refresh(ids);
+  // `refresh` is already best-effort internally; this catch is belt-and-braces
+  // because every caller runs it after a committed grant.
+  await userOwnedEmojiCache.refresh(ids).catch(() => undefined);
 }
 
 type CosmeticLookup = {

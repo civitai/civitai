@@ -1,3 +1,5 @@
+import type * as PromClient from '~/server/prom/client';
+import type * as RedisCaches from '~/server/redis/caches';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => ({
@@ -31,8 +33,20 @@ vi.mock('~/server/db/client', () => ({
       }),
   },
 }));
-vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() } }));
+// `importOriginal` keeps the rest of the prom surface real — the import graph
+// reaches several of its registrars transitively via ~/server/redis/caches.
+vi.mock('~/server/prom/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromClient>()),
+  dbReadFallbackCounter: { inc: vi.fn() },
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
+// The post-commit emoji cache bust would reach a Redis that isn't running here,
+// and its failure path logs to axiom — which these tests assert stays silent.
+// `importOriginal` leaves every other cache export real.
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof RedisCaches>()),
+  refreshOwnedEmojiCache: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
   createMultiAccountBuzzTransaction: mocks.createMultiTx,

@@ -63,7 +63,13 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
       const status = await cosmeticStatus({ id: cosmeticId, userId });
       userStatus = { ...status, cosmeticId };
       // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
-      await hSetWithTTL(redis, key, userId.toString(), pack(userStatus), CacheTTL.hour * 1000);
+      await hSetWithTTL(
+        redis,
+        key,
+        userId.toString(),
+        pack(userStatus),
+        CacheTTL.hour * 1000
+      );
     }
 
     const { cosmeticId } = userStatus;
