@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   CommentNotificationPriority,
@@ -24,7 +25,6 @@ const sqlFor = (type: string) => defs[type].prepareQuery!({ lastSent: '2026-01-0
 
 /** The types that fired for MNeMiC's one comment, plus the rest of the comment-derived family. */
 const V2_TYPES = [
-  'new-comment-reply',
   'new-review-response',
   'new-image-comment',
   'new-article-comment',
@@ -45,18 +45,36 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sqlFor(type)).toContain(`concat('comment:v2:', details->>'commentId') "dedupeKey"`);
   });
 
-  it('new-thread-response picks its namespace from details.version (it UNIONs both tables)', () => {
-    const sql = sqlFor('new-thread-response');
-    expect(sql).toContain(
-      `concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "dedupeKey"`
-    );
-  });
+  it.each(['new-thread-response', 'new-comment-reply'])(
+    '%s picks its namespace from details.version (it can see both comment tables)',
+    (type) => {
+      expect(sqlFor(type)).toContain(commentDedupeKeyByVersion);
+    }
+  );
 
   it('the v1/v2 namespace is load-bearing — Comment and CommentV2 ids overlap', () => {
     // Same id, different table: these must NOT collide, or a legacy-comment notification would
     // suppress an unrelated CommentV2 one.
     expect(sqlFor('new-comment')).not.toContain(`'comment:v2:'`);
-    expect(sqlFor('new-comment-reply')).not.toContain(`'comment:v1:'`);
+    expect(sqlFor('new-comment-nested')).not.toContain(`'comment:v2:'`);
+  });
+
+  it.each(['new-comment-reply', 'new-thread-response'])(
+    '%s only claims the key for a thread threadUrlMap can address',
+    (type) => {
+      // Both fall back to threadType 'comment' for an unmapped Thread entity (comicProject, clubPost,
+      // model3dReview), which renders a dead link. Claiming there would suppress a working owner
+      // notification — that is exactly how the mention/challenge regression got in.
+      expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
+      // V1 rows have no threadType and build their URL from modelId, so they always claim.
+      expect(sqlFor(type)).toContain(`when details->>'version' is null then`);
+    }
+  );
+
+  it('new-comic-comment shares the key so it can claim the comic threads those two skip', () => {
+    // Created inline in the router, not by a cron processor, so assert the call site directly.
+    const router = readFileSync('src/server/routers/comics.router.ts', 'utf8');
+    expect(router).toContain('dedupeKey: `comment:v2:${comment.id}`');
   });
 
   it('new-mention dedupes comment mentions but leaves model-description mentions alone', () => {

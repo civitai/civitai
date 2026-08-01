@@ -40,6 +40,24 @@ export const commentDedupeKey = (version: 'v1' | 'v2') =>
 export const commentDedupeKeyByVersion = `concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')`;
 
 /**
+ * The same key, but only claimed when the notification can actually be linked to. Claiming SUPPRESSES
+ * every other notification for that comment, so a claimant that renders a dead link would silently
+ * replace one that works.
+ *
+ * `threadType` resolves to the `'comment'` fallback for any `Thread` entity `threadUrlMap` doesn't
+ * address (comicProject, clubPost, model3dReview today). Those threads stay unclaimed, which is what
+ * lets a purpose-built owner notification like `new-comic-comment` own the key instead. V1 rows carry no
+ * `threadType` and build their URL from `modelId`, so they always render and always claim.
+ *
+ * Add a `Thread` entity column WITHOUT a `threadUrlMap` entry and this keeps the dedupe correct on its
+ * own — that omission is exactly how the mention/challenge regression got in.
+ */
+export const commentDedupeKeyIfAddressable = `case
+          when details->>'version' is null then ${commentDedupeKeyByVersion}
+          when details->>'threadType' <> 'comment' then ${commentDedupeKeyByVersion}
+        end`;
+
+/**
  * Batch order for the comment family, lowest first. `send-notifications` runs each priority as its own
  * sequential batch, so this decides WHICH of several competing notifications a user actually receives:
  * the most specific one runs first and claims the dedupe key. Being named beats being replied to, which
@@ -235,7 +253,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
-        ${commentDedupeKey('v2')} "dedupeKey",
+        ${commentDedupeKeyIfAddressable} "dedupeKey",
         "ownerId"    "userId",
         'new-comment-reply' "type",
         details
@@ -374,7 +392,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
-        ${commentDedupeKeyByVersion} "dedupeKey",
+        ${commentDedupeKeyIfAddressable} "dedupeKey",
         "ownerId"    "userId",
         'new-thread-response' "type",
         details
