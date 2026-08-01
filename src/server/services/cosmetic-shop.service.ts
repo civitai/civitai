@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userOwnedEmojiCache } from '~/server/redis/caches';
+import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -746,7 +746,7 @@ export const purchaseCosmeticShopItem = async ({
       return userCosmetic;
     });
 
-    await userOwnedEmojiCache.refresh([userId]);
+    await refreshOwnedEmojiCache([userId]);
 
     try {
       await withRetries(async () => {

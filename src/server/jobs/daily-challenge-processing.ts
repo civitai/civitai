@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import { eventEngine } from '~/server/events';
 import {
   claimChallengeForCompletion,
@@ -587,7 +588,8 @@ export async function reviewEntries() {
       logToAxiom({
         type: 'warning',
         name: 'daily-challenge-process-entries',
-        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        message:
+          'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
         count: activeChallenges.length,
       });
     }
@@ -1577,7 +1579,8 @@ export async function pickWinnersForChallenge(
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message:
+            'User challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
           residualBuzz,
           winnersCount: winningEntries.length,
@@ -1709,7 +1712,7 @@ export async function startScheduledChallenge(
 
   // Give cosmetic to resource owner
   if (config.resourceCosmeticId) {
-    await dbWrite.$executeRaw`
+    const granted = await dbWrite.$queryRaw<{ userId: number }[]>`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
       SELECT
         "userId",
@@ -1721,8 +1724,10 @@ export async function startScheduledChallenge(
         id,
         'Model'
       FROM "Model"
-      WHERE id = ${challenge.modelId};
+      WHERE id = ${challenge.modelId}
+      RETURNING "userId";
     `;
+    await refreshOwnedEmojiCache(granted.map((x) => x.userId));
     log('Cosmetic given');
   }
 

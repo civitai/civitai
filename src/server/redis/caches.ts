@@ -204,6 +204,18 @@ export const userOwnedEmojiCache = createCachedObject<UserOwnedEmojiLookup>({
   ttl: CacheTTL.day,
 });
 
+/**
+ * Call from **every** path that writes or deletes a UserCosmetic row, not just
+ * the ones that grant emoji today. A stale entry here means someone owns a paid
+ * emoji they silently cannot send until the TTL lapses; a redundant delete on a
+ * badge grant costs nothing next to the Postgres write it follows.
+ */
+export async function refreshOwnedEmojiCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  if (!ids.length) return;
+  await userOwnedEmojiCache.refresh(ids);
+}
+
 type CosmeticLookup = {
   id: number;
   name: string;

@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   cosmeticCache,
   cosmeticEntityCaches,
+  refreshOwnedEmojiCache,
   userCosmeticCache,
   userOwnedEmojiCache,
 } from '~/server/redis/caches';
@@ -232,7 +233,7 @@ export const grantCosmetics = async ({
     ON CONFLICT DO NOTHING;
   `;
 
-  await userOwnedEmojiCache.refresh([userId]);
+  await refreshOwnedEmojiCache([userId]);
 };
 
 /**
@@ -311,7 +312,7 @@ export async function revokeCosmeticsFromUsers({
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);
-  await userOwnedEmojiCache.refresh(uniqueUserIds);
+  await refreshOwnedEmojiCache(uniqueUserIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -398,6 +399,7 @@ export async function assignCosmeticByTarget({
       RETURNING "userId"
     `;
     granted = inserted.length;
+    await refreshOwnedEmojiCache(inserted.map((r) => r.userId));
   }
 
   return { granted, userIds, dryRun: false };
@@ -414,6 +416,7 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
+  await refreshOwnedEmojiCache(userIds);
   return { count: result.count };
 }
 

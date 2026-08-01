@@ -1,6 +1,7 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import {
   subscriptionProductMetadataSchema,
   type GetUserSubscriptionInput,
@@ -337,7 +338,7 @@ export const deliverMonthlyCosmetics = async ({
 }) => {
   const client = tx ?? dbWrite;
 
-  await client.$executeRaw`
+  const granted = await client.$queryRaw<{ userId: number }[]>`
       with users_affected AS (
         SELECT
           "userId",
@@ -378,8 +379,10 @@ export const deliverMonthlyCosmetics = async ({
         -- their badge (cron fired 10h before the window opened, then never retried).
         AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
-      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
+      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
+      RETURNING "userId";
     `;
+  await refreshOwnedEmojiCache(granted.map((x) => x.userId));
 };
 
 /**
