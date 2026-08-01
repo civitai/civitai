@@ -513,6 +513,7 @@ export interface User {
   oauthClients?: OauthClient[];
   oauthConsents?: OauthConsent[];
   roles?: UserRole[];
+  membershipOverride?: UserMembershipOverride | null;
   links?: UserLink[];
   comments?: Comment[];
   commentReactions?: CommentReaction[];
@@ -1819,6 +1820,16 @@ export interface Role {
   createdAt: Date;
   updatedAt: Date;
   members?: UserRole[];
+}
+
+export interface UserMembershipOverride {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  user?: User;
 }
 
 export interface AppBlock {

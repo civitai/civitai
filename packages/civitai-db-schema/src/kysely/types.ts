@@ -3646,6 +3646,14 @@ export type UserLink = {
   url: string;
   type: LinkType;
 };
+export type UserMembershipOverride = {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type UserMetric = {
   userId: number;
   timeframe: MetricTimeframe;
@@ -4182,6 +4190,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;
+  UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;
   UserNotificationSettings: UserNotificationSettings;
   UserPaymentConfiguration: UserPaymentConfiguration;

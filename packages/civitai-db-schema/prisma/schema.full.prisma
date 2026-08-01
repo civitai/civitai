@@ -444,6 +444,7 @@ model User {
   oauthClients         OauthClient[]
   oauthConsents        OauthConsent[]
   roles                UserRole[]
+  membershipOverride   UserMembershipOverride?
   links                UserLink[]
   comments             Comment[]
   commentReactions     CommentReaction[]
@@ -2335,6 +2336,20 @@ model Role {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @default(now()) @updatedAt
   members     UserRole[]
+}
+
+/// Comped membership tier, managed from the auth hub (/admin/membership). The hub folds this into the
+/// session it produces, so the user gets tier-gated access without a CustomerSubscription. It grants only
+/// what reads `session.tier` — NOT the subscription-derived perks (monthly Buzz, vault, badge, multiplier).
+/// One row per user; the override only ever raises a tier, never lowers a paid one.
+model UserMembershipOverride {
+  userId      Int      @id
+  tier        String
+  note        String?
+  grantedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
