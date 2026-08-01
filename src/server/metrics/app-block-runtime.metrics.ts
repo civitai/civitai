@@ -7,11 +7,13 @@
 // (no new infra, no ClickHouse migration) and are scraped by the same
 // /api/metrics endpoint that exposes every other app metric.
 //
-// Two signals:
+// Three signals:
 //   1. Per-app REST RED — emitted from block-scope.middleware for every
 //      block-JWT-authed /api/v1/blocks/* call.
 //   2. Render-failure signal — emitted from the /api/track/block-render beacon
 //      route (ok at BLOCK_READY, error on a host render failure).
+//   3. Cap-limit DEGRADE signal — emitted from app-cap-limits.service when the
+//      per-app spend/velocity resolver falls back to the strictest tier.
 //
 // prom-client GOTCHA: Next.js can import a module twice (hot reload / route
 // bundling), and prom-client throws if a metric name is registered twice. Every
@@ -57,6 +59,32 @@ export type AppBlockEndpoint =
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 
 export type AppBlockRenderResult = 'ok' | 'error';
+
+/**
+ * Why `resolveAppCapLimits` fell back to `STRICTEST_APP_CAP_LIMITS` instead of
+ * resolving the app's real ceilings. The two mean DIFFERENT things and an
+ * operator responds to them differently, which is the whole reason this is a
+ * label and not one undifferentiated counter:
+ *
+ *   - `db_error`    — the `app_blocks` read THREW (DB unreachable, pool
+ *                     exhausted, the override columns not yet applied in this
+ *                     environment). INFRA trouble; usually fleet-wide and
+ *                     correlated with other DB symptoms. Every app degrades at
+ *                     once. This is the page-worthy one.
+ *   - `missing_row` — the read SUCCEEDED and returned nothing. There is no such
+ *                     app: a newly created app racing its first submit, an app
+ *                     deleted mid-session, or a synthetic dev id that slipped
+ *                     the caller's `claims.dev` exclusion. Scoped to ONE app,
+ *                     and a steady non-zero rate here means a real bug in an
+ *                     id-minting path, not a database problem.
+ *
+ * 🔴 Both resolve to a REAL, enforced ceiling (today's shipped 5,000,000/120) —
+ * never to "uncapped". The signal exists because the degrade is otherwise
+ * INVISIBLE: an app silently pinned to the strictest tier looks exactly like an
+ * app that is simply busy, right up until its users start seeing abuse
+ * rejections it did not earn.
+ */
+export type AppCapLimitsDegradeReason = 'db_error' | 'missing_row';
 
 /** Known render slots. Anything else is bucketed to 'other' to bound the label. */
 const KNOWN_SLOT_IDS = new Set([
@@ -171,6 +199,7 @@ type Bundle = {
   rendersTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
+  capLimitsDegradedTotal: Counter<string>;
 };
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
@@ -265,13 +294,59 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     CUSTOMCOMFY_WALLCLOCK_BUCKETS
   );
 
+  // ── per-app cap-limit DEGRADE ────────────────────────────────────────────────
+  // 🔴 NO `app_block_id` LABEL, deliberately. `missing_row` fires precisely for
+  // ids that are NOT in the app catalog, so the label set would be seeded from
+  // exactly the unbounded population `known-app-blocks.service.ts` exists to
+  // clamp — and prom-client retains every distinct label set in the Node heap
+  // forever (the --max-old-space-size exit-139 OOM class). The usual clamp
+  // (`boundAppBlockIdLabel`) is unusable here twice over: it needs a DB read,
+  // which is the very thing that is broken on the `db_error` path, and a
+  // `missing_row` id can never be in the approved set, so it would collapse to
+  // 'other' in the one case an operator most wants attributed.
+  //
+  // So the split is: this counter is the ALERTABLE aggregate (2 series total),
+  // and the paired `console.warn` in app-cap-limits.service carries the specific
+  // `appBlockId` for the operator who is already looking. Alert on the metric,
+  // attribute from the log.
+  const capLimitsDegradedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_cap_limits_degraded_total',
+    'App Block per-app spend/velocity cap-limit resolutions that DEGRADED to the strictest tier, by reason (db_error = the app_blocks read threw, i.e. infra; missing_row = the read succeeded but there is no such app)',
+    ['reason']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
+    capLimitsDegradedTotal,
   };
+}
+
+/**
+ * Fail-soft emit of one per-app cap-limit DEGRADE (the resolver fell back to
+ * `STRICTEST_APP_CAP_LIMITS`). Called from `app-cap-limits.service`.
+ *
+ * 🔴 TOTAL, like the customComfy emitters above. The thing this instruments is a
+ * fail-closed SAFETY path; a metrics error (registry collision, label mismatch)
+ * must never propagate into it and turn "degraded but still generating" into
+ * "generation down". The caller guards too — two layers, because the guarantee
+ * must not depend on either one alone.
+ *
+ * COST: one in-heap counter increment on an already-degraded path. The hot path
+ * (a warm cap-limits cache hit) never reaches here at all, and neither does a
+ * cache miss that RESOLVES — only an actual degrade emits.
+ */
+export function recordAppCapLimitsDegrade(reason: AppCapLimitsDegradeReason): void {
+  try {
+    const { capLimitsDegradedTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    capLimitsDegradedTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the cap guardrail */
+  }
 }
 
 /**

@@ -101,6 +101,16 @@ export type AppCapLimits = {
 };
 
 /**
+ * Parse one env var as a positive integer, or `undefined` when it is unset /
+ * unparseable / non-finite / zero / negative — so a typo in a deploy env can
+ * never disable a cap; it falls through to a sane positive ceiling instead.
+ */
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+/**
  * Parse a positive-integer env override, fail-safe. Unset / unparseable /
  * non-finite / zero / negative → the built-in default, so a sane positive
  * ceiling is ALWAYS in force and a typo in a deploy env can never disable a cap.
@@ -108,14 +118,72 @@ export type AppCapLimits = {
  * `BLOCK_APP_SPEND_*` env vars keep working exactly as documented.)
  */
 function envPositiveInt(name: string, fallback: number): number {
-  const fromEnv = Number(process.env[name]);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : fallback;
+  return parsePositiveInt(process.env[name]) ?? fallback;
+}
+
+/**
+ * As `envPositiveInt`, but ALSO honours a DEPRECATED legacy env name.
+ *
+ * 🔴 WHY A COMPAT PATH AT ALL. The two absolute-ceiling knobs were renamed
+ * because their old names lied about what they now do (see the ceiling constants
+ * below). `civitai-dp-prod` sets neither — verified 2026-07-31 — but these are
+ * SPEND GUARDRAILS, and other environments are not enumerable from here.
+ * Silently ignoring a value an operator deliberately set on a spend guardrail is
+ * the worst possible outcome of a rename: they would believe a clamp is in force
+ * that is not. So the legacy name keeps working, loudly.
+ *
+ * PRECEDENCE (a valid new value always wins):
+ *   1. `name` parses to a positive int   → use it. If `legacyName` is ALSO set,
+ *      warn that it is being ignored — a set-but-overridden guardrail var must
+ *      not be silent either.
+ *   2. else `legacyName` parses          → use it, and warn that it is
+ *      deprecated. (Reached when `name` is unset OR set to an unusable value:
+ *      an unusable value carries no operator intent, so it must not shadow one
+ *      that does.)
+ *   3. else                              → the built-in default. If
+ *      `legacyName` was set but unusable, warn — otherwise a typo'd clamp is
+ *      indistinguishable from no clamp.
+ */
+function envPositiveIntWithLegacy(name: string, legacyName: string, fallback: number): number {
+  const fromNew = parsePositiveInt(process.env[name]);
+  const legacyRaw = process.env[legacyName];
+  const legacyPresent = legacyRaw !== undefined;
+  const fromLegacy = parsePositiveInt(legacyRaw);
+
+  if (fromNew !== undefined) {
+    if (legacyPresent) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[app-cap-limits] ${legacyName} is DEPRECATED and IGNORED here: ${name} is also set and takes precedence (using ${fromNew}). Remove ${legacyName}.`
+      );
+    }
+    return fromNew;
+  }
+
+  if (fromLegacy !== undefined) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[app-cap-limits] ${legacyName} is DEPRECATED — rename it to ${name}. Honouring the legacy value ${fromLegacy} for now. 🔴 Its MEANING changed: it is an ABSOLUTE CEILING that clamps every spend tier AND every per-app override, not the limit an app receives.`
+    );
+    return fromLegacy;
+  }
+
+  if (legacyPresent) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[app-cap-limits] ${legacyName} (DEPRECATED) is set to an unusable value ${JSON.stringify(
+        legacyRaw
+      )} and ${name} is unset — falling back to the built-in default ${fallback}. NO deploy-time clamp is in force.`
+    );
+  }
+  return fallback;
 }
 
 /**
  * The ceilings that were IN FORCE IN PRODUCTION before this feature: one global
  * pair applied to every app. Verified 2026-07-31 — `civitai-dp-prod` sets
- * neither `BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY` nor `BLOCK_APP_SPEND_VELOCITY_MAX_GENS`,
+ * neither of the two absolute-ceiling env knobs below (under their new
+ * `BLOCK_APP_SPEND_ABSOLUTE_MAX_*` names or their deprecated legacy ones),
  * so the shipped defaults below were the live numbers.
  *
  * 🔴 These are a COMPATIBILITY PIN, not a tuning target. They are the
@@ -175,9 +243,12 @@ export const APP_CAP_OVERRIDE_MAX_VELOCITY_GENS = 100_000;
  * aggregate must be a generous multiple — the 5,000,000 `standard` tier is ≈
  * the aggregate spend of ~100 fully-maxed legitimate users through one app.
  *
- * Override at deploy time with `BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY`.
+ * Override at deploy time with `BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY`
+ * (legacy name `BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY` still honoured — see
+ * `envPositiveIntWithLegacy` and the deprecated alias below).
  */
-export const BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY: number = envPositiveInt(
+export const BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY: number = envPositiveIntWithLegacy(
+  'BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY',
   'BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY',
   APP_CAP_OVERRIDE_MAX_DAILY_BUZZ
 );
@@ -207,12 +278,39 @@ export const BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY: number = envPositiveInt(
  * knob does NOT loosen any existing app; only a moderator promoting an app's
  * `spendTier` does. Lowering it tightens everything.
  *
- * Override with `BLOCK_APP_SPEND_VELOCITY_MAX_GENS`.
+ * Override with `BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW` (legacy name
+ * `BLOCK_APP_SPEND_VELOCITY_MAX_GENS` still honoured). The window is
+ * `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS` below.
  */
-export const BLOCK_APP_SPEND_VELOCITY_MAX_GENS: number = envPositiveInt(
+export const BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW: number = envPositiveIntWithLegacy(
+  'BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW',
   'BLOCK_APP_SPEND_VELOCITY_MAX_GENS',
   APP_CAP_OVERRIDE_MAX_VELOCITY_GENS
 );
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DEPRECATED ALIASES — the pre-rename export names.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Same values, kept so existing importers (and their tests) keep compiling while
+ * the rename settles. 🔴 Prefer the `..._ABSOLUTE_MAX_...` names: they are what
+ * the ENV VARS are now called, so a grep for the variable an operator typed
+ * lands on the code that reads it — which is the whole point of the rename.
+ *
+ * WHY THE NAMES WERE WRONG. Before the per-app tier work these two WERE the
+ * ceilings — one global pair applied to every app, so `..._VELOCITY_MAX_GENS`
+ * genuinely was "the max gens". They are now an ABSOLUTE bound that clamps the
+ * tier table AND any per-app moderator override from above. An operator reaching
+ * for `..._VELOCITY_MAX_GENS` mid-incident would reasonably read it as "set the
+ * limit to X" when it actually means "nothing may exceed X" — the same string,
+ * two different mental models, one of which quietly does nothing if the app's
+ * tier is already below X.
+ */
+/** @deprecated Use {@link BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY}. */
+export const BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY: number = BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY;
+/** @deprecated Use {@link BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW}. */
+export const BLOCK_APP_SPEND_VELOCITY_MAX_GENS: number =
+  BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW;
 
 /**
  * The window (seconds) the velocity ceiling is measured over. Fixed bucket:
@@ -287,8 +385,11 @@ export const APP_SPEND_TIER_CAP_LIMITS: Readonly<Record<AppSpendTier, AppCapLimi
         return [
           tier,
           {
-            dailyBuzz: Math.min(target.dailyBuzz, BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY),
-            velocityMaxGens: Math.min(target.velocityMaxGens, BLOCK_APP_SPEND_VELOCITY_MAX_GENS),
+            dailyBuzz: Math.min(target.dailyBuzz, BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY),
+            velocityMaxGens: Math.min(
+              target.velocityMaxGens,
+              BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW
+            ),
           },
         ];
       })
@@ -376,7 +477,7 @@ export type AppCapLimitsRow = {
  * abusive app without demoting its tier is a first-class use of this surface.
  *
  * 🔴 The GLOBAL ceilings are applied LAST, after the override. An operator who
- * clamps `BLOCK_APP_SPEND_VELOCITY_MAX_GENS=50` during an incident must not be
+ * clamps `BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW=50` during an incident must
  * out-ranked by a per-app override written last week — the deploy-time knob is
  * the outermost bound on every path, tier and override alike. (The moderator
  * read surface returns the raw override alongside the effective pair, so a
@@ -393,10 +494,10 @@ export function resolveLimitsFromRow(row: AppCapLimitsRow): AppCapLimits {
     APP_CAP_OVERRIDE_MAX_VELOCITY_GENS
   );
   return {
-    dailyBuzz: Math.min(dailyOverride ?? base.dailyBuzz, BLOCK_APP_SPEND_CAP_BUZZ_PER_DAY),
+    dailyBuzz: Math.min(dailyOverride ?? base.dailyBuzz, BLOCK_APP_SPEND_ABSOLUTE_MAX_BUZZ_PER_DAY),
     velocityMaxGens: Math.min(
       velocityOverride ?? base.velocityMaxGens,
-      BLOCK_APP_SPEND_VELOCITY_MAX_GENS
+      BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW
     ),
   };
 }

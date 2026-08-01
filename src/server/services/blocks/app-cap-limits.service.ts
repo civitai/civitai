@@ -1,3 +1,4 @@
+import type { AppCapLimitsDegradeReason } from '~/server/metrics/app-block-runtime.metrics';
 import {
   APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
   APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
@@ -39,6 +40,16 @@ import {
  * total App-Blocks outage. The invariant this protects is "never uncapped" —
  * and that holds on every path.
  *
+ * 🔴 …AND OBSERVABLE. Degrading silently is its own failure mode: an app pinned
+ * to the strictest ceiling is indistinguishable from an app that is merely busy,
+ * so the first signal would be its users hitting abuse rejections they did not
+ * earn. Every degrade therefore emits BOTH
+ *   - `civitai_app_block_cap_limits_degraded_total{reason}` — the alertable
+ *     counter, `db_error` (infra) vs `missing_row` (no such app) — and
+ *   - a `console.warn` carrying the specific `appBlockId`,
+ * via `signalCapLimitsDegrade` below. See `app-block-runtime.metrics.ts` for why
+ * the app id is in the LOG and not in a prom label.
+ *
  * STALENESS. The cache is per-POD, so a moderator's override/tier change takes
  * effect within `CAP_LIMITS_TTL_MS` fleet-wide (`invalidateAppCapLimits` makes
  * it immediate only on the pod that served the write). One minute was chosen
@@ -74,6 +85,58 @@ function setCacheEntry(appBlockId: string, limits: AppCapLimits, ttlMs: number):
   cache.set(appBlockId, { limits, expiresAt: Date.now() + ttlMs });
 }
 
+/**
+ * Emit the DEGRADE signal for one fallback-to-strictest resolution.
+ *
+ * 🔴 THE SIGNAL IS NOT A FAILURE PATH. Each emitter is independently guarded, so
+ * a broken metrics registry cannot suppress the log, a throwing `console` cannot
+ * suppress the metric, and neither can propagate into `resolveAppCapLimits` —
+ * which must keep its "never throws, never uncapped" contract even while the
+ * thing observing it is broken. (`recordAppCapLimitsDegrade` is ALSO total on
+ * its own side; the duplication is deliberate — the guarantee must not depend on
+ * either layer alone.)
+ *
+ * 🔴 NOT ON THE HOT PATH. `loadAppCapLimits` runs only on a cache MISS, and this
+ * runs only on a miss that DEGRADED — a submit served from the warm cache, and a
+ * miss that resolves a real row, never reach here.
+ *
+ * VOLUME. Bounded by the cache, not by traffic: a degrade is cached for
+ * `CAP_LIMITS_FALLBACK_TTL_MS` (5s) and concurrent misses single-flight, so the
+ * ceiling is `active_apps / 5s` per pod REGARDLESS of submit rate — a burst of
+ * 10k submits against one degraded app emits once, not 10k times. The worst case
+ * is a total DB outage (every active app degrading at once): at today's ~21 apps
+ * that is ~4 lines/sec/pod, and in that scenario the DB-outage signal is the
+ * point. If the app catalog reaches the thousands, this becomes the reason to
+ * revisit the fallback TTL — noting the log already had exactly this cadence on
+ * the `db_error` path before this change; only `missing_row` is newly logged.
+ *
+ * The metric emit is dynamically imported to keep prom-client out of the
+ * deliberately-light static import graph of the spend-cap path (same reasoning
+ * as the `dbRead` import above).
+ */
+async function signalCapLimitsDegrade(
+  appBlockId: string,
+  reason: AppCapLimitsDegradeReason,
+  detail: string
+): Promise<void> {
+  try {
+    const { recordAppCapLimitsDegrade } = await import(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    recordAppCapLimitsDegrade(reason);
+  } catch {
+    /* observability must never break the guardrail it observes */
+  }
+  try {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[app-cap-limits] DEGRADED to the strictest tier for ${appBlockId} (reason=${reason}): ${detail}`
+    );
+  } catch {
+    /* observability must never break the guardrail it observes */
+  }
+}
+
 async function loadAppCapLimits(
   appBlockId: string
 ): Promise<{ limits: AppCapLimits; ttlMs: number }> {
@@ -90,7 +153,11 @@ async function loadAppCapLimits(
     });
     if (!row) {
       // No such app (revoked mid-session, a synthetic dev id that slipped the
-      // caller's `claims.dev` exclusion, …) → strictest. Never uncapped.
+      // caller's `claims.dev` exclusion, a brand-new app racing its first
+      // submit, …) → strictest. Never uncapped — but NOT silent: this is a
+      // one-app, read-succeeded condition, which points at an id-minting bug
+      // rather than at the database, so it gets its own reason.
+      await signalCapLimitsDegrade(appBlockId, 'missing_row', 'no app_blocks row for this id');
       return { limits: STRICTEST_APP_CAP_LIMITS, ttlMs: CAP_LIMITS_FALLBACK_TTL_MS };
     }
     return { limits: resolveLimitsFromRow(row), ttlMs: CAP_LIMITS_TTL_MS };
@@ -98,12 +165,13 @@ async function loadAppCapLimits(
     // DB unreachable, or the override columns not yet applied to this
     // environment (this DB does NOT auto-apply migrations). Either way: fall
     // back to the strictest tier — which is the ceiling that was in force
-    // before this feature — and log so ops can see it.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[app-cap-limits] limit lookup failed for ${appBlockId}; falling back to the strictest tier: ${
-        err instanceof Error ? err.message : String(err)
-      }`
+    // before this feature — and signal so ops can see it. Distinct reason from
+    // the missing-row case above: this one is INFRA and degrades every app at
+    // once, so it is the alert an operator should be paged on.
+    await signalCapLimitsDegrade(
+      appBlockId,
+      'db_error',
+      err instanceof Error ? err.message : String(err)
     );
     return { limits: STRICTEST_APP_CAP_LIMITS, ttlMs: CAP_LIMITS_FALLBACK_TTL_MS };
   }
