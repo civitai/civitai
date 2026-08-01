@@ -1,6 +1,5 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 
 export const deliverPurchasedCosmetics = createJob(
   'deliver-purchased-cosmetics',
@@ -8,8 +7,8 @@ export const deliverPurchasedCosmetics = createJob(
   async () => {
     const [lastDelivered, setLastDelivered] = await getJobDate('last-cosmetic-delivery');
 
-    const deliverSubscriptionCosmetics = () =>
-      dbWrite.$queryRaw<{ userId: number }[]>`
+    const deliverSubscriptionCosmetics = async () =>
+      dbWrite.$executeRaw`
         -- Deliver subscription cosmetics
         WITH active_subscriptions AS (
           SELECT
@@ -56,12 +55,11 @@ export const deliverPurchasedCosmetics = createJob(
           -- re-runs daily but currentPeriodStart never moves within the period.
           AND (c."availableStart" IS NULL OR s."currentPeriodStart"::date >= c."availableStart"::date)
           AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
-        ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
-        RETURNING "userId";
+        ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
-    const deliverSupporterUpgradeCosmetic = () =>
-      dbWrite.$queryRaw<{ userId: number }[]>`
+    const deliverSupporterUpgradeCosmetic = async () =>
+      dbWrite.$executeRaw`
         -- Deliver supporter upgrade cosmetic
         INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
         SELECT
@@ -83,12 +81,11 @@ export const deliverPurchasedCosmetics = createJob(
               AND ocs."userId" = cs."userId"
               AND ocs.status = 'active'
           )
-        ON CONFLICT DO NOTHING
-        RETURNING "userId";
+        ON CONFLICT DO NOTHING;
       `;
 
-    const revokeMembershipLimitedCosmetics = () =>
-      dbWrite.$queryRaw<{ userId: number }[]>`
+    const revokeMembershipLimitedCosmetics = async () =>
+      dbWrite.$executeRaw`
         -- Revoke member limited cosmetics
         WITH to_revoke AS (
           SELECT
@@ -104,18 +101,14 @@ export const deliverPurchasedCosmetics = createJob(
           WHERE r."userId" = uc."userId"
           AND c."permanentUnlock" = false
           AND c.source = 'Membership'
-        )
-        RETURNING uc."userId";
+        );
       `;
 
     // Deliver cosmetics
     // --------------------------------------------
-    const affected = [
-      ...(await deliverSubscriptionCosmetics()),
-      ...(await deliverSupporterUpgradeCosmetic()),
-      ...(await revokeMembershipLimitedCosmetics()),
-    ];
-    await refreshOwnedEmojiCache(affected.map((x) => x.userId));
+    await deliverSubscriptionCosmetics();
+    await deliverSupporterUpgradeCosmetic();
+    await revokeMembershipLimitedCosmetics();
 
     // Update the last time this ran in the KeyValue store
     // --------------------------------------------

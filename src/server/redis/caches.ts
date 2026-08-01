@@ -201,14 +201,18 @@ export const userOwnedEmojiCache = createCachedObject<UserOwnedEmojiLookup>({
   idKey: 'userId',
   staleWhileRevalidate: false,
   lookupFn: lookupOwnedEmoji,
-  ttl: CacheTTL.day,
+  // Deliberately minutes, not the day the caches around this one use: a stale
+  // entry means someone can't send an emoji they paid for, and the bulk-SQL
+  // cosmetic crons grant without surfacing whose entry to drop. Cheap to rebuild
+  // (one small row) and read once per message send.
+  ttl: 60 * 5,
 });
 
 /**
- * Call from **every** path that writes or deletes a UserCosmetic row, not just
- * the ones that grant emoji today. A stale entry here means someone owns a paid
- * emoji they silently cannot send until the TTL lapses; a redundant delete on a
- * badge grant costs nothing next to the Postgres write it follows.
+ * Call wherever a UserCosmetic write already has the affected user ids in hand,
+ * including paths that can't grant an emoji today — a redundant delete costs
+ * nothing next to the Postgres write it follows. Paths that would need a query
+ * change to learn the ids are left to the TTL above instead.
  */
 export async function refreshOwnedEmojiCache(userIds: (number | null | undefined)[]) {
   const ids = [...new Set(userIds.filter(isDefined))];

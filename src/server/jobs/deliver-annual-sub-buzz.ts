@@ -1,6 +1,5 @@
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import { createJob } from './job';
 import dayjs from '~/shared/utils/dayjs';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -56,7 +55,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
     }
 
     // Mark this as purchases to ensure these guys receive their cosmetics.
-    const granted = await dbWrite.$queryRaw<{ userId: number }[]>`
+    await dbWrite.$executeRaw`
       with users_affected AS (
         SELECT
           "userId",
@@ -89,9 +88,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
         c."productId" = p."productId"
         AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
         AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
-      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
-      RETURNING "userId";
+      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
-    await refreshOwnedEmojiCache(granted.map((x) => x.userId));
   }
 );

@@ -1,6 +1,5 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 export const deliverLeaderboardCosmetics = createJob(
@@ -17,7 +16,7 @@ export const deliverLeaderboardCosmetics = createJob(
 async function deliverSeasonCosmetics() {
   // deliver
   // --------------------------------------------
-  const granted = await dbWrite.$queryRaw<{ userId: number }[]>`
+  await dbWrite.$executeRaw`
     -- Deliver leaderboard cosmetics
     with leaderboard_cosmetics AS (
       SELECT
@@ -37,10 +36,8 @@ async function deliverSeasonCosmetics() {
       c."leaderboardId" = lr."leaderboardId"
       AND lr.position <= c."leaderboardPosition"
       AND lr.date = current_date
-    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
-    RETURNING "userId";
+    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
-  await refreshOwnedEmojiCache(granted.map((x) => x.userId));
 
   // equip next best
   // --------------------------------------------
@@ -77,7 +74,7 @@ async function deliverSeasonCosmetics() {
 
   // revoke
   // --------------------------------------------
-  const revoked = await dbWrite.$queryRaw<{ userId: number }[]>`
+  await dbWrite.$executeRaw`
     -- Revoke leaderboard cosmetics
     DELETE FROM "UserCosmetic" uc
     USING "Cosmetic" c
@@ -90,17 +87,15 @@ async function deliverSeasonCosmetics() {
         AND lr."userId" = uc."userId"
         AND lr.position <= c."leaderboardPosition"
         AND lr.date = current_date
-    )
-    RETURNING uc."userId";
+    );
   `;
-  await refreshOwnedEmojiCache(revoked.map((x) => x.userId));
 }
 
 const LEGEND_COSMETIC_CUTOFF = 10;
 async function deliverLegendCosmetics() {
   // deliver
   // --------------------------------------------
-  const grantedLegends = await dbWrite.$queryRaw<{ userId: number }[]>`
+  await dbWrite.$executeRaw`
     -- Deliver leaderboard legend cosmetics
     WITH legends AS (
       SELECT DISTINCT "userId" FROM "LegendsBoardResult"
@@ -119,14 +114,12 @@ async function deliverLegendCosmetics() {
       now()
     FROM legends l
     JOIN cosmetic c ON c.id IS NOT NULL
-    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
-    RETURNING "userId";
+    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
-  await refreshOwnedEmojiCache(grantedLegends.map((x) => x.userId));
 
   // revoke
   // --------------------------------------------
-  const revokedLegends = await dbWrite.$queryRaw<{ userId: number }[]>`
+  await dbWrite.$executeRaw`
     -- Revoke leaderboard legend cosmetics
     WITH legends AS (
       SELECT DISTINCT "userId" FROM "LegendsBoardResult"
@@ -140,8 +133,6 @@ async function deliverLegendCosmetics() {
     )
     DELETE FROM "UserCosmetic" uc
     USING cosmetic c
-    WHERE uc."cosmeticId" = c.id AND uc."userId" NOT IN (SELECT "userId" FROM legends)
-    RETURNING uc."userId";
+    WHERE uc."cosmeticId" = c.id AND uc."userId" NOT IN (SELECT "userId" FROM legends);
   `;
-  await refreshOwnedEmojiCache(revokedLegends.map((x) => x.userId));
 }

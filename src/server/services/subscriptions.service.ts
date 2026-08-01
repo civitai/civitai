@@ -338,7 +338,7 @@ export const deliverMonthlyCosmetics = async ({
 }) => {
   const client = tx ?? dbWrite;
 
-  const granted = await client.$queryRaw<{ userId: number }[]>`
+  await client.$executeRaw`
       with users_affected AS (
         SELECT
           "userId",
@@ -379,10 +379,12 @@ export const deliverMonthlyCosmetics = async ({
         -- their badge (cron fired 10h before the window opened, then never retried).
         AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
-      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
-      RETURNING "userId";
+      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
-  await refreshOwnedEmojiCache(granted.map((x) => x.userId));
+
+  // Only the targeted call knows who it touched; the daily all-subs sweep
+  // relies on the cache's short TTL instead.
+  await refreshOwnedEmojiCache(userIds);
 };
 
 /**
