@@ -7,12 +7,12 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: { userCosmetic: { findMany: (...args: unknown[]) => findMany(...args) } },
 }));
 
-const { lookupOwnedEmoji: lookupFn } = await import('~/server/redis/caches');
+const { lookupOwnedSticker: lookupFn } = await import('~/server/redis/caches');
 
-describe('userOwnedEmojiCache', () => {
+describe('userOwnedStickerCache', () => {
   beforeEach(() => findMany.mockReset());
 
-  it('treats a purchased-but-never-equipped emoji as owned', async () => {
+  it('treats a purchased-but-never-equipped sticker as owned', async () => {
     // Exactly what purchaseCosmeticShopItem writes: no equippedAt.
     findMany.mockResolvedValue([{ userId: 7, cosmeticId: 12 }]);
 
@@ -29,7 +29,7 @@ describe('userOwnedEmojiCache', () => {
     const where = findMany.mock.calls[0][0].where;
     expect(where).not.toHaveProperty('equippedAt');
     expect(where).not.toHaveProperty('equippedToId');
-    expect(where.cosmetic).toEqual({ type: 'Emoji' });
+    expect(where.cosmetic).toEqual({ type: 'Sticker' });
     expect(where.userId).toEqual({ in: [7] });
   });
 
@@ -47,7 +47,7 @@ describe('userOwnedEmojiCache', () => {
     expect(result[8].cosmeticIds).toEqual([14]);
   });
 
-  it('returns nothing for a user with no emoji, rather than throwing', async () => {
+  it('returns nothing for a user with no sticker, rather than throwing', async () => {
     findMany.mockResolvedValue([]);
 
     expect(await lookupFn([7])).toEqual({});

@@ -235,8 +235,8 @@ function CreatorShopReviewPage() {
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
-  const emojiSlug =
-    selected?.cosmetic.type === CosmeticType.Emoji
+  const stickerSlug =
+    selected?.cosmetic.type === CosmeticType.Sticker
       ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
       : undefined;
 
@@ -566,9 +566,9 @@ function CreatorShopReviewPage() {
                       Submitted artwork
                       {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
                     </Text>
-                    {!!emojiSlug && (
+                    {!!stickerSlug && (
                       <Text size="xs" c="dimmed" ta="center">
-                        Typed as <b>:{emojiSlug}:</b>
+                        Typed as <b>:{stickerSlug}:</b>
                       </Text>
                     )}
                     <div>

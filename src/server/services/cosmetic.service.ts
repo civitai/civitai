@@ -7,14 +7,14 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   cosmeticCache,
   cosmeticEntityCaches,
-  refreshOwnedEmojiCache,
+  refreshOwnedStickerCache,
   userCosmeticCache,
-  userOwnedEmojiCache,
+  userOwnedStickerCache,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
-  GetEmojiCosmeticsInput,
+  GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
   GrantCosmeticsToUsersInput,
 } from '~/server/schema/cosmetic.schema';
@@ -25,8 +25,8 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
-import type { EmojiCosmetic } from '~/server/selectors/cosmetic.selector';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
+import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -39,24 +39,24 @@ export async function getCosmeticDetail({ id }: GetByIdInput) {
   return cosmetic;
 }
 
-export async function getEmojiCosmetics({ ids }: GetEmojiCosmeticsInput) {
+export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
   const cosmetics = await cosmeticCache.fetch(ids);
 
   return Object.values(cosmetics)
-    .filter((cosmetic) => cosmetic.type === CosmeticType.Emoji)
+    .filter((cosmetic) => cosmetic.type === CosmeticType.Sticker)
     .map(({ id, name, data }) => {
-      const { slug, url, animated } = (data ?? {}) as EmojiCosmetic['data'];
+      const { slug, url, animated } = (data ?? {}) as StickerCosmetic['data'];
       return { id, name, slug, url, animated };
     })
-    .filter((emoji) => !!emoji.slug && !!emoji.url);
+    .filter((sticker) => !!sticker.slug && !!sticker.url);
 }
 
-export async function getOwnedEmojiCosmetics(userId: number) {
-  const owned = await userOwnedEmojiCache.fetch([userId]);
+export async function getOwnedStickerCosmetics(userId: number) {
+  const owned = await userOwnedStickerCache.fetch([userId]);
   const ids = owned[userId]?.cosmeticIds ?? [];
   if (!ids.length) return [];
 
-  return getEmojiCosmetics({ ids });
+  return getStickerCosmetics({ ids });
 }
 
 export async function isCosmeticAvailable(id: number, userId?: number) {
@@ -233,7 +233,7 @@ export const grantCosmetics = async ({
     ON CONFLICT DO NOTHING;
   `;
 
-  await refreshOwnedEmojiCache([userId]);
+  await refreshOwnedStickerCache([userId]);
 };
 
 /**
@@ -312,7 +312,7 @@ export async function revokeCosmeticsFromUsers({
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);
-  await refreshOwnedEmojiCache(uniqueUserIds);
+  await refreshOwnedStickerCache(uniqueUserIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -399,7 +399,7 @@ export async function assignCosmeticByTarget({
       RETURNING "userId"
     `;
     granted = inserted.length;
-    await refreshOwnedEmojiCache(inserted.map((r) => r.userId));
+    await refreshOwnedStickerCache(inserted.map((r) => r.userId));
   }
 
   return { granted, userIds, dryRun: false };
@@ -416,15 +416,15 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
-  await refreshOwnedEmojiCache(userIds);
+  await refreshOwnedStickerCache(userIds);
   return { count: result.count };
 }
 
 /**
- * Emoji slugs are the send-time lookup key, so format and uniqueness are
+ * Sticker slugs are the send-time lookup key, so format and uniqueness are
  * enforced here — every write path (tRPC upsert, Retool) routes through it.
  */
-export async function validateEmojiCosmetic({
+export async function validateStickerCosmetic({
   id,
   type,
   data,
@@ -433,28 +433,28 @@ export async function validateEmojiCosmetic({
   type?: CosmeticType | null;
   data?: unknown;
 }) {
-  if (type !== CosmeticType.Emoji) return;
+  if (type !== CosmeticType.Sticker) return;
 
   const slug = (data as { slug?: unknown } | null | undefined)?.slug;
-  if (typeof slug !== 'string' || !isValidEmojiSlug(slug)) {
-    throw throwBadRequestError(EMOJI_SLUG_ERROR);
+  if (typeof slug !== 'string' || !isValidStickerSlug(slug)) {
+    throw throwBadRequestError(STICKER_SLUG_ERROR);
   }
 
   const conflict = await dbWrite.cosmetic.findFirst({
     where: {
-      type: CosmeticType.Emoji,
+      type: CosmeticType.Sticker,
       data: { path: ['slug'], equals: slug },
       ...(id ? { id: { not: id } } : {}),
     },
     select: { id: true },
   });
   if (conflict) {
-    throw throwBadRequestError(`The emoji slug ":${slug}:" is already in use`);
+    throw throwBadRequestError(`The sticker slug ":${slug}:" is already in use`);
   }
 }
 
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
-  await validateEmojiCosmetic({ type: data.type, data: data.data });
+  await validateStickerCosmetic({ type: data.type, data: data.data });
   const cosmetic = await dbWrite.cosmetic.create({ data });
   return cosmetic;
 }
@@ -470,7 +470,7 @@ export async function updateCosmetic({
     where: { id },
     select: { type: true, data: true },
   });
-  await validateEmojiCosmetic({
+  await validateStickerCosmetic({
     id,
     type: (data.type as CosmeticType | undefined) ?? existing?.type,
     data: data.data ?? existing?.data,

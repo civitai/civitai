@@ -63,18 +63,18 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
-import { Emoji } from '~/components/Emoji/Emoji';
-import { EmojiPicker } from '~/components/Emoji/EmojiPicker';
-import { EmojiProvider } from '~/components/Emoji/EmojiProvider';
-import { useOwnedEmoji } from '~/components/Emoji/emoji.util';
+import { Sticker } from '~/components/Sticker/Sticker';
+import { StickerPicker } from '~/components/Sticker/StickerPicker';
+import { StickerProvider } from '~/components/Sticker/StickerProvider';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCleanText } from '~/hooks/useCheckProfanity';
 import {
-  EMOJI_SIZE,
-  parseEmojiIds,
-  parseEmojiLines,
-  resolveEmojiTokens,
-  stripEmojiTokens,
-} from '~/shared/utils/emoji-token';
+  STICKER_SIZE,
+  parseStickerIds,
+  parseStickerLines,
+  resolveStickerTokens,
+  stripStickerTokens,
+} from '~/shared/utils/sticker-token';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -545,10 +545,10 @@ export function ExistingChat() {
               <ScamWarningContent chatId={existingChatId!} />
             </Alert>
             {messagesChronological.length > 0 && (
-              <Text mb="md" p="sm" size="xs" italic align="center">{`"${stripEmojiTokens(
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${stripStickerTokens(
                 messagesChronological[0].content
               ).slice(0, 70)}${
-                stripEmojiTokens(messagesChronological[0].content).length > 70 ? '...' : ''
+                stripStickerTokens(messagesChronological[0].content).length > 70 ? '...' : ''
               }"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
@@ -605,7 +605,7 @@ function ChatInputBox({
   const [isSending, setIsSending] = useState(false);
   const [chatMsg, setChatMsg] = useState<string>('');
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
-  const ownedEmoji = useOwnedEmoji();
+  const ownedSticker = useOwnedSticker();
 
   const isMuted = currentUser?.muted && !isModSender;
 
@@ -722,8 +722,8 @@ function ChatInputBox({
     setIsSending(true);
     mutate({
       chatId: existingChatId!,
-      content: resolveEmojiTokens(strippedMessage, {
-        resolveSlug: (slug) => ownedEmoji.bySlug.get(slug)?.id,
+      content: resolveStickerTokens(strippedMessage, {
+        resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
       }),
       referenceMessageId: replyId,
     });
@@ -765,11 +765,11 @@ function ChatInputBox({
         }}
         classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
       />
-      <EmojiPicker
+      <StickerPicker
         disabled={isMuted}
-        onSelect={(emoji) =>
+        onSelect={(sticker) =>
           handleChatTyping(
-            `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${emoji.slug}: `
+            `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
           )
         }
       />
@@ -877,11 +877,11 @@ function DisplayMessages({
     replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
   );
 
-  const emojiIds = useMemo(
+  const stickerIds = useMemo(
     () => [
       ...new Set([
-        ...chats.flatMap((c) => parseEmojiIds(c.content)),
-        ...replyData.flatMap((r) => (r.data ? parseEmojiIds(r.data.content) : [])),
+        ...chats.flatMap((c) => parseStickerIds(c.content)),
+        ...replyData.flatMap((r) => (r.data ? parseStickerIds(r.data.content) : [])),
       ]),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -892,7 +892,7 @@ function DisplayMessages({
   let loopPreviousChatter = 0;
 
   return (
-    <EmojiProvider ids={emojiIds}>
+    <StickerProvider ids={stickerIds}>
       <LazyMotion features={loadMotion}>
         {chats.map((c, idx) => {
           const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
@@ -980,7 +980,7 @@ function DisplayMessages({
                           <ChatMessageContent
                             content={tReplyData.data?.content ?? ''}
                             blur={replaceBadWords || domainColor === 'green'}
-                            emojiSize={EMOJI_SIZE.preview}
+                            stickerSize={STICKER_SIZE.preview}
                             fallback={<em>Could not load message.</em>}
                           />
                         )}
@@ -1038,31 +1038,31 @@ function DisplayMessages({
           );
         })}
       </LazyMotion>
-    </EmojiProvider>
+    </StickerProvider>
   );
 }
 
 /**
- * Profanity is checked once over the whole message with emoji tokens removed —
- * splitting first would let `fu:emoji:1:ck` past the filter as two clean runs.
+ * Profanity is checked once over the whole message with sticker tokens removed —
+ * splitting first would let `fu:sticker:1:ck` past the filter as two clean runs.
  */
 function ChatMessageContent({
   content,
   blur,
-  emojiSize,
+  stickerSize,
   fallback,
 }: {
   content: string;
   blur: boolean;
-  emojiSize?: number;
+  stickerSize?: number;
   fallback?: React.ReactNode;
 }) {
-  const scannable = stripEmojiTokens(content);
+  const scannable = stripStickerTokens(content);
   const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
 
   if (!content.length) return <>{fallback ?? null}</>;
 
-  // A censored message renders as flat text, losing its emoji: re-inserting them
+  // A censored message renders as flat text, losing its sticker: re-inserting them
   // means splitting again, which is the bypass this component exists to close.
   if (cleaned !== scannable)
     return (
@@ -1073,16 +1073,16 @@ function ChatMessageContent({
 
   return (
     <>
-      {parseEmojiLines(content).map((line, lineIdx) => (
+      {parseStickerLines(content).map((line, lineIdx) => (
         <React.Fragment key={lineIdx}>
           {/* `white-space: pre-line` renders these; splitting into lines would otherwise flatten them. */}
           {lineIdx > 0 && '\n'}
           {line.parts.map((part, idx) =>
-            part.type === 'emoji' ? (
-              <Emoji
+            part.type === 'sticker' ? (
+              <Sticker
                 key={idx}
                 cosmeticId={part.cosmeticId}
-                size={emojiSize ?? (line.jumbo ? EMOJI_SIZE.jumbo : EMOJI_SIZE.inline)}
+                size={stickerSize ?? (line.jumbo ? STICKER_SIZE.jumbo : STICKER_SIZE.inline)}
               />
             ) : (
               <Text component="span" key={idx}>

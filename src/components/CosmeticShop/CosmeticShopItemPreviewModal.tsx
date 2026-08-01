@@ -87,7 +87,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
         </Box>
 
         <Stack gap={4}>
-          {cosmetic.type === CosmeticType.Emoji && (
+          {cosmetic.type === CosmeticType.Sticker && (
             <Text size="xs" c="dimmed" align="center">
               Type <b>:{(cosmetic.data as { slug?: string } | null)?.slug}:</b> in chat to use it.
             </Text>
@@ -101,7 +101,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
           <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
             {cosmetic.type === CosmeticType.ContentDecoration
               ? 'Go to my profile'
-              : cosmetic.type === CosmeticType.Emoji
+              : cosmetic.type === CosmeticType.Sticker
               ? 'Done'
               : 'Apply now'}
           </Button>

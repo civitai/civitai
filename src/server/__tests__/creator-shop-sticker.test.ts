@@ -13,22 +13,24 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 // `buildCosmeticData` is what writes `Cosmetic.data` on both the submit and the
 // update path. The original P4 hole was a missing branch here — asserting on
 // the client preview helper instead would let it reopen with tests still green.
-describe('creator-shop emoji submission', () => {
-  it('lists Emoji as a creator-submittable type', () => {
-    expect(creatorCosmeticTypes).toContain(CosmeticType.Emoji);
-    expect(isCreatorCosmeticType(CosmeticType.Emoji)).toBe(true);
+describe('creator-shop sticker submission', () => {
+  it('lists Sticker as a creator-submittable type', () => {
+    expect(creatorCosmeticTypes).toContain(CosmeticType.Sticker);
+    expect(isCreatorCosmeticType(CosmeticType.Sticker)).toBe(true);
   });
 
   it('writes the slug into cosmetic data, not just the url', () => {
-    expect(buildCosmeticData(CosmeticType.Emoji, 'cf-image-id', true, null, 'party_cat')).toEqual({
-      url: 'cf-image-id',
-      slug: 'party_cat',
-      animated: true,
-    });
+    expect(buildCosmeticData(CosmeticType.Sticker, 'cf-image-id', true, null, 'party_cat')).toEqual(
+      {
+        url: 'cf-image-id',
+        slug: 'party_cat',
+        animated: true,
+      }
+    );
   });
 
   it('requires exactly 128x128 with transparency', () => {
-    expect(cosmeticImageRequirements(CosmeticType.Emoji)).toEqual({
+    expect(cosmeticImageRequirements(CosmeticType.Sticker)).toEqual({
       width: 128,
       height: 128,
       exact: true,
@@ -36,10 +38,10 @@ describe('creator-shop emoji submission', () => {
     });
   });
 
-  it('does not fall through to the Badge default for Emoji', () => {
-    const emoji = cosmeticImageRequirements(CosmeticType.Emoji);
-    expect(emoji).not.toEqual(cosmeticImageRequirements(CosmeticType.Badge));
-    expect(emoji.exact).toBe(true);
+  it('does not fall through to the Badge default for Sticker', () => {
+    const sticker = cosmeticImageRequirements(CosmeticType.Sticker);
+    expect(sticker).not.toEqual(cosmeticImageRequirements(CosmeticType.Badge));
+    expect(sticker.exact).toBe(true);
   });
 
   it('leaves the other creator types unchanged', () => {
@@ -52,7 +54,7 @@ describe('creator-shop emoji submission', () => {
 
 // The update path had no coverage, which is how a slug edit that never reached
 // the database got through review.
-describe('creator-shop emoji update — data patching', () => {
+describe('creator-shop sticker update — data patching', () => {
   it('applies a renamed slug rather than preserving the old one', () => {
     expect(
       patchCosmeticData({
@@ -101,9 +103,9 @@ describe('creator-shop price floors', () => {
     for (const type of allTypes) expect(packItemFloor(type)).toBeGreaterThan(0);
   });
 
-  it('sums per member, so a 10-emoji pack floors at 10x', () => {
-    const members = Array.from({ length: 10 }, () => CosmeticType.Emoji);
+  it('sums per member, so a 10-sticker pack floors at 10x', () => {
+    const members = Array.from({ length: 10 }, () => CosmeticType.Sticker);
     const floor = members.reduce((sum, type) => sum + packItemFloor(type), 0);
-    expect(floor).toBe(10 * packItemFloor(CosmeticType.Emoji));
+    expect(floor).toBe(10 * packItemFloor(CosmeticType.Sticker));
   });
 });

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -35,7 +35,7 @@ import {
   getAllImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
-import { validateEmojiCosmetic } from '~/server/services/cosmetic.service';
+import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -110,7 +110,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
       where: { id },
       select: { type: true, data: true },
     });
-    await validateEmojiCosmetic({
+    await validateStickerCosmetic({
       id,
       type: type ?? existing?.type,
       data: data ?? existing?.data,
@@ -135,7 +135,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
     throw new Error('name, type, and source are required to create a cosmetic');
   }
 
-  await validateEmojiCosmetic({ type, data });
+  await validateStickerCosmetic({ type, data });
 
   return dbWrite.cosmetic.create({
     data: {
@@ -668,7 +668,7 @@ export const purchaseCosmeticShopItem = async ({
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
     shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
     shopItem.cosmetic.type == CosmeticType.ProfileDecoration ||
-    shopItem.cosmetic.type == CosmeticType.Emoji;
+    shopItem.cosmetic.type == CosmeticType.Sticker;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
@@ -753,7 +753,7 @@ export const purchaseCosmeticShopItem = async ({
       return userCosmetic;
     });
 
-    await refreshOwnedEmojiCache([userId]);
+    await refreshOwnedStickerCache([userId]);
 
     try {
       await withRetries(async () => {

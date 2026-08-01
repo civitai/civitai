@@ -381,7 +381,7 @@ export const deliverMonthlyCosmetics = async ({
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
-  // No owned-emoji cache bust here on purpose: this delivers membership badges
+  // No owned-sticker cache bust here on purpose: this delivers membership badges
   // (joined on Cosmetic.productId), importing ~/server/redis/caches pulls the
   // redis client into this module's whole dependency tree, and the cache's
   // 5-minute TTL covers the case anyway.

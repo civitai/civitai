@@ -3873,7 +3873,7 @@ enum CosmeticType {
   ContentDecoration
   ProfileDecoration
   ProfileBackground
-  Emoji
+  Sticker
 }
 
 enum CosmeticSource {

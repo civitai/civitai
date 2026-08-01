@@ -35,7 +35,7 @@ import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
-import { stripEmojiTokens } from '~/shared/utils/emoji-token';
+import { stripStickerTokens } from '~/shared/utils/sticker-token';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -220,7 +220,7 @@ export default function ChatShareModal(props: { message: string }) {
                             minWidth: 0,
                           }}
                         >
-                          {stripEmojiTokens(d.messages[0].content)}
+                          {stripStickerTokens(d.messages[0].content)}
                         </Text>
                       )}
                     </Stack>

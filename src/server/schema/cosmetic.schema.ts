@@ -17,8 +17,8 @@ export const grantCosmeticsToUsersSchema = z.object({
   userIds: z.array(z.number()).min(1).max(100),
 });
 
-export type GetEmojiCosmeticsInput = z.infer<typeof getEmojiCosmeticsSchema>;
-export const getEmojiCosmeticsSchema = z.object({
+export type GetStickerCosmeticsInput = z.infer<typeof getStickerCosmeticsSchema>;
+export const getStickerCosmeticsSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(100),
 });
 

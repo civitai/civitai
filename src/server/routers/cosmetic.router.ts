@@ -1,13 +1,13 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   equipCosmeticSchema,
-  getEmojiCosmeticsSchema,
+  getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   grantCosmeticsToUsersSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
-  getEmojiCosmetics,
+  getStickerCosmetics,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   grantCosmeticsToUsers,
@@ -24,11 +24,11 @@ export const cosmeticRouter = router({
     .query(({ input }) => {
       return getCosmeticDetail(input);
     }),
-  getEmoji: publicProcedure
+  getSticker: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
-    .input(getEmojiCosmeticsSchema)
+    .input(getStickerCosmeticsSchema)
     .query(({ input }) => {
-      return getEmojiCosmetics(input);
+      return getStickerCosmetics(input);
     }),
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);

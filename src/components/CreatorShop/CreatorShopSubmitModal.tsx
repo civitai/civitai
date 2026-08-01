@@ -45,7 +45,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const {
     isEdit,
     type,
-    isEmoji,
+    isSticker,
     slug,
     setSlug,
     slugError,
@@ -169,7 +169,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               description={isEdit ? 'Type cannot be changed after submission' : undefined}
             />
 
-            {isEmoji && (
+            {isSticker && (
               <TextInput
                 label="Slug"
                 placeholder="party_cat"
@@ -179,8 +179,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                 disabled={slugLocked}
                 description={
                   slugLocked
-                    ? 'Locked once published — owners already type this to use your emoji'
-                    : 'What people type between colons to use your emoji, e.g. :party_cat:'
+                    ? 'Locked once published — owners already type this to use your sticker'
+                    : 'What people type between colons to use your sticker, e.g. :party_cat:'
                 }
                 withAsterisk
               />

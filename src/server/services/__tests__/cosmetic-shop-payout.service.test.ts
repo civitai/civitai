@@ -40,12 +40,12 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   dbReadFallbackCounter: { inc: vi.fn() },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
-// The post-commit emoji cache bust would reach a Redis that isn't running here,
+// The post-commit sticker cache bust would reach a Redis that isn't running here,
 // and its failure path logs to axiom — which these tests assert stays silent.
 // `importOriginal` leaves every other cache export real.
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
-  refreshOwnedEmojiCache: vi.fn(async () => undefined),
+  refreshOwnedStickerCache: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,

@@ -23,7 +23,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
-import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
@@ -89,20 +89,20 @@ export function useSubmitCreatorShopForm({
     type === CosmeticType.Badge ||
     type === CosmeticType.ProfileDecoration ||
     type === CosmeticType.ProfileBackground ||
-    type === CosmeticType.Emoji;
+    type === CosmeticType.Sticker;
 
   // Mirrors the server's authoritative floor so a creator sees it before submit.
   const priceFloor = cosmeticPriceFloor(type);
 
-  const isEmoji = type === CosmeticType.Emoji;
+  const isSticker = type === CosmeticType.Sticker;
   // Same normalization the server applies, so what's validated here is what's saved.
   const normalizedSlug = slug.trim().toLowerCase();
   // Matches the server rule: the slug is the token owners type, so it's fixed
-  // once the emoji is live.
+  // once the sticker is live.
   const slugLocked = isEdit && item?.status === CosmeticShopItemStatus.Published;
   const slugError =
-    isEmoji && normalizedSlug.length > 0 && !isValidEmojiSlug(normalizedSlug)
-      ? EMOJI_SLUG_ERROR
+    isSticker && normalizedSlug.length > 0 && !isValidStickerSlug(normalizedSlug)
+      ? STICKER_SLUG_ERROR
       : null;
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
@@ -172,7 +172,7 @@ export function useSubmitCreatorShopForm({
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
-    (!isEmoji || isValidEmojiSlug(normalizedSlug));
+    (!isSticker || isValidStickerSlug(normalizedSlug));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -211,7 +211,7 @@ export function useSubmitCreatorShopForm({
         // Send the slug on any artwork swap too: the server rebuilds `data`
         // from scratch and would otherwise fall back to the stored value.
         if (
-          isEmoji &&
+          isSticker &&
           (artReplaced ||
             normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
         )
@@ -232,7 +232,7 @@ export function useSubmitCreatorShopForm({
           sellerShare: sellableByOthers ? sellerShare : 0,
           acceptsBlueBuzz,
           offsets: normalizedOffsets,
-          slug: isEmoji ? normalizedSlug : undefined,
+          slug: isSticker ? normalizedSlug : undefined,
         });
       }
       resetFiles();
@@ -260,7 +260,7 @@ export function useSubmitCreatorShopForm({
     type,
     setType,
     priceFloor,
-    isEmoji,
+    isSticker,
     slug,
     setSlug,
     slugError,

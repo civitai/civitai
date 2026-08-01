@@ -7,7 +7,7 @@ import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   ContentDecorationCosmetic,
-  EmojiCosmetic,
+  StickerCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById } from '~/types/router';
@@ -101,9 +101,9 @@ export const CosmeticPreview = ({
           {descriptionBox}
         </Stack>
       );
-    case CosmeticType.Emoji: {
-      const emojiData = cosmetic.data as EmojiCosmetic['data'];
-      if (!emojiData.url) return null;
+    case CosmeticType.Sticker: {
+      const stickerData = cosmetic.data as StickerCosmetic['data'];
+      if (!stickerData.url) return null;
 
       return (
         <Stack gap="xl" align="center">
@@ -116,17 +116,17 @@ export const CosmeticPreview = ({
             {[24, 48, 96].map((size) => (
               <EdgeMedia
                 key={size}
-                src={emojiData.url}
-                alt={emojiData.slug ? `:${emojiData.slug}:` : cosmetic.name}
+                src={stickerData.url}
+                alt={stickerData.slug ? `:${stickerData.slug}:` : cosmetic.name}
                 width={size}
-                anim={emojiData.animated}
+                anim={stickerData.animated}
                 style={{ width: size, height: size, objectFit: 'contain' }}
               />
             ))}
           </Group>
-          {emojiData.slug && (
+          {stickerData.slug && (
             <Text size="sm" c="dimmed">
-              Type <b>:{emojiData.slug}:</b> to use it
+              Type <b>:{stickerData.slug}:</b> to use it
             </Text>
           )}
           {descriptionBox}

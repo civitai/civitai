@@ -2,30 +2,30 @@ import { Loader, Popover, ScrollArea, Text, TextInput, UnstyledButton } from '@m
 import { IconMoodSmile } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import type { ResolvedEmoji } from '~/components/Emoji/emoji.util';
-import { useOwnedEmoji } from '~/components/Emoji/emoji.util';
+import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-export function EmojiPicker({
+export function StickerPicker({
   onSelect,
   target,
   disabled,
   position = 'top-end',
 }: {
-  onSelect: (emoji: ResolvedEmoji) => void;
+  onSelect: (sticker: ResolvedSticker) => void;
   target?: React.ReactNode;
   disabled?: boolean;
   position?: 'top' | 'top-end' | 'top-start' | 'bottom' | 'bottom-end' | 'bottom-start';
 }) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
-  const { emoji, isLoading } = useOwnedEmoji();
+  const { sticker, isLoading } = useOwnedSticker();
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return emoji;
-    return emoji.filter((x) => x.slug.includes(needle) || x.name.toLowerCase().includes(needle));
-  }, [emoji, query]);
+    if (!needle) return sticker;
+    return sticker.filter((x) => x.slug.includes(needle) || x.name.toLowerCase().includes(needle));
+  }, [sticker, query]);
 
   return (
     <Popover opened={opened} onChange={setOpened} position={position} withArrow shadow="md">
@@ -39,7 +39,7 @@ export function EmojiPicker({
             variant="subtle"
             color="gray"
             disabled={disabled}
-            aria-label="Insert emoji"
+            aria-label="Insert sticker"
             onClick={() => setOpened((o) => !o)}
           >
             <IconMoodSmile />
@@ -50,7 +50,7 @@ export function EmojiPicker({
         <div className="flex w-64 flex-col gap-2">
           <TextInput
             size="xs"
-            placeholder="Search emoji"
+            placeholder="Search sticker"
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
           />
@@ -58,9 +58,9 @@ export function EmojiPicker({
             <div className="flex justify-center py-4">
               <Loader size="sm" />
             </div>
-          ) : !emoji.length ? (
+          ) : !sticker.length ? (
             <Text size="xs" c="dimmed" ta="center" py="sm">
-              You don&apos;t own any emoji yet. Grab some in the shop.
+              You don&apos;t own any sticker yet. Grab some in the shop.
             </Text>
           ) : !filtered.length ? (
             <Text size="xs" c="dimmed" ta="center" py="sm">

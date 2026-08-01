@@ -8,13 +8,13 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
 
 // Business rules (shared by client + server).
 // Every type is seeded at the same value today; the point of the lookup is that
-// emoji economics can be tuned later without touching badges.
+// sticker economics can be tuned later without touching badges.
 const PRICE_FLOOR_DEFAULT = 500;
 
 /** Minimum Buzz a creator may list this cosmetic type for individually. */
 export const cosmeticPriceFloor = (type: CosmeticType): number => {
   switch (type) {
-    case CosmeticType.Emoji:
+    case CosmeticType.Sticker:
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
     case CosmeticType.ProfileBackground:
@@ -31,7 +31,7 @@ export const cosmeticPriceFloor = (type: CosmeticType): number => {
  */
 export const packItemFloor = (type: CosmeticType): number => {
   switch (type) {
-    case CosmeticType.Emoji:
+    case CosmeticType.Sticker:
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
     case CosmeticType.ProfileBackground:
@@ -80,7 +80,7 @@ export const creatorCosmeticTypes = [
   CosmeticType.ProfileDecoration,
   CosmeticType.ContentDecoration,
   CosmeticType.ProfileBackground,
-  CosmeticType.Emoji,
+  CosmeticType.Sticker,
 ] as const;
 
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
@@ -106,7 +106,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
     case CosmeticType.ContentDecoration:
       return { width: 256, height: 256, exact: false, requireTransparency: true };
     // Exact 128×128 so a 48px jumbo render is clean at 2x DPI.
-    case CosmeticType.Emoji:
+    case CosmeticType.Sticker:
       return { width: 128, height: 128, exact: true, requireTransparency: true };
     case CosmeticType.Badge:
     default:
@@ -185,7 +185,7 @@ export const submitCreatorShopItemSchema = z.object({
   // and validates the artwork itself (format/dimensions/transparency).
   imageUrl: z.string().min(1),
   animated: z.boolean().optional(),
-  // Emoji only — the `:slug:` users type. Required for Emoji, ignored otherwise.
+  // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
   slug: z.string().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
   availableQuantity: z.number().int().positive().nullish(),
@@ -216,7 +216,7 @@ export const updateCreatorShopItemSchema = z.object({
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
-  // Emoji only. Omitted leaves the existing slug alone — replacing artwork must
+  // Sticker only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
 });

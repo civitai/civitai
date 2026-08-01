@@ -68,7 +68,7 @@ import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
-import { refreshOwnedEmojiCache, userModelCountCache } from '~/server/redis/caches';
+import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -2329,7 +2329,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
   await dbWrite.userCosmetic.create({
     data: { userId, cosmeticId: cosmetic.id },
   });
-  await refreshOwnedEmojiCache([userId]);
+  await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 

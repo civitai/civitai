@@ -1,24 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import {
-  formatEmojiReactionKey,
-  isEmojiReactionKey,
+  formatStickerReactionKey,
+  isStickerReactionKey,
   parseReactionKey,
 } from '~/shared/utils/reaction-key';
 
-describe('formatEmojiReactionKey', () => {
+describe('formatStickerReactionKey', () => {
   it('namespaces the cosmetic id', () => {
-    expect(formatEmojiReactionKey(1234)).toBe('emoji:1234');
+    expect(formatStickerReactionKey(1234)).toBe('sticker:1234');
   });
 
   it('round-trips through parseReactionKey', () => {
-    expect(parseReactionKey(formatEmojiReactionKey(7))).toEqual({ kind: 'emoji', cosmeticId: 7 });
+    expect(parseReactionKey(formatStickerReactionKey(7))).toEqual({
+      kind: 'sticker',
+      cosmeticId: 7,
+    });
   });
 });
 
-describe('isEmojiReactionKey', () => {
-  it('is true only for the emoji namespace', () => {
-    expect(isEmojiReactionKey('emoji:1')).toBe(true);
-    expect(isEmojiReactionKey('Like')).toBe(false);
+describe('isStickerReactionKey', () => {
+  it('is true only for the sticker namespace', () => {
+    expect(isStickerReactionKey('sticker:1')).toBe(true);
+    expect(isStickerReactionKey('Like')).toBe(false);
   });
 });
 
@@ -33,11 +36,11 @@ describe('parseReactionKey', () => {
     expect(parseReactionKey('like')).toBeNull();
   });
 
-  it('rejects malformed emoji keys', () => {
-    expect(parseReactionKey('emoji:')).toBeNull();
-    expect(parseReactionKey('emoji:abc')).toBeNull();
-    expect(parseReactionKey('emoji:-1')).toBeNull();
-    expect(parseReactionKey('emoji:1.5')).toBeNull();
-    expect(parseReactionKey('emoji:0')).toBeNull();
+  it('rejects malformed sticker keys', () => {
+    expect(parseReactionKey('sticker:')).toBeNull();
+    expect(parseReactionKey('sticker:abc')).toBeNull();
+    expect(parseReactionKey('sticker:-1')).toBeNull();
+    expect(parseReactionKey('sticker:1.5')).toBeNull();
+    expect(parseReactionKey('sticker:0')).toBeNull();
   });
 });

@@ -50,12 +50,12 @@ export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>>
       downloadName: 'civitai-avatar-frame-template.png',
     },
   },
-  [CosmeticType.Emoji]: {
+  [CosmeticType.Sticker]: {
     requirements: [
       {
         key: 'reads-small',
         label:
-          'Must read at 22px. Emoji are usually rendered inline with text — fine detail disappears at that size.',
+          'Must read at 22px. Sticker are usually rendered inline with text — fine detail disappears at that size.',
       },
       {
         key: 'square-transparent',
@@ -65,12 +65,12 @@ export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>>
       {
         key: 'no-text',
         label:
-          'Avoid words and small text. A shape or face reads at emoji size; a sentence does not.',
+          'Avoid words and small text. A shape or face reads at sticker size; a sentence does not.',
       },
       {
         key: 'slug',
         label:
-          'Pick a slug people will actually type. It is what they enter between colons to use your emoji.',
+          'Pick a slug people will actually type. It is what they enter between colons to use your sticker.',
       },
     ],
   },

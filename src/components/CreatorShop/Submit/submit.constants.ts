@@ -4,7 +4,7 @@ export const cosmeticTypeOptions = [
   { value: CosmeticType.Badge, label: 'Badge' },
   { value: CosmeticType.ProfileDecoration, label: 'Avatar Frame' },
   { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
-  { value: CosmeticType.Emoji, label: 'Emoji' },
+  { value: CosmeticType.Sticker, label: 'Sticker' },
 ];
 
 // The cosmetic types a creator can list — the only ones worth filtering by in the storefront.

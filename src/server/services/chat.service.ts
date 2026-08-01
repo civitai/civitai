@@ -19,9 +19,9 @@ import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
 } from '~/server/services/blocklist.service';
-import { getOwnedEmojiCosmetics } from '~/server/services/cosmetic.service';
+import { getOwnedStickerCosmetics } from '~/server/services/cosmetic.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { resolveEmojiTokens, stripEmojiTokens } from '~/shared/utils/emoji-token';
+import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker-token';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
@@ -287,13 +287,13 @@ export const createMessage = async ({
 
   // The client's `:slug:` resolution is optimistic; this is the authority.
   if (userId !== -1) {
-    const owned = await getOwnedEmojiCosmetics(userId);
+    const owned = await getOwnedStickerCosmetics(userId);
     const ownedIds = new Set(owned.map((x) => x.id));
     const ownedBySlug = new Map<string, number>();
-    for (const emoji of owned)
-      if (!ownedBySlug.has(emoji.slug)) ownedBySlug.set(emoji.slug, emoji.id);
+    for (const sticker of owned)
+      if (!ownedBySlug.has(sticker.slug)) ownedBySlug.set(sticker.slug, sticker.id);
 
-    content = resolveEmojiTokens(content, {
+    content = resolveStickerTokens(content, {
       resolveSlug: (slug) => ownedBySlug.get(slug),
       isOwnedId: (id) => ownedIds.has(id),
     }).trim();
@@ -305,8 +305,8 @@ export const createMessage = async ({
 
   // Enforce blocklists and rate limits on message content
   if (userId !== -1 && !isModerator) {
-    // Emoji tokens are stripped, not split around: `fu:emoji:1:ck` must still read as one word.
-    const scannableContent = stripEmojiTokens(content);
+    // Sticker tokens are stripped, not split around: `fu:sticker:1:ck` must still read as one word.
+    const scannableContent = stripStickerTokens(content);
     await throwOnBlockedLinkDomain(scannableContent);
     await throwOnBlockedMessagePattern(scannableContent);
 

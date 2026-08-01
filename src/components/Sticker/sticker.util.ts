@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { trpc } from '~/utils/trpc';
 
-export type ResolvedEmoji = {
+export type ResolvedSticker = {
   id: number;
   name: string;
   slug: string;
@@ -10,8 +10,8 @@ export type ResolvedEmoji = {
   animated?: boolean;
 };
 
-/** Matches the `ids` cap on `getEmojiCosmeticsSchema`. */
-const EMOJI_FETCH_CHUNK = 100;
+/** Matches the `ids` cap on `getStickerCosmeticsSchema`. */
+const STICKER_FETCH_CHUNK = 100;
 
 const obtainedTime = (value?: Date) => {
   const time = value ? new Date(value).getTime() : NaN;
@@ -19,64 +19,64 @@ const obtainedTime = (value?: Date) => {
 };
 
 /**
- * Owned emoji, most-recently-obtained first — newest purchases surface at the
+ * Owned sticker, most-recently-obtained first — newest purchases surface at the
  * top of the picker. Slugs are unique per cosmetic, so `bySlug` can't collide;
  * first-wins is just how the map is built, not a tie-break rule.
  */
-export function useOwnedEmoji() {
+export function useOwnedSticker() {
   const { data, isLoading } = useQueryUserCosmetics();
 
-  const emoji = useMemo(() => {
-    const owned = data?.emoji ?? [];
+  const sticker = useMemo(() => {
+    const owned = data?.sticker ?? [];
     return owned
-      .map(({ id, name, data: emojiData, obtainedAt }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt }) => ({
         id,
         name,
-        slug: emojiData?.slug,
-        url: emojiData?.url,
-        animated: emojiData?.animated,
+        slug: stickerData?.slug,
+        url: stickerData?.url,
+        animated: stickerData?.animated,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)
       .sort((a, b) => obtainedTime(b.obtainedAt) - obtainedTime(a.obtainedAt));
-  }, [data?.emoji]);
+  }, [data?.sticker]);
 
   const bySlug = useMemo(() => {
-    const map = new Map<string, ResolvedEmoji>();
-    for (const item of emoji) if (!map.has(item.slug)) map.set(item.slug, item);
+    const map = new Map<string, ResolvedSticker>();
+    for (const item of sticker) if (!map.has(item.slug)) map.set(item.slug, item);
     return map;
-  }, [emoji]);
+  }, [sticker]);
 
-  return { emoji, bySlug, isLoading };
+  return { sticker, bySlug, isLoading };
 }
 
 /**
  * One request per 100 distinct ids for a whole surface, rather than one per
- * rendered emoji — tRPC request batching sits behind a feature flag that is off
+ * rendered sticker — tRPC request batching sits behind a feature flag that is off
  * by default, so per-component queries would be per-component HTTP requests.
  */
-export function useEmojiCosmetics(ids: number[]) {
+export function useStickerCosmetics(ids: number[]) {
   const chunks = useMemo(() => {
     const unique = [...new Set(ids)].sort((a, b) => a - b);
     const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += EMOJI_FETCH_CHUNK)
-      result.push(unique.slice(i, i + EMOJI_FETCH_CHUNK));
+    for (let i = 0; i < unique.length; i += STICKER_FETCH_CHUNK)
+      result.push(unique.slice(i, i + STICKER_FETCH_CHUNK));
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids.join(',')]);
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
-      t.cosmetic.getEmoji({ ids: chunk }, { staleTime: Infinity, gcTime: Infinity })
+      t.cosmetic.getSticker({ ids: chunk }, { staleTime: Infinity, gcTime: Infinity })
     )
   );
 
-  const emoji = useMemo(() => {
-    const map = new Map<number, ResolvedEmoji>();
+  const sticker = useMemo(() => {
+    const map = new Map<number, ResolvedSticker>();
     for (const query of queries) for (const item of query.data ?? []) map.set(item.id, item);
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
 
-  return { emoji, isLoading: queries.some((q) => q.isLoading) };
+  return { sticker, isLoading: queries.some((q) => q.isLoading) };
 }

@@ -2069,7 +2069,7 @@ export const REDIS_KEYS = {
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
-    USER_OWNED_EMOJI: 'packed:caches:user-owned-emoji',
+    USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',

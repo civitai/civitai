@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { refreshOwnedEmojiCache } from '~/server/redis/caches';
-import { validateEmojiCosmetic } from '~/server/services/cosmetic.service';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -234,7 +234,7 @@ export const submitCreatorShopItem = async ({
   // Slug format + collision, also before charging: finding out your slug is
   // taken after paying a non-refundable fee is the worst version of this.
   const normalizedSlug = slug?.trim().toLowerCase();
-  await validateEmojiCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
+  await validateStickerCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const feeTx = await createBuzzTransaction({
@@ -354,11 +354,11 @@ export const updateCreatorShopItem = async ({
     ? existingData.offsets ?? null
     : offsets;
 
-  // Slug rules are Emoji-only — the schema accepts `slug` on any type, so
+  // Slug rules are Sticker-only — the schema accepts `slug` on any type, so
   // without this gate a crafted request would hit them on a Badge.
-  const isEmojiItem = existing.cosmetic.type === CosmeticType.Emoji;
+  const isStickerItem = existing.cosmetic.type === CosmeticType.Sticker;
   const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
-  const requestedSlug = isEmojiItem ? slug?.trim().toLowerCase() : undefined;
+  const requestedSlug = isStickerItem ? slug?.trim().toLowerCase() : undefined;
   // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
   // owners' `:slug:` text depends on it — so carry the existing one forward.
   const nextSlug = requestedSlug ?? existingSlug;
@@ -406,13 +406,13 @@ export const updateCreatorShopItem = async ({
   // keep working off the id — so the creator gets no signal they broke anything.
   // Mods can still fix a genuine typo.
   if (isPublished && !isModerator && slugChange)
-    throw throwBadRequestError('The emoji slug cannot be changed once published');
+    throw throwBadRequestError('The sticker slug cannot be changed once published');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
 
   if (slugChange)
-    await validateEmojiCosmetic({
+    await validateStickerCosmetic({
       id: existing.cosmetic.id,
       type: existing.cosmetic.type,
       data: { slug: nextSlug },
@@ -1133,7 +1133,7 @@ export const reviewCreatorShopItem = async ({
       ],
       skipDuplicates: true,
     });
-    await refreshOwnedEmojiCache([item.cosmetic.createdById]);
+    await refreshOwnedStickerCache([item.cosmetic.createdById]);
   }
 
   // An unpublished item can't stay featured — free up its slot.

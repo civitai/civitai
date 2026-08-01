@@ -6,7 +6,7 @@ import { eventEngine } from '~/server/events';
 import {
   cosmeticCache,
   profilePictureCache,
-  refreshOwnedEmojiCache,
+  refreshOwnedStickerCache,
   userBasicCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
@@ -63,13 +63,7 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
       const status = await cosmeticStatus({ id: cosmeticId, userId });
       userStatus = { ...status, cosmeticId };
       // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
-      await hSetWithTTL(
-        redis,
-        key,
-        userId.toString(),
-        pack(userStatus),
-        CacheTTL.hour * 1000
-      );
+      await hSetWithTTL(redis, key, userId.toString(), pack(userStatus), CacheTTL.hour * 1000);
     }
 
     const { cosmeticId } = userStatus;
@@ -106,7 +100,7 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
       RETURNING data;
     `) ?? [{ data: {} }];
 
-    await refreshOwnedEmojiCache([userId]);
+    await refreshOwnedStickerCache([userId]);
 
     const cacheKey =
       `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;

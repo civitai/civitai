@@ -655,7 +655,7 @@ export const createMessageHandler = async ({
  * Update a message
  *
  * Currently unrouted (see chat.router.ts). Before reviving it, port the guards
- * `createMessage` applies to new content: blocklist/profanity scanning and emoji
+ * `createMessage` applies to new content: blocklist/profanity scanning and sticker
  * ownership resolution. This writes `content` through unchecked.
  */
 export const updateMessageHandler = async ({

@@ -18,7 +18,7 @@ export const buildData = (
   offsets?: CosmeticOffsets | null,
   slug?: string
 ) => {
-  if (type === CosmeticType.Emoji) return { url: imageId, slug, animated };
+  if (type === CosmeticType.Sticker) return { url: imageId, slug, animated };
   if (type === CosmeticType.ProfileDecoration)
     return { url: imageId, animated, ...(offsets ? { offsets } : {}) };
   if (type === CosmeticType.Badge) return { url: imageId, animated };

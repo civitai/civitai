@@ -53,7 +53,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { EMOJI_SLUG_ERROR, isValidEmojiSlug } from '~/shared/utils/emoji-token';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import { CosmeticSource, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
@@ -91,7 +91,7 @@ const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
   { value: CosmeticType.ContentDecoration, label: 'Content Decoration' },
   { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
   { value: CosmeticType.NamePlate, label: 'Name Plate' },
-  { value: CosmeticType.Emoji, label: 'Emoji' },
+  { value: CosmeticType.Sticker, label: 'Sticker' },
 ];
 
 const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
@@ -107,7 +107,7 @@ const isImageBasedCosmeticType = (type: CosmeticType) =>
   type === CosmeticType.ProfileDecoration ||
   type === CosmeticType.ContentDecoration ||
   type === CosmeticType.ProfileBackground ||
-  type === CosmeticType.Emoji;
+  type === CosmeticType.Sticker;
 
 /**
  * Inline cosmetic creator. Lets a moderator drop in an image and basic
@@ -144,11 +144,11 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
 
     // Client-side only, like every other cosmetic type — this catches the
     // mistake, it doesn't guarantee the artwork.
-    if (type === CosmeticType.Emoji) {
+    if (type === CosmeticType.Sticker) {
       const { checks, allRequiredPassed } = await validateCosmeticImage(file, type, maxSize);
       if (!allRequiredPassed) {
         showErrorNotification({
-          title: 'Artwork does not meet emoji requirements',
+          title: 'Artwork does not meet sticker requirements',
           error: new Error(
             checks
               .filter((c) => !c.passed)
@@ -188,10 +188,10 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       return;
     }
 
-    if (type === CosmeticType.Emoji && !isValidEmojiSlug(slug)) {
+    if (type === CosmeticType.Sticker && !isValidStickerSlug(slug)) {
       showErrorNotification({
         title: 'Invalid slug',
-        error: new Error(EMOJI_SLUG_ERROR),
+        error: new Error(STICKER_SLUG_ERROR),
       });
       return;
     }
@@ -203,7 +203,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       data = { url: imageId };
     } else if (type === CosmeticType.ProfileBackground) {
       data = { url: imageId, type: MediaType.image };
-    } else if (type === CosmeticType.Emoji) {
+    } else if (type === CosmeticType.Sticker) {
       data = { url: imageId, slug, animated };
     }
     // NamePlate gets `data: {}` — moderator can fill styling later via DB tools.
@@ -276,14 +276,14 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           minRows={2}
         />
 
-        {type === CosmeticType.Emoji && (
+        {type === CosmeticType.Sticker && (
           <TextInput
             label="Slug"
-            description="Typed as :slug: to insert the emoji"
+            description="Typed as :slug: to insert the sticker"
             value={slug}
             onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
             placeholder="e.g. party_cat"
-            error={slug.length > 0 && !isValidEmojiSlug(slug) ? EMOJI_SLUG_ERROR : undefined}
+            error={slug.length > 0 && !isValidStickerSlug(slug) ? STICKER_SLUG_ERROR : undefined}
             withAsterisk
           />
         )}
@@ -355,11 +355,11 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
 
         {(type === CosmeticType.Badge ||
           type === CosmeticType.ProfileDecoration ||
-          type === CosmeticType.Emoji) && (
+          type === CosmeticType.Sticker) && (
           <Switch
             label="Animated"
             description={
-              type === CosmeticType.Emoji
+              type === CosmeticType.Sticker
                 ? 'Toggle on for animated WebP sources. Animated PNG is accepted but its frame count and rate are not checked.'
                 : 'Toggle on for animated GIF/APNG sources'
             }
