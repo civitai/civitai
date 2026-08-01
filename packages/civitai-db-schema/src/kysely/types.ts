@@ -1920,6 +1920,7 @@ export type Cosmetic = {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: string | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;

@@ -1,4 +1,6 @@
 import type {
+  MediaHashStep,
+  MediaHashStepTemplate,
   Priority,
   WorkflowStepTemplate,
   WorkflowTemplate,
@@ -222,6 +224,57 @@ export async function createImageIngestionRequest({
   }
 
   return { data, body, error, status: response?.status };
+}
+
+const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
+
+/**
+ * Perceptual hash for an arbitrary image, without creating an `Image` row.
+ *
+ * Submits a one-step `mediaHash` workflow and blocks for the result rather than
+ * routing through the scan-result webhook, which can only address images by id.
+ *
+ * Returns `undefined` on any failure — a hash is a signal, not a gate, so
+ * callers persist what they get and leave the rest for a backfill sweep.
+ */
+export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
+  const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+
+  try {
+    const { data } = await submitWorkflow({
+      client: internalOrchestratorClient,
+      query: { wait: PERCEPTUAL_HASH_WAIT_SECONDS },
+      body: {
+        tags: ['perceptual-hash'],
+        currencies: [],
+        steps: [
+          {
+            $type: 'mediaHash',
+            input: { mediaUrl, hashTypes: ['perceptual'] },
+          } as MediaHashStepTemplate,
+        ],
+      },
+    });
+
+    // A `wait` that elapses returns 202 with the workflow still running, so an
+    // unfinished step is indistinguishable from a failed one here — both are
+    // "no hash yet".
+    const step = data?.steps?.[0] as MediaHashStep | undefined;
+    if (data?.status !== 'succeeded' || step?.status !== 'succeeded') return undefined;
+
+    const perceptual = step.output?.hashes?.perceptual;
+    if (!perceptual) return undefined;
+
+    return BigInt.asIntN(64, BigInt('0x' + perceptual));
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return undefined;
+  }
 }
 
 type XGuardModerationArgs = {

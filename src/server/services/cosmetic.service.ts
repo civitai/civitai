@@ -19,6 +19,8 @@ import {
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -384,8 +386,49 @@ export async function unassignCosmetic({
   return { count: result.count };
 }
 
+export function getCosmeticArtworkUrl(data: Prisma.JsonValue | undefined) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const url = (data as { url?: unknown }).url;
+  return typeof url === 'string' && url.length ? url : undefined;
+}
+
+/**
+ * Fire-and-forget: a cosmetic must land whether or not the orchestrator answers,
+ * so this never blocks the write and never throws. Rows left NULL are picked up
+ * by /api/internal/add-missing-cosmetic-phash.
+ */
+export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: string }) {
+  getPerceptualHash(url)
+    .then(async (pHash) => {
+      if (!pHash) {
+        await logToAxiom({
+          type: 'warning',
+          name: 'cosmetic-phash',
+          message: 'No perceptual hash returned',
+          cosmeticId: id,
+          url,
+        }).catch(() => null);
+        return;
+      }
+      await dbWrite.cosmetic.update({ where: { id }, data: { pHash } });
+    })
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'cosmetic-phash',
+        cosmeticId: id,
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => null)
+    );
+}
+
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
   const cosmetic = await dbWrite.cosmetic.create({ data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url) queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+
   return cosmetic;
 }
 
@@ -396,7 +439,14 @@ export async function updateCosmetic({
   id: number;
   data: Prisma.CosmeticUncheckedUpdateInput;
 }) {
+  const previous = data.data !== undefined ? await getCosmeticDetail({ id }) : undefined;
   const cosmetic = await dbWrite.cosmetic.update({ where: { id }, data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url && url !== getCosmeticArtworkUrl(previous?.data)) {
+    queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+  }
+
   return cosmetic;
 }
 
