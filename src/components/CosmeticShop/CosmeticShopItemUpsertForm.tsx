@@ -35,6 +35,7 @@ import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
@@ -139,6 +140,24 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
         error: new Error(`File should not exceed ${formatBytes(maxSize)}`),
       });
       return;
+    }
+
+    // Mod-authored emoji are the only ones that exist until the creator flow
+    // (P4) opens, so the artwork requirements have to be enforced here.
+    if (type === CosmeticType.Emoji) {
+      const { checks, allRequiredPassed } = await validateCosmeticImage(file, type, maxSize);
+      if (!allRequiredPassed) {
+        showErrorNotification({
+          title: 'Artwork does not meet emoji requirements',
+          error: new Error(
+            checks
+              .filter((c) => !c.passed)
+              .map((c) => `${c.label}${c.detail ? ` (got ${c.detail})` : ''}`)
+              .join('; ')
+          ),
+        });
+        return;
+      }
     }
 
     const result = await uploadToCF(file);

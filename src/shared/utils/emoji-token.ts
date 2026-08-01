@@ -68,6 +68,34 @@ export function parseEmojiContent(content: string): EmojiContentPart[] {
   return parts;
 }
 
+export const EMOJI_SIZE = {
+  /** A line of nothing but emoji. */
+  jumbo: 48,
+  /** Emoji sitting alongside text, aligned to the line. */
+  inline: 22,
+  /** Reply quotes and list previews — a summary surface, never jumbo. */
+  preview: 16,
+} as const;
+
+/** Past this many on one line, jumbo becomes a wall of images. */
+export const EMOJI_JUMBO_LIMIT = 6;
+
+export type EmojiLine = { parts: EmojiContentPart[]; jumbo: boolean };
+
+/**
+ * Splits content into lines and decides per line whether its emoji render
+ * jumbo. Shared so chat and comments can't drift on the rule.
+ */
+export function parseEmojiLines(content: string): EmojiLine[] {
+  return content.split('\n').map((line) => {
+    const parts = parseEmojiContent(line);
+    const emojiCount = parts.filter((p) => p.type === 'emoji').length;
+    const textIsBlank = parts.every((p) => p.type !== 'text' || !p.value.trim());
+
+    return { parts, jumbo: textIsBlank && emojiCount > 0 && emojiCount <= EMOJI_JUMBO_LIMIT };
+  });
+}
+
 export function parseEmojiIds(content: string) {
   return [
     ...new Set(

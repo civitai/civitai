@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EMOJI_JUMBO_LIMIT,
   formatEmojiToken,
   isValidEmojiSlug,
   parseEmojiContent,
   parseEmojiIds,
+  parseEmojiLines,
   resolveEmojiTokens,
   stripEmojiTokens,
 } from '~/shared/utils/emoji-token';
@@ -116,5 +118,48 @@ describe('parseEmojiIds', () => {
 
   it('returns nothing for token-free text', () => {
     expect(parseEmojiIds('nothing here')).toEqual([]);
+  });
+});
+
+describe('parseEmojiLines', () => {
+  const jumboFlags = (content: string) => parseEmojiLines(content).map((l) => l.jumbo);
+
+  it('marks a lone emoji jumbo', () => {
+    expect(jumboFlags(':emoji:1:')).toEqual([true]);
+  });
+
+  it('keeps emoji inline when mixed with text', () => {
+    expect(jumboFlags('hey :emoji:1: how are you')).toEqual([false]);
+  });
+
+  it('marks several emoji on one line jumbo', () => {
+    expect(jumboFlags(':emoji:1::emoji:2::emoji:3:')).toEqual([true]);
+  });
+
+  it('ignores stray whitespace around an emoji-only line', () => {
+    expect(jumboFlags('  :emoji:1:  :emoji:2: ')).toEqual([true]);
+  });
+
+  it('decides per line, so a lone emoji inside a longer message is still jumbo', () => {
+    expect(jumboFlags('look at this\n:emoji:1:\nnice right')).toEqual([false, true, false]);
+  });
+
+  it('drops back to inline past the jumbo limit', () => {
+    const six = ':emoji:1:'.repeat(EMOJI_JUMBO_LIMIT);
+    expect(jumboFlags(six)).toEqual([true]);
+    expect(jumboFlags(six + ':emoji:1:')).toEqual([false]);
+  });
+
+  it('does not mark a text-only or empty line jumbo', () => {
+    expect(jumboFlags('just text')).toEqual([false]);
+    expect(jumboFlags('')).toEqual([false]);
+    expect(jumboFlags('a\n\nb')).toEqual([false, false, false]);
+  });
+
+  it('preserves the parts of each line', () => {
+    expect(parseEmojiLines('hi :emoji:4:')[0].parts).toEqual([
+      { type: 'text', value: 'hi ' },
+      { type: 'emoji', cosmeticId: 4 },
+    ]);
   });
 });

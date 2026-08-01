@@ -3,12 +3,11 @@ import { useMemo } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useEmojiCosmetics } from '~/components/Emoji/emoji.util';
 import { useEmojiContext } from '~/components/Emoji/EmojiProvider';
-
-export const EMOJI_DEFAULT_SIZE = 24;
+import { EMOJI_SIZE } from '~/shared/utils/emoji-token';
 
 export function Emoji({
   cosmeticId,
-  size = EMOJI_DEFAULT_SIZE,
+  size = EMOJI_SIZE.inline,
   className,
 }: {
   cosmeticId: number;

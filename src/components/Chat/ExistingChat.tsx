@@ -69,8 +69,9 @@ import { EmojiProvider } from '~/components/Emoji/EmojiProvider';
 import { useOwnedEmoji } from '~/components/Emoji/emoji.util';
 import { useCleanText } from '~/hooks/useCheckProfanity';
 import {
-  parseEmojiContent,
+  EMOJI_SIZE,
   parseEmojiIds,
+  parseEmojiLines,
   resolveEmojiTokens,
   stripEmojiTokens,
 } from '~/shared/utils/emoji-token';
@@ -1072,15 +1073,25 @@ function ChatMessageContent({
 
   return (
     <>
-      {parseEmojiContent(content).map((part, idx) =>
-        part.type === 'emoji' ? (
-          <Emoji key={idx} cosmeticId={part.cosmeticId} size={emojiSize} />
-        ) : (
-          <Text component="span" key={idx}>
-            <Linkify options={linkifyOptions}>{part.value}</Linkify>
-          </Text>
-        )
-      )}
+      {parseEmojiLines(content).map((line, lineIdx) => (
+        <React.Fragment key={lineIdx}>
+          {/* `white-space: pre-line` renders these; splitting into lines would otherwise flatten them. */}
+          {lineIdx > 0 && '\n'}
+          {line.parts.map((part, idx) =>
+            part.type === 'emoji' ? (
+              <Emoji
+                key={idx}
+                cosmeticId={part.cosmeticId}
+                size={emojiSize ?? (line.jumbo ? EMOJI_SIZE.jumbo : EMOJI_SIZE.inline)}
+              />
+            ) : (
+              <Text component="span" key={idx}>
+                <Linkify options={linkifyOptions}>{part.value}</Linkify>
+              </Text>
+            )
+          )}
+        </React.Fragment>
+      ))}
     </>
   );
 }

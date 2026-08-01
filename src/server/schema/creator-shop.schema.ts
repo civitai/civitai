@@ -65,6 +65,9 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
       return { width: 450, height: 144, exact: false, requireTransparency: false };
     case CosmeticType.ContentDecoration:
       return { width: 256, height: 256, exact: false, requireTransparency: true };
+    // Exact 128×128 so a 48px jumbo render is clean at 2x DPI.
+    case CosmeticType.Emoji:
+      return { width: 128, height: 128, exact: true, requireTransparency: true };
     case CosmeticType.Badge:
     default:
       return { width: 144, height: 144, exact: false, requireTransparency: true };
