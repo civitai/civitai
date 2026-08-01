@@ -31,6 +31,7 @@ type PendingReturnRow = {
   debounceSeconds: number | null;
   lastTriggered: string;
   nextSendAt: string;
+  dedupeKey: string | null;
 };
 
 type RetData = {
@@ -64,7 +65,7 @@ export const PENDING_CLAIM_QUERY = `
     return_data AS (
       SELECT
         id, type, category, key, users, details,
-        "debounceSeconds", "lastTriggered", "nextSendAt"
+        "debounceSeconds", "lastTriggered", "nextSendAt", "dedupeKey"
       FROM "PendingNotification"
       WHERE
         ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '${tooOld}')
@@ -94,8 +95,11 @@ const getPending = async (): Promise<PendingReturnRow[]> => {
 };
 
 // Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
-export const handleNormal = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
-  const { id, key, type, category, details, users } = row;
+export const handleNormal = async (
+  row: PendingReturnRow,
+  client: PoolClient
+): Promise<RetData[]> => {
+  const { id, key, type, category, details, users, dedupeKey } = row;
   let retData: RetData[] = [];
 
   // SELECT first to avoid burning a Notification.id sequence value when the key already exists.
@@ -124,11 +128,16 @@ export const handleNormal = async (row: PendingReturnRow, client: PoolClient): P
 
   // Always run fan-out — Notification.key is shared across users, so a pre-existing key may still have
   // new users in this row. UserNotification's UNIQUE (notificationId, userId) dedups safely.
+  //
+  // The untargeted ON CONFLICT DO NOTHING covers BOTH unique constraints, which is what makes cross-type
+  // dedup work: a recipient who already has a row carrying this `dedupeKey` (from a different type fired
+  // for the same source event) trips the partial UNIQUE ("userId", "dedupeKey") and is skipped. Skipped
+  // rows are absent from RETURNING, so they also produce no signal and no unread-count increment.
   if (respId) {
-    const userMappedData = users.map((u) => [respId, u]);
+    const userMappedData = users.map((u) => [respId, u, dedupeKey]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
       const insertUsersQuery = format(
-        `INSERT INTO "UserNotification" ("notificationId", "userId")
+        `INSERT INTO "UserNotification" ("notificationId", "userId", "dedupeKey")
          VALUES %L ON CONFLICT DO NOTHING RETURNING id, "userId", "createdAt"`,
         batch
       );
@@ -142,8 +151,12 @@ export const handleNormal = async (row: PendingReturnRow, client: PoolClient): P
 };
 
 // Exported for behavioral unit tests (fake PoolClient). Export-for-test only — logic unchanged.
-export const handleDebounce = async (row: PendingReturnRow, client: PoolClient): Promise<RetData[]> => {
-  const { id, key, type, category, details, users, debounceSeconds, lastTriggered, nextSendAt } = row;
+export const handleDebounce = async (
+  row: PendingReturnRow,
+  client: PoolClient
+): Promise<RetData[]> => {
+  const { id, key, type, category, details, users, debounceSeconds, lastTriggered, nextSendAt } =
+    row;
   let retData: RetData[] = [];
 
   if (
@@ -171,6 +184,11 @@ export const handleDebounce = async (row: PendingReturnRow, client: PoolClient):
     respId = insRes.rows[0]?.id;
   }
 
+  // Debounced rows deliberately leave "dedupeKey" NULL (the column default). This INSERT targets ONE
+  // constraint so it can re-surface a debounced notification (createdAt/viewed reset); a row that also
+  // carried a dedupeKey could violate the OTHER unique index, which a targeted ON CONFLICT cannot absorb
+  // — it would abort the transaction. Cross-type dedup is a normal-path concern only (no debounced type
+  // shares a source event with another type today); revisit here before setting dedupeKey on one.
   if (respId) {
     const userMappedData = users.map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {

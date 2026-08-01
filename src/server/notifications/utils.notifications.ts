@@ -76,9 +76,13 @@ for (const notification of notifications) {
   notificationPriorities[priority] ??= [];
   notificationPriorities[priority].push(notification);
 }
+// Numeric sort, not lexicographic: `send-notifications` runs these batches in order and the comment
+// family relies on that order to decide which of several competing notifications wins the shared dedupe
+// key. A default .sort() would put priority 10 ahead of priority 2.
 export const notificationBatches = Object.keys(notificationPriorities)
-  .sort()
-  .map((key) => notificationPriorities[key as unknown as number]);
+  .map(Number)
+  .sort((a, b) => a - b)
+  .map((key) => notificationPriorities[key]);
 
 export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};

@@ -45,18 +45,19 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       const insertValues = toInsert
         .map((d) =>
           format(
-            '(%L, %L, %L::"NotificationCategory", %L, %L::jsonb, %L)',
+            '(%L, %L, %L::"NotificationCategory", %L, %L::jsonb, %L, %L)',
             d.key,
             d.type,
             d.category,
             `{${d.users.join(',')}}`,
             JSON.stringify(d.details),
-            d.debounceSeconds ?? null
+            d.debounceSeconds ?? null,
+            d.dedupeKey ?? null
           )
         )
         .join(',');
       const insertResp = await write.cancellableQuery(`
-        INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
+        INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds", "dedupeKey")
         VALUES ${insertValues}
         ON CONFLICT (key) DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
       `);
@@ -268,9 +269,7 @@ export function markNotificationsRead(input: MarkReadInput): void {
   });
 }
 
-async function runMarkReadWithRetry(
-  input: MarkReadInput & { all: boolean }
-): Promise<void> {
+async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Promise<void> {
   const { userId, all, category } = input;
   for (let attempt = 1; attempt <= MARK_READ_MAX_ATTEMPTS; attempt++) {
     try {
@@ -351,6 +350,7 @@ async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<vo
       [id]
     );
     const catData = await catQuery.result();
-    if (catData.length) notificationCache.decrementUser(userId, catData[0].category).catch(() => null);
+    if (catData.length)
+      notificationCache.decrementUser(userId, catData[0].category).catch(() => null);
   }
 }

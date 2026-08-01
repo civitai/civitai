@@ -1,6 +1,10 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import {
+  CommentNotificationPriority,
+  commentDedupeKeyByVersion,
+  threadUrlMap,
+} from '~/server/notifications/comment.notifications';
 
 // Moveable (possibly)
 
@@ -8,6 +12,7 @@ export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.Mention,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
@@ -147,6 +152,9 @@ export const mentionNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        -- Only comment mentions share a source event with the comment.notifications types. A mention in a
+        -- model DESCRIPTION has no commentId and stays NULL (opted out of dedup).
+        case when details->>'mentionedIn' = 'comment' then ${commentDedupeKeyByVersion} end "dedupeKey",
         "ownerId"    "userId",
         'new-mention' "type",
         details

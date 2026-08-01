@@ -61,20 +61,24 @@ vi.mock('../env', () => ({ signalsEndpoint: 'http://signals.test' }));
 
 import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
-import {
-  notificationsFannedOutTotal,
-  workerPendingProcessedTotal,
-} from '../lib/server/metrics';
+import { notificationsFannedOutTotal, workerPendingProcessedTotal } from '../lib/server/metrics';
 
 // ---- Fake PoolClient -------------------------------------------------------------------------------------
 // query(sql) dispatches on the SQL shape and returns a per-key canned response. A response is either
 // `{ rows }` or `{ throw: err }`; a key's value may be a single response (reused) or an array consumed in
 // call order (so the 23505 retry can be `[<empty select>, <select returns id>]`).
 type Resp = { rows?: any[]; throw?: any };
-type Responses = Partial<Record<
-  'notifSelect' | 'notifUpdate' | 'notifInsert' | 'userInsert' | 'pendingDelete' | 'pendingUpdate',
-  Resp | Resp[]
->>;
+type Responses = Partial<
+  Record<
+    | 'notifSelect'
+    | 'notifUpdate'
+    | 'notifInsert'
+    | 'userInsert'
+    | 'pendingDelete'
+    | 'pendingUpdate',
+    Resp | Resp[]
+  >
+>;
 
 function keyFor(sql: string): keyof Responses | 'txn' | null {
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return 'txn';
@@ -127,7 +131,10 @@ beforeEach(() => {
   h.state.connectClient = null;
   h.state.connectError = null;
   h.state.pendingRows = [];
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as any));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true } as any))
+  );
 });
 
 afterEach(() => {
@@ -185,7 +192,13 @@ describe('handleNormal', () => {
     const ret = await handleNormal({ ...baseRow, debounceSeconds: null } as any, client);
 
     // SELECT, INSERT(throws), SELECT(retry), then fan-out on the recovered id.
-    expect(client.keys()).toEqual(['notifSelect', 'notifInsert', 'notifSelect', 'userInsert', 'pendingDelete']);
+    expect(client.keys()).toEqual([
+      'notifSelect',
+      'notifInsert',
+      'notifSelect',
+      'userInsert',
+      'pendingDelete',
+    ]);
     const userSql = client.calls.find((s: string) => keyFor(s) === 'userInsert')!;
     expect(userSql).toContain("'777'"); // recovered id from the re-SELECT reaches fan-out
     expect(ret).toEqual([{ id: 3, userId: 11, createdAt: 'z' }]);
@@ -196,7 +209,9 @@ describe('handleNormal', () => {
       notifSelect: { rows: [] },
       notifInsert: { throw: { code: '23502' } }, // not_null_violation — a real bug, must surface
     });
-    await expect(handleNormal({ ...baseRow, debounceSeconds: null } as any, client)).rejects.toEqual({
+    await expect(
+      handleNormal({ ...baseRow, debounceSeconds: null } as any, client)
+    ).rejects.toEqual({
       code: '23502',
     });
     // No re-SELECT, no fan-out, no delete after a hard failure.
@@ -207,7 +222,12 @@ describe('handleNormal', () => {
     // 2 users, default insertBatchSize (5000) → single batch; assert both fanned rows returned.
     const client = makeClient({
       notifSelect: { rows: [{ id: 1 }] },
-      userInsert: { rows: [{ id: 10, userId: 11, createdAt: 'a' }, { id: 11, userId: 22, createdAt: 'b' }] },
+      userInsert: {
+        rows: [
+          { id: 10, userId: 11, createdAt: 'a' },
+          { id: 11, userId: 22, createdAt: 'b' },
+        ],
+      },
     });
     const ret = await handleNormal({ ...baseRow, debounceSeconds: null } as any, client);
     expect(ret).toHaveLength(2);
@@ -384,7 +404,10 @@ describe('run (poll pass)', () => {
   it('counts an errored outcome and skips fan-out when create returns undefined', async () => {
     // A handler error inside the txn → create() ROLLBACKs and returns undefined (the only path to
     // undefined; connect() throwing would propagate out of create, so it must fail mid-transaction).
-    const client = makeClient({ notifSelect: { rows: [] }, notifInsert: { throw: { code: '23502' } } });
+    const client = makeClient({
+      notifSelect: { rows: [] },
+      notifInsert: { throw: { code: '23502' } },
+    });
     h.state.connectClient = client;
     h.state.pendingRows = [{ ...baseRow, debounceSeconds: null }];
 
@@ -395,7 +418,7 @@ describe('run (poll pass)', () => {
     // No fan-out side effects for a failed row.
     expect(notificationsFannedOutTotal.inc).not.toHaveBeenCalled();
     expect(notificationCache.incrementUser).not.toHaveBeenCalled();
-    expect((globalThis.fetch as any)).not.toHaveBeenCalled();
+    expect(globalThis.fetch as any).not.toHaveBeenCalled();
   });
 
   it('fans out: increments the per-user cache and POSTs a realtime signal per affected user', async () => {
@@ -425,6 +448,93 @@ describe('run (poll pass)', () => {
     h.state.pendingRows = [];
     await run();
     expect(workerPendingProcessedTotal.inc).not.toHaveBeenCalled();
-    expect((globalThis.fetch as any)).not.toHaveBeenCalled();
+    expect(globalThis.fetch as any).not.toHaveBeenCalled();
+  });
+});
+
+// =========================================================================================================
+// Cross-type dedup. A single comment can match several notification types at once (@mention + thread reply
+// + comment-on-your-model), each arriving as its OWN PendingNotification row with its own `key`. They share
+// a `dedupeKey`, and the partial UNIQUE ("userId", "dedupeKey") is what collapses them to one per recipient.
+describe('handleNormal — dedupeKey fan-out', () => {
+  it('writes the dedupeKey onto each UserNotification row', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 500 }] },
+      userInsert: { rows: [{ id: 1, userId: 11, createdAt: 'x' }] },
+    });
+    await handleNormal(
+      { ...baseRow, debounceSeconds: null, dedupeKey: 'comment:v2:1' } as any,
+      client
+    );
+
+    const userSql = client.calls.find((s: string) => keyFor(s) === 'userInsert')!;
+    expect(userSql).toContain('"dedupeKey"');
+    // Once per recipient — the key is per-EVENT, so every user in the row carries the same one.
+    expect(userSql.match(/comment:v2:1/g)).toHaveLength(baseRow.users.length);
+  });
+
+  it('leaves the column NULL when the type opts out of dedup', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 500 }] },
+      userInsert: { rows: [{ id: 1, userId: 11, createdAt: 'x' }] },
+    });
+    await handleNormal({ ...baseRow, debounceSeconds: null, dedupeKey: null } as any, client);
+
+    const userSql = client.calls.find((s: string) => keyFor(s) === 'userInsert')!;
+    expect(userSql).toContain('NULL');
+  });
+
+  it('keeps ON CONFLICT UNTARGETED so the dedupe index can absorb the conflict too', async () => {
+    // A targeted `ON CONFLICT ("notificationId","userId")` would NOT cover the dedupe index — a duplicate
+    // would raise 23505 and abort the transaction instead of being silently skipped.
+    const client = makeClient({ notifSelect: { rows: [{ id: 1 }] }, userInsert: { rows: [] } });
+    await handleNormal(
+      { ...baseRow, debounceSeconds: null, dedupeKey: 'comment:v2:1' } as any,
+      client
+    );
+
+    const userSql = client.calls.find((s: string) => keyFor(s) === 'userInsert')!;
+    expect(userSql).toContain('ON CONFLICT DO NOTHING');
+    expect(userSql).not.toMatch(/ON CONFLICT\s*\(/);
+  });
+
+  it('a deduped recipient is absent from RETURNING → no signal, no unread bump', async () => {
+    // The second type to fire for the same comment: the insert conflicts, so RETURNING comes back empty.
+    h.state.pendingRows = [
+      { ...baseRow, users: [11], debounceSeconds: null, dedupeKey: 'comment:v2:1' },
+    ];
+    h.state.connectClient = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      userInsert: { rows: [] },
+    });
+    await run();
+
+    expect(notificationsFannedOutTotal.inc).toHaveBeenCalledWith(0);
+    expect(notificationCache.incrementUser).not.toHaveBeenCalled();
+    expect(globalThis.fetch as any).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleDebounce — dedupeKey', () => {
+  it('never writes a dedupeKey (its targeted ON CONFLICT could not absorb that conflict)', async () => {
+    const client = makeClient({
+      notifUpdate: { rows: [{ id: 300 }] },
+      userInsert: { rows: [{ id: 3, userId: 11, createdAt: 'z' }] },
+    });
+    await handleDebounce(
+      {
+        ...baseRow,
+        debounceSeconds: 60,
+        dedupeKey: 'comment:v2:1',
+        lastTriggered: '2026-01-01T00:00:00Z',
+        nextSendAt: '2026-01-01T00:00:00Z',
+      } as any,
+      client
+    );
+
+    const userSql = client.calls.find((s: string) => keyFor(s) === 'userInsert')!;
+    expect(userSql).not.toContain('"dedupeKey"');
+    expect(userSql).not.toContain('comment:v2:1');
+    expect(userSql).toContain('ON CONFLICT ("notificationId", "userId")');
   });
 });

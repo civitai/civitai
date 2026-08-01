@@ -8,11 +8,21 @@ import { notificationCategories } from './constants';
 
 const notificationCategory = z.enum(notificationCategories);
 
+/**
+ * Identifies the underlying *event* a notification was derived from, shared by every type that can fire
+ * for it (a comment that is simultaneously an @mention, a thread reply, and a comment on your model
+ * carries one `dedupeKey` across all three). A partial UNIQUE ("userId", "dedupeKey") on
+ * `UserNotification` collapses those to the first one that lands; `key` stays per-type so the queue and
+ * `Notification` rows are unaffected. Null opts a type out of cross-type dedup entirely.
+ */
+const dedupeKey = z.string().nullish();
+
 export const notificationSingleRow = z.object({
   key: z.string(),
   userId: z.number(),
   type: z.string(),
   details: z.record(z.string(), z.any()),
+  dedupeKey,
 });
 export type NotificationSingleRow = z.infer<typeof notificationSingleRow>;
 
@@ -26,11 +36,13 @@ export type NotificationSingleRowFull = z.infer<typeof notificationSingleRowFull
  * `debounceSeconds` opts the row into the debounce path (a settle window before fan-out). This is the
  * exact shape the monolith's `createNotification` accepted, lifted into the shared seam.
  */
-export const createNotificationPendingRow = notificationSingleRowFull.omit({ userId: true }).extend({
-  userId: z.number().optional(),
-  userIds: z.array(z.number()).optional(),
-  debounceSeconds: z.number().optional(),
-});
+export const createNotificationPendingRow = notificationSingleRowFull
+  .omit({ userId: true })
+  .extend({
+    userId: z.number().optional(),
+    userIds: z.array(z.number()).optional(),
+    debounceSeconds: z.number().optional(),
+  });
 export type CreateNotificationPendingRow = z.infer<typeof createNotificationPendingRow>;
 
 // --- Read / count / mark / exists / bulk / cleanup contracts (the app's authed API) ------------------
@@ -92,6 +104,7 @@ export const createNotificationRow = z.object({
   users: z.array(z.number()),
   details: z.record(z.string(), z.any()),
   debounceSeconds: z.number().optional(),
+  dedupeKey,
 });
 export type CreateNotificationRow = z.infer<typeof createNotificationRow>;
 export const createNotificationsBulkInput = z.array(createNotificationRow);
