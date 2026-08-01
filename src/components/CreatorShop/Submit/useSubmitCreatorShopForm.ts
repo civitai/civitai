@@ -92,10 +92,15 @@ export function useSubmitCreatorShopForm({
     type === CosmeticType.Emoji;
 
   const isEmoji = type === CosmeticType.Emoji;
+  // Same normalization the server applies, so what's validated here is what's saved.
+  const normalizedSlug = slug.trim().toLowerCase();
   // Matches the server rule: the slug is the token owners type, so it's fixed
   // once the emoji is live.
   const slugLocked = isEdit && item?.status === CosmeticShopItemStatus.Published;
-  const slugError = isEmoji && slug.length > 0 && !isValidEmojiSlug(slug) ? EMOJI_SLUG_ERROR : null;
+  const slugError =
+    isEmoji && normalizedSlug.length > 0 && !isValidEmojiSlug(normalizedSlug)
+      ? EMOJI_SLUG_ERROR
+      : null;
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
@@ -164,7 +169,7 @@ export function useSubmitCreatorShopForm({
     !!name.trim() &&
     price >= COSMETIC_PRICE_FLOOR &&
     canAffordFee &&
-    (!isEmoji || isValidEmojiSlug(slug));
+    (!isEmoji || isValidEmojiSlug(normalizedSlug));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -204,9 +209,10 @@ export function useSubmitCreatorShopForm({
         // from scratch and would otherwise fall back to the stored value.
         if (
           isEmoji &&
-          (artReplaced || slug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
+          (artReplaced ||
+            normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
         )
-          payload.slug = slug;
+          payload.slug = normalizedSlug;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
@@ -223,7 +229,7 @@ export function useSubmitCreatorShopForm({
           sellerShare: sellableByOthers ? sellerShare : 0,
           acceptsBlueBuzz,
           offsets: normalizedOffsets,
-          slug: isEmoji ? slug : undefined,
+          slug: isEmoji ? normalizedSlug : undefined,
         });
       }
       resetFiles();

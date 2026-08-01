@@ -87,6 +87,11 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
         </Box>
 
         <Stack gap={4}>
+          {cosmetic.type === CosmeticType.Emoji && (
+            <Text size="xs" c="dimmed" align="center">
+              Type <b>:{(cosmetic.data as { slug?: string } | null)?.slug}:</b> in chat to use it.
+            </Text>
+          )}
           {cosmetic.type === CosmeticType.ContentDecoration && (
             <Text size="xs" c="dimmed" align="center">
               This decoration is now available to apply to your content. You can select which piece
@@ -94,7 +99,11 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
             </Text>
           )}
           <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
-            {cosmetic.type === CosmeticType.ContentDecoration ? 'Go to my profile' : 'Apply now'}
+            {cosmetic.type === CosmeticType.ContentDecoration
+              ? 'Go to my profile'
+              : cosmetic.type === CosmeticType.Emoji
+              ? 'Done'
+              : 'Apply now'}
           </Button>
           <NotificationToggle type="cosmetic-shop-item-added-to-section">
             {({ onToggle, isEnabled }) =>

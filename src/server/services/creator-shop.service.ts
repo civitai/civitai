@@ -5,6 +5,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedEmojiCache } from '~/server/redis/caches';
 import { validateEmojiCosmetic } from '~/server/services/cosmetic.service';
+import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -110,22 +111,6 @@ const withRemaining = (item: CreatorShopItemRow) => {
 };
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
-const buildCosmeticData = (
-  type: CosmeticType,
-  imageUrl: string,
-  animated?: boolean,
-  offsets?: CosmeticOffsets | null,
-  slug?: string
-) => {
-  if (type === CosmeticType.Emoji) return { url: imageUrl, slug, animated: !!animated };
-  if (type === CosmeticType.ProfileBackground)
-    return { url: imageUrl, type: MediaType.image, animated: !!animated };
-  if (type === CosmeticType.ProfileDecoration)
-    return { url: imageUrl, animated: !!animated, ...(offsets ? { offsets } : {}) };
-  if (type === CosmeticType.Badge) return { url: imageUrl, animated: !!animated };
-  return { url: imageUrl };
-};
-
 // Server-side artwork validation (source of truth). Fetches the original upload
 // and inspects it with sharp against the per-type requirements.
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
@@ -241,7 +226,8 @@ export const submitCreatorShopItem = async ({
 
   // Slug format + collision, also before charging: finding out your slug is
   // taken after paying a non-refundable fee is the worst version of this.
-  await validateEmojiCosmetic({ type: cosmeticType, data: { slug } });
+  const normalizedSlug = slug?.trim().toLowerCase();
+  await validateEmojiCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const feeTx = await createBuzzTransaction({
@@ -270,7 +256,7 @@ export const submitCreatorShopItem = async ({
             imageUrl,
             animated,
             offsets,
-            slug
+            normalizedSlug
           ) as Prisma.InputJsonValue,
           createdById: userId,
         },
@@ -361,8 +347,20 @@ export const updateCreatorShopItem = async ({
     ? existingData.offsets ?? null
     : offsets;
 
+  // Slug rules are Emoji-only — the schema accepts `slug` on any type, so
+  // without this gate a crafted request would hit them on a Badge.
+  const isEmojiItem = existing.cosmetic.type === CosmeticType.Emoji;
+  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
+  const requestedSlug = isEmojiItem ? slug?.trim().toLowerCase() : undefined;
+  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
+  // owners' `:slug:` text depends on it — so carry the existing one forward.
+  const nextSlug = requestedSlug ?? existingSlug;
+  const slugChange = requestedSlug !== undefined && requestedSlug !== existingSlug;
+
   // Cross-listings point at another creator's shared cosmetic — the seller may
   // never touch its art/name/description/payment terms, only price & quantity.
+  // The slug belongs to the original creator too: a reseller renaming it would
+  // break every owner's typed `:slug:` on someone else's cosmetic.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
@@ -370,17 +368,12 @@ export const updateCreatorShopItem = async ({
       description !== undefined ||
       imageUrl !== undefined ||
       acceptsBlueBuzz !== undefined ||
-      offsetsChange)
+      offsetsChange ||
+      slugChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
     );
-
-  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
-  // owners' `:slug:` text depends on it — so carry the existing one forward.
-  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
-  const nextSlug = slug ?? existingSlug;
-  const slugChange = slug !== undefined && slug !== existingSlug;
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
@@ -444,7 +437,7 @@ export const updateCreatorShopItem = async ({
   }
 
   const contentChanged =
-    name !== undefined || description !== undefined || artChanged || offsetsChange;
+    name !== undefined || description !== undefined || artChanged || offsetsChange || slugChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -459,14 +452,14 @@ export const updateCreatorShopItem = async ({
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
   if (contentChanged) {
-    // Offsets-only edits patch the existing data blob; art replacement rebuilds
-    // it (with the effective offsets already folded in above).
-    const { offsets: _prevOffsets, ...restData } = existingData;
-    const patchedData = artwork
-      ? artwork.data
-      : offsetsChange
-      ? ((nextOffsets ? { ...restData, offsets: nextOffsets } : restData) as Prisma.InputJsonValue)
-      : undefined;
+    const patchedData = patchCosmeticData({
+      existingData,
+      artworkData: artwork?.data as Record<string, unknown> | undefined,
+      offsetsChange,
+      slugChange,
+      nextOffsets,
+      nextSlug,
+    }) as Prisma.InputJsonValue | undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
       data: {
