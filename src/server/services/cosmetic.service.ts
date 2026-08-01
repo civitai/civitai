@@ -1,12 +1,14 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
+import { cosmeticCache, cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
+  GetEmojiCosmeticsInput,
   GetPaginatedCosmeticsInput,
   GrantCosmeticsToUsersInput,
 } from '~/server/schema/cosmetic.schema';
@@ -16,6 +18,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import type { EmojiCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -26,6 +29,18 @@ export async function getCosmeticDetail({ id }: GetByIdInput) {
   });
 
   return cosmetic;
+}
+
+export async function getEmojiCosmetics({ ids }: GetEmojiCosmeticsInput) {
+  const cosmetics = await cosmeticCache.fetch(ids);
+
+  return Object.values(cosmetics)
+    .filter((cosmetic) => cosmetic.type === CosmeticType.Emoji)
+    .map(({ id, name, data }) => {
+      const { slug, url, animated } = (data ?? {}) as EmojiCosmetic['data'];
+      return { id, name, slug, url, animated };
+    })
+    .filter((emoji) => !!emoji.slug && !!emoji.url);
 }
 
 export async function isCosmeticAvailable(id: number, userId?: number) {

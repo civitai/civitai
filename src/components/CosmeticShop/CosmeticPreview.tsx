@@ -5,7 +5,10 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EmojiCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -44,7 +47,7 @@ export const CosmeticPreview = ({
       browsingLevel: browsingLevel,
     },
     {
-      enabled: !!currentUser && !isProfileRelated,
+      enabled: !!currentUser && cosmetic.type === CosmeticType.ContentDecoration,
     }
   );
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -98,6 +101,38 @@ export const CosmeticPreview = ({
           {descriptionBox}
         </Stack>
       );
+    case CosmeticType.Emoji: {
+      const emojiData = cosmetic.data as EmojiCosmetic['data'];
+      if (!emojiData.url) return null;
+
+      return (
+        <Stack gap="xl" align="center">
+          {!hideHeader && (
+            <Text fw="bold" align="center">
+              Preview
+            </Text>
+          )}
+          <Group gap="lg" align="flex-end">
+            {[24, 48, 96].map((size) => (
+              <EdgeMedia
+                key={size}
+                src={emojiData.url}
+                alt={emojiData.slug ? `:${emojiData.slug}:` : cosmetic.name}
+                width={size}
+                anim={emojiData.animated}
+                style={{ width: size, height: size, objectFit: 'contain' }}
+              />
+            ))}
+          </Group>
+          {emojiData.slug && (
+            <Text size="sm" c="dimmed">
+              Type <b>:{emojiData.slug}:</b> to use it
+            </Text>
+          )}
+          {descriptionBox}
+        </Stack>
+      );
+    }
     case CosmeticType.ContentDecoration:
       if (!images.length) {
         return null;

@@ -1,18 +1,20 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   equipCosmeticSchema,
+  getEmojiCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   grantCosmeticsToUsersSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
+  getEmojiCosmetics,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   grantCosmeticsToUsers,
   revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
-import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const cosmeticRouter = router({
@@ -21,6 +23,12 @@ export const cosmeticRouter = router({
     .input(getByIdSchema)
     .query(({ input }) => {
       return getCosmeticDetail(input);
+    }),
+  getEmoji: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getEmojiCosmeticsSchema)
+    .query(({ input }) => {
+      return getEmojiCosmetics(input);
     }),
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);

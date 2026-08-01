@@ -108,7 +108,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Emoji";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 

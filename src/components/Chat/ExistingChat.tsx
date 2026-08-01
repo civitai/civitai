@@ -64,6 +64,10 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
 import { BlurText } from '~/components/BlurText/BlurText';
+import { Emoji } from '~/components/Emoji/Emoji';
+import { EmojiPicker } from '~/components/Emoji/EmojiPicker';
+import { useOwnedEmoji } from '~/components/Emoji/emoji.util';
+import { parseEmojiContent, resolveEmojiTokens } from '~/shared/utils/emoji-token';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -128,8 +132,8 @@ export function ExistingChat() {
   // Mutating pages + pageParams simultaneously inside select breaks RQ v5 cursor
   // tracking and causes the hook to return empty data.
   // Note: We reverse the `pages` array (chunks) instead of the flattened array
-  // because the backend returns chunks in newest-to-oldest order, but the items 
-  // *inside* the chunks are correctly ordered chronologically. Reversing the 
+  // because the backend returns chunks in newest-to-oldest order, but the items
+  // *inside* the chunks are correctly ordered chronologically. Reversing the
   // flattened array would break the internal chronological order of the messages.
   const messagesChronological = useMemo(() => {
     if (!data?.pages) return [];
@@ -261,7 +265,6 @@ export function ExistingChat() {
       status: ChatMemberStatus.Joined,
     });
   };
-
 
   useEffect(() => {
     // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
@@ -535,10 +538,15 @@ export function ExistingChat() {
               <ScamWarningContent chatId={existingChatId!} />
             </Alert>
             {messagesChronological.length > 0 && (
-              <Text mb="md" p="sm" size="xs" italic align="center">{`"${messagesChronological[0].content.slice(
-                0,
-                70
-              )}${messagesChronological[0].content.length > 70 ? '...' : ''}"`}</Text>
+              <Text
+                mb="md"
+                p="sm"
+                size="xs"
+                italic
+                align="center"
+              >{`"${messagesChronological[0].content.slice(0, 70)}${
+                messagesChronological[0].content.length > 70 ? '...' : ''
+              }"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
             <Group p="sm" justify="center">
@@ -594,6 +602,7 @@ function ChatInputBox({
   const [isSending, setIsSending] = useState(false);
   const [chatMsg, setChatMsg] = useState<string>('');
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
+  const ownedEmoji = useOwnedEmoji();
 
   const isMuted = currentUser?.muted && !isModSender;
 
@@ -710,7 +719,7 @@ function ChatInputBox({
     setIsSending(true);
     mutate({
       chatId: existingChatId!,
-      content: strippedMessage,
+      content: resolveEmojiTokens(strippedMessage, (slug) => ownedEmoji.bySlug.get(slug)?.id),
       referenceMessageId: replyId,
     });
   };
@@ -750,6 +759,14 @@ function ChatInputBox({
           }
         }}
         classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
+      />
+      <EmojiPicker
+        disabled={isMuted}
+        onSelect={(emoji) =>
+          handleChatTyping(
+            `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${emoji.slug}: `
+          )
+        }
       />
       <LegacyActionIcon
         h="100%"
@@ -986,11 +1003,17 @@ function DisplayMessages({
                         [classes.myMessage]: isMe,
                       })}
                     >
-                      <Linkify options={linkifyOptions}>
-                        <BlurText blur={replaceBadWords || domainColor === 'green'}>
-                          {c.content}
-                        </BlurText>
-                      </Linkify>
+                      {parseEmojiContent(c.content).map((part, partIdx) =>
+                        part.type === 'emoji' ? (
+                          <Emoji key={partIdx} cosmeticId={part.cosmeticId} />
+                        ) : (
+                          <Linkify key={partIdx} options={linkifyOptions}>
+                            <BlurText blur={replaceBadWords || domainColor === 'green'}>
+                              {part.value}
+                            </BlurText>
+                          </Linkify>
+                        )
+                      )}
                     </div>
                   </Tooltip>
                 </Group>

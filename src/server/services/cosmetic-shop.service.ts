@@ -646,7 +646,8 @@ export const purchaseCosmeticShopItem = async ({
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
     shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
-    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
+    shopItem.cosmetic.type == CosmeticType.ProfileDecoration ||
+    shopItem.cosmetic.type == CosmeticType.Emoji;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:

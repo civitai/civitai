@@ -89,7 +89,10 @@ const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
   { value: CosmeticType.ContentDecoration, label: 'Content Decoration' },
   { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
   { value: CosmeticType.NamePlate, label: 'Name Plate' },
+  { value: CosmeticType.Emoji, label: 'Emoji' },
 ];
+
+const EMOJI_SLUG_REGEX = /^[a-z0-9_]{2,32}$/;
 
 const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
   { value: CosmeticSource.Purchase, label: 'Purchase' },
@@ -103,7 +106,8 @@ const isImageBasedCosmeticType = (type: CosmeticType) =>
   type === CosmeticType.Badge ||
   type === CosmeticType.ProfileDecoration ||
   type === CosmeticType.ContentDecoration ||
-  type === CosmeticType.ProfileBackground;
+  type === CosmeticType.ProfileBackground ||
+  type === CosmeticType.Emoji;
 
 /**
  * Inline cosmetic creator. Lets a moderator drop in an image and basic
@@ -119,6 +123,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [animated, setAnimated] = useState(false);
+  const [slug, setSlug] = useState('');
   const [imageId, setImageId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -165,6 +170,14 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       return;
     }
 
+    if (type === CosmeticType.Emoji && !EMOJI_SLUG_REGEX.test(slug)) {
+      showErrorNotification({
+        title: 'Invalid slug',
+        error: new Error('Use 2-32 lowercase letters, numbers or underscores'),
+      });
+      return;
+    }
+
     let data: Record<string, unknown> = {};
     if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) {
       data = { url: imageId, animated };
@@ -172,6 +185,8 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       data = { url: imageId };
     } else if (type === CosmeticType.ProfileBackground) {
       data = { url: imageId, type: MediaType.image };
+    } else if (type === CosmeticType.Emoji) {
+      data = { url: imageId, slug, animated };
     }
     // NamePlate gets `data: {}` — moderator can fill styling later via DB tools.
 
@@ -243,6 +258,22 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           minRows={2}
         />
 
+        {type === CosmeticType.Emoji && (
+          <TextInput
+            label="Slug"
+            description="Typed as :slug: to insert the emoji"
+            value={slug}
+            onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+            placeholder="e.g. party_cat"
+            error={
+              slug.length > 0 && !EMOJI_SLUG_REGEX.test(slug)
+                ? 'Use 2-32 lowercase letters, numbers or underscores'
+                : undefined
+            }
+            withAsterisk
+          />
+        )}
+
         {requiresImage ? (
           <div>
             <Text fw={500} size="sm" mb={4}>
@@ -308,7 +339,9 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           </Text>
         )}
 
-        {(type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) && (
+        {(type === CosmeticType.Badge ||
+          type === CosmeticType.ProfileDecoration ||
+          type === CosmeticType.Emoji) && (
           <Switch
             label="Animated"
             description="Toggle on for animated GIF/APNG sources"

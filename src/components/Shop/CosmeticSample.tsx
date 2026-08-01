@@ -6,6 +6,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
+  EmojiCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
@@ -54,6 +55,19 @@ export const CosmeticSample = ({
             <div className="size-full bg-gray-100 dark:bg-dark-7" />
           </FeedCard>
         </div>
+      );
+    case CosmeticType.Emoji:
+      const emojiData = cosmetic.data as EmojiCosmetic['data'];
+      if (!emojiData.url) return null;
+
+      return (
+        <EdgeMedia
+          src={emojiData.url}
+          alt={emojiData.slug ? `:${emojiData.slug}:` : cosmetic.name}
+          width={values.badgeSize}
+          anim={emojiData.animated}
+          style={{ width: values.badgeSize, height: values.badgeSize, objectFit: 'contain' }}
+        />
       );
     case CosmeticType.NamePlate:
       const data = cosmetic.data as NamePlateCosmetic['data'];
