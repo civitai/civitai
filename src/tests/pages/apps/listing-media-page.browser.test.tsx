@@ -54,10 +54,18 @@ const state = vi.hoisted(() => ({
   floor: { meetsFloor: true, complete: false },
   invalidate: vi.fn().mockResolvedValue(undefined),
   flags: { appBlocks: true } as Record<string, boolean>,
+  // Drives WHICH live-app notice the editor renders. `useCurrentUser()` throws
+  // without a CivitaiSessionProvider (which `renderWithProviders` deliberately does
+  // not mount), so it is mocked rather than provided.
+  currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => state.currentUser,
 }));
 
 vi.mock('~/components/AppLayout/NotFound', () => ({
@@ -183,6 +191,7 @@ beforeEach(() => {
   state.invalidate.mockReset();
   state.invalidate.mockResolvedValue(undefined);
   state.flags = { appBlocks: true };
+  state.currentUser = { id: 7, username: 'owner' };
   setRouterQuery({ appBlockId: 'my-block' });
 });
 
@@ -280,6 +289,65 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     await expect.element(notice).toBeInTheDocument();
     await expect.element(notice).toHaveTextContent(/live/i);
     await expect.element(notice).toHaveTextContent(/moderator re-approves/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 The live-app notice must match the CALLER's actual write semantics.
+  //
+  // `resolveOwnerAssetEditTarget` + `assertOwnerAssetEditable` BOTH short-circuit on
+  // `user.isModerator`, so a moderator's icon/cover/screenshot edit is written
+  // DIRECTLY to the live approved listing — no shadow revision is minted and nothing
+  // is re-approved. (Confirmed in production: mod screenshot adds against live
+  // listings created zero revisions.) The single ungated notice therefore told every
+  // moderator the exact opposite of what the server does with their edit.
+  // -------------------------------------------------------------------------
+
+  test('🔴 a MODERATOR is told they are editing the LIVE listing directly — never that it is staged', async () => {
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    renderWithProviders(<ListingMediaPage />);
+
+    const notice = page.getByTestId('apps-listing-media-mod-live-notice');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent(/live/i);
+    await expect.element(notice).toHaveTextContent(/apply to the live listing immediately/i);
+    await expect.element(notice).toHaveTextContent(/not.*staged as a revision/i);
+
+    // The owner variant — the one carrying the false "staged / re-approval" claim —
+    // must be GONE, not merely supplemented.
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+    // And no surviving copy anywhere may assert the staged/re-approval semantics.
+    expect(page.getByText(/go live only after a moderator re-approves/i).elements()).toHaveLength(
+      0
+    );
+  });
+
+  test('🔴 a NON-moderator owner keeps the staged-revision copy (and never sees the mod variant)', async () => {
+    state.currentUser = { id: 7, username: 'owner', isModerator: false };
+    renderWithProviders(<ListingMediaPage />);
+
+    const notice = page.getByTestId('apps-listing-media-live-notice');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent(/staged as a revision/i);
+    await expect.element(notice).toHaveTextContent(/go live only after a moderator re-approves/i);
+
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR on a non-approved (draft) listing sees NEITHER live notice', async () => {
+    // The bypass only matters for an APPROVED, non-shadow listing — a draft is edited
+    // in place for everyone, so neither "this is live" framing applies.
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      status: 'draft',
+      shadowId: null,
+      editTargetId: 'apl_draft',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
   });
 
   test('Submit for review fires submitListingRevision with the shadow id', async () => {

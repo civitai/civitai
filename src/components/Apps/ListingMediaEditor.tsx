@@ -1,9 +1,10 @@
 import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
-import { IconInfoCircle, IconSend } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -15,8 +16,16 @@ import { trpc } from '~/utils/trpc';
  * of the unified `/apps/[appBlockId]/edit` page (and reused anywhere else).
  *
  * Owner gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
- * FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound. All asset
- * edits target a SHADOW revision (mod re-review) so the live listing keeps serving.
+ * FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound.
+ *
+ * 🔴 TWO DIFFERENT WRITE SEMANTICS, and the copy MUST match the caller's:
+ *   - OWNER (non-mod), approved listing → the first asset mutation mints a SHADOW
+ *     revision server-side; the live listing keeps serving until a mod re-approves.
+ *   - MODERATOR → `resolveOwnerAssetEditTarget` / `assertOwnerAssetEditable` both
+ *     short-circuit on `user.isModerator`, so NO shadow is minted and the write lands
+ *     DIRECTLY on the live approved listing (the deliberate curation bypass). Telling
+ *     a mod their edits are "staged for re-approval" is simply false — observed in
+ *     production, where mod screenshot adds on live listings created zero revisions.
  *
  * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
  * page has a single back control), not here.
@@ -24,6 +33,11 @@ import { trpc } from '~/utils/trpc';
 export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const router = useRouter();
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  // Drives WHICH live-app notice renders — see the 🔴 note above. Read from the
+  // session hook (the established client idiom, e.g. `ExternalSubmitForm`) rather
+  // than threaded as a prop, so every host of this editor is correct by default.
+  const isModerator = !!currentUser?.isModerator;
 
   // 1) Owner-gated resolve of the backing listing id for this app block. A non-owner
   //    (FORBIDDEN) or a missing listing (NOT_FOUND) both settle to NotFound.
@@ -126,22 +140,45 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
           contradictory half-UI where the pre-narrowing code showed a clean NotFound.
           The red alert below still surfaces those non-gating errors (that improvement
           stands); this notice just stops claiming context it doesn't have. */}
-      {listing && !listingError && isApproved && !editBlockedReason && (
-        <Alert
-          icon={<IconInfoCircle size={16} />}
-          color="blue"
-          variant="light"
-          title="Listing images"
-          data-testid="apps-listing-media-live-notice"
-        >
-          <Text size="sm">
-            This app is <b>live</b> — your image changes are staged as a revision and go live only
-            after a moderator re-approves. Update the icon, cover and screenshots below, then submit
-            for review. Media can be added while it is still scanning; it only goes live once its
-            scan finishes cleanly.
-          </Text>
-        </Alert>
-      )}
+      {listing &&
+        !listingError &&
+        isApproved &&
+        !editBlockedReason &&
+        (isModerator ? (
+          // 🔴 MODERATOR variant. The server's curation bypass writes straight to the
+          // live listing — no shadow, no re-approval — so this must NOT repeat the
+          // owner copy's "staged as a revision" claim. Own testid so a test can tell
+          // the two variants apart (and so the owner testid keeps meaning "owner").
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            title="Editing the live listing"
+            data-testid="apps-listing-media-mod-live-notice"
+          >
+            <Text size="sm">
+              This app is <b>live</b> and you are editing it as a <b>moderator</b> — your image
+              changes are <b>not</b> staged as a revision and need no re-approval. They apply to the
+              live listing immediately. Media can be added while it is still scanning; it only
+              appears once its scan finishes cleanly.
+            </Text>
+          </Alert>
+        ) : (
+          <Alert
+            icon={<IconInfoCircle size={16} />}
+            color="blue"
+            variant="light"
+            title="Listing images"
+            data-testid="apps-listing-media-live-notice"
+          >
+            <Text size="sm">
+              This app is <b>live</b> — your image changes are staged as a revision and go live only
+              after a moderator re-approves. Update the icon, cover and screenshots below, then
+              submit for review. Media can be added while it is still scanning; it only goes live
+              once its scan finishes cleanly.
+            </Text>
+          </Alert>
+        ))}
 
       {listing?.hasPendingRevision && (
         <Alert
