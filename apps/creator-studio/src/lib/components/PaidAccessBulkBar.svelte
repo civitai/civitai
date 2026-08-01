@@ -15,6 +15,7 @@
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
+  import { monetizationLimits } from '$lib/monetization/paid-access';
   import type { CreatorCaps } from '$lib/server/membership';
   import {
     MIN_ACCESS_PRICE,
@@ -52,7 +53,9 @@
 
   const permanentCap = $derived(caps.permanentCap);
   const permanentUsed = $derived(caps.permanentUsed);
-  const priceCap = $derived(caps.priceCap);
+  // One price lands on a mixed selection, so the STRICTEST ceiling governs — no baseModel means image,
+  // which is the lower of the two. Mirrors strictestCapMediaType on the server.
+  const priceCap = $derived(monetizationLimits({ tier: caps.capTier }).access.maxPrice);
 
   const bulkGenOnly = $derived(usage === 'generation');
   // Permanent slots still available (null cap = unlimited) — "max minus current".

@@ -230,11 +230,13 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
   const OWNER = 7;
   const FUTURE = new Date('2099-01-01T00:00:00.000Z');
 
+  // Permanent (timeframeDays null) — the only kind with a price ceiling. A timed window is uncapped and
+  // has its own tests below.
   const row = (over: Record<string, unknown> = {}) => ({
     entityId: 1,
     ownerId: OWNER,
     endsAtMs: FUTURE.getTime(),
-    timeframeDays: 7,
+    timeframeDays: null,
     terms: { download: { price: 5000 } },
     ...over,
   });
@@ -423,5 +425,47 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
     });
 
     expect(out[1].licensingFee).toBeNull();
+  });
+});
+
+describe('getViewerMonetization — the price ceiling is permanent-only', () => {
+  const OWNER = 7;
+  const drive = (gates: Record<string, unknown>) =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier: null } } : gates
+    );
+  const row = (over: Record<string, unknown>) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
+    terms: { download: { price: 5000 } },
+    ...over,
+  });
+
+  it('lowers an over-cap PERMANENT gate to the tier ceiling', async () => {
+    drive({ 1: row({ timeframeDays: null }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
+  });
+
+  it('leaves a TIMED early-access window at its stored price', async () => {
+    drive({ 1: row({ timeframeDays: 7 }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
+  });
+
+  it('still caps the licensing fee on a timed gate — it is charged per generation, not per window', async () => {
+    drive({ 1: row({ timeframeDays: 7 }) });
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].licensingFee).toBe(1);
   });
 });

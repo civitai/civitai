@@ -1,4 +1,4 @@
-import { capMediaType, suggestedFeePerImage } from '$lib/monetization/fee';
+import { suggestedFee } from '$lib/monetization/fee';
 import type { CsvVersionRow } from '$lib/server/models';
 
 // CSV round-trip for bulk licensing-fee editing (early-access 2.2). The creator downloads their versions, edits a
@@ -32,7 +32,7 @@ export function buildFeeCsv(rows: CsvVersionRow[]): string {
         r.versionName,
         r.baseModel,
         r.modelType,
-        suggestedFeePerImage(r.modelType, capMediaType(r.baseModel)),
+        suggestedFee({ modelType: r.modelType, baseModel: r.baseModel }),
         r.licensingFee ?? '',
       ]
         .map(csvCell)

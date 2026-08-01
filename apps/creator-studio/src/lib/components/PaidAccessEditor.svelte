@@ -15,12 +15,11 @@
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-    maxPaidAccessPrice,
+    monetizationLimits,
     CREATOR_USAGE_CONTROLS,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
 
-  import { capMediaType } from '$lib/monetization/fee';
   import type { CreatorModelVersion } from '$lib/server/models';
   import type { CreatorCaps } from '$lib/server/membership';
 
@@ -43,13 +42,6 @@
   const earlyAccessCap = $derived(caps.earlyAccessCap);
   const maxEarlyAccessDays = $derived(caps.maxEarlyAccessDays);
   const tier = $derived(caps.tier);
-  // Per-version, not caps.priceCap: that is page-level and can't know this version's media type, so it
-  // would pin a video gate to the image ceiling the server would happily exceed.
-  const priceCap = $derived.by(() => {
-    const cap = maxPaidAccessPrice(caps.capTier, capMediaType(version.baseModel));
-    return Number.isFinite(cap) ? cap : null;
-  });
-
   const permAtCap = $derived(
     permanentCap !== null && permanentCap > 0 && permanentUsed >= permanentCap
   );
@@ -72,6 +64,17 @@
   }
   // Seed once from the version at mount (the parent remounts via `{#key version.id}` on open).
   let ea = $state(untrack(() => seed(version)));
+
+  // Resolved per version AND per gate kind: a page-level cap can't know this version's media type, and a
+  // timed early-access window has no price ceiling at all — only a permanent gate does.
+  const limits = $derived(
+    monetizationLimits({
+      tier: caps.capTier,
+      baseModel: version.baseModel,
+      permanent: ea.permanent,
+    })
+  );
+  const priceCap = $derived(limits.access.maxPrice);
 
   // max never drops below the stored price: the server blocks only RAISES, so clamping down would silently
   // cut a grandfathered price on any unrelated edit.
@@ -340,7 +343,12 @@
               value={ea.accessPrice}
               cap={priceCap ?? Infinity}
               capTier={caps.capTier}
-              capFor={(t) => maxPaidAccessPrice(t, capMediaType(version.baseModel))}
+              capFor={(t) =>
+                monetizationLimits({
+                  tier: t,
+                  baseModel: version.baseModel,
+                  permanent: ea.permanent,
+                }).access.maxPrice ?? Infinity}
               title="Price for access"
             />
           </div>

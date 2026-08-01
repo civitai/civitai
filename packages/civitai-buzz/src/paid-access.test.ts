@@ -275,14 +275,12 @@ describe('shouldUpsellCap — nudge only when the ceiling is actually in the way
     expect(nextCapTier('gold')).toBeNull();
   });
 
-  it('treats founder as bronze, so it upgrades to silver', () => {
-    expect(nextCapTier('founder')).toBe('silver');
-    expect(nextCapTier('bronze')).toBe('silver');
-  });
-
-  it('an unknown or lapsed tier prices as free, so the next step is bronze', () => {
-    expect(nextCapTier(null)).toBe('bronze');
+  // Normalising a raw tier string (founder, unknown, lapsed) is resolveCapTier's job and is tested there;
+  // nextCapTier takes the canonical tier that produces, so it only has to walk the ladder.
+  it('walks one step up the ladder', () => {
     expect(nextCapTier('free')).toBe('bronze');
+    expect(nextCapTier('bronze')).toBe('silver');
+    expect(nextCapTier('silver')).toBe('gold');
   });
 
   // 99999 >= Infinity * 0.8 is false by arithmetic, so an Infinity case would pass even without the

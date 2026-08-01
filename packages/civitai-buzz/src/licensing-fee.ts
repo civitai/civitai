@@ -24,6 +24,9 @@ export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
   return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
 }
 
+/** Infinity means 'no limit', which no JSON boundary survives — every cap crosses one as null. */
+export const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? n : null);
+
 export type FeeRatio = { buzz: number; images: number };
 
 // Image-count denominators the creator UI offers (a select, not a free input). Every stored fee maps
@@ -59,6 +62,7 @@ export function ratioToFee(buzz: number, images: number): number {
 // everything else is 0.1 ⚡/image (= 1 ⚡ per 10 images).
 export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
 export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
+/** @internal Editors should read monetizationLimits().fee.suggested / .suggestedPerGeneration. */
 export function suggestedFeePerImage(
   modelType: string | null | undefined,
   mediaType?: CapMediaType
@@ -116,6 +120,9 @@ export function effectiveLicensingFee(
  * The cap in the editor's whole-number domain. Fees are entered as an integer "N ⚡ per M generations"
  * ratio, so a fractional per-image cap (free/other is 0.1) has no valid entry at small denominators —
  * capping in the per-image domain instead lets the UI offer 0.1 and the integer schema then rejects it.
+ *
+ * @internal Editors should read monetizationLimits().fee.maxBuzzByDenominator, which keeps this in step
+ * with the denominators offered and the tier used.
  */
 export function maxFeeBuzzForRatio(
   tier: string | null | undefined,
@@ -126,7 +133,10 @@ export function maxFeeBuzzForRatio(
   return Math.floor(maxLicensingFee(tier, modelType, mediaType) * images);
 }
 
-/** Denominators from FEE_IMAGE_OPTIONS that can express at least 1 ⚡ under this tier's cap. */
+/**
+ * Denominators from FEE_IMAGE_OPTIONS that can express at least 1 ⚡ under this tier's cap.
+ * @internal Editors should read monetizationLimits().fee.denominators.
+ */
 export function feeImageOptionsForCap(
   tier: string | null | undefined,
   modelType?: string | null,

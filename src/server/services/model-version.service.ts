@@ -1989,14 +1989,16 @@ export const earlyAccessPurchase = async ({
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
   //
-  // Charged at the OWNER's current cap, not the stored price: a lapsed membership drops what buyers pay to
-  // the free-tier cap (CU 868kj4q4j). The stored value is left alone, so re-subscribing restores it.
-  const ownerTier = await getCachedCapTier(modelVersion.model.userId);
-  const amount = effectivePaidAccessPrice(
-    type === 'download' ? terms.download?.price : generationPrice(terms),
-    ownerTier,
-    capMediaType(modelVersion.baseModel)
-  );
+  // A PERMANENT gate is charged at the OWNER's current cap, not the stored price: a lapsed membership
+  // drops what buyers pay to the free-tier cap (CU 868kj4q4j), and the stored value is left alone so
+  // re-subscribing restores it. A TIMED early-access window has no ceiling, so it charges as stored —
+  // this must mirror getViewerMonetization, or buyers see one price and get billed another.
+  const storedPrice = type === 'download' ? terms.download?.price : generationPrice(terms);
+  const isPermanentGate = paidAccess.timeframeDays == null;
+  const ownerTier = isPermanentGate ? await getCachedCapTier(modelVersion.model.userId) : null;
+  const amount = isPermanentGate
+    ? effectivePaidAccessPrice(storedPrice, ownerTier, capMediaType(modelVersion.baseModel))
+    : storedPrice ?? 0;
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {

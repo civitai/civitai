@@ -1,4 +1,9 @@
-import { maxLicensingFee, VIDEO_CAP_MULTIPLIER, type CapMediaType } from './licensing-fee';
+import {
+  finiteOrNull,
+  maxLicensingFee,
+  VIDEO_CAP_MULTIPLIER,
+  type CapMediaType,
+} from './licensing-fee';
 
 // Paid access — pure helpers shared by the main app and the creator-studio spoke.
 // The gate reads ONE column, `endsAt`: active <=> endsAt IS NULL (permanent) OR endsAt > now().
@@ -197,22 +202,8 @@ export const CAP_TIER_LABELS: Record<CapTier, string> = {
 };
 
 /** The tier above `tier`, or null when there's nothing left to sell (gold, or an unknown tier). */
-export function nextCapTier(tier: string | null | undefined): CapTier | null {
-  // founder isn't in CAP_TIERS — it charges as bronze, so it upgrades like bronze.
-  const current = tier === 'founder' ? 'bronze' : (tier as CapTier);
-  const i = CAP_TIERS.indexOf(current);
-  if (i < 0) return CAP_TIERS[1] ?? null; // unknown/lapsed prices as free, so the next step is bronze
-  return i < CAP_TIERS.length - 1 ? CAP_TIERS[i + 1] : null;
-}
-
-/**
- * The row a creator should see highlighted as "you". founder isn't in CAP_TIERS (it charges as bronze), and
- * an unknown or lapsed tier prices as free — without this, those creators open the table and find no row
- * marked as theirs.
- */
-export function highlightCapTier(tier: string | null | undefined): CapTier {
-  if (tier === 'founder') return 'bronze';
-  return CAP_TIERS.includes(tier as CapTier) ? (tier as CapTier) : 'free';
+export function nextCapTier(tier: CapTier): CapTier | null {
+  return CAP_TIERS[CAP_TIERS.indexOf(tier) + 1] ?? null;
 }
 
 /**
@@ -241,7 +232,7 @@ export function shouldUpsellCap({
 }: {
   value: number | null | undefined;
   cap: number;
-  tier: string | null | undefined;
+  tier: CapTier;
 }): boolean {
   if (!nextCapTier(tier)) return false;
   if (!Number.isFinite(cap) || cap <= 0) return false;
@@ -264,8 +255,6 @@ export type TierCapRow = {
   /** Concurrent permanent gates — a count, so the video multiplier doesn't apply. `null` = unlimited. */
   permanentGates: number | null;
 };
-
-const finiteOrNull = (n: number) => (Number.isFinite(n) ? n : null);
 
 const amountsFor = (tier: CapTier, mediaType: CapMediaType): TierCapAmounts => ({
   feeCheckpoint: maxLicensingFee(tier, 'Checkpoint', mediaType),

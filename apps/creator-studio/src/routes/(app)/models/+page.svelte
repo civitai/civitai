@@ -40,12 +40,11 @@
   import {
     feeToRatio,
     formatFeeRatio,
-    maxLicensingFee,
-    maxFeeBuzzForRatio,
-    feeImageOptionsForCap,
-    suggestedFeePerImage,
+    feeMaxFor,
+    monetizationLimits,
+    suggestedFee,
     DEFAULT_FEE_IMAGES,
-    capMediaType,
+    type MonetizationLimits,
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
@@ -67,6 +66,9 @@
 
   let { data }: { data: PageData } = $props();
 
+  // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
+  const tier = $derived(data.caps.capTier);
+
   // Off / Active / Over cap — anyone may set a fee now, so the amber state means "above your tier's ceiling
   // for this model type": still charged in full, but it can't be raised until the membership is upgraded.
   function feeStatus(
@@ -75,7 +77,7 @@
     baseModel: string
   ): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-2' };
-    return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
+    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
       ? { label: 'Over cap', cls: 'text-yellow-5' }
       : { label: 'Active', cls: 'text-green-5' };
   }
@@ -89,7 +91,7 @@
     if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-2' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
-    return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
+    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
       ? { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' }
       : { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
   }
@@ -238,29 +240,27 @@
   });
   // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
   const bulkSuggested = $derived(
-    data.query.mt
-      ? suggestedFeePerImage(data.query.mt, data.query.bm ? capMediaType(data.query.bm) : undefined)
-      : undefined
+    data.query.mt ? suggestedFee({ modelType: data.query.mt, baseModel: data.query.bm }) : undefined
   );
 
   // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the selection
   // — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this page, whose model
   // types aren't loaded, so anything unresolved falls back to the non-checkpoint cap (the strictest there is).
-  const bulkFeeCap = $derived.by(() => {
+  const bulkLimits = $derived.by(() => {
     const loaded = new Map<number, { modelType: string; baseModel: string }>();
     for (const m of data.models)
       for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
-    // Seeded at Infinity so a checkpoint-only selection gets the checkpoint cap; only ids whose type isn't
-    // loaded (select-all reaches beyond this page) fall back to the stricter non-checkpoint cap.
-    let cap = Infinity;
+    // Keep the whole limits object for the strictest version, not just its number — the bar needs the
+    // denominators that go with it. An id whose type isn't loaded (select-all reaches beyond this page)
+    // resolves to the non-checkpoint image caps, which are the strictest there are.
+    let strictest: MonetizationLimits | null = null;
     for (const id of selected) {
       const v = loaded.get(id);
-      cap = Math.min(
-        cap,
-        maxLicensingFee(data.caps.capTier, v?.modelType, capMediaType(v?.baseModel))
-      );
+      const limits = monetizationLimits({ tier, modelType: v?.modelType, baseModel: v?.baseModel });
+      if (!strictest || limits.fee.maxPerGeneration < strictest.fee.maxPerGeneration)
+        strictest = limits;
     }
-    return Number.isFinite(cap) ? cap : maxLicensingFee(data.caps.capTier, undefined);
+    return strictest ?? monetizationLimits({ tier });
   });
 
   // Leaving bulk mode (Cancel, or any URL change that drops the mode) discards a pending selection.
@@ -380,9 +380,15 @@
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
   // The edited version's base model decides the media axis of every cap in the drawer.
-  const editingMediaType = $derived(capMediaType(editing?.baseModel));
+  // One object per edited version — max, offered denominators and the suggestion all come from it, so
+  // they cannot disagree with each other or with what the server enforces.
+  const editingLimits = $derived(
+    monetizationLimits({ tier, modelType: editingType, baseModel: editing?.baseModel })
+  );
   // Per-model-type suggested fee behind the drawer's "Use this" shortcut.
-  const suggested = $derived(feeToRatio(suggestedFeePerImage(editingType, editingMediaType)));
+  const suggested = $derived(
+    feeToRatio(suggestedFee({ modelType: editingType, baseModel: editing?.baseModel }))
+  );
   // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
   let feeBuzz = $state<number | undefined>();
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
@@ -675,7 +681,7 @@
     suggestedFee={bulkSuggested}
     cancelHref={buildHref({ mode: null })}
     onSelectAll={selectAll}
-    feeCap={bulkFeeCap}
+    limits={bulkLimits}
   />
 {/if}
 
@@ -986,12 +992,7 @@
             <NumberInput
               name="buzz"
               min={0}
-              max={maxFeeBuzzForRatio(
-                data.caps.capTier,
-                editingType,
-                Number(feeImages),
-                editingMediaType
-              )}
+              max={feeMaxFor(editingLimits, Number(feeImages))}
               bind:value={feeBuzz}
               placeholder="Off"
               aria-label="Buzz for {editing.name}"
@@ -1014,7 +1015,7 @@
                 {feeImages}
               </Select.Trigger>
               <Select.Content>
-                {#each feeImageOptionsForCap(data.caps.capTier, editingType, editingMediaType) as opt (opt)}
+                {#each editingLimits.fee.denominators as opt (opt)}
                   <Select.Item value={String(opt)} label={String(opt)} />
                 {/each}
               </Select.Content>
@@ -1024,15 +1025,17 @@
             <div class="w-full">
               <CapUpsell
                 value={feeBuzz}
-                cap={maxFeeBuzzForRatio(
-                  data.caps.capTier,
-                  editingType,
-                  Number(feeImages),
-                  editingMediaType
-                )}
+                cap={feeMaxFor(editingLimits, Number(feeImages))}
                 capTier={data.caps.capTier}
                 capFor={(t) =>
-                  maxFeeBuzzForRatio(t, editingType, Number(feeImages), editingMediaType)}
+                  feeMaxFor(
+                    monetizationLimits({
+                      tier: t,
+                      modelType: editingType,
+                      baseModel: editing?.baseModel,
+                    }),
+                    Number(feeImages)
+                  )}
                 title="Licensing fee"
                 perLabel="{feeImages} generation{feeImages === '1' ? '' : 's'}"
               />

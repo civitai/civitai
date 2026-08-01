@@ -268,10 +268,15 @@ export async function getViewerMonetization({
     }
     const tier = capTiers.get(ownerOf(v) as number) ?? null;
     const mediaType = capMediaType(v.baseModel);
+    // Gate prices are capped only for a PERMANENT gate (timeframeDays null). A timed early-access window
+    // isn't ceilinged, so its stored price is also what buyers pay. The licensing fee is capped either
+    // way — it's charged per generation forever, not for the length of a window.
+    const capsGatePrice = row != null && row.timeframeDays == null;
     out[v.id] = {
-      paidAccess: row
-        ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier, mediaType) }
-        : undefined,
+      paidAccess:
+        row && capsGatePrice
+          ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier, mediaType) }
+          : row,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
     };
@@ -300,18 +305,22 @@ export async function assertPaidAccessCaps({
   const existing = versionId
     ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
     : undefined;
-  const priceCap = maxPaidAccessPrice(tier, capMediaType(baseModel));
-  const next = gatePrices(paidAccess.terms);
-  const prev = gatePrices(existing?.terms as ModelVersionTerms);
-  // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised to
-  // the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
-  if (
-    raisesOverCap(next.download, prev.download, priceCap) ||
-    raisesOverCap(next.generation, prev.generation, priceCap)
-  )
-    throw throwBadRequestError(
-      `Your tier allows a paid-access price of up to ${priceCap} Buzz. Lower the price or upgrade your membership.`
-    );
+  // The price ceiling governs PERMANENT gates only. A timed early-access window prices itself out — the
+  // version becomes free when the window closes — so a creator may charge what they like for one.
+  if (paidAccess.permanent) {
+    const priceCap = maxPaidAccessPrice(tier, capMediaType(baseModel));
+    const next = gatePrices(paidAccess.terms);
+    const prev = gatePrices(existing?.terms as ModelVersionTerms);
+    // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised
+    // to the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
+    if (
+      raisesOverCap(next.download, prev.download, priceCap) ||
+      raisesOverCap(next.generation, prev.generation, priceCap)
+    )
+      throw throwBadRequestError(
+        `Your tier allows a permanent paid-access price of up to ${priceCap} Buzz. Lower the price, use a timed early-access window, or upgrade your membership.`
+      );
+  }
 
   // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
   if (paidAccess.permanent) {

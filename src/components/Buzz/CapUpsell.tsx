@@ -1,6 +1,6 @@
 import { Anchor, Button, Popover, Stack, Table, Text } from '@mantine/core';
 import type { CapTier } from '@civitai/buzz';
-import { capUpsellRows, highlightCapTier, shouldUpsellCap } from '@civitai/buzz';
+import { capUpsellRows, shouldUpsellCap } from '@civitai/buzz';
 
 // Turns a monetization cap from a dead end into an upgrade nudge, beside the input the creator is
 // pressing against. Deliberately quiet — a small link, not a banner — and absent until the value nears
@@ -20,7 +20,7 @@ export function CapUpsell({
 }: {
   value: number | null | undefined;
   cap: number;
-  capTier: string;
+  capTier: CapTier;
   capFor: (tier: CapTier) => number;
   title: string;
   /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
@@ -29,7 +29,6 @@ export function CapUpsell({
   if (!shouldUpsellCap({ value, cap, tier: capTier })) return null;
 
   const rows = capUpsellRows(capFor);
-  const current = highlightCapTier(capTier);
   const fmt = (n: number) =>
     !Number.isFinite(n)
       ? 'Unlimited'
@@ -52,7 +51,7 @@ export function CapUpsell({
           <Table fz="xs" verticalSpacing={4} horizontalSpacing="xs">
             <Table.Tbody>
               {rows.map((row) => {
-                const isCurrent = row.tier === current;
+                const isCurrent = row.tier === capTier;
                 return (
                   <Table.Tr key={row.tier}>
                     <Table.Td fw={isCurrent ? 600 : 400} c={isCurrent ? undefined : 'dimmed'}>

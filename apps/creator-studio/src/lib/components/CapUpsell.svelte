@@ -1,12 +1,7 @@
 <script lang="ts">
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import {
-    capUpsellRows,
-    highlightCapTier,
-    shouldUpsellCap,
-    type CapTier,
-  } from '$lib/monetization/paid-access';
+  import { capUpsellRows, shouldUpsellCap, type CapTier } from '$lib/monetization/paid-access';
   import { CIVITAI_MEMBERSHIP_URL } from '$lib/creator-program';
 
   // Turns a cap from a dead end into an upgrade nudge, beside the input the creator is pressing against.
@@ -24,7 +19,7 @@
   }: {
     value: number | null | undefined;
     cap: number;
-    capTier: string;
+    capTier: CapTier;
     capFor: (tier: CapTier) => number;
     title: string;
     /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
@@ -33,7 +28,6 @@
 
   const show = $derived(shouldUpsellCap({ value, cap, tier: capTier }));
   const rows = $derived(capUpsellRows(capFor));
-  const current = $derived(highlightCapTier(capTier));
   const fmt = (n: number) =>
     !Number.isFinite(n)
       ? 'Unlimited'
@@ -52,7 +46,7 @@
       <table class="w-full border-collapse text-xs">
         <tbody>
           {#each rows as row (row.tier)}
-            {@const isCurrent = row.tier === current}
+            {@const isCurrent = row.tier === capTier}
             <tr class={isCurrent ? 'font-semibold text-white' : 'text-dark-2'}>
               <td class="py-1">
                 {row.label}

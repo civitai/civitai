@@ -59,7 +59,8 @@ export {
   shouldUpsellCap,
   nextCapTier,
   capUpsellRows,
-  highlightCapTier,
+  monetizationLimits,
+  resolveCapTier,
 } from '@civitai/buzz';
 export type { TierCapAmounts, TierCapRow, CapTier } from '@civitai/buzz';
 

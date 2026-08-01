@@ -79,17 +79,13 @@ import {
   type ModelVersionTerms,
   DEFAULT_GENERATION_TRIAL_LIMIT,
   DEFAULT_FEE_IMAGES,
-  FEE_IMAGE_OPTIONS,
   buildModelVersionTerms,
-  feeImageOptionsForCap,
+  feeMaxFor,
   feeToRatio,
-  maxFeeBuzzForRatio,
-  maxLicensingFee,
-  maxLicensingFeeCeiling,
-  capMediaType,
-  maxPaidAccessPrice,
+  monetizationLimits,
   ratioToFee,
-  suggestedFeePerImage,
+  resolveCapTier,
+  suggestedFee,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import {
@@ -337,7 +333,7 @@ export function ModelVersionUpsertForm({
   const initialLicensingFee = version?.id
     ? Number(version.licensingFee ?? 0)
     : features.licensingFee
-    ? suggestedFeePerImage(model?.type, capMediaType(initialBaseModel))
+    ? suggestedFee({ modelType: model?.type, baseModel: initialBaseModel })
     : 0;
 
   const defaultValues: Schema = {
@@ -423,22 +419,24 @@ export function ModelVersionUpsertForm({
   //
   // `memberInBadState` mirrors the server's getCapTier, which excludes bad-state subs — so the UI never
   // advertises a ceiling the server will reject.
-  const feeCapTier = currentUser?.memberInBadState ? 'free' : currentUser?.tier ?? 'free';
-  // Video ceilings are 5x image. Keyed to the WATCHED base model, not the seeded one, so switching
-  // ecosystem mid-form moves the max instead of stranding it on the value the form loaded with.
-  const feeMediaType = capMediaType(baseModel);
-  const licensingFeeCap = currentUser?.isModerator
-    ? maxLicensingFeeCeiling(feeMediaType)
-    : maxLicensingFee(feeCapTier, model?.type, feeMediaType);
-  // Denominators that can express at least 1 ⚡ under this cap — at the free/other cap of 0.1, "per 1
-  // generation" has no valid whole-number entry, so offering it would strand the field.
-  const feeImageOptions = currentUser?.isModerator
-    ? [...FEE_IMAGE_OPTIONS]
-    : feeImageOptionsForCap(feeCapTier, model?.type, feeMediaType);
-  // Infinity (gold/moderator) falls back to MAX_DONATION_GOAL: an infinite `max` renders as no cap at all.
-  const tierPriceCap = maxPaidAccessPrice(feeCapTier, feeMediaType);
-  const paidAccessCap =
-    currentUser?.isModerator || !Number.isFinite(tierPriceCap) ? MAX_DONATION_GOAL : tierPriceCap;
+  const feeCapTier = resolveCapTier({
+    tier: currentUser?.tier ?? null,
+    isMember: !!currentUser?.tier && currentUser.tier !== 'free' && !currentUser.memberInBadState,
+  });
+  // Keyed to the WATCHED base model, not the seeded one, so switching ecosystem mid-form moves the caps
+  // instead of stranding them on whatever the form loaded with.
+  const limits = monetizationLimits({
+    tier: feeCapTier,
+    modelType: model?.type,
+    baseModel,
+    isModerator: currentUser?.isModerator,
+    // Only a permanent gate has a price ceiling; a timed early-access window becomes free when it closes.
+    permanent: !!paidAccessConfig?.permanent,
+  });
+  const licensingFeeCap = limits.fee.maxPerGeneration;
+  const feeImageOptions = limits.fee.denominators;
+  // An unlimited price renders as no cap at all, so the input falls back to the donation ceiling.
+  const paidAccessCap = limits.access.maxPrice ?? MAX_DONATION_GOAL;
   const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
   const storedPaidGen =
     storedTerms?.generation && !('free' in storedTerms.generation)
@@ -1032,9 +1030,12 @@ export function ModelVersionUpsertForm({
                           {!currentUser?.isModerator && (
                             <CapUpsell
                               value={paidAccessConfig?.accessPrice}
-                              cap={tierPriceCap}
+                              cap={limits.access.maxPrice ?? Infinity}
                               capTier={feeCapTier}
-                              capFor={(t) => maxPaidAccessPrice(t, feeMediaType)}
+                              capFor={(t) =>
+                                monetizationLimits({ tier: t, baseModel, permanent: true }).access
+                                  .maxPrice ?? Infinity
+                              }
                               title="Price for access"
                             />
                           )}
@@ -1200,7 +1201,7 @@ export function ModelVersionUpsertForm({
                       })
                     }
                     min={0}
-                    max={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images, feeMediaType)}
+                    max={feeMaxFor(limits, feeRatio.images)}
                     step={1}
                     allowDecimal={false}
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -1218,10 +1219,7 @@ export function ModelVersionUpsertForm({
                       // 0.1), so `cap * images` would put a decimal into a whole-number field the schema then
                       // rejects. floor() keeps the value enterable and valid.
                       applyFeeRatio({
-                        buzz: Math.min(
-                          feeRatio.buzz,
-                          maxFeeBuzzForRatio(feeCapTier, model?.type, images, feeMediaType)
-                        ),
+                        buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
                         images,
                       });
                     }}
@@ -1237,9 +1235,14 @@ export function ModelVersionUpsertForm({
               {!currentUser?.isModerator && (
                 <CapUpsell
                   value={feeRatio.buzz}
-                  cap={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images, feeMediaType)}
+                  cap={feeMaxFor(limits, feeRatio.images)}
                   capTier={feeCapTier}
-                  capFor={(t) => maxFeeBuzzForRatio(t, model?.type, feeRatio.images, feeMediaType)}
+                  capFor={(t) =>
+                    feeMaxFor(
+                      monetizationLimits({ tier: t, modelType: model?.type, baseModel }),
+                      feeRatio.images
+                    )
+                  }
                   title="Licensing fee"
                   perLabel={`${feeRatio.images} generation${feeRatio.images === 1 ? '' : 's'}`}
                 />

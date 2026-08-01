@@ -135,7 +135,6 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     countActiveEarlyAccessVersions(locals.user.id),
   ]);
   const permanentCap = maxPermanentAccessModels(cappedTier(membership));
-  const paidAccessPriceCap = maxPaidAccessPrice(cappedTier(membership));
   return {
     ...result,
     perPage,
@@ -147,7 +146,6 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       capTier: cappedTier(membership),
       permanentUsed,
       permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
-      priceCap: Number.isFinite(paidAccessPriceCap) ? paidAccessPriceCap : null,
       // Score gates early access two ways: how long a window can run, and how many can run at once.
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
@@ -419,7 +417,9 @@ export const actions: Actions = {
     // INCREASE is rejected: the editor resubmits the stored price on every save, so capping the submitted
     // value outright would make an over-cap version uneditable after a lapse (the same class of bug that
     // 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
-    if (!locals.user.isModerator) {
+    // Permanent gates only: a timed early-access window has no price ceiling, because the version becomes
+    // free when the window closes. Mirrors assertPaidAccessCaps in the main app.
+    if (!locals.user.isModerator && permanent) {
       const priceCap = maxPaidAccessPrice(
         cappedTier(membership),
         await strictestCapMediaType([versionId.data])
@@ -439,7 +439,7 @@ export const actions: Actions = {
       )
         return fail(403, {
           versionId: versionId.data,
-          error: `Your membership allows a paid-access price of up to ${priceCap} buzz. Lower the price or upgrade your membership.`,
+          error: `Your membership allows a permanent paid-access price of up to ${priceCap} buzz. Lower the price, use a timed window, or upgrade your membership.`,
         });
     }
 
