@@ -477,11 +477,11 @@ export type AppCapLimitsRow = {
  * abusive app without demoting its tier is a first-class use of this surface.
  *
  * 🔴 The GLOBAL ceilings are applied LAST, after the override. An operator who
- * clamps `BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW=50` during an incident must
- * out-ranked by a per-app override written last week — the deploy-time knob is
- * the outermost bound on every path, tier and override alike. (The moderator
- * read surface returns the raw override alongside the effective pair, so a
- * clamp is visible rather than silent.)
+ * clamps `BLOCK_APP_SPEND_ABSOLUTE_MAX_GENS_PER_WINDOW=50` during an incident
+ * must not be out-ranked by a per-app override written last week — the
+ * deploy-time knob is the outermost bound on every path, tier and override
+ * alike. (The moderator read surface returns the raw override alongside the
+ * effective pair, so a clamp is visible rather than silent.)
  */
 export function resolveLimitsFromRow(row: AppCapLimitsRow): AppCapLimits {
   const base = limitsForSpendTier(row.spendTier);
