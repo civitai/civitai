@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+// Type-only namespace import so the `importOriginal` generic below keeps FULL
+// module typing (the mock calls through to `actual.isWorkflowAvailable`) without
+// an inline `import()` type annotation, which `consistent-type-imports` forbids.
+import type * as WorkflowsConfig from '~/shared/data-graph/generation/config/workflows';
 
 /**
  * The ECOSYSTEM-level half of the edit-only guard in
@@ -26,9 +30,7 @@ const { availability } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/shared/data-graph/generation/config/workflows', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/shared/data-graph/generation/config/workflows')
-  >();
+  const actual = await importOriginal<typeof WorkflowsConfig>();
   return {
     ...actual,
     isWorkflowAvailable: (workflowId: string, ecosystemId: number) => {
@@ -105,9 +107,7 @@ describe('edit-only ECOSYSTEM + no sourceImage', () => {
   // being the only way to exercise it.
   it('documents that no REAL image ecosystem is currently edit-only', async () => {
     setAvailability({});
-    const { isWorkflowAvailable } = await import(
-      '~/shared/data-graph/generation/config/workflows'
-    );
+    const { isWorkflowAvailable } = await import('~/shared/data-graph/generation/config/workflows');
     const editOnly = Object.values(ECO).filter(
       (id) =>
         typeof id === 'number' &&
