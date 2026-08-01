@@ -193,7 +193,9 @@ export function resolveVersionWorkflowScope(opts: {
   // Same-position sibling in the target workflow's list — the exact mapping
   // `buildVersionMappings` applies when the form switches workflow. Falls back
   // to the target workflow's default version.
-  const sourceOptions = versionOptionList(getWorkflowCapability(ecosystem, offeredFor[0])?.versions);
+  const sourceOptions = versionOptionList(
+    getWorkflowCapability(ecosystem, offeredFor[0])?.versions
+  );
   const targetOptions = versionOptionList(target?.versions);
   const index = sourceOptions.findIndex((o) => o.value === versionId);
   const suggestedVersionId =
