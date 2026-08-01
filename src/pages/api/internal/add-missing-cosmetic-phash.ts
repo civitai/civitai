@@ -15,20 +15,30 @@ const schema = z.object({
 
 type CosmeticRow = { id: number; url: string; animated: boolean };
 
+// Each hash can block for the orchestrator wait, so a batch has to stay well
+// inside the ingress timeout — a dropped connection loses the report and invites
+// a re-run against rows still in flight.
+const DEFAULT_LIMIT = 100;
+
 export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const { limit = 1000, concurrency = 5, cosmeticId, dryRun } = schema.parse(req.query);
+  const { limit = DEFAULT_LIMIT, concurrency = 5, cosmeticId, dryRun } = schema.parse(req.query);
   const start = Date.now();
 
   // Type isn't a reliable filter — NamePlate and ContentDecoration are CSS-only,
   // but the presence of `data.url` is what actually decides whether there's art.
+  //
+  // The pHashUrl comparison re-sweeps cosmetics whose artwork was replaced by a
+  // path that doesn't hash (creator-shop edits, product badges), where the row
+  // holds a hash of the *previous* image — worse than holding none.
   const records = await dbRead.$queryRaw<CosmeticRow[]>`
     SELECT
       id,
       data->>'url' as url,
       COALESCE((data->>'animated')::boolean, false) as animated
     FROM "Cosmetic"
-    WHERE "pHash" IS NULL
-      AND data->>'url' IS NOT NULL
+    WHERE (data->>'url') IS NOT NULL
+      AND (data->>'url') <> ''
+      AND ("pHash" IS NULL OR "pHashUrl" IS DISTINCT FROM data->>'url')
       ${cosmeticId ? Prisma.sql`AND id = ${cosmeticId}` : Prisma.empty}
     ORDER BY id
     LIMIT ${limit}
@@ -47,13 +57,22 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
 
   await limitConcurrency(
     records.map((record) => async () => {
-      const pHash = await getPerceptualHash(record.url);
-      if (!pHash) {
+      // limitConcurrency rejects the whole run on the first throw, which would
+      // discard the tally for every row already done.
+      try {
+        const pHash = await getPerceptualHash(record.url);
+        if (!pHash) {
+          failures.push({ id: record.id, animated: record.animated });
+          return;
+        }
+        await dbWrite.cosmetic.update({
+          where: { id: record.id },
+          data: { pHash, pHashUrl: record.url },
+        });
+        hashed++;
+      } catch {
         failures.push({ id: record.id, animated: record.animated });
-        return;
       }
-      await dbWrite.cosmetic.update({ where: { id: record.id }, data: { pHash } });
-      hashed++;
     }),
     concurrency
   );

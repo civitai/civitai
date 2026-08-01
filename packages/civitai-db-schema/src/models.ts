@@ -2620,6 +2620,7 @@ export interface Cosmetic {
   leaderboardPosition: number | null;
   createdById: number | null;
   pHash: bigint | null;
+  pHashUrl: string | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];

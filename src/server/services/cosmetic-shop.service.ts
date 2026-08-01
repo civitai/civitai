@@ -124,7 +124,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
     });
 
     const url = getCosmeticArtworkUrl(cosmetic.data);
-    if (url && url !== getCosmeticArtworkUrl(previous?.data)) {
+    if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
       queueCosmeticPerceptualHash({ id: cosmetic.id, url });
     }
 

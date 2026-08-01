@@ -3926,6 +3926,7 @@ model Cosmetic {
   leaderboardPosition Int?
   createdById         Int?
   pHash               BigInt?
+  pHashUrl            String?
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]

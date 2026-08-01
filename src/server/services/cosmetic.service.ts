@@ -404,20 +404,20 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
         await logToAxiom({
           type: 'warning',
           name: 'cosmetic-phash',
-          message: 'No perceptual hash returned',
-          cosmeticId: id,
-          url,
+          message: `No perceptual hash returned for cosmetic ${id} (${url})`,
         }).catch(() => null);
         return;
       }
-      await dbWrite.cosmetic.update({ where: { id }, data: { pHash } });
+      // pHashUrl records what was actually hashed. Paths that swap `data.url`
+      // without going through here leave the two disagreeing, which is what the
+      // backfill re-sweeps on — a stale hash is worse than no hash.
+      await dbWrite.cosmetic.update({ where: { id }, data: { pHash, pHashUrl: url } });
     })
     .catch((error) =>
       logToAxiom({
         type: 'error',
         name: 'cosmetic-phash',
-        cosmeticId: id,
-        url,
+        message: `Perceptual hash failed for cosmetic ${id} (${url})`,
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => null)
     );
@@ -443,7 +443,7 @@ export async function updateCosmetic({
   const cosmetic = await dbWrite.cosmetic.update({ where: { id }, data });
 
   const url = getCosmeticArtworkUrl(cosmetic.data);
-  if (url && url !== getCosmeticArtworkUrl(previous?.data)) {
+  if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
     queueCosmeticPerceptualHash({ id: cosmetic.id, url });
   }
 

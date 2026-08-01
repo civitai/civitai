@@ -227,6 +227,10 @@ export async function createImageIngestionRequest({
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
+// A `wait: 30` request still unanswered at 45s is a socket the orchestrator
+// accepted and abandoned; without this the promise never settles, leaking a
+// pending write-path hash and permanently occupying a backfill slot.
+const PERCEPTUAL_HASH_ABORT_MS = 45_000;
 
 /**
  * Perceptual hash for an arbitrary image, without creating an `Image` row.
@@ -244,6 +248,7 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
     const { data } = await submitWorkflow({
       client: internalOrchestratorClient,
       query: { wait: PERCEPTUAL_HASH_WAIT_SECONDS },
+      signal: AbortSignal.timeout(PERCEPTUAL_HASH_ABORT_MS),
       body: {
         tags: ['perceptual-hash'],
         currencies: [],
