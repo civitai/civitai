@@ -1,9 +1,10 @@
 import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
-import { IconInfoCircle, IconSend } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -15,8 +16,39 @@ import { trpc } from '~/utils/trpc';
  * of the unified `/apps/[appBlockId]/edit` page (and reused anywhere else).
  *
  * Owner gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
- * FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound. All asset
- * edits target a SHADOW revision (mod re-review) so the live listing keeps serving.
+ * NOT_OWNED→FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound.
+ * 🔴 That owner check has NO moderator branch, so this editor is only ever reachable
+ * for the caller's OWN listing — including for a moderator (the production incident
+ * behind the notice below was an owner-AND-moderator editing their own live apps).
+ *
+ * 🔴 THREE WRITE SEMANTICS on an APPROVED listing, and the copy MUST match. The
+ * discriminator is `isModerator && !shadowId` — NOT `isModerator` alone:
+ *   - OWNER (non-mod) → the first asset mutation mints a SHADOW revision server-side;
+ *     the live listing keeps serving until a mod re-approves. STAGED.
+ *   - MODERATOR, NO shadow yet → `editTargetId` is the live parent, and
+ *     `resolveOwnerAssetEditTarget` / `assertOwnerAssetEditable` both short-circuit on
+ *     `user.isModerator`, so no shadow is minted and the write lands DIRECTLY on the
+ *     live listing (the deliberate curation bypass). IMMEDIATE.
+ *   - MODERATOR, shadow ALREADY exists → 🔴 STAGED, same as an owner.
+ *     `getMyListingForApp` resolves `editTargetId` to an existing shadow with no
+ *     moderator branch of its own, so the asset step is hosted against the SHADOW's id
+ *     — and `resolveOwnerAssetEditTarget` returns its target UNCHANGED for a moderator
+ *     (`if (user.isModerator) return listing;` is the first line; the `revisionOfId`
+ *     check below it is never reached for a mod, and describes the OWNER branch). Here
+ *     "unchanged" means the shadow, so the write applies to the shadow and only goes
+ *     live on re-approval. Gating the "applies immediately" copy on `isModerator`
+ *     alone lies to exactly this case.
+ *
+ *     🔴 HOW OFTEN this state occurs is UNMEASURED — and the gate's correctness does
+ *     not depend on it, which is the only reason not to go measure it. Do NOT justify
+ *     this branch with the 78%-of-approved-parents-carry-a-shadow figure in the note
+ *     below: that counted the PRE-fix prevalence manufactured by the write-on-view bug
+ *     lazy creation removed, under preconditions that no longer hold. Post-fix a shadow
+ *     exists only after a real owner edit, and a moderator's own asset edits never mint
+ *     one — so the rate could be near zero, or still high if those legacy never-edited
+ *     shadows were never purged (no cleanup migration is known to have run). Citing a
+ *     measurement taken under different preconditions is the exact error that produced
+ *     the first, wrong version of this gate. If you need the number, go count it.
  *
  * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
  * page has a single back control), not here.
@@ -24,6 +56,12 @@ import { trpc } from '~/utils/trpc';
 export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const router = useRouter();
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  // Read from the session hook (the established client idiom, e.g.
+  // `ExternalSubmitForm`) rather than threaded as a prop, so every host of this
+  // editor is correct by default. NOT sufficient on its own as the copy
+  // discriminator — see `modDirectLiveEdit` below.
+  const isModerator = !!currentUser?.isModerator;
 
   // 1) Owner-gated resolve of the backing listing id for this app block. A non-owner
   //    (FORBIDDEN) or a missing listing (NOT_FOUND) both settle to NotFound.
@@ -51,6 +89,21 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   const shadowId = listing?.shadowId ?? null;
   const editBlockedReason = listing?.editBlockedReason ?? null;
   const isApproved = listing?.status === 'approved';
+
+  // 🔴 THE ONE DISCRIMINATOR for "this edit goes live immediately" — see the header.
+  // `!shadowId` is what makes it correct: it is exactly `editTargetId === appListingId`
+  // (the server sets `shadowId` and redirects `editTargetId` together, or neither), so
+  // it says "the asset step is hosted against the LIVE parent". A moderator whose
+  // listing already carries a shadow is editing that shadow and IS staged — they must
+  // get the owner copy. `isModerator` alone would tell them the opposite.
+  //
+  // Deliberately NOT `&& isApproved`: both consumers already sit inside an `isApproved`
+  // gate, so the conjunct flipped no state while making the expression read as a
+  // different rule from the one the comments state. Keep this identical to the header's
+  // `isModerator && !shadowId`. 🔴 If you ever consume it OUTSIDE an `isApproved` gate,
+  // add the approval check THERE — a draft/pending listing has no shadow, so this alone
+  // would be true for a moderator on one.
+  const modDirectLiveEdit = isModerator && !shadowId;
 
   // 3) Re-pull the projected assets after EVERY successful asset mutation.
   //
@@ -126,22 +179,48 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
           contradictory half-UI where the pre-narrowing code showed a clean NotFound.
           The red alert below still surfaces those non-gating errors (that improvement
           stands); this notice just stops claiming context it doesn't have. */}
-      {listing && !listingError && isApproved && !editBlockedReason && (
-        <Alert
-          icon={<IconInfoCircle size={16} />}
-          color="blue"
-          variant="light"
-          title="Listing images"
-          data-testid="apps-listing-media-live-notice"
-        >
-          <Text size="sm">
-            This app is <b>live</b> — your image changes are staged as a revision and go live only
-            after a moderator re-approves. Update the icon, cover and screenshots below, then submit
-            for review. Media can be added while it is still scanning; it only goes live once its
-            scan finishes cleanly.
-          </Text>
-        </Alert>
-      )}
+      {listing &&
+        !listingError &&
+        isApproved &&
+        !editBlockedReason &&
+        (modDirectLiveEdit ? (
+          // 🔴 MODERATOR-ON-THE-LIVE-PARENT variant (`isModerator && !shadowId`). The
+          // server's curation bypass writes straight to the live listing — no shadow,
+          // no re-approval — so this must NOT repeat the owner copy's "staged as a
+          // revision" claim. A moderator WITH a shadow falls through to the owner copy
+          // below, which is correct for them: that write goes to the shadow. Own testid
+          // so a test can tell the variants apart (and so the owner testid keeps
+          // meaning "the staged-revision copy").
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            title="Editing the live listing"
+            data-testid="apps-listing-media-mod-live-notice"
+          >
+            <Text size="sm">
+              This app is <b>live</b> and you are editing it as a <b>moderator</b> — your image
+              changes are <b>not</b> staged as a revision and need no re-approval. They apply to the
+              live listing immediately. Media can be added while it is still scanning; it only
+              appears once its scan finishes cleanly.
+            </Text>
+          </Alert>
+        ) : (
+          <Alert
+            icon={<IconInfoCircle size={16} />}
+            color="blue"
+            variant="light"
+            title="Listing images"
+            data-testid="apps-listing-media-live-notice"
+          >
+            <Text size="sm">
+              This app is <b>live</b> — your image changes are staged as a revision and go live only
+              after a moderator re-approves. Update the icon, cover and screenshots below, then
+              submit for review. Media can be added while it is still scanning; it only goes live
+              once its scan finishes cleanly.
+            </Text>
+          </Alert>
+        ))}
 
       {listing?.hasPendingRevision && (
         <Alert
@@ -201,7 +280,14 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               onCompletenessChange={handleCompletenessChange}
             />
           </div>
-          {isApproved && (
+          {/* 🔴 Same discriminator as the notice above, deliberately. For a moderator
+              editing the LIVE parent, no edit will ever mint a shadow, so "Change an
+              image to stage a revision" is false and `disabled={… || !shadowId}` makes
+              Submit permanently dead — a broken control contradicting the notice four
+              lines above it. There is nothing to submit: their change is already live.
+              🔴 Do NOT widen this to `isModerator` — a moderator WITH a shadow has a
+              real revision that still needs submitting for re-approval. */}
+          {isApproved && !modDirectLiveEdit && (
             <Group justify="flex-end" align="center">
               {!shadowId && (
                 <Text size="xs" c="dimmed" data-testid="apps-listing-media-no-changes">

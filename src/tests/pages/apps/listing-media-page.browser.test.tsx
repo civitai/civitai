@@ -54,10 +54,18 @@ const state = vi.hoisted(() => ({
   floor: { meetsFloor: true, complete: false },
   invalidate: vi.fn().mockResolvedValue(undefined),
   flags: { appBlocks: true } as Record<string, boolean>,
+  // Drives WHICH live-app notice the editor renders. `useCurrentUser()` throws
+  // without a CivitaiSessionProvider (which `renderWithProviders` deliberately does
+  // not mount), so it is mocked rather than provided.
+  currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => state.currentUser,
 }));
 
 vi.mock('~/components/AppLayout/NotFound', () => ({
@@ -183,6 +191,7 @@ beforeEach(() => {
   state.invalidate.mockReset();
   state.invalidate.mockResolvedValue(undefined);
   state.flags = { appBlocks: true };
+  state.currentUser = { id: 7, username: 'owner' };
   setRouterQuery({ appBlockId: 'my-block' });
 });
 
@@ -280,6 +289,159 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     await expect.element(notice).toBeInTheDocument();
     await expect.element(notice).toHaveTextContent(/live/i);
     await expect.element(notice).toHaveTextContent(/moderator re-approves/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 The live-app notice must match the CALLER's actual write semantics, and the
+  // discriminator is `isModerator && !shadowId` — NOT `isModerator`.
+  //
+  // With NO shadow, `editTargetId` is the live parent and
+  // `resolveOwnerAssetEditTarget` + `assertOwnerAssetEditable` both short-circuit on
+  // `user.isModerator`, so a moderator's edit is written DIRECTLY to the live listing.
+  // (Confirmed in production, on listings the moderator also OWNED — this editor's
+  // read is owner-bound with no mod branch, so it is only ever reachable for your own
+  // listing.)
+  //
+  // 🔴 But `getMyListingForApp` redirects `editTargetId` to an EXISTING shadow with no
+  // moderator branch of its own, so the step is hosted against the SHADOW's id — and
+  // `resolveOwnerAssetEditTarget` returns its target UNCHANGED for a moderator (the
+  // `isModerator` early return is its FIRST line; the `revisionOfId` check below it is
+  // the OWNER branch and is never reached for a mod). "Unchanged" is the shadow, so
+  // that write IS staged. Gating on `isModerator` alone replaces one false banner with
+  // another. How OFTEN a mod hits that state is unmeasured and the gate does not depend
+  // on it — see the header comment in `ListingMediaEditor` before reaching for the 78%
+  // figure quoted above, which measured a pre-fix condition that no longer holds.
+  //
+  // The four states below are the whole matrix; each has a test.
+  // -------------------------------------------------------------------------
+
+  test('🔴 MOD + NO shadow: told they are editing the LIVE listing directly — never that it is staged', async () => {
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    // The mod bypass only reaches the live parent when there is no shadow to redirect
+    // the edit target onto. (The shared fixture carries a shadow — see the next test.)
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    // The step really is hosted against the LIVE parent — the precondition for the
+    // copy, asserted rather than assumed.
+    await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_onsite:');
+
+    const notice = page.getByTestId('apps-listing-media-mod-live-notice');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent(/live/i);
+    await expect.element(notice).toHaveTextContent(/apply to the live listing immediately/i);
+    await expect.element(notice).toHaveTextContent(/not.*staged as a revision/i);
+
+    // The owner variant — the one carrying the false "staged / re-approval" claim —
+    // must be GONE, not merely supplemented.
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+    // And no surviving copy anywhere may assert the staged/re-approval semantics.
+    expect(page.getByText(/go live only after a moderator re-approves/i).elements()).toHaveLength(
+      0
+    );
+  });
+
+  test('🔴 MOD + shadow ALREADY exists: the edit IS staged, so the STAGED copy must render', async () => {
+    // `getMyListingForApp` redirects `editTargetId` onto an existing shadow with no
+    // moderator branch, so this write goes to the shadow and only goes live on
+    // re-approval. Gating the "applies immediately" copy on `isModerator` alone told
+    // this moderator the opposite. The shared fixture is exactly this shape.
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    renderWithProviders(<ListingMediaPage />);
+
+    // Precondition: the step is hosted against the SHADOW, not the live parent.
+    await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_shadow:');
+
+    const notice = page.getByTestId('apps-listing-media-live-notice');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent(/staged as a revision/i);
+    await expect.element(notice).toHaveTextContent(/go live only after a moderator re-approves/i);
+
+    // The immediate-edit claim must NOT appear for this moderator.
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+    expect(page.getByText(/apply to the live listing immediately/i).elements()).toHaveLength(0);
+  });
+
+  test('🔴 a NON-moderator owner keeps the staged-revision copy (and never sees the mod variant)', async () => {
+    state.currentUser = { id: 7, username: 'owner', isModerator: false };
+    renderWithProviders(<ListingMediaPage />);
+
+    const notice = page.getByTestId('apps-listing-media-live-notice');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent(/staged as a revision/i);
+    await expect.element(notice).toHaveTextContent(/go live only after a moderator re-approves/i);
+
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+  });
+
+  test('a NON-moderator owner with NO shadow still gets the STAGED copy (their first edit mints one)', async () => {
+    // `!shadowId` alone must not flip the copy — it only means "immediate" for a mod.
+    state.currentUser = { id: 7, username: 'owner', isModerator: false };
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect
+      .element(page.getByTestId('apps-listing-media-live-notice'))
+      .toHaveTextContent(/staged as a revision/i);
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR on a non-approved (draft) listing sees NEITHER live notice', async () => {
+    // The bypass only matters for an APPROVED, non-shadow listing — a draft is edited
+    // in place for everyone, so neither "this is live" framing applies.
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      status: 'draft',
+      shadowId: null,
+      editTargetId: 'apl_draft',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-media-mod-live-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // The Submit affordance must follow the SAME discriminator as the notice.
+  // -------------------------------------------------------------------------
+
+  test('🔴 MOD + NO shadow: no dead Submit button and no "stage a revision" hint', async () => {
+    // No edit by this moderator will ever mint a shadow, so `disabled={… || !shadowId}`
+    // would leave Submit permanently dead beneath a banner correctly saying the change
+    // is already live, next to a hint promising a revision that never appears.
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-media-submit').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-media-no-changes').elements()).toHaveLength(0);
+  });
+
+  test('🔴 MOD + shadow: Submit REMAINS — that revision still needs re-approval', async () => {
+    // The mirror of the test above: hiding Submit on `isModerator` alone would strand a
+    // real revision with no way to send it for review.
+    state.currentUser = { id: 1, username: 'mod', isModerator: true };
+    state.floor = { meetsFloor: true, complete: false };
+    renderWithProviders(<ListingMediaPage />);
+
+    const submit = page.getByTestId('apps-listing-media-submit');
+    await expect.element(submit).toBeInTheDocument();
+    await expect.element(submit).not.toBeDisabled();
   });
 
   test('Submit for review fires submitListingRevision with the shadow id', async () => {
