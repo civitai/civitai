@@ -21,6 +21,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -142,19 +143,27 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                 />
               </Box>
               {showCommentActions ? (
-                <Group gap="xs" justify="flex-end">
-                  <Button
-                    variant="default"
-                    onClick={() => {
-                      setShowCommentActions(false);
-                      form.reset();
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" loading={saveCommentMutation.isPending}>
-                    Comment
-                  </Button>
+                <Group gap="xs" justify="space-between">
+                  <StickerPicker
+                    position="top-start"
+                    onSelect={(sticker) =>
+                      editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug })
+                    }
+                  />
+                  <Group gap="xs">
+                    <Button
+                      variant="default"
+                      onClick={() => {
+                        setShowCommentActions(false);
+                        form.reset();
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" loading={saveCommentMutation.isPending}>
+                      Comment
+                    </Button>
+                  </Group>
                 </Group>
               ) : null}
             </Stack>

@@ -292,6 +292,11 @@ export function RichTextEditor({
         editorRef.current.commands.insertContentAt(currentPosition, value);
       }
     },
+    // Composers that hide the toolbar mount the picker themselves, so they need
+    // the command without the control. Same command the toolbar control calls.
+    insertSticker: (attributes) => {
+      editorRef.current?.chain().focus().setSticker(attributes).run();
+    },
     focus: () => {
       if (editorRef.current && innerRef) {
         editorRef.current.commands.focus('end');
@@ -442,6 +447,7 @@ export function RichTextEditor({
 
 export type EditorCommandsRef = {
   insertContentAtCursor: (value: string) => void;
+  insertSticker: (attributes: { id: number; slug?: string }) => void;
   focus: () => void;
 };
 
