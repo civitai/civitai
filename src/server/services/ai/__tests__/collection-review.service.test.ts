@@ -9,6 +9,7 @@ import { NsfwLevel } from '~/server/common/enums';
 
 const clean: Record<string, unknown> = {
   sexualContent: false,
+  isPhotorealistic: false,
   suggestiveStyling: false,
   nsfwEstimate: 'PG',
   depictsMinor: false,
@@ -32,6 +33,8 @@ describe('decideFromObservations', () => {
     ['missing hasBuzzReference', { ...clean, hasBuzzReference: undefined }],
     ['missing sexualContent', { ...clean, sexualContent: undefined }],
     ['missing depictsMinor', { ...clean, depictsMinor: undefined }],
+    // Optional here would read as false and silently disable the photorealism gate below.
+    ['missing isPhotorealistic', { ...clean, isPhotorealistic: undefined }],
     ['a string where a boolean belongs', { ...clean, sexualContent: 'no' }],
     ['otherViolations as a string', { ...clean, otherViolations: 'graphic violence' }],
     ['null', null],
@@ -114,6 +117,19 @@ describe('decideFromObservations', () => {
     const result = decideFromObservations({ ...clean, depictsMinor: true });
     expect(result.decision).toBe('approve');
   });
+
+  it.each(['minorIsPhotorealistic', 'minorInappropriate'])(
+    'honours %s even when the model only suspects a minor',
+    (signal) => {
+      const result = decideFromObservations({
+        ...clean,
+        depictsMinor: false,
+        minorUncertain: true,
+        [signal]: true,
+      });
+      expect(result.decision).toBe('escalate');
+    }
+  );
 
   it('escalates suggestive styling instead of rejecting it', () => {
     const result = decideFromObservations({ ...clean, suggestiveStyling: true });

@@ -47,7 +47,9 @@ export const aiReviewObservationsSchema = z.object({
   sexualContent: z.boolean(),
   suggestiveStyling: z.boolean().optional(),
   nsfwEstimate: z.string().optional(),
-  isPhotorealistic: z.boolean().optional(),
+  // Required, not optional: it gates a child-safety rule, and an omitted optional field would read
+  // as `false` and silently disable that gate. Missing it fails the parse, which routes to a human.
+  isPhotorealistic: z.boolean(),
   depictsMinor: z.boolean(),
   minorUncertain: z.boolean().optional(),
   minorIsPhotorealistic: z.boolean().optional(),
@@ -93,8 +95,12 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
   const violations: AiReviewViolation[] = [];
   const escalations: string[] = [];
 
-  if (o.depictsMinor && o.minorIsPhotorealistic) escalations.push('photorealistic minor');
-  if (o.depictsMinor && o.minorInappropriate) escalations.push('minor depicted inappropriately');
+  // Also honoured when the model only suspects a minor: these are seven independent booleans with
+  // no cross-validation, and a hedged depictsMinor alongside a positive finding is exactly the
+  // inconsistency the rules layer exists to absorb.
+  const anyMinorSignal = o.depictsMinor || !!o.minorUncertain;
+  if (anyMinorSignal && o.minorIsPhotorealistic) escalations.push('photorealistic minor');
+  if (anyMinorSignal && o.minorInappropriate) escalations.push('minor depicted inappropriately');
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
   const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
