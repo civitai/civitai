@@ -694,17 +694,27 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     );
   }
 
-  // (1a) POSTURE ↔ `auditableText` AGREEMENT, both directions.
+  // (1a) POSTURE ↔ `auditableText` AGREEMENT, both directions. 🔴 THE TWO
+  // DIRECTIONS ARE NOT OF EQUAL WEIGHT, and labelling that is the point of this
+  // note — one is a control, the other is diagnostics.
   //
-  // Forward: a posture that audits free text must SAY WHERE THE TEXT IS. Without
-  // this, an entry could declare `'promptAudit'`, omit the field entirely, and
-  // register cleanly — a step that announces a moderation surface and has no
-  // handler input, i.e. a posture satisfied by auditing nothing.
+  // Forward (posture requires the field, entry omits it) — 🔴 DIAGNOSTICS ONLY,
+  // NOT A CONTROL. Do not count it among the guards that make the fail-closed
+  // property hold. Clause 5a below is gated on the IDENTICAL predicate
+  // (`postureRequiresAuditableText`), and clause 2 guarantees at least one
+  // variant, so 5a is ALWAYS reached for a `'promptAudit'` entry and rejects
+  // this same shape on its own — via a raw `TypeError: step.auditableText is not
+  // a function` out of its `step.auditableText!(...)` call. Registration fails
+  // closed with or without this branch; its entire contribution is a NAMED,
+  // actionable error in place of that TypeError. Worth keeping for exactly that,
+  // and worth being honest that a mutation removing it degrades the message
+  // rather than opening a hole.
   //
-  // Reverse: an entry that declares audit text while declaring a posture that
-  // does not audit is a CONTRADICTION its author is best placed to resolve. It
-  // reads as covered and is not: the field is never called, so the text reaches
-  // the orchestrator unaudited. Rejecting it is the fail-closed direction.
+  // Reverse (field declared under a posture that never audits) — 🔴 A GENUINE
+  // CONTROL, and the ONLY clause that catches this shape: nothing else below
+  // runs for a non-auditing posture, so without it the entry registers cleanly,
+  // reads as covered, and its text reaches the orchestrator unaudited. Rejecting
+  // is the fail-closed direction. Leave this branch exactly as it is.
   if (postureRequiresAuditableText(step.moderationPosture)) {
     if (typeof step.auditableText !== 'function') {
       throw new Error(

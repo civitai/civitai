@@ -171,6 +171,51 @@ describe("step moderation — the 'promptAudit' handler", () => {
     expect(mockAuditPromptServer).not.toHaveBeenCalled();
   });
 
+  // 🔴 THE `negativePrompt` TYPE CLAUSE. `./index` clause 5a checks this at
+  // registry LOAD against canonical params; this checks the params actually
+  // submitted. Without it a non-string reaches `stripBenignPhrases` inside
+  // `auditPromptServer`'s own try (`text.replace is not a function`), the catch
+  // treats it as a moderation hit, and on the non-green path it writes a
+  // `BlockedPromptEntry` and increments the AUTO-MUTE counter before rethrowing
+  // "Your prompt was flagged". Innocent users would take a mute-counter hit on
+  // every submit, so "the audit was not called" is the assertion that matters.
+  it.each([
+    ['a number', 42],
+    ['an object', { toString: () => 'sneaky' }],
+    ['null', null],
+  ])(
+    'REJECTS %s as negativePrompt BEFORE auditPromptServer is called',
+    async (_label, negativePrompt) => {
+      const error = await runStepModeration(
+        request({
+          step: makeStep({
+            auditableText: () => ({ prompt: 'a cat', negativePrompt }),
+          } as unknown as Partial<AnyBlockStep>),
+        })
+      ).then(
+        () => undefined,
+        (e) => e
+      );
+
+      expect(
+        mockAuditPromptServer,
+        'auditPromptServer must not be reached with a negativePrompt it cannot read — its ' +
+          'internal catch would record a BlockedPromptEntry and bump the auto-mute counter'
+      ).not.toHaveBeenCalled();
+      expect(error).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('non-string negativePrompt'),
+      });
+    }
+  );
+
+  it('still passes a legitimate string negativePrompt straight through', async () => {
+    // The negative control for the clause above: it must reject a bad type, not
+    // every negativePrompt.
+    await runStepModeration(request());
+    expect(mockAuditPromptServer.mock.calls[0][0].negativePrompt).toBe('blurry');
+  });
+
   it('PROPAGATES a flagged prompt — the audit is never wrapped in a catch', async () => {
     // 🔴 Fail-soft is `auditPromptServer`'s OWN behaviour for a moderation-service
     // outage (it catches the extModeration error internally and continues). A
@@ -218,6 +263,69 @@ describe('step moderation — dispatch over the posture table', () => {
     });
     expect(mockAuditPromptServer).not.toHaveBeenCalled();
   });
+
+  // 🔴 THE PROTOTYPE-KEY ATTACK. A plain object literal inherits from
+  // `Object.prototype`, so `handlers['toString']` returns
+  // `Object.prototype.toString` — TRUTHY. `!handler` would then be false,
+  // `await handler(req)` would RESOLVE, and `runStepModeration` would return
+  // cleanly having audited nothing and thrown nothing: the fail-closed guard
+  // failing OPEN, for the exact keys an attacker would pick. Verified by
+  // execution before the fix. The table's null prototype is what makes these
+  // read `undefined`.
+  //
+  // These are the two keys that produce the SILENT ALLOW: reverting the table to
+  // a plain object literal fails both on `promise resolved "undefined" instead
+  // of rejecting`, because `Object.prototype.toString.call(undefined)` returns a
+  // string and `Object(req)` returns `req` — neither throws. A plain unknown
+  // string like `'nope'` does NOT cover this; that key misses the prototype too,
+  // which is why the pre-fix code already handled it.
+  it.each([['toString'], ['constructor']])(
+    "FAILS CLOSED on the Object.prototype key '%s' — it must not resolve to an inherited method",
+    async (posture) => {
+      await expect(
+        runStepModeration(
+          request({
+            step: makeStep({
+              moderationPosture: posture,
+              auditableText: undefined,
+            } as unknown as Partial<AnyBlockStep>),
+          })
+        )
+      ).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: "step 'fixture-step' declares an unimplemented moderation posture",
+      });
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    }
+  );
+
+  // The remaining inherited keys, kept separate and NOT counted as clean kills.
+  // ⚠️ DISCLOSED: with the null prototype reverted these do not silently allow —
+  // `Object.prototype.valueOf` / `.hasOwnProperty` invoked with `this ===
+  // undefined` (ESM is strict) and `__proto__` resolving to a non-callable
+  // `Object.prototype` all throw a raw `TypeError`. So a mutation dies here to
+  // JavaScript's error, not to this guard's. They are asserted because the named
+  // 500 is the behaviour we want on every prototype key, not because they
+  // demonstrate the fail-open.
+  it.each([['valueOf'], ['hasOwnProperty'], ['__proto__']])(
+    "also fails closed on '%s' (a raw TypeError pre-fix, not a silent allow)",
+    async (posture) => {
+      await expect(
+        runStepModeration(
+          request({
+            step: makeStep({
+              moderationPosture: posture,
+              auditableText: undefined,
+            } as unknown as Partial<AnyBlockStep>),
+          })
+        )
+      ).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: "step 'fixture-step' declares an unimplemented moderation posture",
+      });
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    }
+  );
 
   it('is TOTAL over every declared posture — no key reads as undefined', async () => {
     for (const posture of STEP_MODERATION_POSTURES) {

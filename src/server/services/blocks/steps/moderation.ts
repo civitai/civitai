@@ -72,51 +72,101 @@ type StepModerationHandler = (req: StepModerationRequest) => Promise<void>;
  * The posture → handler table. TOTAL over `StepModerationPosture`; `null` means
  * "declared, deliberately not implemented", which is a fail-closed gate rather
  * than a missing key that would read as `undefined` at runtime.
+ *
+ * 🔴 NULL PROTOTYPE, AND THAT IS A CONTROL RATHER THAN A STYLE CHOICE. A plain
+ * object literal inherits from `Object.prototype`, so indexing it with an
+ * arbitrary string falls through: `handlers['toString']` returns
+ * `Object.prototype.toString` — TRUTHY — which makes the `!handler` guard in
+ * `runStepModeration` below evaluate `false`, lets `await handler(req)` resolve,
+ * and returns from the whole submit path HAVING AUDITED NOTHING AND THROWN
+ * NOTHING. The one guard whose job is to fail closed on an unimplemented posture
+ * would fail OPEN, for the exact key an attacker would reach for. The registry's
+ * load-time gate makes that unreachable for a REGISTERED step today, but this
+ * seam exists precisely for the day the posture value stops coming from a
+ * code-reviewed literal (a DB column, a manifest field) — and defence in depth
+ * that inverts under a chosen input is worse than none. With a null prototype
+ * every non-own key reads `undefined` and the guard fails closed. It also covers
+ * `assertModerationHandlerTable`, which walks the same table.
+ *
+ * `satisfies` (in addition to the annotation) is what keeps the literal TOTAL
+ * over the posture union — a missing posture is exactly the drift this table
+ * exists to make impossible. Verified by typecheck mutation rather than assumed:
+ * deleting `textOutput` from the literal WITH `satisfies` present is a `TS1360`
+ * build error; deleting `satisfies` as well makes that error disappear, because
+ * `Object.assign`'s inferred result type absorbs the shortfall and the
+ * annotation alone does not reject it (it also costs the handlers their
+ * contextual typing — 5×`TS7031`).
  */
-const moderationPostureHandlers: Record<StepModerationPosture, StepModerationHandler | null> = {
-  // Nothing to run, by construction: no free-text input, no free-text output.
-  none: async () => {
-    /* no surface */
-  },
+const moderationPostureHandlers: Record<StepModerationPosture, StepModerationHandler | null> =
+  Object.assign(
+    Object.create(null) as Record<StepModerationPosture, StepModerationHandler | null>,
+    {
+      // Nothing to run, by construction: no free-text input, no free-text output.
+      none: async () => {
+        /* no surface */
+      },
 
-  /**
-   * The posture `textToImage` and `customComfy` already implement inline. Same
-   * function, same two text fields, same `isGreen` source, same fail-closed
-   * throw — declared by a step instead of hardcoded in a router branch.
-   */
-  promptAudit: async ({ step, params, userId, isGreen, loadIsModerator }) => {
-    const text = step.auditableText?.(params);
+      /**
+       * The posture `textToImage` and `customComfy` already implement inline. Same
+       * function, same two text fields, same `isGreen` source, same fail-closed
+       * throw — declared by a step instead of hardcoded in a router branch.
+       */
+      promptAudit: async ({ step, params, userId, isGreen, loadIsModerator }) => {
+        const text = step.auditableText?.(params);
 
-    // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
-    //
-    // `auditPromptServer` RETURNS EARLY on an empty prompt. Passing it one would
-    // therefore be a declared moderation posture that runs, audits nothing, and
-    // reports success — indistinguishable from a clean audit at every call site.
-    // The registry's load-time probe proves the entry produces text for its
-    // CANONICAL params; this proves it for the params actually submitted, which
-    // is the only input an untrusted iframe controls.
-    if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
-      throwBadRequestError(
-        `step '${step.id}' declares moderation posture '${step.moderationPosture}' but the ` +
-          'submitted params carry no auditable text — the request is rejected rather than ' +
-          'submitted unaudited'
-      );
-      return; // unreachable; `throwBadRequestError` throws. Narrows `text` below.
-    }
+        // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
+        //
+        // `auditPromptServer` RETURNS EARLY on an empty prompt. Passing it one would
+        // therefore be a declared moderation posture that runs, audits nothing, and
+        // reports success — indistinguishable from a clean audit at every call site.
+        // The registry's load-time probe proves the entry produces text for its
+        // CANONICAL params; this proves it for the params actually submitted, which
+        // is the only input an untrusted iframe controls.
+        if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
+          throwBadRequestError(
+            `step '${step.id}' declares moderation posture '${step.moderationPosture}' but the ` +
+              'submitted params carry no auditable text — the request is rejected rather than ' +
+              'submitted unaudited'
+          );
+          return; // unreachable; `throwBadRequestError` throws. Narrows `text` below.
+        }
 
-    await auditPromptServer({
-      prompt: text.prompt,
-      negativePrompt: text.negativePrompt,
-      userId,
-      isGreen,
-      isModerator: await loadIsModerator(),
-    });
-  },
+        // 🔴 FAIL CLOSED ON A NON-STRING `negativePrompt`, mirroring the load-time
+        // check in `./index` clause 5a on the params actually submitted. Load time
+        // proves the shape for CANONICAL params only; an entry carrying a lying
+        // `as unknown as string` cast satisfies neither the compiler nor that probe
+        // and would otherwise reach the audit unchecked.
+        //
+        // 🔴 WHY THIS CANNOT BE LEFT TO `auditPromptServer` TO NOTICE. A non-string
+        // reaches `stripBenignPhrases` and throws `text.replace is not a function`
+        // INSIDE that function's own try block. Its catch treats the throw as a
+        // moderation hit: on the non-green path it writes a `BlockedPromptEntry` and
+        // increments the auto-mute counter before rethrowing "Your prompt was
+        // flagged". So the failure mode is not a 500 a reviewer would notice — it is
+        // innocent users accruing mute-counter hits on every submit because of a
+        // registry-entry bug.
+        if (text.negativePrompt !== undefined && typeof text.negativePrompt !== 'string') {
+          throwBadRequestError(
+            `step '${step.id}' declares moderation posture '${step.moderationPosture}' but the ` +
+              'submitted params produced a non-string negativePrompt — the request is rejected ' +
+              'rather than audited with a value auditPromptServer cannot read'
+          );
+        }
 
-  // Free-text OUTPUT. Generated text is scanned by nothing on any current path,
-  // and answering that is a content-policy decision, not a code one.
-  textOutput: null,
-};
+        await auditPromptServer({
+          prompt: text.prompt,
+          negativePrompt: text.negativePrompt,
+          userId,
+          isGreen,
+          isModerator: await loadIsModerator(),
+        });
+      },
+
+      // Free-text OUTPUT. Generated text is scanned by nothing on any current path,
+      // and answering that is a content-policy decision, not a code one.
+      textOutput: null,
+    } satisfies Record<StepModerationPosture, StepModerationHandler | null>
+  );
 
 /**
  * Cross-check that the handler table agrees with `isModerationPostureImplemented`
