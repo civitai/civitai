@@ -1,9 +1,8 @@
 import * as z from 'zod';
 import { openrouter } from '~/server/services/ai/openrouter';
-export { DEFAULT_AI_REVIEW_PROMPT } from '~/server/services/ai/collection-review.prompt';
 import type { TokenUsage } from '~/server/services/ai/openrouter';
 
-export const AI_REVIEW_VIOLATIONS = [
+const AI_REVIEW_VIOLATIONS = [
   'sexual/adult content',
   'no buzz reference',
   'graphic violence',
@@ -13,12 +12,10 @@ export const AI_REVIEW_VIOLATIONS = [
 ] as const;
 export type AiReviewViolation = (typeof AI_REVIEW_VIOLATIONS)[number];
 
-const MODEL_VIOLATIONS: string[] = [
-  'graphic violence',
-  'illegal drugs',
-  'self-harm',
-  'hate or extremism',
-];
+// The subset the model may report directly; the other two are decided from its booleans.
+const MODEL_VIOLATIONS: AiReviewViolation[] = AI_REVIEW_VIOLATIONS.filter(
+  (v) => v !== 'sexual/adult content' && v !== 'no buzz reference'
+);
 
 // Rendered after the notification's own "Your submission to X wasn't accepted." so these are
 // clauses, not sentences. Fixed here rather than passed through from the model.
@@ -38,17 +35,13 @@ const GENERIC_REJECTION = "It doesn't meet this collection's guidelines.";
 // prompt asks for; the rest are the labels a model reaches for on its own.
 const ADULT_RATINGS = ['r+', 'r', 'x', 'xxx', 'nsfw', 'explicit'];
 
-/**
- * The booleans the rules depend on are REQUIRED. A response missing them is not a clean bill of
- * health — it is a response we cannot read, and it must not resolve to approve.
- */
+// The booleans the rules depend on are required: a response missing them is one we cannot read,
+// and it must not resolve to approve.
 export const aiReviewObservationsSchema = z.object({
   reason: z.string().optional(),
   sexualContent: z.boolean(),
   suggestiveStyling: z.boolean().optional(),
   nsfwEstimate: z.string().optional(),
-  // Required, not optional: it gates a child-safety rule, and an omitted optional field would read
-  // as `false` and silently disable that gate. Missing it fails the parse, which routes to a human.
   isPhotorealistic: z.boolean(),
   depictsMinor: z.boolean(),
   minorUncertain: z.boolean().optional(),
@@ -58,8 +51,6 @@ export const aiReviewObservationsSchema = z.object({
   otherViolations: z.array(z.string()).optional(),
   hasBuzzReference: z.boolean(),
 });
-
-export type AiReviewObservations = z.infer<typeof aiReviewObservationsSchema>;
 
 export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
@@ -73,14 +64,8 @@ export type AiReviewDecision = {
   neverReject?: boolean;
 };
 
-/**
- * The model reports observations; this turns them into a verdict. Keeping the rules here means
- * they can be retuned or audited without re-running any classification, and a model that hedges
- * cannot approve something the rules forbid.
- *
- * Takes `unknown` on purpose: the input is unvalidated model output, and a refusal, a fallback to
- * a different provider, or plain schema drift all arrive as parseable JSON with the wrong shape.
- */
+// Takes `unknown` because a refusal, a provider fallback, or schema drift all arrive as parseable
+// JSON with the wrong shape.
 export function decideFromObservations(raw: unknown): AiReviewDecision {
   const parsed = aiReviewObservationsSchema.safeParse(raw);
   if (!parsed.success)
@@ -118,7 +103,8 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
   for (const entry of o.otherViolations ?? []) {
     const value = entry.toLowerCase().trim();
     if (!value) continue;
-    if (MODEL_VIOLATIONS.includes(value)) violations.push(value as AiReviewViolation);
+    const known = MODEL_VIOLATIONS.find((v) => v === value);
+    if (known) violations.push(known);
     else escalations.push(`unrecognized category: ${entry}`);
   }
 

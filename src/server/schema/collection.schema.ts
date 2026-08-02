@@ -106,17 +106,13 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
-// Model choice is ours, not the collection owner's: a free-text field could name a non-vision or
-// far more expensive model. Declared here rather than in the service so the client can render the
-// picker without pulling in server-only AI deps.
+// Declared here, not in the service, so the client can render the picker without pulling in
+// server-only AI deps.
 export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
 
 export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
-/**
- * Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
- * metadata, which caps a Contest collection's entire metadata at the btree row limit (~2704 bytes).
- * The prompt alone is bigger than that.
- */
+// Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
+// metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
 export const collectionAiReviewSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
@@ -129,7 +125,7 @@ export const collectionAiReviewSchema = z.object({
     .default(NsfwLevel.PG | NsfwLevel.PG13),
   escalationAction: z.enum(['reject', 'leaveForHuman']).default('reject'),
   reasonCopy: z.record(z.string(), z.string()).optional(),
-  dryRun: z.boolean().default(false),
+  dryRun: z.boolean().default(true),
 });
 
 export type SetCollectionAiReviewInput = z.infer<typeof setCollectionAiReviewInput>;

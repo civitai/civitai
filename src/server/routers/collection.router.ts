@@ -140,15 +140,17 @@ export const collectionRouter = router({
     .use(isFlagProtected('collections'))
     .mutation(updateCollectionItemsStatusHandler),
   // Moderator-only rather than collection MANAGE: the prompt becomes an LLM system prompt, and
-  // reviews cost us money. isFlagProtected gates the endpoint itself, not just the UI.
+  // reviews cost us money.
   setAiReview: moderatorProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(setCollectionAiReviewInput)
     .use(isFlagProtected('collectionAiReview'))
     .mutation(({ input }) => setCollectionAiReview(input)),
   getAiReview: moderatorProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
     .use(isFlagProtected('collectionAiReview'))
-    .query(({ input }: { input: GetByIdInput }) => getCollectionAiReview(input.id)),
+    .query(({ input }) => getCollectionAiReview(input.id)),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)

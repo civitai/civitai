@@ -97,6 +97,14 @@ FROM collectionAiReviewEvents WHERE collectionId = 3870938 AND applied = 0
 ORDER BY createdAt DESC LIMIT 100;
 ```
 
+## Contest collections only
+
+`updateCollectionItemsStatus` sends its accept/reject notification only when
+`collection.mode === CollectionMode.Contest`. Anywhere else the job would reject submissions
+silently — and on boards where a cron deletes rejected rows, the entry disappears with no
+explanation at all. `setCollectionAiReview` therefore refuses to enable AI review on a non-Contest
+collection. Lifting that restriction means fixing the notification path first.
+
 ## Operational notes
 
 - **Throughput.** A vision call is ~3s at the median but 13-20s at the tail, and each chunk is a

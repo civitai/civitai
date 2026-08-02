@@ -1,6 +1,13 @@
 /**
  * Buzz Beggars Board (collection 3870938) auto-moderator — CLASSIFY ONLY.
  *
+ * FROZEN at calibration-time behaviour. This is NOT the shipped policy and has already diverged
+ * from it: the prompt here predates `isPhotorealistic`, which the app now requires, so responses
+ * driven by this file would fail production validation. The shipped truth is
+ * `src/server/services/ai/collection-review.prompt.ts` and `decideFromObservations` in
+ * `src/server/services/ai/collection-review.service.ts` — port changes from there before
+ * retuning against this harness, or you will tune the wrong prompt.
+ *
  * Usage:
  *   node scripts/oneoffs/buzz-beggars-classifier.mjs fetch            # pending REVIEW items -> pending.json
  *   node scripts/oneoffs/buzz-beggars-classifier.mjs classify [--limit N] [--ids 1,2] [--model X]
@@ -159,11 +166,11 @@ const USER_MESSAGE = {
     "Your entry wasn't accepted because the Buzz Beggars Board shows on the homepage and needs to stay PG-13.",
   'no buzz reference':
     "Your entry wasn't accepted because it doesn't mention Buzz. Add 'buzz pls' text or a Buzz lightning bolt and try again!",
-  'graphic violence':
-    "Your entry wasn't accepted because it shows graphic violence or injury.",
+  'graphic violence': "Your entry wasn't accepted because it shows graphic violence or injury.",
   'illegal drugs': "Your entry wasn't accepted because it depicts illegal substances.",
   'self-harm': "Your entry wasn't accepted because it touches on self-harm themes.",
-  'hate or extremism': "Your entry wasn't accepted because it contains hateful or extremist content.",
+  'hate or extremism':
+    "Your entry wasn't accepted because it contains hateful or extremist content.",
 };
 
 /**
@@ -411,7 +418,8 @@ async function classify(args) {
     );
     const before = items.length;
     items = items.filter((i) => !done.has(i.imageId));
-    if (before !== items.length) console.log(`skipping ${before - items.length} already classified`);
+    if (before !== items.length)
+      console.log(`skipping ${before - items.length} already classified`);
   }
 
   const stream = fs.createWriteStream(RESULTS_FILE, { flags: 'a' });
@@ -437,7 +445,9 @@ async function validate(args) {
     const ok = result.decision === truth.expected;
     if (ok) agree++;
     console.log(
-      `${ok ? 'MATCH ' : 'DIFF  '} imageId ${truth.imageId} expected=${truth.expected} got=${result.decision}\n` +
+      `${ok ? 'MATCH ' : 'DIFF  '} imageId ${truth.imageId} expected=${truth.expected} got=${
+        result.decision
+      }\n` +
         `        signals: nsfw=${result.nsfwEstimate} sexual=${result.sexualContent} buzz=${result.hasBuzzReference}` +
         ` minor=${result.depictsMinor}/photoreal=${result.minorIsPhotorealistic}/inappropriate=${result.minorInappropriate}` +
         ` realPerson=${result.depictsRealPerson}\n` +
@@ -509,8 +519,9 @@ async function bakeoff(args) {
     const mix = {};
     for (const r of results) mix[r.decision] = (mix[r.decision] ?? 0) + 1;
     console.log(
-      `\n${model}\n  ground truth: ${agree}/${GROUND_TRUTH.length}\n  decisions: ${JSON.stringify(mix)}` +
-        (errors.length ? `\n  first error: ${errors[0].reason.slice(0, 160)}` : '')
+      `\n${model}\n  ground truth: ${agree}/${GROUND_TRUTH.length}\n  decisions: ${JSON.stringify(
+        mix
+      )}` + (errors.length ? `\n  first error: ${errors[0].reason.slice(0, 160)}` : '')
     );
   }
 
@@ -518,7 +529,9 @@ async function bakeoff(args) {
   for (const item of sample) {
     const calls = models.map((m) => byModel[m].get(item.imageId)?.decision);
     if (new Set(calls).size > 1) {
-      console.log(`imageId ${item.imageId}: ${models.map((m, i) => `${m}=${calls[i]}`).join('  ')}`);
+      console.log(
+        `imageId ${item.imageId}: ${models.map((m, i) => `${m}=${calls[i]}`).join('  ')}`
+      );
       for (const m of models) {
         const r = byModel[m].get(item.imageId);
         console.log(`    ${m}: ${r?.reason} [${r?.violations?.join(', ') || 'none'}]`);
@@ -535,7 +548,9 @@ const argValue = (args, flag) => {
 const [cmd, ...args] = process.argv.slice(2);
 const commands = { fetch: fetchPending, classify, validate, report, bakeoff };
 if (!commands[cmd]) {
-  console.error(`usage: ${path.basename(process.argv[1])} <fetch|classify|validate|report|bakeoff>`);
+  console.error(
+    `usage: ${path.basename(process.argv[1])} <fetch|classify|validate|report|bakeoff>`
+  );
   process.exit(1);
 }
 await commands[cmd](args);

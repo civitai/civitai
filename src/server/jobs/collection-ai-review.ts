@@ -1,12 +1,15 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
-import { updateCollectionItemsStatus } from '~/server/services/collection.service';
+import {
+  COLLECTION_AI_REVIEW_KEY_PREFIX,
+  updateCollectionItemsStatus,
+} from '~/server/services/collection.service';
 import {
   decideFromObservations,
   isAiReviewAvailable,
@@ -22,14 +25,8 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createJob } from './job';
 
 const SYSTEM_USER_ID = -1;
-/**
- * Measured against mimo-v2.5: a call is ~3s at the median but 13-20s at the tail, and each chunk
- * is a barrier that waits for its slowest straggler. Small chunks therefore pay the tail
- * repeatedly — 10-item chunks at concurrency 5 managed only 0.25 items/s. Concurrency 15 with a
- * chunk wide enough to absorb stragglers measures ~0.78 items/s, so a full batch lands in roughly
- * seven minutes, well inside the lock. Chunk size is still the crash-safety granularity: a run
- * that dies loses at most one chunk's classifications.
- */
+// Chunks are barriers waiting on the slowest call (~3s median, 13-20s tail), so they must be wide
+// enough to absorb stragglers. Chunk size is also the crash-safety granularity. See the feature doc.
 const BATCH_SIZE = 300;
 const CHUNK_SIZE = 50;
 const CONCURRENCY = 15;
@@ -49,8 +46,8 @@ export const collectionAiReview = createJob(
   async () => {
     if (!isAiReviewAvailable()) return;
 
-    const rows = await dbWrite.$queryRaw<{ key: string; value: unknown }[]>`
-      SELECT key, value FROM "KeyValue" WHERE key LIKE 'collection-ai-review:%'
+    const rows = await dbRead.$queryRaw<{ key: string; value: unknown }[]>`
+      SELECT key, value FROM "KeyValue" WHERE key LIKE ${`${COLLECTION_AI_REVIEW_KEY_PREFIX}%`}
     `;
 
     for (const row of rows) {
@@ -207,12 +204,8 @@ async function classifyItem({
   return { collectionItemId: item.collectionItemId, action, message };
 }
 
-/**
- * Every item is stamped before any status is written. A status write can throw — a collection with
- * judgesCanScoreEntries rejects a batch whose items lack scores — and an unstamped item is selected
- * again on the next run, so stamping last would mean re-classifying and re-billing forever. A
- * stamped item whose status write failed stays visible in the moderator queue.
- */
+// Stamps before writing status: a status write can throw, and an unstamped item is reselected and
+// re-billed on the next run.
 async function applyOutcomes({
   collectionId,
   outcomes,
