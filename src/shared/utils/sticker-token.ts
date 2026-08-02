@@ -108,3 +108,50 @@ export function parseStickerIds(content: string) {
     ),
   ];
 }
+
+/**
+ * Placements per sticker id. A *use* is one placement, not one message: three
+ * stickers in a comment is three uses, and the same sticker twice is two.
+ *
+ * Counts both content forms, since chat stores `:sticker:<id>:` tokens while
+ * comments store `<span data-type="sticker" data-id="…">` — a given piece of
+ * content is one or the other, so scanning for both is safe.
+ */
+export function countStickerPlacements(content: string): Map<number, number> {
+  const counts = new Map<number, number>();
+  const add = (raw: string) => {
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) return;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
+
+  for (const match of content.matchAll(new RegExp(STICKER_TOKEN.source, 'g'))) add(match[1]);
+  for (const match of content.matchAll(
+    /<span[^>]*data-type="sticker"[^>]*data-id="(\d{1,9})"[^>]*>|<span[^>]*data-id="(\d{1,9})"[^>]*data-type="sticker"[^>]*>/g
+  ))
+    add(match[1] ?? match[2]);
+
+  return counts;
+}
+
+/**
+ * What an edit costs: placements added relative to what was already there,
+ * floored at zero per sticker. Creation is the degenerate case of an empty
+ * previous content. Removing a placement refunds nothing — the use was spent
+ * when it was placed.
+ */
+export function netNewStickerPlacements(
+  nextContent: string,
+  prevContent = ''
+): Map<number, number> {
+  const next = countStickerPlacements(nextContent);
+  const prev = countStickerPlacements(prevContent);
+  const delta = new Map<number, number>();
+
+  for (const [id, count] of next) {
+    const added = count - (prev.get(id) ?? 0);
+    if (added > 0) delta.set(id, added);
+  }
+
+  return delta;
+}

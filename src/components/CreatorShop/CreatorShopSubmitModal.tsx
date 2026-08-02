@@ -51,6 +51,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     slugError,
     slugLocked,
     priceFloor,
+    uses,
+    setUses,
+    usesError,
     name,
     description,
     price,
@@ -182,6 +185,19 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                     ? 'Locked once published — owners already type this to use your sticker'
                     : 'What people type between colons to use your sticker, e.g. :party_cat:'
                 }
+                withAsterisk
+              />
+            )}
+
+            {isSticker && (
+              <NumberInput
+                label="Uses per purchase"
+                description="How many times a buyer can place this sticker. They buy more by buying it again."
+                value={uses}
+                onChange={(v) => setUses(typeof v === 'number' ? v : 1)}
+                min={1}
+                step={10}
+                error={usesError}
                 withAsterisk
               />
             )}

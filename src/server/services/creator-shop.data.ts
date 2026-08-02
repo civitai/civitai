@@ -9,9 +9,11 @@ export const buildCosmeticData = (
   imageUrl: string,
   animated?: boolean,
   offsets?: CosmeticOffsets | null,
-  slug?: string
+  slug?: string,
+  uses?: number
 ) => {
-  if (type === CosmeticType.Sticker) return { url: imageUrl, slug, animated: !!animated };
+  if (type === CosmeticType.Sticker)
+    return { url: imageUrl, slug, animated: !!animated, ...(uses ? { uses } : {}) };
   if (type === CosmeticType.ProfileBackground)
     return { url: imageUrl, type: MediaType.image, animated: !!animated };
   if (type === CosmeticType.ProfileDecoration)
@@ -30,23 +32,28 @@ export const patchCosmeticData = ({
   artworkData,
   offsetsChange,
   slugChange,
+  usesChange,
   nextOffsets,
   nextSlug,
+  nextUses,
 }: {
   existingData: Record<string, unknown>;
   artworkData?: Record<string, unknown>;
   offsetsChange?: boolean;
   slugChange?: boolean;
+  usesChange?: boolean;
   nextOffsets?: CosmeticOffsets | null;
   nextSlug?: string;
+  nextUses?: number;
 }) => {
   if (artworkData) return artworkData;
-  if (!offsetsChange && !slugChange) return undefined;
+  if (!offsetsChange && !slugChange && !usesChange) return undefined;
 
   const { offsets: _prevOffsets, ...restData } = existingData;
   return {
     ...restData,
     ...(nextOffsets ? { offsets: nextOffsets } : {}),
     ...(nextSlug ? { slug: nextSlug } : {}),
+    ...(nextUses ? { uses: nextUses } : {}),
   };
 };

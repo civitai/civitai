@@ -3625,6 +3625,7 @@ export type UserCosmetic = {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
 };
 export type UserCosmeticShopPurchases = {
   userId: number;

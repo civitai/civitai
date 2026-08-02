@@ -36,6 +36,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import { stickerUsesFromCosmeticData } from '~/server/services/sticker.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -590,6 +591,7 @@ export const purchaseCosmeticShopItem = async ({
         select: {
           type: true,
           createdById: true,
+          data: true,
         },
       },
       _count: {
@@ -736,6 +738,9 @@ export const purchaseCosmeticShopItem = async ({
           userId,
           cosmeticId: shopItem.cosmeticId,
           claimKey: transactionId,
+          // Consumables grant a finite balance; everything else stays NULL,
+          // which reads as unlimited.
+          remaining: stickerUsesFromCosmeticData(shopItem.cosmetic.data),
         },
       });
 

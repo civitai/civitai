@@ -23,6 +23,8 @@ const { db, amIBlockedByUser } = vi.hoisted(() => {
       commentV2: {
         create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 999 })),
         update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 5 })),
+        // Read on the edit path to diff sticker placements for consumption.
+        findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ content: '' })),
       },
       $transaction: vi.fn(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx)),
     },

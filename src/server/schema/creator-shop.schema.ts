@@ -86,6 +86,10 @@ export const creatorCosmeticTypes = [
   CosmeticType.Sticker,
 ] as const;
 
+// Consumables are priced per use, so a listing has to clear both floors.
+export const STICKER_MIN_BUZZ_PER_USE = 5;
+export const STICKER_DEFAULT_USES = 100;
+
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
 export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
   (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
@@ -190,6 +194,8 @@ export const submitCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
   slug: z.string().optional(),
+  // Sticker only — uses granted per purchase.
+  uses: z.number().int().positive().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
   availableQuantity: z.number().int().positive().nullish(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
@@ -222,6 +228,7 @@ export const updateCreatorShopItemSchema = z.object({
   // Sticker only. Omitted leaves the existing slug alone — replacing artwork must
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
+  uses: z.number().int().positive().optional(),
 });
 
 export type SetCreatorShopItemListedInput = z.infer<typeof setCreatorShopItemListedSchema>;

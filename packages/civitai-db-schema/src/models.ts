@@ -2884,6 +2884,7 @@ export interface UserCosmetic {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
 }
 
 export interface CosmeticShopSection {

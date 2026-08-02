@@ -19,6 +19,8 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import {
   cosmeticPriceFloor,
+  STICKER_DEFAULT_USES,
+  STICKER_MIN_BUZZ_PER_USE,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
@@ -46,6 +48,9 @@ export function useSubmitCreatorShopForm({
     item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
       ? item.cosmetic.type
       : CosmeticType.Badge
+  );
+  const [uses, setUses] = useState<number>(
+    ((item?.cosmetic.data as { uses?: number } | null)?.uses ?? STICKER_DEFAULT_USES) as number
   );
   const [slug, setSlug] = useState<string>(
     ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
@@ -95,6 +100,12 @@ export function useSubmitCreatorShopForm({
   const priceFloor = cosmeticPriceFloor(type);
 
   const isSticker = type === CosmeticType.Sticker;
+  // Consumables must clear a per-use floor as well as the listing floor.
+  const usesFloor = isSticker ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
+  const usesError =
+    isSticker && price < usesFloor
+      ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+      : null;
   // Same normalization the server applies, so what's validated here is what's saved.
   const normalizedSlug = slug.trim().toLowerCase();
   // Matches the server rule: the slug is the token owners type, so it's fixed
@@ -175,7 +186,7 @@ export function useSubmitCreatorShopForm({
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
-    (!isSticker || isValidStickerSlug(normalizedSlug));
+    (!isSticker || (isValidStickerSlug(normalizedSlug) && !usesError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -236,6 +247,7 @@ export function useSubmitCreatorShopForm({
           acceptsBlueBuzz,
           offsets: normalizedOffsets,
           slug: isSticker ? normalizedSlug : undefined,
+          uses: isSticker ? uses : undefined,
         });
       }
       resetFiles();
@@ -264,6 +276,9 @@ export function useSubmitCreatorShopForm({
     setType,
     priceFloor,
     isSticker,
+    uses,
+    setUses,
+    usesError,
     slug,
     setSlug,
     slugError,

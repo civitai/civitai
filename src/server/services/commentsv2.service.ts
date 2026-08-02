@@ -1,6 +1,7 @@
 import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { spendStickerUses } from '~/server/services/sticker.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -165,6 +166,19 @@ export const upsertComment = async ({
   });
 
   if (thread?.locked) throw throwBadRequestError('comment thread locked');
+
+  // Charge before writing: an edit that adds stickers must pay for the ones it
+  // added, or posting an empty comment and editing stickers in would be free.
+  // Throws (and so aborts the whole upsert) if any balance is short.
+  const previous = data.id
+    ? await dbWrite.commentV2.findUnique({ where: { id: data.id }, select: { content: true } })
+    : null;
+  await spendStickerUses({
+    userId,
+    surface: 'comment',
+    content: data.content ?? '',
+    previousContent: previous?.content ?? '',
+  });
 
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {

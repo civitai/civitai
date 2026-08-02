@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
+import { spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -190,6 +191,18 @@ export const createOrUpdateComment = async ({
       code: 'FORBIDDEN',
       message: 'This comment is locked and cannot be updated',
     });
+
+  // Same rule as CommentV2: pay for stickers this edit added, so an empty
+  // comment edited to add stickers isn't free. Throws before the write.
+  const previous = id
+    ? await dbWrite.comment.findUnique({ where: { id }, select: { content: true } })
+    : null;
+  await spendStickerUses({
+    userId: ownerId,
+    surface: 'comment',
+    content: commentInput.content ?? '',
+    previousContent: previous?.content ?? '',
+  });
 
   const result = await dbWrite.comment.upsert({
     where: { id: id ?? -1 },
