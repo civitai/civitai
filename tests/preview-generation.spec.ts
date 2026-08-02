@@ -173,8 +173,18 @@ test.describe('generation cost quote (gold)', () => {
         // Read the body the route handler buffered, NOT `response.text()` (see above).
         // Raw text, not `.json()`: under batching the body is newline-delimited JSON
         // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
-        expect(capturedBody, 'whatIf response body was captured').not.toBeNull();
-        return { body: capturedBody as string };
+        // A plain null-check rather than `expect(...).not.toBeNull()` plus a cast.
+        // `capturedBody` is assigned from inside the `page.route` closure, which
+        // TS control-flow analysis cannot see, so after the reset above it narrows
+        // to `null` here and `as string` is an illegal null->string conversion.
+        // Checking explicitly narrows it honestly, needs no cast, and fails with a
+        // message that says which half broke: the response was seen, the body wasn't.
+        if (capturedBody === null) {
+          throw new Error(
+            'whatIf response was observed but its body was not captured by the route handler'
+          );
+        }
+        return { body: capturedBody };
       },
       { attempts: 2 }
     );
