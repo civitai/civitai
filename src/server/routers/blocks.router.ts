@@ -1018,7 +1018,24 @@ async function createBlockTextToImageStep(opts: {
   // resources). It is `undefined` on whatIf calls (the graph omits it then), so
   // callers can attach it to the REAL submit body only — mirroring the normal
   // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
-  return { step, workflowMetadata };
+  //
+  // `modelSubstitutions` (issue #3520): checkpoint versions the graph SILENTLY
+  // replaced during the validation just performed. Read from the per-request
+  // collector on the `externalCtx` built two lines above — never a shared/cached
+  // object — so it describes THIS submit and no one else's. Behaviour is
+  // unchanged; the caller folds this into the snapshot so the block can detect
+  // that it was billed for a model it did not ask for.
+  return {
+    step,
+    workflowMetadata,
+    modelSubstitutions: externalCtx.modelSubstitutions
+      ?.list()
+      .map(({ requested, applied, reason }) => ({
+        requested,
+        applied,
+        reason,
+      })),
+  };
 }
 
 export const blocksRouter = router({
@@ -3759,7 +3776,11 @@ export const blocksRouter = router({
       // whatIf: no `metadata` on the body — matches the normal path
       // (`generateFromGraph` builds workflowMetadata only for real submits) and
       // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      const { step, modelSubstitutions } = await createBlockTextToImageStep({
+        input: generateInput,
+        user,
+        whatIf: true,
+      });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -3770,7 +3791,10 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+      // cost for model A and is silently priced for model B has the same
+      // detectability problem as the submit, one step earlier.
+      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
     }),
 
   /**
@@ -4293,7 +4317,7 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata } = await createBlockTextToImageStep({
+        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
           input: generateInput,
           user,
           isGreen,
@@ -4317,7 +4341,9 @@ export const blocksRouter = router({
             externalId: blockExternalId,
           },
         });
-        snapshot = snapshotFromWorkflow(submitted);
+        // #3520: fold in any checkpoint the graph silently swapped during the
+        // validation inside `createBlockTextToImageStep` above.
+        snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old

@@ -165,6 +165,31 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toBeUndefined();
   });
 
+  // ---- #3520: silent model substitutions surfaced on the snapshot ----------
+  //
+  // The orchestrator Workflow cannot carry these — the substitution happened
+  // during graph validation, before anything was submitted — so they arrive as
+  // an explicit second argument. The invariant being protected is "a caller
+  // billed for model A and given model B must be able to find that out".
+  it('surfaces modelSubstitutions passed alongside the workflow', () => {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+      modelSubstitutions: [{ requested: 2558804, applied: 2552908, reason: 'wrong-workflow' }],
+    });
+    expect(snap.modelSubstitutions).toEqual([
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+    ]);
+  });
+
+  it('OMITS modelSubstitutions when nothing was substituted (byte-identical to before)', () => {
+    // Three shapes that all mean "nothing to report": no second argument at all
+    // (every pre-existing call site), an empty object, and an empty array. None
+    // may add a key to the wire payload.
+    for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra);
+      expect('modelSubstitutions' in snap).toBe(false);
+    }
+  });
+
   // ---- image extraction across ALL image-producing step types --------------
   // The extractor accepts THREE step types (textToImage / imageGen / comfy);
   // the happy-path test above only exercises textToImage. These pin the other

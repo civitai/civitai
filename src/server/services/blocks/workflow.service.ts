@@ -37,7 +37,18 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
  */
-export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot {
+export function snapshotFromWorkflow(
+  workflow: Workflow,
+  /**
+   * Facts about the SUBMIT that the orchestrator Workflow cannot carry, because
+   * they happened during graph validation before anything was submitted.
+   * Currently only the silent checkpoint substitutions recorded on the request's
+   * `GenerationCtx` (issue #3520) — see `BlockWorkflowSnapshot.modelSubstitutions`.
+   * Optional so every existing call site is unchanged and its snapshot stays
+   * byte-identical.
+   */
+  extra?: { modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'] }
+): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
   for (const step of workflow.steps ?? []) {
@@ -109,6 +120,9 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
     ...(spentAccountType ? { spentAccountType } : {}),
+    // Omitted entirely when nothing was substituted — the common case — so a
+    // normal snapshot is unchanged on the wire.
+    ...(extra?.modelSubstitutions?.length ? { modelSubstitutions: extra.modelSubstitutions } : {}),
   };
 }
 

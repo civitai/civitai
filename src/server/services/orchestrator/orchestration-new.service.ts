@@ -45,6 +45,9 @@ import {
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
+import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
+import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
+import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   redis,
@@ -309,6 +312,15 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         hasTestingAccess: ecosystemConfig.hasTestingAccess,
       }),
+      // 🔴 PER-REQUEST, and attached to THIS freshly-built object literal only
+      // (issue #3520). `status` / `ecosystemConfig` / `gateRules` above are
+      // awaited from process- and redis-level CACHES; hanging a mutable
+      // collector off anything reachable through them would accumulate
+      // substitutions across users and leak one caller's requested model id into
+      // another caller's snapshot. This function returns a brand-new object on
+      // every call with no memoization, so the collector's lifetime is exactly
+      // one request.
+      modelSubstitutions: createModelSubstitutionCollector(classifyModelSubstitutionReason),
     },
     status: {
       mode: status.mode,
@@ -531,6 +543,18 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  */
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
   const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
+
+  // Issue #3520 — count silent checkpoint substitutions. This is the single
+  // choke point every SERVER-side graph validation passes through (submit,
+  // whatIf, and the App Blocks bridge), so one emit here covers all of them.
+  // Runs regardless of `result.success`: a parse that substituted and THEN
+  // failed on some other node still substituted, and dropping those would bias
+  // the number toward "this never happens".
+  //
+  // `void` is safe by contract — `emitModelSubstitutions` resolves on every
+  // path and never rejects (see its module note). It is deliberately NOT
+  // awaited: this function is synchronous and on the submit path.
+  void emitModelSubstitutions(externalCtx.modelSubstitutions);
 
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)

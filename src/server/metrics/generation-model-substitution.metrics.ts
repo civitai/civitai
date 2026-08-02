@@ -1,0 +1,100 @@
+// Silent checkpoint SUBSTITUTION counter (issue #3520, phase 1).
+//
+// On a `modelLocked` ecosystem the generation graph replaces a checkpoint
+// version id that is not in the current workflow's visible list with that
+// workflow's `defaultModelId`, returns success, and bills the user — with
+// nothing in the response, the snapshot, or the `block_workflows` read-model
+// saying a different model ran. The behaviour is deliberate and is NOT changed
+// by this counter; the counter exists because the swap is otherwise
+// unmeasurable, and every later decision about it (reject `wrong-workflow`?
+// keep degrading `unrecognized`?) needs a real traffic number first.
+//
+// Emitted from `validateInput` in orchestration-new.service — the single choke
+// point through which every SERVER-side `generationGraph.safeParse` runs
+// (on-site submit, whatIf, and the App Blocks bridge alike). The in-browser form
+// parse never reaches here: only the server attaches a substitution collector.
+//
+// 🔴 WHAT ONE INCREMENT MEANS: one GRAPH VALIDATION that substituted — NOT one
+// user-visible generation. The App Blocks generate path validates TWICE for a
+// single submit (a whatIf cost preflight, then the real submit), each with its
+// own per-request collector, so one block generation with an out-of-list version
+// contributes 2. Read this as a RATE and a TREND, not as a headcount of affected
+// generations; a "how many generations were served the wrong model" figure has
+// to come from the snapshot/log side, not from here.
+//
+// 🔴 ALERTING: use `max_over_time(...[window])`, NOT `rate()`. This is a RARE
+// per-pod counter across ~130 pods: a pod that substitutes once creates its
+// labelled child at 1 and never increments it again, so `rate()`/`increase()`
+// over that child is structurally 0 and an alert keyed on it silently never
+// fires — the counter looks healthy precisely because the event is rare, which
+// is the failure mode this signal exists to prevent.
+//
+// prom-client GOTCHA (same as ~/server/metrics/app-block-runtime.metrics.ts):
+// Next.js can import a module twice (hot reload / route bundling) and prom-client
+// throws if a metric name is registered twice, so the getter below is a
+// get-or-create guard against the DEFAULT global registry.
+//
+// 🔴 CARDINALITY: `reason` is the ONLY label, over a 3-value code-owned union →
+// 3 series, TOTAL, forever. Deliberately NO version id, model id, app id, or
+// user id: this fires once per substituted parse with nothing caching it, the
+// requested version id is caller-controlled and effectively unbounded, and
+// prom-client retains every distinct label set in the Node heap forever (the
+// --max-old-space-size exit-139 OOM class) across ~130 scraped pods. Attribution
+// belongs in the snapshot the caller already receives (which carries the exact
+// requested/applied ids) — alert on the metric, attribute from the snapshot.
+import client, { type Counter, type Registry } from 'prom-client';
+
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+
+function getOrCreateCounter(
+  reg: Registry,
+  name: string,
+  help: string,
+  labelNames: string[]
+): Counter<string> {
+  const existing = reg.getSingleMetric(name) as Counter<string> | undefined;
+  if (existing) return existing;
+  return new client.Counter({ name, help, labelNames, registers: [reg] });
+}
+
+/**
+ * Idempotent: safe to call on every request. Returns the counter instance
+ * (existing or newly created) from the default registry that /api/metrics
+ * scrapes.
+ */
+export function ensureRegisterGenerationModelSubstitutionMetrics(reg: Registry = client.register): {
+  modelSubstitutionsTotal: Counter<string>;
+} {
+  const modelSubstitutionsTotal = getOrCreateCounter(
+    reg,
+    'civitai_generation_model_substitutions_total',
+    'Server-side generation graph validations in which a modelLocked ecosystem SILENTLY replaced the requested checkpoint version with the workflow default, by reason ' +
+      '(wrong-workflow = the version is scoped to a different workflow of the same ecosystem; unrecognized = the version is in no scoped list at all; gated = the version IS offered for this workflow but a gate rule hid it from this user)',
+    ['reason']
+  );
+  return { modelSubstitutionsTotal };
+}
+
+/**
+ * Fail-soft emit of one recorded substitution.
+ *
+ * 🔴 TOTAL, like every emitter in `app-block-runtime.metrics.ts`. This
+ * instruments the GENERATION SUBMIT path: a metrics error (registry collision,
+ * label mismatch) must never propagate, or observing a successful degradation
+ * would turn it into a failed generation — the observability converting a
+ * working request into an outage. The caller guards independently too; the
+ * duplication is deliberate, because the guarantee must not rest on either layer
+ * alone.
+ *
+ * COST: one in-heap counter increment, and only on a parse that actually
+ * substituted. A submit that names an in-list version never reaches here, so the
+ * steady state on healthy traffic is zero emits.
+ */
+export function recordGenerationModelSubstitution(reason: ModelSubstitutionReason): void {
+  try {
+    const { modelSubstitutionsTotal } = ensureRegisterGenerationModelSubstitutionMetrics();
+    modelSubstitutionsTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the generation path */
+  }
+}
