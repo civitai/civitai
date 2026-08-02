@@ -41,6 +41,7 @@ export function RenderHtml({
   withMentions = false,
   allowCustomStyles = true,
   withProfanityFilter = false,
+  allowStickers = false,
   className,
   ...props
 }: Props) {
@@ -92,11 +93,7 @@ export function RenderHtml({
     }
 
     return sanitizeHtml(processedHtml, {
-      // Render-side, so this must NOT re-decide policy: whether a surface may
-      // contain a sticker was settled when the content was written. Stripping
-      // here would blank stickers out of comments that legitimately paid for
-      // them, and rendering is explicitly ungated.
-      allowStickers: true,
+      allowStickers,
       parseStyleAttributes: allowCustomStyles,
       allowedAttributes: {
         ...DEFAULT_ALLOWED_ATTRIBUTES,
@@ -198,13 +195,14 @@ export function RenderHtml({
     withMentions,
     withProfanityFilter,
     thirdPartyAllowed,
+    allowStickers,
   ]);
 
   // Stored comment content carries stickers as empty `<span data-type="sticker">`
   // elements. Resolve their art and fill them in on the client, the same
-  // post-mount hydration the timestamps below use. Deliberately ungated: a
-  // sticker already in someone's comment renders for every reader.
+  // post-mount hydration the timestamps below use.
   const stickerIds = useMemo(() => {
+    if (!allowStickers) return [];
     const ids = [...html.matchAll(/data-type="sticker"[^>]*data-id="(\d{1,9})"/g)].map((m) =>
       Number(m[1])
     );
@@ -212,7 +210,7 @@ export function RenderHtml({
       Number(m[1])
     );
     return [...new Set([...ids, ...reversed])];
-  }, [html]);
+  }, [html, allowStickers]);
   const { sticker: stickerById } = useStickerCosmetics(stickerIds);
 
   useEffect(() => {
@@ -281,4 +279,10 @@ type Props = Omit<TypographyStylesProviderProps, 'children'> & {
   withMentions?: boolean;
   allowCustomStyles?: boolean;
   withProfanityFilter?: boolean;
+  /**
+   * Opt in to drawing sticker cosmetics. Defaults off so a surface that stores
+   * unsanitized HTML can't render a paid sticker for free, and so any rich-text
+   * surface added later fails closed. Only the comment sites pass it.
+   */
+  allowStickers?: boolean;
 };

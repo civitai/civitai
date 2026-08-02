@@ -180,6 +180,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 className="text-sm"
                 withMentions
                 withProfanityFilter
+                allowStickers
               />
             ) : (
               <RichTextEditor
