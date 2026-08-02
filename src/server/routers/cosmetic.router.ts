@@ -14,6 +14,7 @@ import {
   revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
+import { getStickerBalances } from '~/server/services/sticker.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -30,6 +31,11 @@ export const cosmeticRouter = router({
     .query(({ input }) => {
       return getStickerCosmetics(input);
     }),
+  // Remaining uses per owned sticker, so the picker can show a balance instead
+  // of the user discovering it as a failed comment submit.
+  getStickerBalances: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => getStickerBalances(ctx.user.id)),
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),

@@ -504,16 +504,27 @@ export const getShopSectionsWithItems = async ({
         where: {
           shopItem: {
             cosmetic: {
-              ...((cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {}),
+              // Merged into ONE `type` filter. A second `type` key would silently
+              // overwrite the caller's requested types — with the flag off (the
+              // default for everyone), /shop?cosmeticTypes=Badge would return
+              // every non-sticker type instead of badges.
+              ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
+                ? {
+                    type: {
+                      ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
+                      // Stickers stay out of the official shop until the flag is
+                      // on. Rendering is unaffected — this hides the storefront
+                      // entry only.
+                      ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                    },
+                  }
+                : {}),
               // Creator-made cosmetics (createdById set — official items also
               // have an addedById, the mod who listed them) are gated behind
               // the creatorShop feature flag; a section of only creator items
               // disappears entirely for unflagged viewers via the
               // empty-section filter below.
               ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
-              // Stickers stay out of the official shop until the flag is on.
-              // Rendering is unaffected — this hides the storefront entry only.
-              ...(stickersEnabled ? {} : { type: { not: CosmeticType.Sticker } }),
               // A block between viewer and creator (either direction) hides
               // that creator's items even when featured in official sections.
               ...(blockedPairIds.length

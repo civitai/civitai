@@ -7,6 +7,7 @@ import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function StickerPicker({
   onSelect,
@@ -23,6 +24,13 @@ export function StickerPicker({
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
   const { sticker, isLoading } = useOwnedSticker();
+  const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: features.stickers,
+  });
+  const balances = useMemo(
+    () => new Map((balanceRows ?? []).map((b) => [b.cosmeticId, b.remaining])),
+    [balanceRows]
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -70,7 +78,7 @@ export function StickerPicker({
             </div>
           ) : !sticker.length ? (
             <Text size="xs" c="dimmed" ta="center" py="sm">
-              You don&apos;t own any sticker yet. Grab some in the shop.
+              You don&apos;t own any stickers yet. Grab some in the shop.
             </Text>
           ) : !filtered.length ? (
             <Text size="xs" c="dimmed" ta="center" py="sm">
@@ -79,24 +87,39 @@ export function StickerPicker({
           ) : (
             <ScrollArea.Autosize mah={220} type="auto">
               <div className="grid grid-cols-6 gap-1">
-                {filtered.map((item) => (
-                  <UnstyledButton
-                    key={item.id}
-                    title={`:${item.slug}:`}
-                    className="flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5"
-                    onClick={() => {
-                      onSelect(item);
-                      setOpened(false);
-                      setQuery('');
-                    }}
-                  >
-                    <EdgeImage
-                      src={item.url}
-                      options={{ width: 64, anim: item.animated }}
-                      style={{ width: 28, height: 28, objectFit: 'contain' }}
-                    />
-                  </UnstyledButton>
-                ))}
+                {filtered.map((item) => {
+                  const remaining = balances.get(item.id);
+                  const exhausted = remaining === 0;
+                  return (
+                    <UnstyledButton
+                      key={item.id}
+                      // Stickers are consumable in comments; showing the balance
+                      // here is what keeps "not enough uses" from arriving as a
+                      // failed submit.
+                      title={
+                        remaining == null ? `:${item.slug}:` : `:${item.slug}: · ${remaining} left`
+                      }
+                      disabled={exhausted}
+                      className="relative flex items-center justify-center rounded p-1 hover:bg-gray-2 disabled:opacity-40 dark:hover:bg-dark-5"
+                      onClick={() => {
+                        onSelect(item);
+                        setOpened(false);
+                        setQuery('');
+                      }}
+                    >
+                      <EdgeImage
+                        src={item.url}
+                        options={{ width: 64, anim: item.animated }}
+                        style={{ width: 28, height: 28, objectFit: 'contain' }}
+                      />
+                      {remaining != null && (
+                        <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
+                          {remaining}
+                        </span>
+                      )}
+                    </UnstyledButton>
+                  );
+                })}
               </div>
             </ScrollArea.Autosize>
           )}

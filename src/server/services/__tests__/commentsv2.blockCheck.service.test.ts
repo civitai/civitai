@@ -13,7 +13,14 @@ const { db, amIBlockedByUser } = vi.hoisted(() => {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 100, locked: false })),
     },
-    commentV2: { create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 999 })) },
+    commentV2: {
+      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 999 })),
+      // The edit path now runs inside the caller's transaction, so the sticker
+      // charge and the comment write commit together.
+      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 5 })),
+    },
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
   };
   return {
     db: {
@@ -82,6 +89,7 @@ describe('upsertComment — block enforcement on create', () => {
       upsertComment({ ...baseCreate, id: 5 } as Parameters<typeof upsertComment>[0])
     ).resolves.toMatchObject({ id: 5 });
     expect(amIBlockedByUser).not.toHaveBeenCalled();
-    expect(db.commentV2.update).toHaveBeenCalledTimes(1);
+    // The edit runs inside the transaction now, alongside the sticker charge.
+    expect(db.tx.commentV2.update).toHaveBeenCalledTimes(1);
   });
 });

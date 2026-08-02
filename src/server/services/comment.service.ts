@@ -198,27 +198,32 @@ export const createOrUpdateComment = async ({
     });
 
   // Same rule as CommentV2: pay for stickers this edit added, so an empty
-  // comment edited to add stickers isn't free. Throws before the write.
+  // comment edited to add stickers isn't free. Charge and write share one
+  // transaction so a failure can't debit uses and lose the comment.
   const previous = id
     ? await dbWrite.comment.findUnique({ where: { id }, select: { content: true } })
     : null;
-  const chargedStickers = await spendStickerUses({
-    userId: ownerId,
-    surface: 'comment',
-    content: commentInput.content ?? '',
-    previousContent: previous?.content ?? '',
-  });
 
-  const result = await dbWrite.comment.upsert({
-    where: { id: id ?? -1 },
-    create: { ...commentInput, userId: ownerId },
-    update: { ...commentInput },
-    select: {
-      id: true,
-      modelId: true,
-      content: true,
-      nsfw: true,
-    },
+  const { result, chargedStickers } = await dbWrite.$transaction(async (tx) => {
+    const charged = await spendStickerUses({
+      userId: ownerId,
+      surface: 'comment',
+      content: commentInput.content ?? '',
+      previousContent: previous?.content ?? '',
+      tx,
+    });
+    const row = await tx.comment.upsert({
+      where: { id: id ?? -1 },
+      create: { ...commentInput, userId: ownerId },
+      update: { ...commentInput },
+      select: {
+        id: true,
+        modelId: true,
+        content: true,
+        nsfw: true,
+      },
+    });
+    return { result: row, chargedStickers: charged };
   });
   recordStickerUsage({
     track,

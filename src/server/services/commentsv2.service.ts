@@ -172,21 +172,25 @@ export const upsertComment = async ({
 
   if (thread?.locked) throw throwBadRequestError('comment thread locked');
 
-  // Charge before writing: an edit that adds stickers must pay for the ones it
-  // added, or posting an empty comment and editing stickers in would be free.
-  // Throws (and so aborts the whole upsert) if any balance is short.
+  // An edit that adds stickers must pay for the ones it added, or posting an
+  // empty comment and editing stickers in would be free. The spend runs inside
+  // the same transaction as the write below — charging in its own transaction
+  // would debit uses and then lose the comment to any failure in between.
   const previous = data.id
     ? await dbWrite.commentV2.findUnique({ where: { id: data.id }, select: { content: true } })
     : null;
-  const chargedStickers = await spendStickerUses({
-    userId,
-    surface: 'comment',
-    content: data.content ?? '',
-    previousContent: previous?.content ?? '',
-  });
+  const chargeStickers = (tx: Prisma.TransactionClient) =>
+    spendStickerUses({
+      userId,
+      surface: 'comment',
+      content: data.content ?? '',
+      previousContent: previous?.content ?? '',
+      tx,
+    });
 
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
+      const chargedStickers = await chargeStickers(tx);
       if (!thread) {
         const parentThread = parentThreadId
           ? await tx.thread.findUnique({ where: { id: parentThreadId } })
@@ -219,15 +223,20 @@ export const upsertComment = async ({
       return created;
     });
   }
-  const updated = await dbWrite.commentV2.update({
-    where: { id: data.id },
-    data,
-    select: commentV2Select,
+  // Wrapped so the edit's charge and the edit itself commit together.
+  const { updated, charged } = await dbWrite.$transaction(async (tx) => {
+    const chargedStickers = await chargeStickers(tx);
+    const row = await tx.commentV2.update({
+      where: { id: data.id },
+      data,
+      select: commentV2Select,
+    });
+    return { updated: row, charged: chargedStickers };
   });
   recordStickerUsage({
     track,
     userId,
-    charged: chargedStickers,
+    charged,
     entityType: 'comment',
     entityId: updated.id,
   });

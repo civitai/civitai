@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { isPreview, isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { StickerContentForm } from '~/shared/utils/sticker-token';
 import { netNewStickerPlacements } from '~/shared/utils/sticker-token';
 
 /**
@@ -16,31 +17,50 @@ export type StickerSurface = 'chat' | 'comment';
 const CONSUMES: Record<StickerSurface, boolean> = { chat: false, comment: true };
 
 /**
- * Spends one use per placement, atomically and all-or-nothing.
+ * How each surface stores a sticker. Only the form a surface actually renders
+ * counts — a comment shows spans, so literal `:sticker:12:` text in one is just
+ * text and must not be charged.
+ */
+const CONTENT_FORM: Record<StickerSurface, StickerContentForm> = {
+  chat: 'token',
+  comment: 'span',
+};
+
+/**
+ * Spends one use per placement, all-or-nothing.
  *
- * The balance check and the decrement are the same statement — a read-then-write
- * would let two concurrent submissions both pass a check against the same
- * balance. Zero rows updated means insufficient (or not owned), and the whole
- * transaction rolls back, so a submission is never partially charged.
+ * Holdings are locked `FOR UPDATE` before the balance is read, so two concurrent
+ * submissions serialize rather than both passing a check against the same
+ * balance. If the total across every holding can't cover the placements, nothing
+ * is written.
+ *
+ * Pass the caller's `tx` whenever the spend accompanies a write. Committing
+ * separately would debit uses and then lose the comment to any failure in
+ * between; sharing the transaction makes the charge and the content atomic.
  */
 export async function spendStickerUses({
   userId,
   surface,
   content,
   previousContent,
+  tx,
 }: {
   userId: number;
   surface: StickerSurface;
   content: string;
   previousContent?: string;
+  tx?: Prisma.TransactionClient;
 }) {
   if (!CONSUMES[surface]) return new Map<number, number>();
 
-  const delta = netNewStickerPlacements(content, previousContent ?? '');
+  const delta = netNewStickerPlacements(content, previousContent ?? '', CONTENT_FORM[surface]);
   if (!delta.size) return delta;
 
-  await dbWrite.$transaction(async (tx) => {
-    for (const [cosmeticId, count] of delta) {
+  const spend = async (tx: Prisma.TransactionClient) => {
+    // Sorted so concurrent submissions lock holdings in the same order. Looping
+    // in content order lets two submissions sharing two stickers each take one
+    // lock and wait on the other, which Postgres resolves by aborting one.
+    for (const [cosmeticId, count] of [...delta].sort((a, b) => a[0] - b[0])) {
       // A user can hold several rows for one cosmetic — the PK is
       // [userId, cosmeticId, claimKey], so a purchase and a grant coexist.
       // FOR UPDATE serializes concurrent submissions against these rows, which
@@ -80,7 +100,10 @@ export async function spendStickerUses({
         owed -= take;
       }
     }
-  });
+  };
+
+  if (tx) await spend(tx);
+  else await dbWrite.$transaction(spend);
 
   return delta;
 }
@@ -145,25 +168,27 @@ export type StickerUsageRow = {
 
 /** Remaining balance per owned sticker; NULL entries are unlimited. */
 export async function getStickerBalances(userId: number) {
-  const rows = await dbWrite.$queryRaw<{ cosmeticId: number; remaining: number | null }[]>`
-    SELECT uc."cosmeticId", MAX(uc."remaining") AS "remaining"
+  // SUM, not MAX: spending drains across holdings, so the spendable balance is
+  // the total. A NULL holding is unlimited and wins outright — bool_or gives
+  // that in the same pass rather than a second query.
+  const rows = await dbRead.$queryRaw<
+    { cosmeticId: number; remaining: number | null; unlimited: boolean }[]
+  >`
+    SELECT
+      uc."cosmeticId",
+      SUM(uc."remaining")::int AS "remaining",
+      bool_or(uc."remaining" IS NULL) AS "unlimited"
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     WHERE uc."userId" = ${userId} AND c.type = 'Sticker'::"CosmeticType"
     GROUP BY uc."cosmeticId"
   `;
 
-  // A NULL anywhere for a cosmetic means unlimited, and MAX ignores NULLs — so
-  // re-check for an unlimited holding rather than trusting the aggregate.
-  const unlimited = await dbWrite.$queryRaw<{ cosmeticId: number }[]>`
-    SELECT DISTINCT "cosmeticId" FROM "UserCosmetic"
-    WHERE "userId" = ${userId} AND "remaining" IS NULL
-  `;
-  const unlimitedIds = new Set(unlimited.map((r) => r.cosmeticId));
-
-  return new Map(
-    rows.map((r) => [r.cosmeticId, unlimitedIds.has(r.cosmeticId) ? null : r.remaining])
-  );
+  return rows.map(({ cosmeticId, remaining, unlimited }) => ({
+    cosmeticId,
+    // null = unlimited, which is every non-consumable holding.
+    remaining: unlimited ? null : remaining ?? 0,
+  }));
 }
 
 export const stickerUsesFromCosmeticData = (data: Prisma.JsonValue | null | undefined) => {
