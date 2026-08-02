@@ -61,9 +61,18 @@ describe('sticker autocomplete', () => {
     await expect.element(page.getByText(/gumdong_heart/).first()).toBeInTheDocument();
   });
 
-  test('does not suggest anything the user does not own', async () => {
+  // Byte for byte the flag-off state as well as the owns-nothing state: no popup
+  // at all, rather than a dropdown advertising a feature they may not have.
+  test('shows no popup when there is nothing to offer', async () => {
     renderWithProviders(<Harness available={[]} />);
     await typeInto(' :gu');
+    expect(document.body.textContent).not.toContain('No stickers match');
+    expect(document.body.textContent).not.toContain('gumdong_heart');
+  });
+
+  test('still says so when a query matches none of what you own', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto(' :zz');
     await expect.element(page.getByText('No stickers match').first()).toBeInTheDocument();
   });
 

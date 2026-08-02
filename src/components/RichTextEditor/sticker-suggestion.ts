@@ -26,6 +26,11 @@ export function getStickerSuggestions(getAvailable: () => ResolvedSticker[]) {
   const suggestion: Omit<SuggestionOptions<ResolvedSticker>, 'editor'> = {
     pluginKey: StickerSuggestionPluginKey,
     char: ':',
+    // No popup at all when there is nothing to offer. Insertion was already
+    // blocked — storage is the single choke point and it is empty — but a
+    // "No stickers match" dropdown advertises a feature the viewer may not have,
+    // whether that's the flag being off or every balance being spent.
+    allow: () => getAvailable().length > 0,
     allowSpaces: false,
     // Without this the trigger fires on the `:` in `https://` and `12:30`.
     allowedPrefixes: [' ', '\n'],
