@@ -766,6 +766,7 @@ function ChatInputBox({
         classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
       />
       <StickerPicker
+        surface="chat"
         disabled={isMuted}
         onSelect={(sticker) =>
           handleChatTyping(

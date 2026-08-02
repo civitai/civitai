@@ -65,6 +65,8 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
     },
     async onSuccess() {
       await queryUtils.comment.getCommentsById.invalidate();
+      // Placements just spent uses, so the picker's counts are stale.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
 
       setShowCommentActions(false);
       form.reset();

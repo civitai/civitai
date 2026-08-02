@@ -66,8 +66,13 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
 // and render as the paid sticker for anyone who pasted it, owned or not.
 // Denied by default so a surface added later fails closed; the surfaces that
 // charge for stickers opt in.
+// Normalised so the strip is strictly BROADER than every consumer. All four
+// matchers (the RenderHtml hydrator, Tiptap parseHTML, the id-collection regex
+// and countStickerPlacements) are exact-lowercase today, so `STICKER` and
+// ` sticker` render nowhere — but if any one of them is later made lenient
+// about case or whitespace, a narrower strip would quietly open a gap.
 const isStickerSpan = (frame: { tag: string; attribs: Record<string, string> }) =>
-  frame.tag === 'span' && frame.attribs['data-type'] === 'sticker';
+  frame.tag === 'span' && frame.attribs['data-type']?.trim().toLowerCase() === 'sticker';
 
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;

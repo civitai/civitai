@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { ChangelogType, DomainColor } from '~/shared/utils/prisma/enums';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -20,7 +21,7 @@ export type CreateChangelogInput = z.infer<typeof createChangelogInput>;
 export const createChangelogInput = z.object({
   title: z.string().min(1),
   titleColor: z.string().optional(),
-  content: z.string().min(1),
+  content: getSanitizedStringSchema(),
   link: z.url().optional().or(z.literal('')),
   //   link: z.string().optional().refine(value => !value || /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})(\/[\w.-]*)*\/?$/.test(value), {
   //     message: "Please provide a valid URL",

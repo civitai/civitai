@@ -7,15 +7,20 @@ import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { StickerSurface } from '~/shared/utils/sticker-token';
+import { STICKER_SURFACES } from '~/shared/utils/sticker-token';
 import { trpc } from '~/utils/trpc';
 
 export function StickerPicker({
   onSelect,
+  surface = 'comment',
   target,
   disabled,
   position = 'top-end',
 }: {
   onSelect: (sticker: ResolvedSticker) => void;
+  /** Balances are only meaningful where placements are charged. */
+  surface?: StickerSurface;
   target?: React.ReactNode;
   disabled?: boolean;
   position?: 'top' | 'top-end' | 'top-start' | 'bottom' | 'bottom-end' | 'bottom-start';
@@ -24,12 +29,14 @@ export function StickerPicker({
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
   const { sticker, isLoading } = useOwnedSticker();
+  // DMs are free, so a "3 left" badge there would be actively misleading.
+  const showBalances = STICKER_SURFACES[surface].consumes;
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
-    enabled: features.stickers,
+    enabled: features.stickers && showBalances,
   });
   const balances = useMemo(
-    () => new Map((balanceRows ?? []).map((b) => [b.cosmeticId, b.remaining])),
-    [balanceRows]
+    () => new Map((showBalances ? balanceRows ?? [] : []).map((b) => [b.cosmeticId, b.remaining])),
+    [balanceRows, showBalances]
   );
 
   const filtered = useMemo(() => {

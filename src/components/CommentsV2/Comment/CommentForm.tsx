@@ -82,6 +82,8 @@ export const CommentForm = ({
   const { mutate, isPending: isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
       form.reset();
+      // Placements just spent uses, so the picker's counts are stale.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
       // if it has an id, just set the data with state
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.

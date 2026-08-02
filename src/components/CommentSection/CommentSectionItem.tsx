@@ -44,6 +44,8 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
       await queryUtils.comment.getCommentsById.invalidate();
+      // Placements just spent uses, so the picker's counts are stale.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
       setEditComment(null);
     },
     onError(error) {

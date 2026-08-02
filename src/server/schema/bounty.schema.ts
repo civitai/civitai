@@ -15,6 +15,7 @@ import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -51,7 +52,7 @@ export const bountyDetailsSchema = z.object({
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
-  description: z.string().nonempty(),
+  description: getSanitizedStringSchema(),
   unitAmount: z
     .number()
     .min(constants.bounties.minCreateAmount)
