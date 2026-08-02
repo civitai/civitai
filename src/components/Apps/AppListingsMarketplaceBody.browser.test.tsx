@@ -120,10 +120,15 @@ const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
  * so a single test that clicks a toggle and then reads the tRPC args would assert
  * the OLD value and pass for the wrong reason. Keep the two halves separate.
  */
-// eslint-disable-next-line react-hooks/rules-of-hooks -- not a real hook: the
-// scaffold mocks `next/router` with `useRouter: () => router`, a plain function
-// returning a singleton. Calling it at module scope is the established idiom here
-// (a per-file `vi.mock` silently loses to the setup-file mock — see AppEditPage).
+// NOTE the disable is the LAST comment line before the statement — an
+// `eslint-disable-next-line` followed by MORE comment lines disables the next
+// COMMENT, not the code, and silently does nothing.
+//
+// Not a real hook: the scaffold mocks `next/router` with `useRouter: () => router`,
+// a plain function returning a singleton, so module-scope is fine (and is the
+// established idiom — a per-file `vi.mock` silently loses to the setup-file mock;
+// see AppEditPage.browser.test.tsx).
+// eslint-disable-next-line react-hooks/rules-of-hooks
 const router = useRouter();
 
 beforeEach(() => {
