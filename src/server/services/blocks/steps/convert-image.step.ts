@@ -1,5 +1,7 @@
 import * as z from 'zod';
 import { civitaiHostedImageUrlSchema } from '~/server/schema/blocks/civitai-image-url';
+import { mediaFromBlobs } from './output';
+import type { StepOutputMedia } from './output';
 import type { BlockStep, OrchestratorStepTemplate } from './index';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,29 +33,36 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //     and no way to reach a gated / early-access / Private model version through
 //     it.
 //
-// 🔴 THE ONE THING THAT IS NOT LOCALLY VERIFIABLE is the orchestrator's ACTUAL
-// price for this step. It could not be measured from this environment (it needs
-// a real orchestrator token and a live `whatif` call). `PRICE_BUZZ` below is
-// therefore a DECLARED CEILING chosen conservatively, and the router treats a
-// realized cost ABOVE it as a cap-accounting shortfall it must top up and
-// report — see `civitai_app_block_step_price_divergence_total` in
-// `blocks.router.ts`. That instrumentation exists precisely because this number
-// is the one input to the money path that was not verified before shipping.
+// ✅ THE PRICE IS NOW MEASURED, NOT DECLARED. A real `whatif:true` submit of
+// this exact step shape was run against the live orchestrator from the PR
+// preview environment on 2026-08-02, and a real (non-whatif) submit was run and
+// polled to `succeeded`. Both returned `cost.total = 1`
+// (`cost: {base:1, factors:{base:1}, fixed:{}, tips:{...}, total:1}`), and the
+// per-job cost was likewise `1`. `PRICE_BUZZ = 1` therefore matches the
+// orchestrator's own quote rather than being a conservative guess.
+//
+// 🔴 That measurement does NOT make the price self-enforcing, so the submit path
+// no longer trusts it as the ceiling: it runs its own `whatif` before the
+// per-call `buzzBudget` gate and reserves `max(declared, quoted)`. See the
+// ORCHESTRATOR QUOTE section in `blocks.router.ts`. A single measurement is one
+// point on a rate card that can change; the gate must not depend on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * The declared exact price, in Buzz.
  *
  * Reserved against the per-user daily cap, the per-app aggregate cap and (when
- * present) the dev-session cap BEFORE submit, and gated against the block
- * token's per-call `buzzBudget`. Must be a positive integer — enforced at
- * registry load (`assertStepInvariants`).
+ * present) the dev-session cap BEFORE submit. Must be a positive integer —
+ * enforced at registry load (`assertStepInvariants`).
  *
- * Set to 1: this is a CPU-only transform, so the honest expectation is that the
- * orchestrator charges at or near zero. A price of 1 is the smallest value the
- * invariant permits and errs in the SAFE direction (over-reserving against an
- * abuse cap is stricter; under-reserving is a hole). It is not a claim about
- * the orchestrator's rate card — see the header.
+ * Set to 1 because that is what the orchestrator actually quoted for this step
+ * shape (see the header for the measurement). It is also the value `estimateBuzz`
+ * shows the block, and the registry's load-time invariant forces those two to
+ * agree.
+ *
+ * 🔴 It is NOT the enforced ceiling. The per-call `buzzBudget` gate runs against
+ * the orchestrator's live `whatif` quote, so a rate-card change is caught at
+ * submit rather than by a human reading a counter later.
  */
 export const CONVERT_IMAGE_PRICE_BUZZ = 1;
 
@@ -123,11 +132,43 @@ const convertImageParamsSchema = z
 
 export type ConvertImageStepParams = z.infer<typeof convertImageParamsSchema>;
 
+/**
+ * The orchestrator's completed-step shape for `convertImage`.
+ *
+ * 🔴 SINGULAR `blob`, not `images` and not `blobs` — `ConvertImageOutput` in
+ * `@civitai/client` is `{ blob?: ImageBlob }`, and `product-badge.service.ts`
+ * reads `step.output.blob.url`. This is the whole reason output extraction had
+ * to become a registry field: both `workflow.service` extractors were blind to
+ * this step in TWO independent ways (the `$type` was not in their allowlist, and
+ * the key is not one they read), so a paid-for conversion could never be
+ * retrieved.
+ *
+ * Shape confirmed against a REAL orchestrator response (2026-08-02, live
+ * `convertImage` workflow polled to `succeeded`): `step.output` had exactly the
+ * key `blob`, with `available` transitioning false→true, plus `url`, `width`
+ * (797) and `height` (1024). No `images` key and no `blobs` key were present.
+ */
+type ConvertImageOutputStepLike = {
+  output?: {
+    blob?: {
+      url?: string | null;
+      available?: boolean;
+      width?: number | null;
+      height?: number | null;
+      nsfwLevel?: string | null;
+    } | null;
+  } | null;
+};
+
 export const convertImageStep = {
   id: 'convert-image',
   orchestratorType: 'convertImage',
   billingMode: 'prepaidFixed',
   moderationPosture: 'none',
+  // References no AIR resource of any kind — no checkpoint, no LoRA, no upscale
+  // model. Nothing for the entitlement belt to gate. ENFORCED at registry load,
+  // not just declared: clause 7 deep-scans the built step for an AIR URN.
+  resourcePolicy: { kind: 'none' },
   paramSchema: convertImageParamsSchema,
   variants: [DEFAULT_VARIANT],
   resolveVariant: () => DEFAULT_VARIANT,
@@ -143,6 +184,37 @@ export const convertImageStep = {
       image: params.image,
       ...(params.transforms ? { transforms: params.transforms } : {}),
       output: params.output,
+    },
+  }),
+  /**
+   * The SINGULAR `blob` this step type returns → the shared media shape. The
+   * availability + non-empty-url filter comes from `mediaFromBlobs`, so it is
+   * the same rule the other extraction paths apply, in one place.
+   */
+  extractOutput: (step: unknown): StepOutputMedia[] =>
+    mediaFromBlobs((step as ConvertImageOutputStepLike | null | undefined)?.output?.blob),
+  /**
+   * A canonical COMPLETED step, for the load-time extraction probe.
+   *
+   * 🔴 Copied from a real captured orchestrator response (2026-08-02), not
+   * invented to match `extractOutput`. A sample written from the extractor would
+   * make the probe assert only that the code agrees with itself — the exact
+   * both-wrong-blind failure where the fake encodes the same wrong shape as the
+   * code under test. Field names, nesting and the `available` flag here are the
+   * observed ones; only the url/signature are shortened.
+   */
+  canonicalOutputFor: (): unknown => ({
+    $type: 'convertImage',
+    name: 'block-step',
+    status: 'succeeded',
+    output: {
+      blob: {
+        id: 'W9E3ZK1G1RJSH6S88HT3GW5ZW0.webp',
+        url: 'https://orchestration-new.civitai.com/v2/consumer/blobs/W9E3ZK1G1RJSH6S88HT3GW5ZW0.webp?sig=probe',
+        available: true,
+        width: 797,
+        height: 1024,
+      },
     },
   }),
 } satisfies BlockStep<ConvertImageStepParams>;

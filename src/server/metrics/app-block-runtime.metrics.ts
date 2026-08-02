@@ -234,7 +234,7 @@ type Bundle = {
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
-  stepPriceDivergenceTotal: Counter<string>;
+  stepPriceCheckTotal: Counter<string>;
 };
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
@@ -378,28 +378,43 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['reason']
   );
 
-  // ── `kind: 'step'` prepaidFixed PRICE DIVERGENCE ─────────────────────────────
-  // 🔴 This counter instruments the ONE input to the step bridge's money path
-  // that could not be verified before shipping: the orchestrator's ACTUAL price
-  // for a `prepaidFixed` step type. The registry DECLARES an exact price, gates
-  // the block token's per-call budget against it, and reserves it on every cap
-  // before submit. If the orchestrator ever bills MORE than the declared price,
-  // the declaration is wrong and the entry needs a higher price — or a different
-  // billing mode entirely, because "deterministic cost knowable before
-  // execution" would have turned out to be false for it.
+  // ── `kind: 'step'` prepaidFixed PRICE CHECK ──────────────────────────────────
+  // 🔴 Instruments whether the registry's DECLARED price still matches what the
+  // orchestrator actually bills for a `prepaidFixed` step type. A declared price
+  // that drifts below the real one leaves every cap counter short.
   //
-  // The submit path corrects the cap counters for the overage itself; this
-  // counter is what makes the correction VISIBLE instead of silent. A non-zero
-  // rate here is a registry bug, not a user problem.
+  // 🔴 WHY THIS FIRES ON EVERY SUBMIT, NOT ONLY ON A DIVERGENCE. A
+  // divergence-only counter cannot distinguish "the price is right" from "the
+  // detector never ran" — both read as a flat zero forever, and the second is
+  // the state where the mitigation is inert. That is not a hypothetical: the
+  // detector reads `snapshot.cost?.total`, which `snapshotFromWorkflow` OMITS
+  // when the orchestrator returns no numeric cost, and the step submit passes no
+  // `wait`, so the response returns as soon as the job queues. (Measured
+  // 2026-08-02 against the live orchestrator: a queued `convertImage` submit —
+  // HTTP 202, status `processing` — DOES carry `cost.total`, so the precondition
+  // holds today. It was unverified before, and it is not guaranteed for a future
+  // step type.)
   //
-  // Cardinality: one `step` label, drawn from the code-owned registry keys
-  // (never client input — the wire enum is derived from those same keys, so an
-  // unregistered id cannot reach here). One series per registered step type.
-  const stepPriceDivergenceTotal = getOrCreateCounter(
+  // So the `outcome` label carries the non-divergent case too:
+  //   exact  — realized cost ≤ the reservation. The healthy state, and PROOF the
+  //            detector is live.
+  //   over   — realized cost EXCEEDED the reservation. A registry bug: the entry
+  //            needs a higher price, or a different billing mode, because
+  //            "deterministic cost knowable before execution" was false for it.
+  //   absent — no numeric cost on the snapshot, so nothing could be compared.
+  //            The state that used to be indistinguishable from `exact`.
+  //
+  // Alert on `outcome="over"`; read `outcome="exact"` to confirm the check runs
+  // at all; investigate a rising `outcome="absent"`.
+  //
+  // Cardinality: `step` is drawn from the code-owned registry keys (never client
+  // input — the wire enum derives from those same keys, so an unregistered id
+  // cannot reach here); `outcome` is a closed 3-value set. Bounded and small.
+  const stepPriceCheckTotal = getOrCreateCounter(
     reg,
-    'civitai_app_block_step_price_divergence_total',
-    "App Block `kind:'step'` submits whose REALIZED orchestrator cost exceeded the registry's DECLARED prepaidFixed price, by step id. Non-zero means the declared price is wrong.",
-    ['step']
+    'civitai_app_block_step_price_check_total',
+    "App Block `kind:'step'` prepaidFixed price checks at submit, by step id and outcome (exact = realized cost within the reservation; over = the orchestrator billed MORE than reserved, i.e. the declared price is wrong; absent = the snapshot carried no numeric cost, so no comparison was possible)",
+    ['step', 'outcome']
   );
 
   return {
@@ -410,22 +425,32 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
-    stepPriceDivergenceTotal,
+    stepPriceCheckTotal,
   };
 }
 
 /**
- * Fail-soft emit of one `prepaidFixed` step price divergence (realized cost
- * exceeded the registry's declared price). Called from the step submit path
- * AFTER the money has already moved.
+ * The closed outcome set for `civitai_app_block_step_price_check_total`. Keeping
+ * it a union (rather than a bare string) is what bounds the label cardinality at
+ * the type level — a caller cannot invent a fourth value.
+ */
+export type StepPriceCheckOutcome = 'exact' | 'over' | 'absent';
+
+/**
+ * Fail-soft emit of ONE `prepaidFixed` step price check. Called from the step
+ * submit path on EVERY submit, after the money has already moved.
+ *
+ * 🔴 Emitted unconditionally — including `outcome: 'exact'` — so a flat
+ * divergence line can be told apart from a detector that never ran. See the
+ * counter's definition above for why that distinction is load-bearing.
  *
  * 🔴 TOTAL, like every emitter in this module. It reports on an already-billed
  * submit; a metrics error must never turn a successful generation into a 500.
  */
-export function recordStepPriceDivergence(step: string): void {
+export function recordStepPriceCheck(step: string, outcome: StepPriceCheckOutcome): void {
   try {
-    const { stepPriceDivergenceTotal } = ensureRegisterAppBlockRuntimeMetrics();
-    stepPriceDivergenceTotal.inc({ step });
+    const { stepPriceCheckTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    stepPriceCheckTotal.inc({ step, outcome });
   } catch {
     /* instrument-only — never let a metrics error touch an already-billed submit */
   }

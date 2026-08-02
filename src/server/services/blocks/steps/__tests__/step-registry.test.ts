@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
+  assertOrchestratorTypesUnique,
   assertStepInvariants,
+  containsAirReference,
   estimateStepBuzz,
   getStep,
+  getStepByOrchestratorType,
   isBillingModeImplemented,
   isModerationPostureImplemented,
+  isResourcePolicyImplemented,
   listRegisteredSteps,
+  mediaFromBlobs,
+  NATIVELY_EXTRACTED_STEP_TYPES,
   planStepSpend,
   REGISTERED_STEP_IDS,
   STEP_BILLING_MODES,
@@ -16,6 +22,7 @@ import {
   type BlockStep,
   type StepBillingMode,
 } from '~/server/services/blocks/steps';
+import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 
 /**
  * Coverage for the App Blocks step-type registry (RFC #3515 migration step 1).
@@ -40,12 +47,21 @@ type FixtureParams = { value: number };
 
 const fixtureParamSchema = z.object({ value: z.number().int().min(1).max(10) }).strict();
 
+/** The orchestrator-shaped completed step the fixture's extractor reads. */
+const FIXTURE_OUTPUT_STEP = {
+  $type: 'fixtureType',
+  output: {
+    blob: { url: 'https://blobs.example/fixture.webp', available: true, width: 4, height: 5 },
+  },
+};
+
 function makeFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
   const base = {
     id: 'fixture-step',
     orchestratorType: 'fixtureType',
     billingMode: 'prepaidFixed',
     moderationPosture: 'none',
+    resourcePolicy: { kind: 'none' },
     paramSchema: fixtureParamSchema,
     variants: ['default'],
     resolveVariant: () => 'default',
@@ -53,6 +69,12 @@ function makeFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
     priceForVariant: () => 7,
     estimateBuzz: () => 7,
     buildStep: (p: FixtureParams) => ({ $type: 'fixtureType', input: { value: p.value } }),
+    extractOutput: (step: unknown) =>
+      mediaFromBlobs(
+        (step as { output?: { blob?: OrchestratorBlobLike | null } } | null | undefined)?.output
+          ?.blob
+      ),
+    canonicalOutputFor: (): unknown => FIXTURE_OUTPUT_STEP,
   } satisfies BlockStep<FixtureParams>;
   return { ...base, ...overrides } as AnyBlockStep;
 }
@@ -87,6 +109,49 @@ describe('block step registry — the shipped population', () => {
           step.paramSchema.safeParse(withUnknown).success,
           `step '${id}' variant '${variant}' silently ACCEPTED an unknown param — ` +
             'an unknown param on a money path is a wrong-generation bug, not a validation nit'
+        ).toBe(false);
+      }
+    }
+  });
+
+  // 🔴 THE FIX-1 POPULATION TEST. Every registered step must be RETRIEVABLE on
+  // BOTH read surfaces. Run over `listRegisteredSteps()` so a step registered
+  // tomorrow is covered by this test today — which is the whole reason output
+  // extraction became a registry field instead of a fourth hardcoded branch.
+  it('every registered entry is resolvable by $type and surfaces media from its canonical output', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      expect(
+        getStepByOrchestratorType(step.orchestratorType),
+        `step '${id}' is not resolvable by its own orchestratorType — both workflow.service ` +
+          'extractors would skip it and its output would be unreachable'
+      ).toBe(step);
+      expect(
+        NATIVELY_EXTRACTED_STEP_TYPES,
+        `step '${id}' shadows a natively-extracted $type`
+      ).not.toContain(step.orchestratorType);
+      for (const variant of step.variants) {
+        const media = step.extractOutput(step.canonicalOutputFor(variant));
+        expect(
+          media.length,
+          `step '${id}' variant '${variant}' extracted no media`
+        ).toBeGreaterThan(0);
+        for (const item of media) expect(item.url.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('every registered entry declares an IMPLEMENTED resource policy, enforced against its BUILT step', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      expect(isResourcePolicyImplemented(step.resourcePolicy), `step '${id}' resourcePolicy`).toBe(
+        true
+      );
+      if (step.resourcePolicy.kind !== 'none') continue;
+      for (const variant of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+        expect(
+          containsAirReference(step.buildStep(params).input),
+          `step '${id}' declares resourcePolicy 'none' but its built step carries an AIR — ` +
+            'that reaches the orchestrator around the generation-graph entitlement belt'
         ).toBe(false);
       }
     }
@@ -176,6 +241,137 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     expect(() =>
       assertStepInvariants('fixture-step', makeFixtureStep({ moderationPosture: 'textOutput' }))
     ).toThrow(/moderationPosture 'textOutput' has no implemented handler/);
+  });
+
+  // ── 🔴 FIX 3 — the ENTITLEMENT axis ────────────────────────────────────────
+  // `BlockRecipe` carries `resourceAllowlist` + `checkpointPolicy`; the first
+  // draft of this generalization dropped both, while this PR's own triage
+  // disqualified `imageUpscaler` PRECISELY because its arbitrary-AIR `model`
+  // field would reach the orchestrator around the entitlement belt. Without a
+  // required, fail-closed field, an entry with exactly that shape registers
+  // cleanly and every other invariant passes.
+
+  it('rejects a resource policy with no implemented handler', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          resourcePolicy: { kind: 'staticAllowlist', airs: ['urn:air:sdxl:checkpoint:x@1'] },
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/resourcePolicy 'staticAllowlist' has no implemented handler/);
+  });
+
+  // 🔴 THE `imageUpscaler` CASE, as a registry-level guard. The entry declares
+  // 'none' honestly-looking, but its builder forwards an AIR URN. Every other
+  // invariant passes: the params parse, the schema is strict, the price is a
+  // positive integer that equals the estimate, the variant resolves, the output
+  // extracts. Only this clause catches it.
+  it("rejects a resourcePolicy 'none' whose BUILT step actually carries an AIR reference", () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          buildStep: (p: { value: number }) => ({
+            $type: 'fixtureType',
+            input: {
+              value: p.value,
+              model: 'urn:air:sdxl:checkpoint:civitai:4384@128713',
+            },
+          }),
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/resourcePolicy 'none' is contradicted — buildStep\(\) emitted an AIR reference/);
+  });
+
+  it('finds an AIR nested anywhere in the built input, not just at the top level', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          buildStep: (p: { value: number }) => ({
+            $type: 'fixtureType',
+            input: { value: p.value, nested: { deep: [{ air: 'URN:AIR:SDXL:lora:civitai:1@2' }] } },
+          }),
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/resourcePolicy 'none' is contradicted/);
+  });
+
+  // ── 🔴 FIX 1 — output extraction ───────────────────────────────────────────
+  // A registered step whose output nothing can read is a capability the caller
+  // is CHARGED for and can never retrieve: it polls to `succeeded` with an empty
+  // result forever. No other invariant here can see that.
+
+  it('rejects an entry whose extractOutput surfaces NOTHING for its own canonical output', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ extractOutput: () => [] } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractOutput\(\) returned no media for canonicalOutputFor\(\)/);
+  });
+
+  // The realistic shape of the shipped bug: the extractor reads the WRONG key
+  // (`images`/`blobs` instead of the singular `blob` convertImage returns), so
+  // it silently yields nothing on a real response.
+  it('rejects an extractOutput that reads the wrong output key', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          extractOutput: (step: unknown) =>
+            mediaFromBlobs(
+              (step as { output?: { blobs?: OrchestratorBlobLike[] } } | undefined)?.output?.blobs
+            ),
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractOutput\(\) returned no media for canonicalOutputFor\(\)/);
+  });
+
+  it('rejects extracted media with an empty url (a block would render a dead link)', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          extractOutput: () => [{ url: '', width: null, height: null, nsfwLevel: null }],
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractOutput\(\) returned media with no url/);
+  });
+
+  it('rejects an orchestratorType that SHADOWS a natively-extracted $type', () => {
+    // Placing the registry branch before workflow.service's native `$type` filter
+    // is only safe because of this guard — otherwise a registered entry could
+    // silently take over textToImage extraction.
+    for (const nativeType of NATIVELY_EXTRACTED_STEP_TYPES) {
+      expect(() =>
+        assertStepInvariants(
+          'fixture-step',
+          makeFixtureStep({ orchestratorType: nativeType } as Partial<AnyBlockStep>)
+        )
+      ).toThrow(
+        /is natively extracted by workflow\.service — a registered step must not shadow it/
+      );
+    }
+  });
+
+  it('rejects two entries claiming the SAME orchestratorType (single-winner lookup)', () => {
+    expect(() =>
+      assertOrchestratorTypesUnique([
+        ['a', makeFixtureStep({ id: 'a' } as Partial<AnyBlockStep>)],
+        ['b', makeFixtureStep({ id: 'b' } as Partial<AnyBlockStep>)],
+      ])
+    ).toThrow(/orchestratorType 'fixtureType' is already claimed by 'a'/);
+  });
+
+  it('accepts distinct orchestratorTypes', () => {
+    expect(() =>
+      assertOrchestratorTypesUnique([
+        ['a', makeFixtureStep({ id: 'a' } as Partial<AnyBlockStep>)],
+        ['b', makeFixtureStep({ id: 'b', orchestratorType: 'otherType' } as Partial<AnyBlockStep>)],
+      ])
+    ).not.toThrow();
   });
 
   it('rejects an entry declaring no variants', () => {
@@ -339,7 +535,40 @@ describe('block step registry — billing-mode dispatch', () => {
     const step = makeFixtureStep();
     const params = step.paramSchema.parse(step.canonicalParamsFor('default'));
     const plan = planStepSpend(step, params);
-    expect(plan).toEqual({ reserveBuzz: 7, postPaidSettle: false, stepTimeoutSeconds: null });
+    expect(plan).toEqual({
+      reserveBuzz: 7,
+      postPaidSettle: false,
+      // 🔴 The reservation is an EXACT price, so an overage is a permanent cap
+      // shortfall the submit path must top up. This flag is what keeps that
+      // `prepaidFixed`-shaped correction from running for a mode whose
+      // reservation is a CEILING (which the post-paid settle would then unwind
+      // from the un-topped-up number). Mutually exclusive with `postPaidSettle`.
+      correctReservationOverage: true,
+      stepTimeoutSeconds: null,
+    });
+  });
+
+  // 🔴 LABELLED HONESTLY: this is an INVARIANT GUARD, not regression coverage.
+  // Only `prepaidFixed` is registered, so `correctReservationOverage` is always
+  // true and `postPaidSettle` always false — no mutation of the ROUTER'S gate on
+  // this flag can fail today (verified: deleting `if (plan.correctReservationOverage)`
+  // kills zero tests). What IS proven is that the flag is load-bearing: flipping
+  // it to false in the handler kills 6 tests, so the router really reads it. The
+  // false branch becomes reachable — and this guard becomes real coverage — when
+  // a `timeBounded` entry is registered.
+  it('correctReservationOverage and postPaidSettle are MUTUALLY EXCLUSIVE for every mode', () => {
+    // Over the real population, not a fixture: a future entry that sets both
+    // would double-handle its overage — topped up here AND settled down there.
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+        const plan = planStepSpend(step, params);
+        expect(
+          plan.correctReservationOverage && plan.postPaidSettle,
+          `step '${id}' plans BOTH an overage correction and a post-paid settle`
+        ).toBe(false);
+      }
+    }
   });
 
   // 🔴 STRUCTURAL PROOF that dispatch is on `billingMode`, not on the step id and
@@ -399,5 +628,67 @@ describe('block step registry — billing-mode dispatch', () => {
         expect(String(error)).toContain(`billing mode '${mode}' has no money-path handler`);
       }
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The shared extraction primitives. `mediaFromBlobs` is the ONE copy of the
+// availability filter every entry uses — a per-entry reimplementation is how one
+// copy gets a fix and the others don't.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('mediaFromBlobs — the shared availability filter', () => {
+  const url = 'https://blobs.example/a.webp';
+
+  it('accepts a SINGLE blob (the convertImage shape) and a list alike', () => {
+    const single = mediaFromBlobs({ url, available: true, width: 3, height: 4 });
+    expect(single).toEqual([{ url, width: 3, height: 4, nsfwLevel: null }]);
+    expect(mediaFromBlobs([{ url, available: true }])).toEqual([
+      { url, width: null, height: null, nsfwLevel: null },
+    ]);
+  });
+
+  it('DROPS unavailable, url-less and empty-url blobs rather than handing over dead links', () => {
+    expect(
+      mediaFromBlobs([
+        { url, available: false },
+        { url: '', available: true },
+        { url: null, available: true },
+        { available: true },
+      ])
+    ).toEqual([]);
+  });
+
+  it('is total over absent/null input and skips null entries', () => {
+    expect(mediaFromBlobs(undefined)).toEqual([]);
+    expect(mediaFromBlobs(null)).toEqual([]);
+    expect(mediaFromBlobs([null, undefined, { url, available: true }])).toHaveLength(1);
+  });
+
+  it('passes the RAW orchestrator rating string through — never a mapped bitflag', () => {
+    // The numeric browsing-level mapping lives in exactly one place
+    // (`nsfwLevelFromContentRating`, in the projection). A registry entry must
+    // not be able to invent its own.
+    expect(mediaFromBlobs({ url, available: true, nsfwLevel: 'pg13' })[0].nsfwLevel).toBe('pg13');
+    expect(mediaFromBlobs({ url, available: true, nsfwLevel: 'na' })[0].nsfwLevel).toBe('na');
+  });
+});
+
+describe('containsAirReference — the entitlement probe', () => {
+  it('finds an AIR in a string, an array, and a nested object, case-insensitively', () => {
+    expect(containsAirReference('urn:air:sdxl:checkpoint:civitai:4384@128713')).toBe(true);
+    expect(containsAirReference(['x', 'URN:AIR:sdxl:lora:civitai:1@2'])).toBe(true);
+    expect(containsAirReference({ a: { b: [{ c: 'urn:air:flux:vae:x@1' }] } })).toBe(true);
+  });
+
+  it('does not false-positive on ordinary step input', () => {
+    expect(
+      containsAirReference({
+        image: 'https://image.civitai.com/x.png',
+        output: { format: 'webp', quality: 90, hideMetadata: true },
+        transforms: [{ type: 'resize', targetWidth: 512 }],
+      })
+    ).toBe(false);
+    expect(containsAirReference(null)).toBe(false);
+    expect(containsAirReference(42)).toBe(false);
   });
 });

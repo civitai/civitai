@@ -144,10 +144,10 @@ import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/rec
 // declared `billingMode` — this router contains NO per-step and NO per-mode
 // branch, which is what makes adding a capability additive.
 import { estimateStepBuzz, getStep, planStepSpend } from '~/server/services/blocks/steps';
-// Instrument-only: surfaces a prepaidFixed step whose REALIZED orchestrator cost
-// exceeded the registry's DECLARED price (see the submit path's divergence
-// correction). Never throws.
-import { recordStepPriceDivergence } from '~/server/metrics/app-block-runtime.metrics';
+// Instrument-only: records EVERY prepaidFixed step price check at submit —
+// `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
+// from a detector that never ran. Never throws.
+import { recordStepPriceCheck } from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
 // terminal poll/cancel hook. Static import (both are light) — the heavy
@@ -6370,6 +6370,31 @@ function resolveBlockStep(body: StepBody) {
 }
 
 /**
+ * Parse a step's params against its own `.strict()` schema, as a CALLER error.
+ *
+ * 🔴 `paramSchema.parse()` throws a raw `ZodError` from inside the resolver, and
+ * tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR — verified by execution, not assumed. So an app author
+ * sending an out-of-range `targetWidth` got a 500. This surface is entirely
+ * app-author-driven: routine iteration against the param contract would have
+ * registered as a server-error rate, burying real 5xx in developer typos.
+ *
+ * `safeParse` + an explicit BAD_REQUEST makes the caller error a caller error.
+ * The zod message is included because the app author is the one who has to fix
+ * it, and the params are the app's OWN input — nothing server-side is disclosed.
+ */
+function parseStepParams(step: ReturnType<typeof resolveBlockStep>, raw: unknown) {
+  const parsed = step.paramSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `invalid params for step '${step.id}': ${parsed.error.message}`,
+    });
+  }
+  return parsed.data;
+}
+
+/**
  * The gates every step request passes before anything else happens, in the same
  * order and with the same fail-closed posture as the customComfy handlers.
  * Shared by estimate and submit so the two can never drift — a gate that holds
@@ -6399,14 +6424,14 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * viewer is charged, so an estimate can never quote a different number than the
  * submit bills.
  *
- * Fail-closed on an out-of-bounds param (ZodError → BAD_REQUEST), exactly as
- * submit does — the same `.strict()` schema runs on both paths.
+ * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
+ * exactly as submit does — the same `.strict()` schema runs on both paths.
  */
 async function estimateStepWorkflow(opts: { claims: BlockClaims; body: StepBody }) {
   const { claims, body } = opts;
   await assertStepRequestAllowed(claims);
   const step = resolveBlockStep(body);
-  const params = step.paramSchema.parse(body.params);
+  const params = parseStepParams(step, body.params);
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
@@ -6457,8 +6482,8 @@ async function submitStepWorkflow(opts: {
   // The registry entry's OWN `.strict()` schema is the real param contract (the
   // wire schema only gated the `step` id). An unknown param is REJECTED here,
   // never silently dropped — enforced for every registered entry at registry
-  // load. An invalid param throws → fail-closed.
-  const params = step.paramSchema.parse(body.params);
+  // load. An invalid param is a BAD_REQUEST → fail-closed.
+  const params = parseStepParams(step, body.params);
 
   // ── Moderation posture. Tranche 1 declares 'none' (no free-text input, no
   // free-text output → no new moderation surface), and the registry's load-time
@@ -6474,7 +6499,10 @@ async function submitStepWorkflow(opts: {
     });
   }
 
-  const user = await getBlockSessionUser(userId);
+  // NOTE: no `getBlockSessionUser` call here. A registry step carries no model
+  // binding, no checkpoint resolution and no entitlement belt, so nothing on
+  // this path reads the session user — fetching one cost a `getUserById` per
+  // submit for a value that was never used (and an unused-var eslint warning).
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // A registry step has no `accountType` field on its wire body (params are the
   // step's own bounded contract), so currency selection is Auto — the
@@ -6487,13 +6515,98 @@ async function submitStepWorkflow(opts: {
   // single place the money shape is decided; the rest of this function is
   // mode-agnostic and never re-inspects `billingMode`.
   const plan = planStepSpend(step, params);
-  const reserveBuzz = Math.ceil(plan.reserveBuzz);
+  const declaredBuzz = Math.ceil(plan.reserveBuzz);
 
-  // (1) STATIC pre-submit gate against the token's per-call budget. For a
-  // `prepaidFixed` step this is exact: the price is known before execution, so
-  // a submit that passes here cannot exceed the per-call budget — unless the
-  // orchestrator bills above the declared price, which is precisely what the
-  // divergence counter below exists to surface.
+  // Built ONCE, then used for the quote and the real submit, so the two can
+  // never price different things. `timeout` is stamped ONLY for a billing mode
+  // whose cap IS a timeout (`timeBounded`); `prepaidFixed` returns null, because
+  // a timeout on a fixed-price step would be a liveness knob and stamping one
+  // here would imply a Buzz-cap relationship that does not exist.
+  const built = step.buildStep(params);
+  const orchestratorStep = {
+    $type: built.$type,
+    name: BLOCK_STEP_NAME,
+    ...(plan.stepTimeoutSeconds !== null
+      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
+      : {}),
+    input: built.input,
+  };
+  // Parameterized tags: emit the step id as both the workflow-type tag and the
+  // `baseModel` slot (a registry step has no base model), preserving the
+  // `app-block:*` provenance tags the per-app subqueue read depends on.
+  const tags = buildWorkflowTags(claims, step.id, 'step');
+
+  // ── (0) ORCHESTRATOR QUOTE — a real `whatif:true` submit, BEFORE the per-call
+  // budget gate.
+  //
+  // 🔴 WHY THE DECLARED PRICE CANNOT BE THE CEILING. Before this, the per-call
+  // `buzzBudget` gate compared the token's budget against a number Civitai had
+  // simply asserted in the registry. That made this the FIRST block spend path
+  // whose per-call ceiling rested on nothing the platform enforces:
+  // `textToImage` submit gates on a real `whatif` quote from the orchestrator,
+  // and `customComfy` stamps a step `timeout` the orchestrator physically
+  // enforces as the Buzz ceiling. A `prepaidFixed` step does neither —
+  // `stepTimeoutSeconds` is deliberately `null` — so if the declared price were
+  // ever below the real one, EVERY submit would exceed `buzzBudget` by the
+  // overage, forever, until a human read a counter and shipped code. The
+  // downstream divergence correction adjusts the CAP COUNTERS; it never touched
+  // the declared price or this gate, so it was never a backstop for it.
+  //
+  // 🔴 `prepaidFixed` means "cost knowable before execution" — which is exactly
+  // what `whatif:true` returns. Asking the orchestrator is therefore not a
+  // workaround for the mode, it is the mode's own premise made enforceable.
+  //
+  // No `externalId` on the quote (mirrors the txt2img whatIf preflight): the
+  // idempotency key belongs to the REAL submit only.
+  //
+  // Cost of this: one extra orchestrator round-trip per step submit — the same
+  // one the txt2img path already pays. A throw here propagates BEFORE any
+  // reservation exists, so there is nothing to refund.
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      steps: [orchestratorStep as any],
+      tags,
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  const quotedTotal = whatIfResult.cost?.total;
+  const quotedBuzz =
+    typeof quotedTotal === 'number' && Number.isFinite(quotedTotal) ? Math.ceil(quotedTotal) : null;
+
+  // Fail CLOSED on an unquotable step. A missing quote means the mode's premise
+  // ("cost knowable before execution") did not hold for this submit, which puts
+  // the ceiling back on the unenforced declared constant — the exact state this
+  // gate exists to remove. Reported as a recoverable failed-shape snapshot (the
+  // same shape every other cap rejection returns) rather than a throw, and
+  // counted as `outcome: 'absent'` so it is visible rather than silent.
+  if (quotedBuzz === null) {
+    recordStepPriceCheck(step.id, 'absent');
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: declaredBuzz },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      },
+    };
+  }
+
+  // 🔴 The reservation is the LARGER of the two. The quote is what makes the
+  // ceiling real (a quote above the declared price must be gated and reserved at
+  // the real number, not the asserted one); the declared price is the floor
+  // because it is what `estimateBuzz` SHOWED the block, and the registry's
+  // load-time invariant forces those to agree. Over-reserving only makes a cap
+  // stricter.
+  const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
+
+  // (1) Pre-submit gate against the token's per-call budget — now enforced
+  // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
   if (reserveBuzz > claims.buzzBudget) {
     return {
       snapshot: {
@@ -6645,23 +6758,9 @@ async function submitStepWorkflow(opts: {
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
   const submittedAt = Date.now();
   try {
-    const built = step.buildStep(params);
-    // The step envelope. `timeout` is stamped ONLY for a billing mode whose cap
-    // IS a timeout (`timeBounded`); `prepaidFixed` returns null, because a
-    // timeout on a fixed-price step would be a liveness knob and stamping one
-    // here would imply a Buzz-cap relationship that does not exist.
-    const orchestratorStep = {
-      $type: built.$type,
-      name: BLOCK_STEP_NAME,
-      ...(plan.stepTimeoutSeconds !== null
-        ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
-        : {}),
-      input: built.input,
-    };
-    // Parameterized tags: emit the step id as both the workflow-type tag and the
-    // `baseModel` slot (a registry step has no base model), preserving the
-    // `app-block:*` provenance tags the per-app subqueue read depends on.
-    const tags = buildWorkflowTags(claims, step.id, 'step');
+    // `orchestratorStep` + `tags` were built above the quote — the SAME objects
+    // the whatif priced, so the quote and the charge can never describe
+    // different work.
     const submitted = await submitWorkflow({
       token,
       body: {
@@ -6695,42 +6794,77 @@ async function submitStepWorkflow(opts: {
   const genResult = { snapshot };
   if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
-  // ── PRICE DIVERGENCE CORRECTION (prepaidFixed's residual risk, made visible).
+  // ── PRICE CHECK + RESERVATION-OVERAGE CORRECTION.
   //
-  // A `prepaidFixed` entry DECLARES an exact price and we reserved exactly that
-  // on every cap. If the orchestrator billed MORE, those counters are short by
-  // the difference and the per-app abuse cap would be that much looser for every
-  // subsequent submit — the one direction a spend cap must never drift. Correct
-  // both counters for the overage (an accounting correction for money already
-  // spent, NOT a gate: `chargeAppSpendOverage` deliberately has no deny path)
-  // and emit the counter that says the DECLARED PRICE IS WRONG and the registry
-  // entry needs fixing.
+  // We reserved an EXACT amount on every cap. If the orchestrator billed MORE,
+  // those counters are short by the difference and the per-app abuse cap would
+  // be that much looser for every subsequent submit — the one direction a spend
+  // cap must never drift. Correct ALL THREE reservations for the overage (an
+  // accounting correction for money already spent, NOT a gate: every `charge*`
+  // helper deliberately has no deny path) and record the outcome.
+  //
+  // 🔴 GATED ON THE PLAN, NOT RUN UNCONDITIONALLY. This correction is
+  // `prepaidFixed`-shaped: it is only right when the reservation was an exact
+  // price. A future `timeBounded` entry reserves a CEILING, and a submit-time
+  // cost above it would be topped up here AND then settled ceiling→actual by the
+  // post-paid machinery off the un-topped-up ceiling. `plan.correctReservationOverage`
+  // is how the MODE decides, keeping this function mode-agnostic — the property
+  // the registry exists to guarantee.
   //
   // Under-billing needs no correction: over-reserving only makes the cap
-  // stricter, and a `prepaidFixed` reservation is final by definition (there is
-  // no post-paid settle to refund it down).
-  const realizedCost = snapshot.cost?.total;
-  if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
-    const overage = Math.ceil(realizedCost) - reserveBuzz;
-    if (overage > 0) {
-      recordStepPriceDivergence(step.id);
-      // Best-effort on both keys; each guarded independently so one failing
-      // cannot skip the other, and neither can break an already-billed submit.
-      try {
-        await reserveBlockBuzzSpendForClaims(claims, userId, overage);
-      } catch {
-        /* best-effort correction — a lost one under-counts by the overage only */
-      }
-      if (appSpendReserve) {
+  // stricter, and an exact reservation is final by definition (there is no
+  // post-paid settle to refund it down).
+  if (plan.correctReservationOverage) {
+    const realizedCost = snapshot.cost?.total;
+    if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
+      const overage = Math.ceil(realizedCost) - reserveBuzz;
+      if (overage > 0) {
+        // 🔴 The declared price is wrong (or the rate card moved). Alert on this.
+        recordStepPriceCheck(step.id, 'over');
+        // Best-effort on ALL THREE keys; each guarded independently so one
+        // failing cannot skip the others, and none can break an already-billed
+        // submit.
+        //
+        // 🔴 THE DEV-SESSION KEY IS ONE OF THE THREE. The earlier version
+        // corrected the per-user and per-app counters only, while its own
+        // comment claimed "both cap counters" — there are three reservations, and
+        // a divergent submit inside a dev tunnel left that counter under-reading
+        // by the overage: precisely the drift direction the same comment forbids.
         try {
-          const { chargeAppSpendOverage } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
-          await chargeAppSpendOverage(appSpendReserve.key, overage);
+          await reserveBlockBuzzSpendForClaims(claims, userId, overage);
         } catch {
-          /* best-effort correction */
+          /* best-effort correction — a lost one under-counts by the overage only */
         }
+        if (appSpendReserve) {
+          try {
+            const { chargeAppSpendOverage } = await import(
+              '~/server/services/blocks/app-spend-cap.service'
+            );
+            await chargeAppSpendOverage(appSpendReserve.key, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+        if (devSessionReserve) {
+          try {
+            const { chargeDevSessionOverage } = await import(
+              '~/server/services/blocks/dev-tunnel.service'
+            );
+            await chargeDevSessionOverage(devSessionReserve.sessionId, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+      } else {
+        // Healthy — AND the proof that this check runs at all. Without this
+        // emit, a flat divergence line could not be told apart from a detector
+        // that never executed.
+        recordStepPriceCheck(step.id, 'exact');
       }
+    } else {
+      // No numeric cost on the snapshot → nothing to compare. Distinguished from
+      // `exact` on purpose: this is the state in which the correction is inert.
+      recordStepPriceCheck(step.id, 'absent');
     }
   }
 

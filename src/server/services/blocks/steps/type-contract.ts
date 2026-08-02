@@ -6,6 +6,7 @@
  */
 import type * as z from 'zod';
 import type { BlockStep } from './index';
+import type { StepOutputMedia } from './output';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPILE-TIME contract for the step registry: `billingMode` and
@@ -42,6 +43,7 @@ type CompleteStep = {
   orchestratorType: string;
   billingMode: 'prepaidFixed';
   moderationPosture: 'none';
+  resourcePolicy: { kind: 'none' };
   paramSchema: ParamSchema;
   variants: readonly string[];
   resolveVariant(params: Params): string;
@@ -49,6 +51,8 @@ type CompleteStep = {
   priceForVariant(variant: string): number;
   estimateBuzz(params: Params): number;
   buildStep(params: Params): { $type: string; input: Record<string, unknown> };
+  extractOutput(step: unknown): StepOutputMedia[];
+  canonicalOutputFor(variant: string): unknown;
 };
 
 // 🔴 THE CONTROL. If this ever stops compiling, every assertion below is
@@ -101,4 +105,42 @@ type _TokenMeteredNeedsMaxBuzz = Expect<
     Omit<CompleteStep, 'billingMode' | 'priceForVariant'> & { billingMode: 'tokenMetered' },
     BlockStep<Params>
   >
+>;
+
+// ── `resourcePolicy` is REQUIRED ─────────────────────────────────────────────
+// 🔴 The ENTITLEMENT axis. `BlockRecipe` carried `resourceAllowlist` +
+// `checkpointPolicy` and the first draft of this generalization dropped both —
+// while the PR's own triage disqualified `imageUpscaler` precisely because its
+// arbitrary-AIR `model` field would reach the orchestrator around the
+// generation-graph entitlement belt. If this assertion ever fails, the field
+// became optional and a future AIR-taking entry can register without declaring
+// anything.
+type _RequiresResourcePolicy = Expect<
+  NotAssignable<Omit<CompleteStep, 'resourcePolicy'>, BlockStep<Params>>
+>;
+
+// ── the policy must be one of the DECLARED shapes ────────────────────────────
+type _RejectsUnknownResourcePolicy = Expect<
+  NotAssignable<
+    Omit<CompleteStep, 'resourcePolicy'> & { resourcePolicy: { kind: 'anythingGoes' } },
+    BlockStep<Params>
+  >
+>;
+
+// ── `extractOutput` is REQUIRED ──────────────────────────────────────────────
+// 🔴 This is what makes "register a step" and "its result is retrievable" ONE
+// action. Without it, both `workflow.service` extractors `continue` past the new
+// `$type` and the capability is inert AFTER the caller has been charged — which
+// is exactly what shipped. If this assertion ever fails, a new entry can be
+// registered with no way to return its output.
+type _RequiresExtractOutput = Expect<
+  NotAssignable<Omit<CompleteStep, 'extractOutput'>, BlockStep<Params>>
+>;
+
+// ── `canonicalOutputFor` is REQUIRED ─────────────────────────────────────────
+// The probe input for the load-time extraction invariant. Without it,
+// `extractOutput` could be satisfied by `() => []` — compiling, registering, and
+// shipping the same inert capability.
+type _RequiresCanonicalOutput = Expect<
+  NotAssignable<Omit<CompleteStep, 'canonicalOutputFor'>, BlockStep<Params>>
 >;

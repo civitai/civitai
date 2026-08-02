@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
+import { getStepByOrchestratorType } from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -53,6 +54,25 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
         if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
           imageUrls.push(blob.url);
         }
+      }
+      continue;
+    }
+    // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
+    // in its registry entry, because the output key is step-type-specific —
+    // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
+    // native `$type` filter below `continue`s on every registered step and its
+    // result is unreachable: the caller is charged, the workflow reaches
+    // `succeeded`, and `imageUrls` is absent on every poll.
+    //
+    // 🔴 ADDITIVE BY CONSTRUCTION. A registry entry may not claim one of the
+    // natively-extracted `$type` values (`NATIVELY_EXTRACTED_STEP_TYPES`,
+    // enforced at registry load), so this branch cannot shadow the customComfy /
+    // textToImage / imageGen / comfy behaviour below — it only reaches `$type`s
+    // that used to fall through to `continue`.
+    const registeredStep = getStepByOrchestratorType(step.$type);
+    if (registeredStep) {
+      for (const media of registeredStep.extractOutput(step)) {
+        imageUrls.push(media.url);
       }
       continue;
     }
@@ -169,6 +189,29 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
           nsfwLevel:
             blob.nsfwLevel && blob.nsfwLevel !== 'na'
               ? nsfwLevelFromContentRating(blob.nsfwLevel)
+              : null,
+        });
+      }
+      continue;
+    }
+    // A REGISTERED step type — same registry-declared extraction the snapshot
+    // uses, so a capability is retrievable on BOTH read surfaces from ONE
+    // declaration. Without it `queryAppWorkflows` returns `images: []` for a
+    // step the app paid for. See the snapshotFromWorkflow branch for why this is
+    // additive and cannot shadow the native `$type`s below.
+    const registeredStep = getStepByOrchestratorType(step.$type);
+    if (registeredStep) {
+      for (const media of registeredStep.extractOutput(step)) {
+        images.push({
+          url: media.url,
+          width: media.width,
+          height: media.height,
+          // The RAW orchestrator rating string is mapped by the SAME canonical
+          // helper the native branches use — the registry hands over the string,
+          // never a bitflag, so the mapping stays in one place.
+          nsfwLevel:
+            media.nsfwLevel && media.nsfwLevel !== 'na'
+              ? nsfwLevelFromContentRating(media.nsfwLevel)
               : null,
         });
       }

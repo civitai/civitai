@@ -1,5 +1,6 @@
 import type * as z from 'zod';
 import { convertImageStep } from './convert-image.step';
+import type { StepOutputMedia } from './output';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks STEP-TYPE registry (`kind: 'step'`) — RFC #3515 migration step 1.
@@ -121,6 +122,111 @@ export type OrchestratorStepTemplate = {
   input: Record<string, unknown>;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Resource / entitlement posture — REQUIRED, for the same reason
+// `moderationPosture` is.
+//
+// 🔴 `BlockRecipe` — the interface this registry generalizes — carries
+// `resourceAllowlist` AND `checkpointPolicy`. Neither survived the first draft
+// of the generalization, and that omission was the sharper half of the pair:
+// entitlement is the axis this PR's OWN Tranche-1 triage named as the real
+// risk. `imageUpscaler` was disqualified PRECISELY because its `model` field
+// takes an arbitrary AIR URN, which would let an untrusted iframe reach the
+// orchestrator around the generation-graph entitlement belt. With no declared
+// field, a future entry with exactly that shape would register cleanly and
+// every other load-time invariant would pass — the registry would look guarded
+// on the axis it is least guarded on.
+//
+// 🔴 Only `'none'` has an implemented handler. A step that reaches ANY AIR
+// resource needs a real, reviewed allowlist implementation (checkpoint policy
+// included — a checkpoint IS an AIR, so it is a `staticAllowlist` case, not a
+// separate field), and until one exists it fails at registry LOAD. Same
+// unskippable property moderation already had.
+// ─────────────────────────────────────────────────────────────────────────────
+export type StepResourcePolicy =
+  /**
+   * The step references NO AIR resource of any kind — there is nothing for the
+   * entitlement belt to gate and no way to reach a gated / early-access /
+   * Private model version through it. The ONLY policy with an implemented
+   * handler today, and it is ENFORCED, not merely declared: the built step is
+   * probed at load and must contain no AIR reference (see `assertStepInvariants`).
+   */
+  | { kind: 'none' }
+  /**
+   * A fixed, code-reviewed set of AIRs the step may reach — the generalization
+   * of `BlockRecipe.resourceAllowlist` + `checkpointPolicy`.
+   * NOT IMPLEMENTED — registering an entry with this policy fails at load.
+   */
+  | { kind: 'staticAllowlist'; airs: readonly string[] };
+
+/** True iff the resource policy has an implemented handler. */
+export function isResourcePolicyImplemented(policy: StepResourcePolicy): boolean {
+  return policy.kind === 'none';
+}
+
+/** The AIR URN scheme prefix. Lowercase; the scan lowercases its input. */
+const AIR_URN_PREFIX = 'urn:air:';
+
+/**
+ * True when any string ANYWHERE in the value is (or embeds) an AIR URN.
+ *
+ * Deliberately a deep scan rather than a check of a known field name: the point
+ * is to catch an AIR arriving through a field NOBODY thought to look at, which
+ * is the only way the `'none'` declaration can become a lie.
+ */
+export function containsAirReference(value: unknown): boolean {
+  if (typeof value === 'string') return value.toLowerCase().includes(AIR_URN_PREFIX);
+  if (Array.isArray(value)) return value.some(containsAirReference);
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(containsAirReference);
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTPUT EXTRACTION — registering a step and surfacing its result are ONE
+// action.
+//
+// 🔴 WHY THIS IS A REGISTRY FIELD AND NOT A BRANCH IN `workflow.service`.
+// `snapshotFromWorkflow` (the poll/submit snapshot) and `projectAppWorkflow`
+// (the `queryAppWorkflows` subqueue read) each carried a hardcoded `$type`
+// allowlist — `customComfy | textToImage | imageGen | comfy` — and `continue`d
+// on everything else. `convertImage`'s output is `{ blob?: ImageBlob }`
+// (SINGULAR `blob`, not `images` and not `blobs`), so BOTH extractors were
+// blind to it in two independent ways: the `$type` and the key. The result was
+// a capability that charges Buzz, reaches `succeeded`, and can never return its
+// result to the caller — inert, but only after the money moved.
+//
+// A fourth hardcoded `if ($type === 'convertImage')` branch would have fixed
+// today and guaranteed the next registered step repeated it; the same class had
+// already recurred twice elsewhere. So the entry DECLARES its own extraction,
+// the two extractors consult the registry by `$type`, and a new entry that gets
+// it wrong is a LOAD-TIME failure (clause 8) rather than a silent inert
+// capability.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The extraction primitives live in the leaf module `./output` (see its header
+// for why). Re-exported here so `~/server/services/blocks/steps` stays the one
+// import site for consumers that aren't registry entries.
+export type { StepOutputMedia } from './output';
+export { mediaFromBlobs } from './output';
+
+/**
+ * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with
+ * their own long-standing inline branches.
+ *
+ * 🔴 A registered step MUST NOT claim one of these (enforced, clause 9). That
+ * invariant is what makes the registry branch safe to place BEFORE the native
+ * `$type` filter: it cannot shadow an existing branch, so `textToImage` /
+ * `imageGen` / `comfy` / `customComfy` extraction stays byte-identical.
+ */
+export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
+  'customComfy',
+  'textToImage',
+  'imageGen',
+  'comfy',
+] as const;
+
 /**
  * Fields every registered step declares, regardless of billing mode.
  *
@@ -135,6 +241,12 @@ interface BlockStepBase<P> {
   billingMode: StepBillingMode;
   /** 🔴 REQUIRED. See `StepModerationPosture`. */
   moderationPosture: StepModerationPosture;
+  /**
+   * 🔴 REQUIRED. See `StepResourcePolicy`. The entitlement axis — the one this
+   * PR's own triage identified as the real bypass risk, and the one a
+   * generalization of `BlockRecipe` must not drop.
+   */
+  resourcePolicy: StepResourcePolicy;
   /**
    * Bounded param schema. MUST be `.strict()` — an unknown param is REJECTED,
    * never silently dropped. Enforced behaviourally at registry load.
@@ -175,6 +287,37 @@ interface BlockStepBase<P> {
   buildStep(params: P): OrchestratorStepTemplate;
   /** The Buzz figure `estimateWorkflow` shows the block. */
   estimateBuzz(params: P): number;
+  /**
+   * 🔴 REQUIRED. PURE extractor: the orchestrator's completed step object → the
+   * output media the caller gets back. Called by BOTH `snapshotFromWorkflow`
+   * (`imageUrls`) and `projectAppWorkflow` (`images`), so one declaration
+   * surfaces the result on both read surfaces.
+   *
+   * MUST apply the availability filter — use the shared `mediaFromBlobs` helper
+   * rather than reimplementing it.
+   *
+   * Takes the whole step (not `step.output`) because the output KEY is
+   * step-type-specific: `convertImage` returns `{ blob }`, `customComfy`
+   * returns `{ blobs }`, the image steps return `{ images }`. Typed `unknown`
+   * because the orchestrator step union is wider than any one entry knows;
+   * narrow it inside the entry.
+   */
+  extractOutput(step: unknown): StepOutputMedia[];
+  /**
+   * A canonical, orchestrator-SHAPED completed step object for the given
+   * variant, carrying at least one available output blob.
+   *
+   * Exists SOLELY for the load-time extraction probe (clause 8), the same way
+   * `canonicalParamsFor` exists for the budget/strictness probes. Without it,
+   * `extractOutput` would be a required field that a new entry could satisfy
+   * with `() => []` — compiling, registering, and shipping the exact inert
+   * capability this field exists to prevent.
+   *
+   * 🔴 Populate it from a REAL observed orchestrator response, not from what the
+   * extractor expects. A sample written to match the code proves only that the
+   * code matches itself.
+   */
+  canonicalOutputFor(variant: string): unknown;
 }
 
 /**
@@ -266,6 +409,24 @@ export type StepSpendPlan = {
    */
   postPaidSettle: boolean;
   /**
+   * True when a REALIZED cost above `reserveBuzz` must be topped up onto the cap
+   * counters immediately, at submit.
+   *
+   * 🔴 THIS IS `prepaidFixed`-SHAPED AND MUST NOT RUN FOR EVERY MODE. It is
+   * correct only when the reservation is an EXACT price: the counters are then
+   * genuinely short by the difference and nothing else will ever fix them. For a
+   * mode whose reservation is a CEILING (`timeBounded`), a submit-time cost
+   * above the ceiling would be topped up here AND then settled ceiling→actual by
+   * the post-paid machinery off the UN-topped-up ceiling — double-counting the
+   * overage and then unwinding the wrong number. The correction used to fire
+   * unconditionally on `overage > 0`, which is a latent version of exactly that,
+   * and it defeats the additivity this registry exists to guarantee. So the mode
+   * decides, here, and the router stays mode-agnostic.
+   *
+   * Mutually exclusive with `postPaidSettle` by construction.
+   */
+  correctReservationOverage: boolean;
+  /**
    * The orchestrator step `timeout` to stamp, for modes whose cap IS a timeout.
    * `null` when the mode does not use one (`prepaidFixed`: the price is not a
    * function of wall-clock, so a timeout would be a liveness knob, not a Buzz
@@ -311,6 +472,8 @@ const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
         // Exact price → the reservation is final; never touch the post-paid
         // settle machinery.
         postPaidSettle: false,
+        // Exact price → an overage IS a permanent cap shortfall, so correct it.
+        correctReservationOverage: true,
         stepTimeoutSeconds: null,
       };
     },
@@ -395,6 +558,23 @@ export const REGISTERED_STEP_IDS = Object.keys(stepRegistry) as [
 /** Resolve a step by id. Returns `undefined` for an unregistered id. */
 export function getStep(id: string): AnyBlockStep | undefined {
   return (stepRegistry as Record<string, AnyBlockStep>)[id];
+}
+
+/**
+ * Resolve a step by the orchestrator `$type` it submits as — the lookup the two
+ * `workflow.service` extractors use, since a returned Workflow carries the
+ * `$type`, never the registry id.
+ *
+ * Returns `undefined` for an unregistered `$type`, so a caller keeps whatever
+ * fallback it had. Uniqueness of `orchestratorType` across the registry is
+ * enforced at load (`assertOrchestratorTypesUnique`) — without it this lookup
+ * would silently pick whichever entry happened to be declared last.
+ */
+export function getStepByOrchestratorType(orchestratorType: string): AnyBlockStep | undefined {
+  for (const [, step] of listRegisteredSteps()) {
+    if (step.orchestratorType === orchestratorType) return step;
+  }
+  return undefined;
 }
 
 /**
@@ -532,13 +712,73 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
         break;
       }
     }
+
+    // (7) RESOURCE POLICY, enforced rather than merely declared. A `'none'`
+    // entry claims it reaches no AIR resource; prove it against the step this
+    // entry actually BUILDS, by deep-scanning for an AIR URN anywhere in the
+    // submitted input. This is what stops a future `imageUpscaler`-shaped entry
+    // — an arbitrary AIR URN forwarded from an untrusted iframe, straight past
+    // the generation-graph entitlement belt — from registering with a `'none'`
+    // declaration and passing every other invariant.
+    //
+    // 🔴 HONEST LIMIT, stated so nobody over-trusts it: this probes the
+    // CANONICAL params, so it cannot see an AIR that only appears when an
+    // OPTIONAL air-bearing field is supplied. It is a floor, not a proof. The
+    // load-bearing guard for that case is the required declaration itself plus
+    // the unimplemented `staticAllowlist` gate (clause 11): an entry whose
+    // params can carry an AIR cannot honestly declare `'none'`, and declaring
+    // `'staticAllowlist'` fails at load until someone implements and reviews it.
+    if (step.resourcePolicy.kind === 'none') {
+      const built = step.buildStep(parsed.data);
+      if (containsAirReference(built.input)) {
+        throw new Error(
+          `${vWhere}: resourcePolicy 'none' is contradicted — buildStep() emitted an AIR ` +
+            'reference. A step that reaches an AIR resource bypasses the generation-graph ' +
+            'entitlement belt and needs a declared, implemented resource allowlist'
+        );
+      }
+    }
+
+    // (8) OUTPUT EXTRACTION must actually surface something. A registered step
+    // whose output nothing can read is a capability the caller is CHARGED for
+    // and can never retrieve — it polls to `succeeded` with an empty result
+    // forever. That failure is invisible to every other invariant here, and it
+    // is exactly what shipped before this clause existed.
+    const sampleStep = step.canonicalOutputFor(variant);
+    const media = step.extractOutput(sampleStep);
+    if (!Array.isArray(media) || media.length === 0) {
+      throw new Error(
+        `${vWhere}: extractOutput() returned no media for canonicalOutputFor() — the step's ` +
+          'result would be unreachable on both the snapshot and the app-workflow projection'
+      );
+    }
+    for (const item of media) {
+      if (typeof item?.url !== 'string' || item.url.length === 0) {
+        throw new Error(
+          `${vWhere}: extractOutput() returned media with no url — a block would render a dead link`
+        );
+      }
+    }
   }
 
-  // (7) LAST: the declared billing mode must have an implemented money-path
+  // (9) The orchestrator `$type` must not shadow one of the `$type` values
+  // `workflow.service`'s extractors handle NATIVELY. The registry branch there
+  // is evaluated BEFORE the native `$type` filter (it has to be — that filter
+  // `continue`s on everything else), so without this guard a registered entry
+  // could silently take over `textToImage` extraction. With it, the placement is
+  // provably behaviour-preserving for the existing kinds.
+  if (NATIVELY_EXTRACTED_STEP_TYPES.includes(step.orchestratorType)) {
+    throw new Error(
+      `${where}: orchestratorType '${step.orchestratorType}' is natively extracted by ` +
+        'workflow.service — a registered step must not shadow it'
+    );
+  }
+
+  // (10) LAST-1: the declared billing mode must have an implemented money-path
   // handler. This is what stops a newly declared mode from riding another
   // mode's reservation logic — it is a BUILD failure, not a runtime one.
   //
-  // Placed last so the structural per-variant invariants above stay reachable
+  // Placed late so the structural per-variant invariants above stay reachable
   // (see clause 6). Position does not weaken it: every clause here throws at
   // module load, so an entry declaring an unimplemented mode still cannot
   // register regardless of which guard reports first.
@@ -547,6 +787,41 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       `${where}: billingMode '${step.billingMode}' has no implemented money-path handler`
     );
   }
+
+  // (11) LAST: the declared resource policy must have an implemented handler.
+  // Same fail-closed shape and same reason as the billing-mode gate, on the
+  // entitlement axis. Placed last for the same reachability reason: with it
+  // first, clause 7's `'none'` branch would still run (it only applies to
+  // `'none'`), but any future per-policy structural invariant would not.
+  if (!isResourcePolicyImplemented(step.resourcePolicy)) {
+    throw new Error(
+      `${where}: resourcePolicy '${step.resourcePolicy.kind}' has no implemented handler — ` +
+        'a step that reaches AIR resources needs a reviewed entitlement gate first'
+    );
+  }
+}
+
+/**
+ * Cross-entry invariant: no two registered steps may claim the same orchestrator
+ * `$type`. `getStepByOrchestratorType` is a single-winner lookup, so a duplicate
+ * would silently route one step's output extraction through the other's
+ * extractor — a wrong-shape read on a money path.
+ *
+ * Separate from `assertStepInvariants` because it is a property of the
+ * POPULATION, not of any one entry.
+ */
+export function assertOrchestratorTypesUnique(entries: [string, AnyBlockStep][]): void {
+  const seen = new Map<string, string>();
+  for (const [id, step] of entries) {
+    const prior = seen.get(step.orchestratorType);
+    if (prior !== undefined) {
+      throw new Error(
+        `block step '${id}': orchestratorType '${step.orchestratorType}' is already claimed by ` +
+          `'${prior}' — output extraction would silently resolve to one of them`
+      );
+    }
+    seen.set(step.orchestratorType, id);
+  }
 }
 
 // Fail-fast every invariant at module load. A registry that violates one is a
@@ -554,3 +829,4 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
 for (const [id, step] of listRegisteredSteps()) {
   assertStepInvariants(id, step);
 }
+assertOrchestratorTypesUnique(listRegisteredSteps());
