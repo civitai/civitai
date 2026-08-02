@@ -16,8 +16,6 @@ import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
-import { StickerNode } from '~/shared/tiptap/sticker.node';
-import { Sticker } from '~/components/Sticker/Sticker';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 
 const extensions = [
@@ -31,7 +29,6 @@ const extensions = [
   MentionNode,
   StrawPollNode,
   TimestampNode,
-  StickerNode,
 ];
 
 export function RenderRichText({ content }: { content: Record<string, any> }) {
@@ -46,7 +43,6 @@ export function RenderRichText({ content }: { content: Record<string, any> }) {
           timestamp: ({ node }) => (
             <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
           ),
-          sticker: ({ node }) => <Sticker cosmeticId={Number(node.attrs.id)} />,
           // For unconsented CA visitors, replace third-party embed nodes with a
           // placeholder so the iframe is never inserted in the DOM.
           ...(!allowed && {

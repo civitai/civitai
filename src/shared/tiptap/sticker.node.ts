@@ -19,9 +19,10 @@ declare module '@tiptap/core' {
  * not an image: widening the comment allowlist to `img` would open a general
  * image-embed hole.
  *
- * Must be registered in BOTH `RichTextEditorComponent` and `RenderRichText` —
- * the static renderer keeps a parallel extension array, and omitting it there
- * produces stickers that work in the editor and vanish on the page.
+ * Registered by the editor only. `RenderRichText` deliberately does NOT register
+ * it: its one consumer is the article page, articles are not a sticker surface,
+ * and registering it there let a crafted `contentJson` draw a paid sticker with
+ * no ownership check.
  */
 export const StickerNode = Node.create({
   name: 'sticker',

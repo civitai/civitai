@@ -217,8 +217,8 @@ export function RichTextEditor({
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
-    // Always registered, never gated: a sticker already in stored content has to
-    // render for every reader regardless of who may insert one.
+    // Ungated so a sticker survives an edit round-trip rather than being dropped
+    // from the doc. Whether it is ever drawn is decided at render, not here.
     arr.push(StickerEditNode);
 
     return arr;
