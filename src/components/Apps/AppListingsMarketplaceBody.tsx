@@ -117,6 +117,12 @@ export function AppListingsMarketplaceBody() {
    *     adopting now would yank characters out from under the caret.
    * Only when both are settled does a disagreement mean the URL genuinely moved.
    */
+  // The rule's own suggestion here — "pass [isWritePending, searchInput,
+  // debouncedSearch, filters.query]" — is exactly the dependency-array form that
+  // does NOT work (see above): under render coalescing `filters.query` never
+  // appears to change and the effect never fires. The three guards inside are
+  // what make this terminate, not the dep list.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isWritePending) return;
     if (searchInput !== debouncedSearch) return;

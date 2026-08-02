@@ -78,7 +78,12 @@ function base(over: Partial<ListingCard>): ListingCard {
     creator: { id: 5, username: 'alice', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://my-app.civit.ai',
+    },
     ...over,
   };
 }
@@ -88,8 +93,14 @@ function base(over: Partial<ListingCard>): ListingCard {
  *
  * `width` is the OUTER box. `Card padding="md" withBorder` eats 2x16 + 2x1, so
  * the content box — the number the layout measurements below are about — is
- * `width - 34`. 314 -> a 280px content box, which is what a 1200px viewport
- * produces at the store's 4-column `xl` grid.
+ * `width - 34`.
+ *
+ * The two widths used below, both measured through the real
+ * `AppsPageLayout` + `Grid` rather than assumed:
+ *   - `280` -> a 246px content box = the TRUE 1200px-viewport geometry
+ *     (container 1200 -> column 296 -> card 280 -> row 246);
+ *   - `314` -> a 280px content box, i.e. roughly a 1345 viewport. "280" in the
+ *     original bug report is the CARD width at 1200, not its content box.
  */
 function Sized({ width, card }: { width: number; card: ListingCard }) {
   return (
@@ -100,8 +111,8 @@ function Sized({ width, card }: { width: number; card: ListingCard }) {
 }
 
 /**
- * 🔴 GUARD ON THE GUARD. Proves `@mantine/core/styles.css` actually applied
- * before any geometry is trusted. If the import ever silently stops working
+ * 🔴 GUARD ON THE GUARD. Proves the stylesheet cascade above actually applied
+ * before any geometry is trusted. If either import ever silently stops working
  * (renamed export path, harness change), every measurement below reverts to CSS
  * initial values and starts passing for the wrong reason — this fails loudly
  * instead, and names the cause.
@@ -260,9 +271,7 @@ describe('AppListingCard', () => {
     mocks.currentUser = { id: 5, username: 'alice' }; // owner
     // base() has iconUrl: null + coverUrl: null → below floor.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await expect
-      .element(page.getByTestId('apps-listing-owner-incomplete'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-owner-incomplete')).toBeInTheDocument();
   });
 
   test('OWNER does NOT see the "Incomplete" indicator when icon+cover are present', async () => {
@@ -357,7 +366,10 @@ describe('AppListingCard', () => {
     // An unfetchable URL — the browser fires the <img>'s real `error` event, which
     // is the component's own onError → placeholder path.
     renderWithProviders(
-      <AppListingCard card={base({ coverUrl: 'https://edge.invalid/does-not-exist.png' })} canOpenPage />
+      <AppListingCard
+        card={base({ coverUrl: 'https://edge.invalid/does-not-exist.png' })}
+        canOpenPage
+      />
     );
     await expect.element(page.getByTestId('apps-listing-cover')).toBeInTheDocument();
 
@@ -570,11 +582,19 @@ describe('AppListingCard', () => {
         recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
         reviewCount: 100,
       };
+      // The widest CTA ("View details") — the tight cell in the table above. A
+      // connect-kind listing has no external target, so `getListingCta` falls
+      // through to the unified detail. Fully typed (`externalUrl` included)
+      // rather than cast: the cast version compiled under vitest but failed
+      // `tsc` with TS2352, since the shape did not overlap `ListingCardKindData`.
       const OFFSITE_CONNECT = {
         ...REVIEWED,
         kind: 'offsite' as const,
-        // The widest CTA ("View details") — the tight cell in the table above.
-        kindData: { kind: 'offsite', subKind: 'oauth-connect' } as ListingCard['kindData'],
+        kindData: {
+          kind: 'offsite',
+          subKind: 'oauth-connect',
+          externalUrl: null,
+        } satisfies ListingCard['kindData'],
       };
 
       test('🔴 owner + "View details" keeps a LEGIBLE recommend rollup', async () => {
@@ -605,6 +625,44 @@ describe('AppListingCard', () => {
 
         // …and the row still holds its shape: one line, no overflow.
         expect(sameLine(rollup, actionRow('View details').actions)).toBe(true);
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      /**
+       * 🔴 THE TRUE 1200px GEOMETRY, which is TIGHTER than the case above.
+       *
+       * Measured through the real `AppsPageLayout` + `Grid` at a 1200 viewport:
+       * container 1200 -> grid column 296 -> CARD 280 -> action-row content box
+       * **246**. So "280px" in the original report is the card's OUTER width; the
+       * box the action row actually gets is 246, and a 314px wrapper (content box
+       * 280) corresponds to roughly a 1345 viewport. Testing only at 280 would
+       * have left the real 1200 case unguarded and 34px tighter than anything
+       * asserted.
+       */
+      test('🔴 at the REAL 1200 geometry (246px content box) the rollup still survives', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        const { row, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(246);
+        /**
+         * Measured: 3.6px before the fix, 52.1px after — the glyph (13) + gap (4)
+         * + ~35px of text, i.e. "91%…". Floor set at 50 from that measurement.
+         *
+         * 🔴 STATED HONESTLY: at this, the tightest geometry the store actually
+         * produces, the figure is HARD TRUNCATED. That is a real limitation, not
+         * a clean win — but it is truncation (the documented, designed behaviour
+         * of the flexible side) rather than the total disappearance the icons
+         * caused. Recovering the full "91% recommend (100)" here would mean
+         * shrinking the PRIMARY CTA too, which changes non-owner cards and is out
+         * of scope for this fix.
+         */
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(50);
+        const glyph = rollup.querySelector('svg') as SVGElement;
+        expect(glyph.getBoundingClientRect().width).toBeGreaterThan(0);
         expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
       });
 
@@ -693,7 +751,10 @@ describe('AppListingCard', () => {
     // width bound the label never clips and the tooltip stays disabled.
     renderWithProviders(
       <div style={{ width: 200 }}>
-        <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+        <AppListingCard
+          card={base({ creator: { id: 5, username: longName, image: null } })}
+          canOpenPage
+        />
       </div>
     );
     const label = page.getByText(`by ${longName}`);

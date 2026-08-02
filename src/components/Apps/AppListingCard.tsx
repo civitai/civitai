@@ -25,10 +25,7 @@ import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   canOwnerEditListing,
   getListingCta,
@@ -255,7 +252,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   // `container-type: inline-size`, i.e. inline-axis containment only, so the
   // card's height still follows its content and `h-full` is unaffected.
   return (
-    <Card shadow="sm" padding="md" radius="md" withBorder className="@container h-full">
+    <Card shadow="sm" padding="md" radius="md" withBorder className="h-full @container">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
