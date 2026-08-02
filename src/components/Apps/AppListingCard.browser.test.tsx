@@ -1,5 +1,28 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+/**
+ * 🔴 REAL MANTINE CSS, imported ON PURPOSE — without it every geometry assertion
+ * in this file is a lie.
+ *
+ * The shared component harness deliberately does NOT load
+ * `@mantine/core/styles.css`. `Group` styles itself entirely from that
+ * stylesheet, so unstyled it computes `display: block` and `flex-wrap` returns
+ * the CSS INITIAL value `nowrap` — which is true of literally any element.
+ * `expect(getComputedStyle(row).flexWrap).toBe('nowrap')` therefore passed
+ * against a component flipped to `wrap="wrap"`; the companion "Edit and the CTA
+ * share a line" check was the same accident, since with no flex the buttons are
+ * `display: inline` and share a text line no matter what.
+ *
+ * Mutation-proven: with both `<Group wrap="nowrap">` in `AppListingCard.tsx`
+ * flipped to `"wrap"`, this file reported 27 passed / 1 failed — and the ONE
+ * failure was the PRE-EXISTING `--group-wrap` test, not either of these.
+ *
+ * Any `getComputedStyle` assertion whose expected value happens to equal the CSS
+ * initial value (`nowrap`, `visible`, `static`, `auto`, `none`, `0px`) is
+ * suspect for exactly this reason. {@link assertLayoutIsReal} is the guard that
+ * makes the import's failure loud instead of silent.
+ */
+import '@mantine/core/styles.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -44,6 +67,62 @@ function base(over: Partial<ListingCard>): ListingCard {
     kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
     ...over,
   };
+}
+
+/**
+ * Render a card inside a fixed-width box.
+ *
+ * `width` is the OUTER box. `Card padding="md" withBorder` eats 2x16 + 2x1, so
+ * the content box — the number the layout measurements below are about — is
+ * `width - 34`. 314 -> a 280px content box, which is what a 1200px viewport
+ * produces at the store's 4-column `xl` grid.
+ */
+function Sized({ width, card }: { width: number; card: ListingCard }) {
+  return (
+    <div style={{ width }}>
+      <AppListingCard card={card} canOpenPage />
+    </div>
+  );
+}
+
+/**
+ * 🔴 GUARD ON THE GUARD. Proves `@mantine/core/styles.css` actually applied
+ * before any geometry is trusted. If the import ever silently stops working
+ * (renamed export path, harness change), every measurement below reverts to CSS
+ * initial values and starts passing for the wrong reason — this fails loudly
+ * instead, and names the cause.
+ */
+function assertLayoutIsReal(row: HTMLElement) {
+  expect(
+    getComputedStyle(row).display,
+    'Mantine stylesheet did not apply — every geometry assertion below is vacuous'
+  ).toBe('flex');
+}
+
+/** The action row's three parts, located from the primary CTA. */
+function actionRow(ctaName: string) {
+  const cta = page.getByRole('link', { name: ctaName, exact: true }).element() as HTMLElement;
+  const actions = cta.parentElement as HTMLElement;
+  const row = actions.parentElement as HTMLElement;
+  const rollup = row.firstElementChild as HTMLElement;
+  return { cta, actions, row, rollup };
+}
+
+/**
+ * Two elements share one flex line.
+ *
+ * Compares vertical CENTRES, not `top`. `Group` defaults to `align="center"`, so
+ * a short item (the ~18px recommend rollup) and a tall one (the ~36px action
+ * buttons) legitimately have `top` values ~9px apart while sitting on the SAME
+ * line — a `top`-based check reports them as wrapped and fails against correct
+ * code. Tolerance is half the shorter element's height, which is comfortably
+ * below the ~36px a real wrap would move them.
+ */
+function sameLine(a: Element, b: Element) {
+  const ra = a.getBoundingClientRect();
+  const rb = b.getBoundingClientRect();
+  const centreDelta = Math.abs(ra.top + ra.height / 2 - (rb.top + rb.height / 2));
+  return centreDelta < Math.min(ra.height, rb.height) / 2 + 1;
 }
 
 describe('AppListingCard', () => {
@@ -411,41 +490,39 @@ describe('AppListingCard', () => {
       // the wide single-column base — and with the OWNER "Edit" button present,
       // which is the widest configuration the row ever has.
       mocks.currentUser = { id: 5, username: 'alice' };
-      renderWithProviders(
-        <div style={{ width: 320 }}>
-          <AppListingCard card={base({})} canOpenPage />
-        </div>
-      );
-      // Await FIRST — `render()` commits on a later task, so a synchronous
-      // `.element()` observes an empty container.
+      renderWithProviders(<Sized width={340} card={base({})} />);
       await expect
         .element(page.getByRole('link', { name: 'Open', exact: true }))
         .toBeInTheDocument();
-      const cta = page.getByRole('link', { name: 'Open', exact: true }).element() as HTMLElement;
-      const actions = cta.parentElement as HTMLElement;
-      const row = actions.parentElement as HTMLElement;
+
+      const { row, actions, rollup } = actionRow('Open');
+      assertLayoutIsReal(row);
+
+      // Now that layout is real, this is a genuine assertion: with the stylesheet
+      // loaded `Group` resolves `flex-wrap` from `--group-wrap`, so flipping the
+      // component to `wrap="wrap"` makes this read `wrap`.
       expect(getComputedStyle(row).flexWrap).toBe('nowrap');
       expect(getComputedStyle(actions).flexWrap).toBe('nowrap');
       expect(getComputedStyle(actions).flexShrink).toBe('0');
-      // …and the actions really are on ONE line: Edit and the CTA share a row.
-      const edit = page.getByTestId('apps-listing-owner-edit').element() as HTMLElement;
-      expect(Math.abs(edit.getBoundingClientRect().top - cta.getBoundingClientRect().top)).toBeLessThan(2);
+
+      // …and BEHAVIOURALLY: everything is on one line and nothing overflows the
+      // row box. This is the half a `--group-wrap` assertion cannot prove.
+      expect(sameLine(rollup, actions)).toBe(true);
+      expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      // The actions are at their natural width — not squeezed to fake a fit.
+      expect(actions.getBoundingClientRect().width).toBeCloseTo(actions.scrollWidth, 0);
     });
 
     test('the recommend rollup is the side that absorbs the extra width (it truncates)', async () => {
-      renderWithProviders(
-        <div style={{ width: 320 }}>
-          <AppListingCard card={base({})} canOpenPage />
-        </div>
-      );
+      renderWithProviders(<Sized width={340} card={base({})} />);
       await expect.element(page.getByText('No reviews yet')).toBeInTheDocument();
       const rollup = page.getByText('No reviews yet').element() as HTMLElement;
-      // ⚠️ Asserted via Mantine's `data-truncate` ATTRIBUTE, not
-      // `getComputedStyle(...).textOverflow`. The harness does not load
-      // `@mantine/core/styles.css`, so the class-based `text-overflow: ellipsis`
-      // computes to `clip` here regardless — an assertion on it fails against
-      // correct code and would have been "fixed" by deleting the truncation.
+      // Mantine's `data-truncate` attribute AND the resolved style — with the
+      // stylesheet loaded the class-based ellipsis actually computes, so both
+      // halves are real. (Before the stylesheet import this asserted only the
+      // attribute, because `textOverflow` computed to `clip` regardless.)
       expect(rollup.getAttribute('data-truncate')).toBe('end');
+      expect(getComputedStyle(rollup).textOverflow).toBe('ellipsis');
       // …and its container is the shrinkable side (`minWidth: 0` is what lets a
       // flex item shrink below its content width at all), which is the actual
       // mechanism that keeps the widened action buttons at natural size.
