@@ -141,7 +141,15 @@ describe('AppsSubmitEditView — routing', () => {
       error: null,
       refetch: vi.fn(),
     };
-    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={30} />);
+    // 🔴 The ceiling must be long enough that the loader is still up when the
+    // RETRYING matcher below first polls. At 30ms this test raced its own
+    // fixture: the loader self-destructs before the first poll can see it, so
+    // `toBeInTheDocument` retried against an element that was already gone and
+    // timed out after ~15s — a red that tracked machine load, not the code.
+    // 200ms is what the sibling ceiling test below uses and passes reliably on.
+    // The assertion's INTENT is unchanged: a component that ignored the ceiling
+    // would still never surface the alert, so this still fails a pre-fix build.
+    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={200} />);
     // Loader shows first…
     await expect.element(page.getByTestId('apps-offsite-edit-loading')).toBeInTheDocument();
     // …then the ceiling elapses and the recoverable alert takes over.

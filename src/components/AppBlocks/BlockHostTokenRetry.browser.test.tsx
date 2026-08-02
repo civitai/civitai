@@ -33,6 +33,18 @@ import {
 // AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+// 🔴 IframeHost calls useFeatureFlags() (added by #3497 for the in-host "open the
+// page" affordance) and the REAL hook THROWS without a FeatureFlagsProvider, which
+// this scaffold does not mount. Without this the whole subtree crashes at mount:
+// `BlockHost` renders NOTHING, `waitForIframe` times out as "iframe never mounted",
+// and — worse — the three absence-asserting tests still PASS, because an empty DOM
+// trivially satisfies "collapsed to null". Same whole-module-factory shape and the
+// same dark-flag defaults as the sibling IframeHost.browser.test.tsx, deliberately
+// not an `importOriginal` spread.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+}));
+
 // IframeHost drives two tRPC queries at render plus the SDK bridges. Stub them so
 // the host mounts network-free AND the init handshake may start immediately
 // (getEffectiveCheckpoint must report isLoading:false so `shouldStartInit` fires).
