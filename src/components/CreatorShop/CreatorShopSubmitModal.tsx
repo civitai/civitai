@@ -328,7 +328,18 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             leftSection={<IconBolt size={16} />}
           />
           <NumberInput
-            label="Quantity (optional)"
+            label={
+              <Group gap={4} wrap="nowrap">
+                <span>Quantity (optional)</span>
+                <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                  <Text size="xs">
+                    The most that will ever be sold. Once it sells out the item is gone for good,
+                    which makes it more exclusive for the people who bought one. Leave it empty to
+                    keep selling without a limit.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
             min={1}
             value={quantity}
             onChange={(v) => form.setQuantity(typeof v === 'number' ? v : undefined)}
