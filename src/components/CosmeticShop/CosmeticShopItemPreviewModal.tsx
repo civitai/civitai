@@ -43,6 +43,10 @@ import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
+
+const { charged, free } = stickerSurfaceLabels();
+const stickerSurfaceCopy = [...charged, ...free].join(' and ');
 
 type Props = { shopItem: CosmeticShopItemGetById; viaShopUserId?: number };
 
@@ -58,7 +62,9 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
   const router = useRouter();
 
   const handleApplyDecoration = async () => {
-    if (cosmetic.type === CosmeticType.ContentDecoration && currentUser?.username) {
+    if (cosmetic.type === CosmeticType.Sticker) {
+      // Owned, not equipped — the button here just acknowledges the purchase.
+    } else if (cosmetic.type === CosmeticType.ContentDecoration && currentUser?.username) {
       router.push(`/user/${currentUser.username}`);
     } else {
       // Apply now...
@@ -89,7 +95,8 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
         <Stack gap={4}>
           {cosmetic.type === CosmeticType.Sticker && (
             <Text size="xs" c="dimmed" align="center">
-              Type <b>:{(cosmetic.data as { slug?: string } | null)?.slug}:</b> in chat to use it.
+              Type <b>:{(cosmetic.data as { slug?: string } | null)?.slug}:</b> or pick it from the
+              sticker button in {stickerSurfaceCopy}.
             </Text>
           )}
           {cosmetic.type === CosmeticType.ContentDecoration && (
@@ -268,6 +275,10 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                       showTypePct={acceptsBlue && payWith === 'blue-first'}
                     />
                   </Stack>
+                ) : cosmetic.type === CosmeticType.Sticker ? (
+                  <Text size="sm" align="center" c="dimmed">
+                    You already own this sticker — it&apos;s in your sticker picker.
+                  </Text>
                 ) : (
                   <Stack gap={4}>
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
