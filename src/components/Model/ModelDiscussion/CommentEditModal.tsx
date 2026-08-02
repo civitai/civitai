@@ -92,7 +92,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
           <InputRTE
             name="content"
             placeholder="Type your thoughts..."
-            includeControls={['formatting', 'link', 'mentions']}
+            includeControls={['formatting', 'link', 'mentions', 'sticker']}
             editorSize="xl"
             onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
             inputClasses="break-words"

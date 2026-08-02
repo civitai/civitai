@@ -1,6 +1,7 @@
 import { Loader, Popover, ScrollArea, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { IconMoodSmile } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import type { ReactElement } from 'react';
+import { cloneElement, isValidElement, useMemo, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
@@ -30,10 +31,13 @@ export function StickerPicker({
   return (
     <Popover opened={opened} onChange={setOpened} position={position} withArrow shadow="md">
       <Popover.Target>
-        {target ? (
-          <UnstyledButton disabled={disabled} onClick={() => setOpened((o) => !o)}>
-            {target}
-          </UnstyledButton>
+        {/* A supplied target is usually already a button (e.g. an RTE toolbar
+            control), so clone the toggle onto it rather than wrapping — nesting
+            buttons is invalid markup and breaks keyboard activation. */}
+        {isValidElement(target) ? (
+          cloneElement(target as ReactElement<{ onClick?: () => void }>, {
+            onClick: () => setOpened((o) => !o),
+          })
         ) : (
           <LegacyActionIcon
             variant="subtle"

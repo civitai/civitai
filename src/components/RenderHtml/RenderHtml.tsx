@@ -11,6 +11,9 @@ import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/Ty
 import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 // Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
 // substring elsewhere in the URL — `url.includes('youtube.com')` would let
@@ -191,6 +194,41 @@ export function RenderHtml({
     withProfanityFilter,
     thirdPartyAllowed,
   ]);
+
+  // Stored comment content carries stickers as empty `<span data-type="sticker">`
+  // elements. Resolve their art and fill them in on the client, the same
+  // post-mount hydration the timestamps below use. Deliberately ungated: a
+  // sticker already in someone's comment renders for every reader.
+  const stickerIds = useMemo(() => {
+    const ids = [...html.matchAll(/data-type="sticker"[^>]*data-id="(\d{1,9})"/g)].map((m) =>
+      Number(m[1])
+    );
+    const reversed = [...html.matchAll(/data-id="(\d{1,9})"[^>]*data-type="sticker"/g)].map((m) =>
+      Number(m[1])
+    );
+    return [...new Set([...ids, ...reversed])];
+  }, [html]);
+  const { sticker: stickerById } = useStickerCosmetics(stickerIds);
+
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container || !stickerIds.length) return;
+    container.querySelectorAll<HTMLSpanElement>('span[data-type="sticker"]').forEach((node) => {
+      const resolved = stickerById.get(Number(node.getAttribute('data-id')));
+      if (!resolved) return;
+      const size = STICKER_SIZE.inline;
+      const img = document.createElement('img');
+      img.src = getEdgeUrl(resolved.url, { width: size * 2, anim: resolved.animated });
+      img.alt = `:${resolved.slug}:`;
+      img.title = `:${resolved.slug}:`;
+      img.style.width = `${size}px`;
+      img.style.height = `${size}px`;
+      img.style.objectFit = 'contain';
+      img.style.display = 'inline-block';
+      img.style.verticalAlign = 'text-bottom';
+      node.replaceChildren(img);
+    });
+  }, [html, stickerById, stickerIds]);
 
   // RenderHtml injects a raw HTML string, so Discord-style `<t:...>` timestamps
   // arrive as `<time data-type="timestamp">` elements carrying a UTC fallback.

@@ -31,6 +31,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { StickerEditNode } from '~/components/TipTap/StickerNode';
+import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
@@ -138,6 +140,7 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
+  const addStickers = includeControls.includes('sticker');
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -214,6 +217,9 @@ export function RichTextEditor({
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
+    // Always registered, never gated: a sticker already in stored content has to
+    // render for every reader regardless of who may insert one.
+    arr.push(StickerEditNode);
 
     return arr;
   }, [
@@ -393,6 +399,11 @@ export function RichTextEditor({
                 <InsertTimestampControl />
               </RTE.ControlsGroup>
             )}
+            {addStickers && (
+              <RTE.ControlsGroup>
+                <InsertStickerControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -444,7 +455,8 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors'
-  | 'timestamp';
+  | 'timestamp'
+  | 'sticker';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

@@ -171,7 +171,7 @@ export const CommentForm = ({
           innerRef={editorRef}
           name="content"
           disabled={isLoading}
-          includeControls={['formatting', 'link', 'mentions']}
+          includeControls={['formatting', 'link', 'mentions', 'sticker']}
           defaultSuggestions={suggestedMentions}
           placeholder={
             !data?.length ? 'Be the first to leave a comment...' : 'Type your comment...'
