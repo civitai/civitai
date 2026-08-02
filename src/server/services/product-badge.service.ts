@@ -10,7 +10,7 @@ import type {
   UpsertProductBadgeInput,
 } from '~/server/schema/product-badge.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic.service';
+import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getImageUploadBackend } from '~/utils/s3-utils';

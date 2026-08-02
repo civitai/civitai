@@ -37,7 +37,7 @@ import {
 import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
-} from '~/server/services/cosmetic.service';
+} from '~/server/services/cosmetic-phash.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
