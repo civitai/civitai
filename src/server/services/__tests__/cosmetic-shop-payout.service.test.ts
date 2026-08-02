@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromClient from '~/server/prom/client';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -31,7 +32,13 @@ vi.mock('~/server/db/client', () => ({
       }),
   },
 }));
-vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() } }));
+// `importOriginal` keeps the rest of the module real: this suite's import graph
+// reaches prom collectors it never names, and a hand-listed mock silently breaks
+// the moment that graph grows.
+vi.mock('~/server/prom/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromClient>()),
+  dbReadFallbackCounter: { inc: vi.fn() },
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,

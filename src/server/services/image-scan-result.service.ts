@@ -3,6 +3,7 @@ import { getWorkflow, type MediaRatingOutput, type WorkflowEvent } from '@civita
 import type { NextApiRequest } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
@@ -417,11 +418,6 @@ function parseScanSteps({ steps, workflowId }: { steps: ScanResultStep[]; workfl
     throw new Error(`media rating unavailable for workflow: ${workflowId}`);
 
   return { wdTags: wdTagging!.tags, mediaRating: mediaRating!, mediaHash };
-}
-
-function computePerceptualHash(perceptual?: string) {
-  if (!perceptual) return undefined;
-  return BigInt.asIntN(64, BigInt('0x' + perceptual));
 }
 
 // All-or-nothing, not a filter: nsfwLevel aggregates as a max and isBlocked as an OR, so
