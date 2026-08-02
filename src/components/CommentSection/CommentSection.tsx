@@ -127,7 +127,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                 <InputRTE
                   name="content"
                   placeholder="Type your comment..."
-                  includeControls={['formatting', 'link', 'mentions']}
+                  includeControls={['formatting', 'link', 'mentions', 'sticker']}
                   disabled={saveCommentMutation.isPending}
                   onFocus={() => setShowCommentActions(true)}
                   defaultSuggestions={suggestedMentions}

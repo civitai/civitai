@@ -12,7 +12,7 @@ import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
-import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { STICKER_JUMBO_LIMIT, STICKER_SIZE } from '~/shared/utils/sticker-token';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 // Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
@@ -213,10 +213,28 @@ export function RenderHtml({
   useEffect(() => {
     const container = contentRef.current;
     if (!container || !stickerIds.length) return;
+    // Same jumbo rule as chat, applied per block: a paragraph containing only
+    // stickers renders them large. `parseStickerLines` can't be reused directly
+    // because the content here is DOM, not the raw token string, so the rule is
+    // re-derived from the same STICKER_JUMBO_LIMIT rather than duplicated.
+    const jumboBlocks = new Set<Element>();
+    container.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6').forEach((block) => {
+      const stickers = block.querySelectorAll(':scope > span[data-type="sticker"]');
+      if (!stickers.length || stickers.length > STICKER_JUMBO_LIMIT) return;
+      const withoutStickers = Array.from(block.childNodes)
+        .filter((n) => !(n instanceof Element && n.matches('span[data-type="sticker"]')))
+        .map((n) => n.textContent ?? '')
+        .join('');
+      if (!withoutStickers.trim()) jumboBlocks.add(block);
+    });
+
     container.querySelectorAll<HTMLSpanElement>('span[data-type="sticker"]').forEach((node) => {
       const resolved = stickerById.get(Number(node.getAttribute('data-id')));
       if (!resolved) return;
-      const size = STICKER_SIZE.inline;
+      const size =
+        node.parentElement && jumboBlocks.has(node.parentElement)
+          ? STICKER_SIZE.jumbo
+          : STICKER_SIZE.inline;
       const img = document.createElement('img');
       img.src = getEdgeUrl(resolved.url, { width: size * 2, anim: resolved.animated });
       img.alt = `:${resolved.slug}:`;
