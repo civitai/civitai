@@ -75,7 +75,7 @@ export function parseStickerContent(content: string): StickerContentPart[] {
 
 export const STICKER_SIZE = {
   /** A line of nothing but sticker. */
-  jumbo: 48,
+  jumbo: 64,
   /** Sticker sitting alongside text, aligned to the line. */
   inline: 22,
   /** Reply quotes and list previews — a summary surface, never jumbo. */

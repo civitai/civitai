@@ -40,7 +40,7 @@ describe('creator-shop sticker submission', () => {
   it('constrains the long edge and the ratio, not width and height', () => {
     expect(cosmeticImageRequirements(CosmeticType.Sticker)).toEqual({
       kind: 'freeform',
-      minLongEdge: 96,
+      minLongEdge: STICKER_SIZE.jumbo * 2,
       maxLongEdge: 512,
       maxAspectRatio: 2,
       requireTransparency: true,
@@ -75,9 +75,13 @@ describe('creator-shop sticker submission', () => {
       expect(pass(512, 100)).toBe(false);
     });
 
+    // Expressed against the derived floor, not a literal: the whole point of
+    // STICKER_SIZE.jumbo * 2 is that raising the render size raises the upload
+    // rule with it, and a test pinning 96 would just have to be edited each time.
+    // The coupling itself is pinned by the test above.
     it('rejects art too small to render a crisp jumbo, and oversized art', () => {
-      expect(pass(95, 95)).toBe(false);
-      expect(pass(96, 96)).toBe(true);
+      expect(pass(STICKER_MIN_LONG_EDGE - 1, STICKER_MIN_LONG_EDGE - 1)).toBe(false);
+      expect(pass(STICKER_MIN_LONG_EDGE, STICKER_MIN_LONG_EDGE)).toBe(true);
       expect(pass(512, 512)).toBe(true);
       expect(pass(513, 513)).toBe(false);
     });
@@ -89,7 +93,7 @@ describe('creator-shop sticker submission', () => {
 
     it('states the actual rule, with no mention of a fixed size', () => {
       const label = cosmeticDimensionsLabel(req);
-      expect(label).toContain('96');
+      expect(label).toContain(String(STICKER_MIN_LONG_EDGE));
       expect(label).toContain('512');
       expect(label).toContain('2:1');
       expect(label).not.toContain('128×128');
