@@ -7,6 +7,7 @@ import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -327,4 +328,42 @@ export type BlockWorkflowSnapshot = {
     amount: number;
     accountType: 'yellow' | 'blue' | 'red' | 'green';
   };
+  /**
+   * Checkpoint versions the generation graph SILENTLY replaced (issue #3520).
+   *
+   * On a `modelLocked` ecosystem the graph swaps any version id that is not in
+   * the current workflow's visible list for that workflow's default, returns
+   * success, and bills the user. That is deliberate graceful degradation — it is
+   * what keeps an app pinned to a since-retired version working instead of
+   * hard-failing — but through this bridge the id was DELIBERATE and the
+   * correction was previously undetectable. `requested` is what the block asked
+   * for, `applied` is what actually ran.
+   *
+   * 🔴 BEHAVIOUR IS UNCHANGED: the same model runs as before; this field only
+   * reports it. OPTIONAL + additive, and OMITTED entirely when nothing was
+   * substituted, so every existing snapshot stays byte-identical and a consumer
+   * that does not read it is unaffected.
+   *
+   * WHERE IT APPEARS. On the submit reply, on the `estimateWorkflow` reply, on
+   * EVERY reply from `submitWorkflow` that quotes a cost without submitting
+   * (insufficient per-call budget, the per-user daily / review Buzz cap, the
+   * per-app aggregate spend+velocity cap, the dev-tunnel session cap), and —
+   * because the submit persists it on the orchestrator workflow's `metadata` —
+   * on every subsequent `pollWorkflow` / `cancelWorkflow` read. The poll is the one
+   * that matters in practice: it is the snapshot carrying `imageUrls`, i.e. the
+   * one a block actually renders from, so the record is present next to the
+   * images it describes rather than only on a reply the block may have discarded.
+   * The estimate reply is the exception — a whatIf creates no persisted workflow,
+   * so there the record exists only on that reply.
+   *
+   * 🔴 WIRE CONTRACT: this is an ADDITIVE field on the type
+   * `@civitai/app-sdk`'s `blocks/types.ts` mirrors. The SDK's inbound validator
+   * does not know it yet, so a block reads it only after the SDK type is widened
+   * in that repo — tracked separately; nothing here edits another repo.
+   */
+  modelSubstitutions?: Array<{
+    requested: number;
+    applied: number;
+    reason: ModelSubstitutionReason;
+  }>;
 };

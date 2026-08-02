@@ -400,6 +400,11 @@ import { recordScopeInvocation } from '~/server/services/blocks/user-app-surface
 // lags by ~a test, making the fire-and-forget queue write's timing flaky.
 import '~/server/services/blocks/block-workflows.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+// #3520 — real collector (not a stub): the router reads `.list()` off the
+// context's collector, so using the genuine implementation keeps the test
+// honest about the shape it consumes.
+import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -6635,6 +6640,393 @@ describe("step-type registry bridge (kind: 'step')", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #3520 — silent checkpoint substitution: the SURFACE label and the field's
+// SURVIVAL to the poll.
+//
+// Two distinct properties, both of which the first cut of this feature got
+// wrong:
+//
+//   1. The `surface` label on `civitai_generation_model_substitutions_total` is
+//      supplied by the CALLER (`buildGenerationContext(..., 'block')`), because
+//      `validateInput` — where the metric is emitted — is shared with the on-site
+//      generator and preset generation and cannot tell them apart. The on-site
+//      substitution is the behaviour #3520 defends as CORRECT, so summing them
+//      contaminates the number that gates the phase-3 policy decision.
+//
+//   2. The record must reach the snapshot the block ACTUALLY RENDERS FROM. That
+//      is the terminal POLL (the only snapshot carrying `imageUrls`), and
+//      `pollWorkflow` builds it from a freshly fetched Workflow with none of the
+//      submitting request's context. Persisting the record on the orchestrator
+//      workflow's own `metadata` at submit is what closes that; `block_workflows`
+//      does not retain the submitted body, so nothing else can.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('blocks — #3520 model substitution observability', () => {
+  type SubstitutionRecord = { requested: number; applied: number; reason: ModelSubstitutionReason };
+  const SUBSTITUTION: SubstitutionRecord = {
+    requested: 2558804,
+    applied: 2552908,
+    reason: 'wrong-workflow',
+  };
+
+  /** A server-shaped context whose collector already holds `records`. */
+  function ctxWithSubstitutions(...records: SubstitutionRecord[]) {
+    const collector = createModelSubstitutionCollector(
+      (e) => records.find((r) => r.requested === e.requested)?.reason ?? 'unrecognized',
+      'block'
+    );
+    for (const r of records) {
+      collector.record({
+        requested: r.requested,
+        applied: r.applied,
+        ecosystem: 'Qwen',
+        workflow: 'txt2img',
+      });
+    }
+    return { externalCtx: { modelSubstitutions: collector } };
+  }
+
+  describe('surface label', () => {
+    it('the App Blocks bridge builds its generation context with surface `block`', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(mockBuildGenerationContext).toHaveBeenCalled();
+      for (const call of mockBuildGenerationContext.mock.calls) {
+        // By INDEX (4th positional arg), so a value passed in the wrong slot
+        // fails rather than passing on a `toHaveBeenCalledWith(...expect.anything())`.
+        expect(call[3]).toBe('block');
+        expect(call[3]).not.toBe('onsite');
+        expect(call[3]).not.toBe('preset');
+      }
+    });
+  });
+
+  describe('🔴 survival to the poll (the record is persisted on the workflow)', () => {
+    it('the REAL submit body carries the substitutions on workflow metadata', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(SUBSTITUTION));
+      // The graph yields workflowMetadata only on a REAL (non-whatIf) call.
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: { params: { prompt: 'a cat' } },
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      const realSubmit = mockSubmitWorkflow.mock.calls[1][0];
+      expect(realSubmit.body.metadata).toEqual({
+        params: { prompt: 'a cat' },
+        modelSubstitutions: [SUBSTITUTION],
+      });
+    });
+
+    it('does NOT touch the metadata when nothing was substituted', async () => {
+      // The overwhelmingly common case: the submitted body must be byte-identical
+      // to before this feature existed.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions());
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: { params: { prompt: 'a cat' } },
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(mockSubmitWorkflow.mock.calls[1][0].body.metadata).toEqual({
+        params: { prompt: 'a cat' },
+      });
+      expect('modelSubstitutions' in result.snapshot).toBe(false);
+    });
+
+    it('🔴 pollWorkflow REPORTS the substitutions recorded at submit', async () => {
+      // The failure this closes: the field existed only on the submit reply, so
+      // it was gone by the time the block had images to display beside it.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'succeeded',
+        cost: { total: 10 },
+        metadata: { params: { prompt: 'a cat' }, modelSubstitutions: [SUBSTITUTION] },
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's',
+            status: 'succeeded',
+            metadata: {},
+            output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          },
+        ],
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+
+      // Present ALONGSIDE the images — the whole point.
+      expect(result.snapshot.imageUrls).toEqual(['https://cdn/i.png']);
+      expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
+    });
+
+    it('pollWorkflow OMITS the field for a workflow that substituted nothing', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'succeeded',
+        cost: { total: 10 },
+        metadata: { params: { prompt: 'a cat' } },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect('modelSubstitutions' in result.snapshot).toBe(false);
+    });
+
+    it('cancelWorkflow reports them too (same read path)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockCancelWorkflow.mockResolvedValue(undefined);
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'canceled',
+        cost: { total: 3 },
+        metadata: { modelSubstitutions: [SUBSTITUTION] },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
+    });
+  });
+
+  describe('🔴 the in-generate cost preflight no longer discards its substitutions', () => {
+    it('the insufficient-budget reply reports what the quote was actually priced for', async () => {
+      // This exit returns a COST and no workflow — the one reply in the flow that
+      // would otherwise quote a price with no way to learn which model it was for.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(SUBSTITUTION));
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect((result.snapshot as { modelSubstitutions?: unknown }).modelSubstitutions).toEqual([
+        SUBSTITUTION,
+      ]);
+      // Only the preflight ran — no real submit.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('the insufficient-budget reply is unchanged when nothing was substituted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions());
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect('modelSubstitutions' in result.snapshot).toBe(false);
+    });
+  });
+
+  // ── The OTHER three exits that quote a cost without submitting.
+  //
+  // The insufficient-budget reply above is not the only one: the per-user daily
+  // Buzz cap, the per-app aggregate spend/velocity cap and the dev-tunnel session
+  // cap all return `cost: { total: cost }` from the SAME whatIf, with
+  // `workflowId: 'failed'` — i.e. no id the caller could poll to find out later
+  // which model that quote was priced for. A distinct substitution record per
+  // exit so a mutation on one exit cannot be killed by a neighbour's assertion.
+  describe('🔴 every cost-quoting exit that does not submit carries the record', () => {
+    const SUB_DAILY_CAP: SubstitutionRecord = {
+      requested: 101,
+      applied: 102,
+      reason: 'wrong-workflow',
+    };
+    const SUB_APP_CAP: SubstitutionRecord = {
+      requested: 201,
+      applied: 202,
+      reason: 'unrecognized',
+    };
+    const SUB_DEV_CAP: SubstitutionRecord = { requested: 301, applied: 302, reason: 'gated' };
+
+    /**
+     * Per-call budget high enough to clear the FIRST gate, so the request runs on
+     * past the insufficient-budget exit and reaches the cap under test. Only the
+     * whatIf submit is stubbed — none of these exits reaches the real submit.
+     *
+     * The three cap drivers are RE-NEUTRALIZED here, not just in `beforeEach`:
+     * the last test drives all three exits inside one `it`, and a cap left armed
+     * from the previous leg would short-circuit the next one at the WRONG exit
+     * (a green test for the wrong reason).
+     */
+    function reachesTheCaps(...records: SubstitutionRecord[]) {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(...records));
+      mockSysRedis.incrBy.mockResolvedValue(0);
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: true,
+        dailyTotal: 0,
+        velocityCount: 1,
+        dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+      });
+      mockGetActiveDevTunnel.mockResolvedValue(null);
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+    }
+
+    it('the DAILY Buzz cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_DAILY_CAP);
+      mockSysRedis.incrBy.mockResolvedValue(50015); // reservation trips the 50,000 cap
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_DAILY_CAP]);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+    });
+
+    it('the PER-APP spend/velocity cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_APP_CAP);
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_APP_CAP]);
+      // The ceiling itself is still not leaked — the message stays number-free.
+      expect(result.snapshot.error).not.toMatch(/\d/);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('the DEV-TUNNEL session cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_DEV_CAP);
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 5000 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_DEV_CAP]);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    // 🔴 The no-behaviour-change half: with nothing substituted every one of the
+    // three replies must be byte-identical to what it returned before this PR.
+    it('all three are UNCHANGED when nothing was substituted', async () => {
+      const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+      reachesTheCaps();
+      mockSysRedis.incrBy.mockResolvedValue(50015);
+      const daily = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(daily.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect('modelSubstitutions' in daily.snapshot).toBe(false);
+
+      reachesTheCaps();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+      const app = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(app.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect('modelSubstitutions' in app.snapshot).toBe(false);
+
+      reachesTheCaps();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 5000 });
+      const dev = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(dev.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      expect('modelSubstitutions' in dev.snapshot).toBe(false);
+    });
+  });
+
+  describe('estimateWorkflow', () => {
+    it('reports the substitutions on the estimate reply (nothing is persisted there)', async () => {
+      // A whatIf creates no persisted workflow, so the reply is the ONLY place
+      // this can appear on the estimate path.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(SUBSTITUTION));
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
     });
   });
 });

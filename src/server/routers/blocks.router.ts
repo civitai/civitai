@@ -133,6 +133,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
@@ -989,10 +990,16 @@ async function createBlockTextToImageStep(opts: {
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
-  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
-    id: opts.user.id,
-    isModerator: opts.user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    opts.user.tier ?? 'free',
+    undefined,
+    { id: opts.user.id, isModerator: opts.user.isModerator },
+    // #3520: the App Blocks bridge — the surface the issue is actually about.
+    // Here the checkpoint version id was written by an app author (deliberate),
+    // and until this PR the correction was undetectable by the caller. This is
+    // the population phase 3's reject/degrade decision has to be measured on.
+    'block'
+  );
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
@@ -1018,7 +1025,40 @@ async function createBlockTextToImageStep(opts: {
   // resources). It is `undefined` on whatIf calls (the graph omits it then), so
   // callers can attach it to the REAL submit body only — mirroring the normal
   // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
-  return { step, workflowMetadata };
+  //
+  // `modelSubstitutions` (issue #3520): checkpoint versions the graph SILENTLY
+  // replaced during the validation just performed. Read from the per-request
+  // collector on the `externalCtx` built two lines above — never a shared/cached
+  // object — so it describes THIS submit and no one else's. Behaviour is
+  // unchanged; the caller folds this into the snapshot so the block can detect
+  // that it was billed for a model it did not ask for.
+  const modelSubstitutions = externalCtx.modelSubstitutions
+    ?.list()
+    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+
+  // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
+  // A block renders from the TERMINAL POLL (the only snapshot carrying
+  // `imageUrls`), and `pollWorkflow` rebuilds its snapshot from a freshly
+  // fetched Workflow with none of this request's context — so a reply-only field
+  // is gone before there is anything to show beside it, and `block_workflows`
+  // does not retain the submitted body to recover it from. Riding on the
+  // orchestrator metadata the submit body already carries makes it readable on
+  // EVERY later read, with no schema/DB change. See
+  // `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY`.
+  //
+  // Byte-identical when nothing was substituted (the overwhelmingly common
+  // case): the key is only added when there is something to add, and
+  // `workflowMetadata` is `undefined` on whatIf — where there is no persisted
+  // workflow to read back from anyway, so the estimate reply carries the record
+  // directly instead.
+  return {
+    step,
+    workflowMetadata:
+      workflowMetadata && modelSubstitutions?.length
+        ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
+        : workflowMetadata,
+    modelSubstitutions,
+  };
 }
 
 export const blocksRouter = router({
@@ -3759,7 +3799,11 @@ export const blocksRouter = router({
       // whatIf: no `metadata` on the body — matches the normal path
       // (`generateFromGraph` builds workflowMetadata only for real submits) and
       // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      const { step, modelSubstitutions } = await createBlockTextToImageStep({
+        input: generateInput,
+        user,
+        whatIf: true,
+      });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -3770,7 +3814,10 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+      // cost for model A and is silently priced for model B has the same
+      // detectability problem as the submit, one step earlier.
+      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
     }),
 
   /**
@@ -4018,11 +4065,36 @@ export const blocksRouter = router({
       // resources/params the real submit uses.
       // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
       // it on whatIf), and the whatif body never carries `metadata` anyway.
-      const { step: stepForCostCheck } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
+      //
+      // #3520 — the preflight's OWN substitutions. This validation is what
+      // produces the cost the budget check below is made against, so if the graph
+      // swapped the checkpoint here, the quote the block is judged on is priced
+      // for a model it did not ask for. On the SUCCESS path the real submit
+      // re-validates the same input and its record is what the snapshot carries
+      // (identical by construction, and tied to a real workflow id), so a second
+      // copy there would be redundant.
+      //
+      // THE RULE: every exit that quotes a cost WITHOUT submitting carries this
+      // record. There are FOUR below, all returning this same whatIf `cost` and
+      // no workflow id the caller could poll to learn the answer later:
+      //
+      //   1. insufficient per-call budget            (`cost > claims.buzzBudget`)
+      //   2. per-user daily / review-session Buzz cap (`total > buzzCap`)
+      //   3. per-app aggregate spend + velocity cap   (G8, `!appSpend.allowed`)
+      //   4. dev-tunnel per-session spend backstop    (F4, `!reserved.allowed`)
+      //
+      // 2–4 sit after the idempotency claim, but every one of them RELEASEs it
+      // rather than finalizing, so none of these snapshots is ever cached and
+      // replayed — each is produced fresh from this request's own preflight.
+      // Adding the field leaks nothing the caller does not already own: it is
+      // the caller's own requested id and the id that would have run, never any
+      // cap value (exit 3's message stays deliberately number-free).
+      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
+        await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          whatIf: true,
+        });
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
@@ -4046,6 +4118,12 @@ export const blocksRouter = router({
             status: 'failed' as const,
             cost: { total: cost },
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+            // Additive + omitted when empty, exactly like every other snapshot
+            // site, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -4137,6 +4215,12 @@ export const blocksRouter = router({
               : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
                 `across your installed apps, this generation costs ${cost}, ` +
                 `daily cap is ${buzzCap}`,
+            // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
+            // when empty, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -4188,6 +4272,12 @@ export const blocksRouter = router({
                   : appSpend.reason === 'unavailable'
                   ? 'generation temporarily unavailable — please retry shortly'
                   : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+              // #3520 exit 3 — quotes `cost` with no workflow. Carries only the
+              // caller's own requested/applied version ids, so it does NOT
+              // weaken the deliberately number-free message above.
+              ...(preflightSubstitutions?.length
+                ? { modelSubstitutions: preflightSubstitutions }
+                : {}),
             },
           };
         }
@@ -4249,6 +4339,12 @@ export const blocksRouter = router({
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
                   `session cap is ${devTunnel.spendCapBuzz}`,
+                // #3520 exit 4 — quotes `cost` with no workflow. This is the
+                // path an app AUTHOR iterating locally hits, i.e. exactly the
+                // audience that needs to see a substituted checkpoint.
+                ...(preflightSubstitutions?.length
+                  ? { modelSubstitutions: preflightSubstitutions }
+                  : {}),
               },
             };
           }
@@ -4293,7 +4389,7 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata } = await createBlockTextToImageStep({
+        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
           input: generateInput,
           user,
           isGreen,
@@ -4317,7 +4413,9 @@ export const blocksRouter = router({
             externalId: blockExternalId,
           },
         });
-        snapshot = snapshotFromWorkflow(submitted);
+        // #3520: fold in any checkpoint the graph silently swapped during the
+        // validation inside `createBlockTextToImageStep` above.
+        snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
