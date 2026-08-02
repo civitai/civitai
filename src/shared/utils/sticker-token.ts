@@ -189,9 +189,25 @@ export type StickerSurface = 'chat' | 'comment';
  */
 export const STICKER_SURFACES = {
   // Free and unlimited by decision (§4b.3), so it stores tokens and never charges.
-  chat: { form: 'token', consumes: false },
-  comment: { form: 'span', consumes: true },
-} as const satisfies Record<StickerSurface, { form: StickerContentForm; consumes: boolean }>;
+  chat: { form: 'token', consumes: false, label: 'direct messages' },
+  comment: { form: 'span', consumes: true, label: 'comments' },
+} as const satisfies Record<
+  StickerSurface,
+  { form: StickerContentForm; consumes: boolean; label: string }
+>;
 
 /** Whether a surface may hold sticker markup at all. Anything absent is denied. */
 export const surfaceMayContainStickers = (surface: string): boolean => surface in STICKER_SURFACES;
+
+/**
+ * Where stickers cost a use and where they don't, in words, read from the table
+ * above. Copy that names surfaces by hand goes stale the moment the table
+ * changes — and worse, can promise a surface stickers were deliberately denied.
+ */
+export const stickerSurfaceLabels = () => {
+  const surfaces = Object.values(STICKER_SURFACES);
+  return {
+    charged: surfaces.filter((s) => s.consumes).map((s) => s.label),
+    free: surfaces.filter((s) => !s.consumes).map((s) => s.label),
+  };
+};

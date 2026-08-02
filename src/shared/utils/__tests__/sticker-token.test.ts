@@ -7,6 +7,8 @@ import {
   parseStickerIds,
   parseStickerLines,
   resolveStickerTokens,
+  STICKER_SURFACES,
+  stickerSurfaceLabels,
   stripStickerTokens,
 } from '~/shared/utils/sticker-token';
 
@@ -199,5 +201,26 @@ describe('legacy :emoji: tokens', () => {
 
   it('only ever writes the new form', () => {
     expect(formatStickerToken(5)).toBe(':sticker:5:');
+  });
+});
+
+// Justin's draft copy for the "uses per purchase" bubble said "public spaces like
+// comments and articles". Articles are deliberately not a sticker surface — that
+// denial is what closed the free-sticker bypass — so the copy is derived from the
+// table rather than written by hand.
+describe('surface copy is derived, not written', () => {
+  const { charged, free } = stickerSurfaceLabels();
+
+  it('partitions exactly by the consumes flag', () => {
+    const entries = Object.values(STICKER_SURFACES);
+    expect(charged).toEqual(entries.filter((s) => s.consumes).map((s) => s.label));
+    expect(free).toEqual(entries.filter((s) => !s.consumes).map((s) => s.label));
+    expect(charged.length + free.length).toBe(entries.length);
+  });
+
+  it('names comments and DMs, and cannot name a denied surface', () => {
+    expect(charged).toEqual(['comments']);
+    expect(free).toEqual(['direct messages']);
+    expect([...charged, ...free].join(' ')).not.toMatch(/article/i);
   });
 });

@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconBolt, IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -36,8 +37,13 @@ import {
   isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
+const stickerSurfaces = stickerSurfaceLabels();
+const joinLabels = (labels: string[]) =>
+  labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
@@ -207,7 +213,19 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
 
             {isSticker && (
               <NumberInput
-                label="Uses per purchase"
+                label={
+                  <Group gap={4} wrap="nowrap">
+                    <span>Uses per purchase</span>
+                    <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                      <Text size="xs">
+                        A use is spent when a buyer places your sticker in{' '}
+                        {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
+                        {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
+                        out they can buy the sticker again.
+                      </Text>
+                    </InfoPopover>
+                  </Group>
+                }
                 description="How many times a buyer can place this sticker. They buy more by buying it again."
                 value={uses}
                 onChange={(v) => setUses(typeof v === 'number' ? v : 1)}
