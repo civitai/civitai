@@ -33,6 +33,9 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
   id: z.number().optional(),
   content: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
+    // Comments charge a use per sticker placement, so they may carry them.
+    // Every other rich-text surface is denied by default.
+    allowStickers: true,
   })
     .refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';

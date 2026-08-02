@@ -92,6 +92,11 @@ export function RenderHtml({
     }
 
     return sanitizeHtml(processedHtml, {
+      // Render-side, so this must NOT re-decide policy: whether a surface may
+      // contain a sticker was settled when the content was written. Stripping
+      // here would blank stickers out of comments that legitimately paid for
+      // them, and rendering is explicitly ungated.
+      allowStickers: true,
       parseStyleAttributes: allowCustomStyles,
       allowedAttributes: {
         ...DEFAULT_ALLOWED_ATTRIBUTES,
