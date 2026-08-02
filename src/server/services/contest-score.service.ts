@@ -55,7 +55,12 @@ import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { Availability, CollectionItemStatus, CollectionMode } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CollectionItemStatus,
+  CollectionMode,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { signalClient } from '~/utils/signal-client';
 import { hashifyObject } from '~/utils/string-helpers';
 
@@ -76,7 +81,7 @@ const nowUtc = Prisma.raw(`(NOW() AT TIME ZONE 'UTC')`);
  * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
  * a disputed result can be traced to the code that produced it.
  */
-export const CONTEST_SCORE_CODE_VERSION = 3;
+export const CONTEST_SCORE_CODE_VERSION = 4;
 
 /**
  * Comments and tips are deliberately unweighted: both are trivially launderable
@@ -242,6 +247,15 @@ export async function setContestScoringConfig({
 }) {
   const { collectionId, scope, config, reason } = input;
   try {
+    // A base-model list is a single contest's rule. On the global row it would apply to
+    // every contest that has no config of its own, and any whose entries are built on
+    // anything else would go wholly ineligible behind a reason that reads like a
+    // finding rather than a misconfiguration.
+    if (scope === 'global' && config.baseModels?.length)
+      throw new ContestScoringError(
+        'Base models cannot be set on the global config — they are specific to one contest. Save them to this contest only, or set them on the collection itself.'
+      );
+
     const suffix = scopeSuffix(scope, collectionId);
     const key = configKey(suffix);
 
@@ -305,6 +319,16 @@ export async function setContestScoringConfig({
 // Window
 // ---------------------------------------------------------------------------
 
+/**
+ * Two windows, and the difference decides prizes.
+ *
+ * `start`/`end` are the DISPLAY window a moderator drives from the date pickers — a
+ * lens over the traffic being counted, freely narrowed to look at a single day.
+ *
+ * `contestStart`/`contestEnd` are the contest itself, off the collection's metadata.
+ * Anything that decides ELIGIBILITY reads these: the age gate, and which versions
+ * qualify. Narrowing the view must never make an entry ineligible, only quieter.
+ */
 export type ResolvedWindow = {
   start: Date;
   end: Date;
@@ -313,6 +337,10 @@ export type ResolvedWindow = {
   /** True while the contest is still open — the run is a preview, not a result. */
   partial: boolean;
   ageCutoff: Date;
+  contestStart: Date;
+  contestEnd: Date;
+  /** `Collection.metadata.baseModels` — the rule entrants were actually told. */
+  declaredBaseModels: string[];
 };
 
 /**
@@ -347,9 +375,12 @@ async function resolveWindow(
       `Collection ${collectionId} has neither submissionEndDate nor endsAt, and no explicit window end was given.`
     );
 
-  // Always the contest's own start, never a narrowed display window — otherwise
-  // zooming the view would drag the age gate along with it.
+  // Always the contest's own bounds, never a narrowed display window — otherwise
+  // zooming the view would drag the age gate and version eligibility along with it.
+  // They fall back to the resolved window only for a contest carrying no submission
+  // dates at all, where the caller's dates are the only definition available.
   const contestStart = metadata.submissionStartDate ?? start;
+  const contestEnd = metadata.submissionEndDate ?? metadata.endsAt ?? end;
   const ageCutoff = new Date(contestStart.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
 
   // Belt and braces behind the schema's `nonnegative()`: a row written before that
@@ -363,7 +394,41 @@ async function resolveWindow(
   const now = new Date();
   const partial = end > now;
 
-  return { start, end, effectiveEnd: partial ? now : end, partial, ageCutoff };
+  return {
+    start,
+    end,
+    effectiveEnd: partial ? now : end,
+    partial,
+    ageCutoff,
+    contestStart,
+    contestEnd,
+    declaredBaseModels: metadata.baseModels?.filter(Boolean) ?? [],
+  };
+}
+
+export type ResolvedBaseModels = {
+  baseModels: string[];
+  source: 'collection' | 'config' | 'none';
+};
+
+/**
+ * The collection's metadata wins over the scoring config, because it is the rule the
+ * submission validator rejected entrants against and the one the contest settings UI
+ * publishes. The config field is the fallback for a contest whose metadata declares
+ * none. The two CAN disagree, so the winning source travels with the answer and is
+ * recorded in the snapshot rather than left to be re-derived.
+ */
+function resolveBaseModels(
+  window: ResolvedWindow,
+  config: ContestScoringConfig
+): ResolvedBaseModels {
+  if (window.declaredBaseModels.length)
+    return { baseModels: window.declaredBaseModels, source: 'collection' };
+
+  const configured = config.baseModels?.filter(Boolean) ?? [];
+  return configured.length
+    ? { baseModels: configured, source: 'config' }
+    : { baseModels: [], source: 'none' };
 }
 
 // ---------------------------------------------------------------------------
@@ -614,12 +679,20 @@ function intList(values: number[]) {
   return values.join(',');
 }
 
-function ineligibilityReason(entry: EntryRow, qualifyingVersions: number) {
+function ineligibilityReason(
+  entry: EntryRow,
+  qualifyingVersions: number,
+  baseModelFilterApplied: boolean
+) {
   if (entry.modelDeleted) return 'Model deleted';
   if (entry.modelStatus !== 'Published') return `Model ${entry.modelStatus.toLowerCase()}`;
   if (entry.modelAvailability === Availability.Private) return 'Model is private';
+  // Only claims a base-model rule when one actually ran, so the reason never asserts a
+  // requirement the contest never had.
   if (!qualifyingVersions)
-    return 'No version was created during the contest window on a qualifying base model';
+    return baseModelFilterApplied
+      ? 'No published version was created during the contest on a qualifying base model'
+      : 'No published version was created during the contest';
   return null;
 }
 
@@ -903,8 +976,6 @@ async function loadImagePairs(
   versionPairs: EntryPair[],
   window: ResolvedWindow
 ) {
-  if (!versionPairs.length) return [];
-
   return withSpan(
     'contest-score.image-pairs',
     () =>
@@ -931,8 +1002,6 @@ async function countImageAuthors(
   window: ResolvedWindow,
   gates: BaseGates
 ) {
-  if (!versionPairs.length) return [];
-
   return withSpan(
     'contest-score.image-authors',
     () =>
@@ -994,8 +1063,9 @@ async function countCollectors(
 }
 
 /**
- * The versions that actually represent an entry: created inside the contest window
- * and, where the config names any, built on one of its base models.
+ * The versions that actually represent an entry: created inside the CONTEST window,
+ * publicly published, and — where the contest names any — built on one of its base
+ * models.
  *
  * Contest rules let an already-existing model enter with a new version, so counting
  * every version of the model credits an entry with traffic its contest work never
@@ -1003,6 +1073,10 @@ async function countCollectors(
  *
  * Deliberately NOT "the latest version": a creator who iterates during the contest
  * has every in-window version count toward the same entry.
+ *
+ * `contestStart`/`contestEnd`, never the display window: a moderator narrowing the
+ * date pickers to inspect one day must not thereby strip every entry of its
+ * qualifying version and declare the whole contest ineligible.
  */
 async function loadQualifyingVersions(
   entries: EntryRow[],
@@ -1016,8 +1090,9 @@ async function loadQualifyingVersions(
       SELECT mv.id AS "id", mv."modelId" AS "modelId"
       FROM "ModelVersion" mv
       WHERE mv."modelId" IN (${Prisma.join(entries.map((e) => e.modelId))})
-        AND mv."createdAt" >= ${utc(window.start)}
-        AND mv."createdAt" < ${utc(window.effectiveEnd)}
+        AND mv."createdAt" >= ${utc(window.contestStart)}
+        AND mv."createdAt" < ${utc(window.contestEnd)}
+        AND mv.status = ${ModelStatus.Published}::"ModelStatus"
         ${
           baseModels.length
             ? Prisma.sql`AND mv."baseModel" IN (${Prisma.join(baseModels)})`
@@ -1052,8 +1127,16 @@ async function loadQualifyingVersions(
 /**
  * The qualifying versions as a Postgres lookup table, so the image-derived signals
  * resolve their images through exactly the version set the ClickHouse signals count.
+ *
+ * An empty set renders as a well-typed table of no rows rather than an empty `VALUES`
+ * list, which is a syntax error. The guard belongs here: every call site joins against
+ * this, so relying on each of them to remember is one edit away from a 500 on a
+ * contest where nothing qualifies.
  */
 function pgVersionTable(pairs: EntryPair[]) {
+  if (!pairs.length)
+    return Prisma.raw(`(SELECT NULL::int AS "entryId", NULL::int AS "versionId" WHERE false) AS v`);
+
   const values = pairs.map((p) => `(${intList([p.entryId, p.entityId])})`).join(',');
   return Prisma.raw(`(VALUES ${values}) AS v("entryId", "versionId")`);
 }
@@ -1165,6 +1248,8 @@ type RunAudit = {
   ageGateBandUsers: number;
   /** Resolved rather than read back off the config, which may not carry the field. */
   baseModels: string[];
+  /** Which of the two rule sources won — they can disagree. */
+  baseModelSource: ResolvedBaseModels['source'];
 };
 
 /**
@@ -1189,8 +1274,13 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
   const { config, scope } = await resolveContestScoringConfig(input.collectionId);
   const window = await resolveWindow(input.collectionId, input, config);
   const statuses = input.statuses ?? DEFAULT_STATUSES;
-  const baseModels = config.baseModels ?? [];
-  const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0, baseModels };
+  const { baseModels, source: baseModelSource } = resolveBaseModels(window, config);
+  const audit: RunAudit = {
+    engagerCount: 0,
+    ageGateBandUsers: 0,
+    baseModels,
+    baseModelSource,
+  };
 
   const base = {
     collectionId: input.collectionId,
@@ -1336,7 +1426,7 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
     const rawTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].raw, 0);
     const qualifiedTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].qualified, 0);
     const qualifyingVersionCount = qualifyingVersions.get(entry.collectionItemId) ?? 0;
-    const reason = ineligibilityReason(entry, qualifyingVersionCount);
+    const reason = ineligibilityReason(entry, qualifyingVersionCount, baseModels.length > 0);
 
     return {
       collectionItemId: entry.collectionItemId,
@@ -1713,7 +1803,7 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
     const { pairs: versionPairs } = await loadQualifyingVersions(
       entries,
       window,
-      config.baseModels ?? []
+      resolveBaseModels(window, config).baseModels
     );
     const imagePairs = toImagePairs(await loadImagePairs(entries, versionPairs, window), entries);
 
@@ -1919,6 +2009,8 @@ export type ContestSnapshot = {
   engagerCount: number;
   /** Empty means no base-model filter was applied, not that the field was forgotten. */
   baseModels: string[];
+  /** `collection` metadata, the scoring `config` row, or `none`. */
+  baseModelSource: ResolvedBaseModels['source'];
   partial: boolean;
   score: ContestCommunityScore;
 };
@@ -1989,6 +2081,7 @@ export async function createContestSnapshot({
       ageGateBandUsers: outcome.audit.ageGateBandUsers,
       engagerCount: outcome.audit.engagerCount,
       baseModels: outcome.audit.baseModels,
+      baseModelSource: outcome.audit.baseModelSource,
       partial: outcome.window.partial,
       score: outcome.score,
     };
