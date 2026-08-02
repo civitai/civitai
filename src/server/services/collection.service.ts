@@ -1830,19 +1830,19 @@ export const setCollectionAiReview = async ({
   collectionId,
   aiReview,
 }: SetCollectionAiReviewInput) => {
-  const collection = await dbWrite.collection.findUnique({
-    where: { id: collectionId },
-    select: { id: true, metadata: true },
-  });
-  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  // jsonb_set rather than read-modify-write: a concurrent save from the collection edit modal would
+  // otherwise silently drop whichever write landed first.
+  const [updated] = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Collection"
+    SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{aiReview}', ${JSON.stringify(
+      aiReview
+    )}::jsonb, true)
+    WHERE id = ${collectionId}
+    RETURNING id
+  `;
+  if (!updated) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
-
-  return dbWrite.collection.update({
-    where: { id: collectionId },
-    data: { metadata: { ...metadata, aiReview } as Prisma.JsonObject },
-    select: { id: true, metadata: true },
-  });
+  return updated;
 };
 
 export const updateCollectionItemsStatus = async ({

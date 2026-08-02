@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   decideFromObservations,
   isNsfwLevelAllowed,
+  isUnratedNsfwLevel,
   resolveRejectionMessage,
 } from '~/server/services/ai/collection-review.service';
-import type { AiReviewObservations } from '~/server/services/ai/collection-review.service';
 import { NsfwLevel } from '~/server/common/enums';
 
-const clean: AiReviewObservations = {
+const clean: Record<string, unknown> = {
   sexualContent: false,
   suggestiveStyling: false,
   nsfwEstimate: 'PG',
@@ -22,6 +22,41 @@ const clean: AiReviewObservations = {
 describe('decideFromObservations', () => {
   it('approves a clean submission', () => {
     expect(decideFromObservations(clean).decision).toBe('approve');
+  });
+
+  // A response we cannot read is not a clean bill of health. Every one of these is JSON-parseable,
+  // so nothing upstream rejects them.
+  it.each([
+    ['empty object', {}],
+    ['a refusal', { error: "I can't assist with that" }],
+    ['missing hasBuzzReference', { ...clean, hasBuzzReference: undefined }],
+    ['missing sexualContent', { ...clean, sexualContent: undefined }],
+    ['missing depictsMinor', { ...clean, depictsMinor: undefined }],
+    ['a string where a boolean belongs', { ...clean, sexualContent: 'no' }],
+    ['otherViolations as a string', { ...clean, otherViolations: 'graphic violence' }],
+    ['null', null],
+    ['an array', []],
+  ])('escalates rather than approving on %s', (_label, response) => {
+    const result = decideFromObservations(response);
+    expect(result.decision).toBe('escalate');
+    expect(result.escalations).toContain('unreadable model response');
+  });
+
+  it('escalates when the model is unsure whether a subject is a minor', () => {
+    const result = decideFromObservations({ ...clean, minorUncertain: true });
+    expect(result.decision).toBe('escalate');
+    expect(result.escalations).toContain('possible minor');
+  });
+
+  // The prompt asks for 'R+', but models reach for the labels they know.
+  it.each(['R+', 'R', 'X', 'XXX', 'nsfw'])('treats nsfwEstimate %s as adult content', (rating) => {
+    const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
+    expect(result.decision).toBe('reject');
+    expect(result.violations).toContain('sexual/adult content');
+  });
+
+  it.each(['PG', 'PG-13'])('does not treat nsfwEstimate %s as adult content', (rating) => {
+    expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
   });
 
   it('rejects visible sexual content', () => {
@@ -39,7 +74,7 @@ describe('decideFromObservations', () => {
   it.each(['photorealistic minor', 'minor depicted inappropriately', 'real person likeness'])(
     'escalates rather than rejects for %s',
     (expected) => {
-      const observations: AiReviewObservations =
+      const observations =
         expected === 'real person likeness'
           ? { ...clean, depictsRealPerson: true }
           : {
@@ -142,8 +177,10 @@ describe('isNsfwLevelAllowed', () => {
     expect(isNsfwLevelAllowed(level, allowed)).toBe(expected);
   });
 
-  // Unrated images have no bit set; the job must skip them rather than read 0 as "disallowed".
-  it('reports an unrated image as not allowed', () => {
-    expect(isNsfwLevelAllowed(0, allowed)).toBe(false);
+  // The codebase uses both 0 and -1 for "not yet rated"; neither may pass the mask, and the job
+  // must skip them rather than reject them as adult content.
+  it.each([0, -1])('reports unrated level %i as not allowed', (level) => {
+    expect(isNsfwLevelAllowed(level, allowed)).toBe(false);
+    expect(isUnratedNsfwLevel(level)).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+import * as z from 'zod';
 import { openrouter } from '~/server/services/ai/openrouter';
 export { DEFAULT_AI_REVIEW_PROMPT } from '~/server/services/ai/collection-review.prompt';
 import type { TokenUsage } from '~/server/services/ai/openrouter';
@@ -33,19 +34,29 @@ export const DEFAULT_AI_REVIEW_REASON_COPY: Record<string, string> = {
 const GENERIC_REJECTION =
   "Your entry wasn't accepted because it doesn't meet this collection's guidelines.";
 
-export type AiReviewObservations = {
-  reason?: string;
-  sexualContent?: boolean;
-  suggestiveStyling?: boolean;
-  nsfwEstimate?: 'PG' | 'PG-13' | 'R+';
-  depictsMinor?: boolean;
-  minorUncertain?: boolean;
-  minorIsPhotorealistic?: boolean;
-  minorInappropriate?: boolean;
-  depictsRealPerson?: boolean;
-  otherViolations?: string[];
-  hasBuzzReference?: boolean;
-};
+// Anything at or above R means the image does not belong on an all-ages surface. 'R+' is what the
+// prompt asks for; the rest are the labels a model reaches for on its own.
+const ADULT_RATINGS = ['r+', 'r', 'x', 'xxx', 'nsfw', 'explicit'];
+
+/**
+ * The booleans the rules depend on are REQUIRED. A response missing them is not a clean bill of
+ * health — it is a response we cannot read, and it must not resolve to approve.
+ */
+export const aiReviewObservationsSchema = z.object({
+  reason: z.string().optional(),
+  sexualContent: z.boolean(),
+  suggestiveStyling: z.boolean().optional(),
+  nsfwEstimate: z.string().optional(),
+  depictsMinor: z.boolean(),
+  minorUncertain: z.boolean().optional(),
+  minorIsPhotorealistic: z.boolean().optional(),
+  minorInappropriate: z.boolean().optional(),
+  depictsRealPerson: z.boolean(),
+  otherViolations: z.array(z.string()).optional(),
+  hasBuzzReference: z.boolean(),
+});
+
+export type AiReviewObservations = z.infer<typeof aiReviewObservationsSchema>;
 
 export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
@@ -57,25 +68,38 @@ export type AiReviewDecision = {
  * The model reports observations; this turns them into a verdict. Keeping the rules here means
  * they can be retuned or audited without re-running any classification, and a model that hedges
  * cannot approve something the rules forbid.
+ *
+ * Takes `unknown` on purpose: the input is unvalidated model output, and a refusal, a fallback to
+ * a different provider, or plain schema drift all arrive as parseable JSON with the wrong shape.
  */
-export function decideFromObservations(o: AiReviewObservations): AiReviewDecision {
+export function decideFromObservations(raw: unknown): AiReviewDecision {
+  const parsed = aiReviewObservationsSchema.safeParse(raw);
+  if (!parsed.success)
+    return { decision: 'escalate', violations: [], escalations: ['unreadable model response'] };
+
+  const o = parsed.data;
   const violations: AiReviewViolation[] = [];
   const escalations: string[] = [];
 
   if (o.depictsMinor && o.minorIsPhotorealistic) escalations.push('photorealistic minor');
   if (o.depictsMinor && o.minorInappropriate) escalations.push('minor depicted inappropriately');
+  // The prompt offers this as the model's way of saying "I can't tell if this is a child", so it
+  // has to lead somewhere other than approve.
+  if (o.minorUncertain) escalations.push('possible minor');
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
-  if (o.sexualContent || o.nsfwEstimate === 'R+') violations.push('sexual/adult content');
+  const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
+  if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
 
-  for (const raw of o.otherViolations ?? []) {
-    const value = String(raw).toLowerCase().trim();
+  for (const entry of o.otherViolations ?? []) {
+    const value = entry.toLowerCase().trim();
+    if (!value) continue;
     if (MODEL_VIOLATIONS.includes(value)) violations.push(value as AiReviewViolation);
-    else escalations.push(`unrecognized category: ${raw}`);
+    else escalations.push(`unrecognized category: ${entry}`);
   }
 
-  if (o.hasBuzzReference === false) violations.push('no buzz reference');
+  if (!o.hasBuzzReference) violations.push('no buzz reference');
 
   const decision = escalations.length ? 'escalate' : violations.length ? 'reject' : 'approve';
   return { decision, violations, escalations };
@@ -94,8 +118,14 @@ export function resolveRejectionMessage(
   return reasonCopy?.[first] ?? DEFAULT_AI_REVIEW_REASON_COPY[first] ?? first;
 }
 
+export const isAiReviewAvailable = () => !!openrouter;
+
+// The codebase treats both 0 and -1 as "not yet rated" (see updateCollectionItemsStatus's
+// judgesApplyBrowsingLevel guard), so neither is a level and neither is allowed here.
+export const isUnratedNsfwLevel = (nsfwLevel: number) => nsfwLevel <= 0;
+
 export function isNsfwLevelAllowed(nsfwLevel: number, allowedNsfwLevels: number) {
-  return nsfwLevel > 0 && (nsfwLevel & allowedNsfwLevels) !== 0;
+  return !isUnratedNsfwLevel(nsfwLevel) && (nsfwLevel & allowedNsfwLevels) !== 0;
 }
 
 export async function reviewImage({
@@ -108,10 +138,10 @@ export async function reviewImage({
   prompt?: string | null;
   model: string;
   systemPrompt: string;
-}): Promise<{ observations: AiReviewObservations; usage: TokenUsage } | null> {
+}): Promise<{ observations: unknown; usage: TokenUsage } | null> {
   if (!openrouter) return null;
 
-  const { content, usage } = await openrouter.getJsonCompletionWithUsage<AiReviewObservations>({
+  const { content, usage } = await openrouter.getJsonCompletionWithUsage<unknown>({
     model,
     temperature: 0,
     maxTokens: 4000,

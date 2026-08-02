@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   entityId          Int64,                  -- the reviewed image
   userId            Int32,                  -- always -1 (system); kept for Tracker parity
   model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.5'
-  decision          LowCardinality(String), -- 'approve' | 'reject' | 'escalate'
+  decision          LowCardinality(String), -- what the rules concluded
+  appliedAction     LowCardinality(String), -- what was actually done: accept | reject | stamp | none
   violations        Array(LowCardinality(String)),
   escalations       Array(String),          -- may contain model-authored text; never user-facing
   reason            String CODEC(ZSTD(3)),  -- the model's own wording, for auditing only
@@ -68,6 +69,10 @@ WHERE collectionId = 3870938 AND decision = 'reject' GROUP BY v ORDER BY 2 DESC;
 SELECT sum(promptTokens) AS pTok, sum(completionTokens) AS cTok, count() AS calls
 FROM collectionAiReviewEvents WHERE createdAt > now() - INTERVAL 1 DAY;
 
+-- where the rules and the applied action diverge (escalations configured to reject)
+SELECT decision, appliedAction, count() FROM collectionAiReviewEvents
+WHERE collectionId = 3870938 GROUP BY decision, appliedAction;
+
 -- what a dry run would have done
 SELECT collectionItemId, entityId, decision, violations, reason
 FROM collectionAiReviewEvents WHERE collectionId = 3870938 AND applied = 0
@@ -76,9 +81,21 @@ ORDER BY createdAt DESC LIMIT 100;
 
 ## Operational notes
 
-- **Dry run** (`aiReview.dryRun`) classifies and logs without touching any item's status. It
-  exercises the real wiring — config read, image URLs, model call, ClickHouse write — which offline
-  calibration does not.
+- **Dry run** (`aiReview.dryRun`) classifies and logs without changing any item's status or sending
+  any notification. It exercises the real wiring — config read, image URLs, model call, ClickHouse
+  write — which offline calibration does not.
+
+  It does stamp `reviewedById`, so each item is classified once. Without that the job would reselect
+  the whole backlog every run and re-bill it indefinitely. To re-run a dry run after changing the
+  prompt, clear the stamps:
+
+  ```sql
+  UPDATE "CollectionItem" SET "reviewedById" = NULL, "reviewedAt" = NULL
+  WHERE "collectionId" = <id> AND status = 'REVIEW' AND "reviewedById" = -1;
+  ```
+
+- **Items whose image the CDN will not serve are stamped after a failure** rather than retried every
+  run. Clear the stamps with the query above to retry them.
 - **`nsfwLevel = 0`** means ingestion has not rated the image yet; those items are skipped, not
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no

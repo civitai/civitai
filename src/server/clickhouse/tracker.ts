@@ -751,6 +751,7 @@ export class Tracker {
   // The beggars board deletes rejected items within the hour, so a decision that is not recorded
   // here leaves no trace of what the model did or why.
   public collectionAiReview(values: {
+    appliedAction: string;
     collectionId: number;
     collectionItemId: number;
     entityId: number;
