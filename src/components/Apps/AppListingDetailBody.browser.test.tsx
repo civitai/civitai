@@ -338,22 +338,27 @@ describe('AppListingDetailBody', () => {
     });
 
   /**
-   * Render barrier. `renderWithProviders` resolves before React has necessarily
-   * committed the CTA, so a bare `document.querySelector` right after it reads
-   * a pre-commit DOM and returns null — which is the SAME trap the `.not`
-   * comment above describes, in its positive form. Every DOM read below waits
-   * on a retrying locator first.
+   * Render barrier. Measured: a bare `document.querySelector` immediately after
+   * an awaited `renderWithProviders` DID return null here — the same trap the
+   * `.not` comment above describes, in its positive form. Retrying removes it.
+   *
+   * Polls for the CTA itself rather than a text barrier: these tests render
+   * TWICE in one body, so a `page.getByText('My App')` locator would match both
+   * mounts and throw on strict mode. Each variant's href is unique, so each wait
+   * can only be satisfied by its own mount.
+   *
+   * Timeout matches the 10s that `test/component-setup.tsx` deliberately sets as
+   * the project-wide `vi.waitFor` default — its comment names the saturated
+   * preview CI box, where these browser tests share a host with the image build.
+   * `vi.waitUntil` is not covered by that patch, so it is set explicitly.
    */
   async function renderAndSettle(
     ui: Parameters<typeof renderWithProviders>[0],
     ctaHref: string
   ): Promise<HTMLAnchorElement> {
     await renderWithProviders(ui);
-    // Poll for the CTA itself rather than a text barrier: this test renders
-    // twice in one body, so a `page.getByText('My App')` locator would match
-    // both mounts and throw on strict mode. The href is unique per variant.
     const cta = await vi.waitUntil(() => document.body.querySelector(`a[href="${ctaHref}"]`), {
-      timeout: 5000,
+      timeout: 10000,
       interval: 25,
     });
     return cta as HTMLAnchorElement;

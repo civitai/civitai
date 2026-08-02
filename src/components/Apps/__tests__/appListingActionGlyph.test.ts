@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  ACTION_GLYPH_ICONS,
   cardActionGlyph,
   detailActionGlyph,
-  type PrimaryActionGlyph,
 } from '~/components/Apps/appListingActionGlyph';
-import { ACTION_GLYPH_ICONS } from '~/components/Apps/appListingActionGlyphIcons';
 import type { ListingCtaAction } from '~/components/Apps/appListingCardView';
 import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
 
@@ -19,10 +18,23 @@ import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
  * in button copy. These assertions are the regression gate for that premise.
  */
 
-// Exhaustive over the union, so adding a mode/action without deciding its glyph
-// fails to typecheck here rather than silently defaulting at a call site.
-const DETAIL_MODES: readonly DetailActionMode[] = ['open', 'visit', 'connect', 'info'];
-const CARD_ACTIONS: readonly ListingCtaAction[] = ['open', 'detail', 'visit', 'connect'];
+// 🔴 GENUINELY exhaustive: `Record<DetailActionMode, true>` cannot be satisfied
+// with a missing key, so adding a 5th mode fails to typecheck HERE. A plain
+// `readonly DetailActionMode[]` would NOT — it accepts any subset, which would
+// let the distinctness tests below silently under-cover a newly added mode.
+const DETAIL_MODES = Object.keys({
+  open: true,
+  visit: true,
+  connect: true,
+  info: true,
+} satisfies Record<DetailActionMode, true>) as DetailActionMode[];
+
+const CARD_ACTIONS = Object.keys({
+  open: true,
+  detail: true,
+  visit: true,
+  connect: true,
+} satisfies Record<ListingCtaAction, true>) as ListingCtaAction[];
 
 describe('detailActionGlyph', () => {
   test('the in-site and off-site glyphs are DIFFERENT (the #3391 premise)', () => {
@@ -55,6 +67,11 @@ describe('cardActionGlyph', () => {
     expect(cardActionGlyph('detail')).toBe('info');
   });
 
+  test('every card action gets a distinct glyph', () => {
+    const glyphs = CARD_ACTIONS.map(cardActionGlyph);
+    expect(new Set(glyphs).size).toBe(CARD_ACTIONS.length);
+  });
+
   test('agrees with the detail page on every shared action name', () => {
     // The two view-models use the same words for the same meaning; a card and
     // the detail it links to must not disagree about what the CTA is.
@@ -65,15 +82,10 @@ describe('cardActionGlyph', () => {
 });
 
 describe('ACTION_GLYPH_ICONS', () => {
-  test('resolves an icon for every glyph in the vocabulary', () => {
-    const glyphs = [
-      ...DETAIL_MODES.map(detailActionGlyph),
-      ...CARD_ACTIONS.map(cardActionGlyph),
-    ] as PrimaryActionGlyph[];
-    for (const glyph of glyphs) {
-      expect(ACTION_GLYPH_ICONS[glyph]).toBeTruthy();
-    }
-  });
+  // NOTE: there is deliberately no "every glyph resolves to an icon" test here.
+  // `Record<PrimaryActionGlyph, Icon>` already forbids a missing key, so such a
+  // test cannot fail while the file typechecks — it would read as coverage while
+  // asserting nothing.
 
   test('🔴 launch and external resolve to DIFFERENT icon components', () => {
     // The string-level assertions above only prove two glyph NAMES differ. This

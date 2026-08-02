@@ -31,14 +31,17 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
-import { detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
-import { ACTION_GLYPH_ICONS } from '~/components/Apps/appListingActionGlyphIcons';
+import {
+  ACTION_GLYPH_ICONS,
+  detailActionGlyph,
+} from '~/components/Apps/appListingActionGlyph';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
+import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
 import {
   getListingPreview,
   LISTING_PREVIEW_HEIGHT,
@@ -370,15 +373,23 @@ function LivePreview({ detail }: { detail: ListingDetail }) {
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
 
-  // 🔴 Every branch below renders THIS icon — do not hard-code a glyph in a
-  // branch. `open` (in-site nav to /apps/run/<slug>, no target) and `visit`
-  // (external new tab) used to share `IconExternalLink`, which made the CTA
-  // carry no on-site/off-site signal at all — the signal #3391 removed the kind
-  // badges on the grounds that the CTA already carried. The mapping is pinned in
+  // 🔴 Resolve the glyph INSIDE each branch, from the mode that branch has
+  // already established — never once up front from `action.mode`. `href` is
+  // optional on `DetailPrimaryAction`, so an `open`/`visit` action without one
+  // falls through to the informational return at the bottom; a single hoisted
+  // lookup would paint a launch icon there. Not reachable from today's
+  // `getDetailPrimaryAction`, which is exactly why it is worth making
+  // structurally impossible rather than relying on that staying true.
+  //
+  // `open` (in-site nav to /apps/run/<slug>, no target) and `visit` (external
+  // new tab) used to share `IconExternalLink`, which left the CTA carrying no
+  // on-site/off-site signal at all — the signal #3391 removed the kind badges on
+  // the grounds that the CTA already carried. Mapping pinned in
   // `__tests__/appListingActionGlyph.test.ts`.
-  const GlyphIcon = ACTION_GLYPH_ICONS[detailActionGlyph(action.mode)];
+  const glyphFor = (mode: DetailActionMode) => ACTION_GLYPH_ICONS[detailActionGlyph(mode)];
 
   if (action.mode === 'open' && action.href) {
+    const GlyphIcon = glyphFor('open');
     return (
       <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />}>
         {action.label}
@@ -387,6 +398,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   }
 
   if (action.mode === 'visit' && action.href) {
+    const GlyphIcon = glyphFor('visit');
     return (
       <Stack gap={4} align="flex-end">
         <Button
@@ -418,6 +430,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   if (action.mode === 'connect') {
     // Honest stub — no derivable OAuth authorize URL from the public DTO. Inert
     // button + a note so the affordance is never a dead 404 link.
+    const GlyphIcon = glyphFor('connect');
     return (
       <Stack gap={4}>
         <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled>
@@ -437,6 +450,12 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   // `info` today (the only such target was the retired `/apps/[appBlockId]`),
   // so the text-only arm is the live one; the link arm is kept as the type's
   // optional-href contract, NOT as a place to reinstate a circular self-link.
+  //
+  // 🔴 Hard-coded to the `info` glyph, NOT `action.mode`. This is the fallthrough
+  // — an `open`/`visit` action that lost its href lands here, and it must wear
+  // the informational icon it is actually rendering, not the launch icon its
+  // mode still claims.
+  const GlyphIcon = glyphFor('info');
   return (
     <Stack gap={4}>
       {action.href ? (
