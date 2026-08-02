@@ -111,6 +111,17 @@ describe('RecentlyOpenedListingsView', () => {
     ...over,
   });
 
+  /** An off-site entry with a usable external target — the hardened new-tab path. */
+  const offsite = (over: Partial<ResolvedRecentApp> = {}): ResolvedRecentApp => ({
+    id: 'lst_1',
+    slug: 'ext-app',
+    kind: 'offsite',
+    hasPage: false,
+    externalUrl: 'https://ext.example/app',
+    name: 'Ext App',
+    ...over,
+  });
+
   test('empty entries → the whole rail is HIDDEN (no heading, no layout reserved)', async () => {
     renderWithProviders(
       <>
@@ -282,6 +293,54 @@ describe('RecentlyOpenedListingsView', () => {
       await expect
         .element(page.getByRole('link', { name: 'View details for Gen Matrix' }))
         .toBeInTheDocument();
+    });
+
+    /**
+     * 🔴 THE ICON CTA'S OWN new-tab HARDENING.
+     *
+     * The only `rel`/`target` assertion in this file queried
+     * `apps-recent-rail-item` — the TILE link — and never the icon button. So
+     * deleting `target`/`rel` from the icon's external `renderRoot` branch left
+     * the suite 21/21 green. That is the SAME branch that shipped as a dead
+     * button and had to be fixed after the fact; the fix landed with a role
+     * assertion but no hardening assertion, which is how a second hole stayed
+     * open in exactly the place that had already failed once.
+     */
+    test('🔴 the off-site ICON CTA carries its own new-tab hardening', async () => {
+      renderWithProviders(
+        <RecentlyOpenedListingsView entries={[offsite()]} canOpenPage />
+      );
+      const action = page.getByTestId('apps-recent-rail-action');
+      await expect.element(action).toBeInTheDocument();
+      await expect.element(action).toHaveAttribute('href', 'https://ext.example/app');
+      await expect.element(action).toHaveAttribute('target', '_blank');
+      // `noopener` is the security half (denies the opened page `window.opener`);
+      // both are asserted because dropping either is a silent downgrade.
+      await expect.element(action).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+
+    /**
+     * `UnstyledButton` computes `type: 'button'` BEFORE `renderRoot` swaps the
+     * root element, and `Box` forwards it through — so without destructuring it
+     * out the icon CTA renders `<a type="button">`. On an anchor `type` is the
+     * MIME-type hint of the linked resource and `"button"` is not a valid MIME
+     * type. Inert, but invalid HTML, and the same "props leaked into the wrong
+     * root element" family as the dead-button bug.
+     */
+    test('neither icon CTA root leaks `type="button"` onto its <a>', async () => {
+      const { rerender } = await renderWithProviders(
+        <RecentlyOpenedListingsView entries={[offsite()]} canOpenPage />
+      );
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      expect(
+        (page.getByTestId('apps-recent-rail-action').element() as HTMLElement).getAttribute('type')
+      ).toBeNull();
+
+      await rerender(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      expect(
+        (page.getByTestId('apps-recent-rail-action').element() as HTMLElement).getAttribute('type')
+      ).toBeNull();
     });
 
     test('an off-site entry → a "Visit" action', async () => {

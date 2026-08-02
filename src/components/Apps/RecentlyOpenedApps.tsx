@@ -357,7 +357,18 @@ function RecentTile({
             aria-label={actionLabel}
             className={TILE_ACTION_CLASS}
             data-testid="apps-recent-rail-action"
-            renderRoot={(props) =>
+            /**
+             * 🔴 `type` IS DESTRUCTURED OUT ON PURPOSE. `UnstyledButton` sets
+             * `type: component === 'button' ? 'button' : undefined` and `Box`
+             * forwards it into `renderRoot(props)` — but it computes that BEFORE
+             * `renderRoot` swaps the root element, so it still thinks the root is
+             * a `<button>` and we get `<a type="button">`. On an anchor `type` is
+             * the MIME-type hint of the linked resource, and `"button"` is not a
+             * valid MIME type: inert, but invalid HTML, and the same
+             * "props leaked into the wrong root element" family as the dead-button
+             * bug this branch already shipped once.
+             */
+            renderRoot={({ type: _dropButtonType, ...props }) =>
               target.external ? (
                 <a {...props} href={target.href} target="_blank" rel="noopener noreferrer" />
               ) : (

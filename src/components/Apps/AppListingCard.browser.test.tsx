@@ -645,6 +645,11 @@ describe('AppListingCard', () => {
         // precedent) — and the icon form must go to the SAME place as the text one.
         await expect.element(edit).toHaveAttribute('aria-label', 'Edit');
         await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
+        // …and it must not repeat the recents rail's `<a type="button">` leak.
+        // This one uses the polymorphic `component={Link}` rather than
+        // `renderRoot`, so Mantine knows the root is not a <button> and omits
+        // `type` — asserted rather than assumed, since the two paths differ.
+        expect((edit.element() as HTMLElement).getAttribute('type')).toBeNull();
       });
 
       test('the icon form is the one SHOWN at 280 and the text form at 460', async () => {
