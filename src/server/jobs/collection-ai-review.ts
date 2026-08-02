@@ -22,11 +22,17 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createJob } from './job';
 
 const SYSTEM_USER_ID = -1;
-// One run must finish well inside the cron period: the lock TTL is not renewed, so an overrun lets
-// the next tick start on the same rows.
-const BATCH_SIZE = 50;
-const CHUNK_SIZE = 10;
-const CONCURRENCY = 5;
+/**
+ * Measured against mimo-v2.5: a call is ~3s at the median but 13-20s at the tail, and each chunk
+ * is a barrier that waits for its slowest straggler. Small chunks therefore pay the tail
+ * repeatedly — 10-item chunks at concurrency 5 managed only 0.25 items/s. Concurrency 15 with a
+ * chunk wide enough to absorb stragglers measures ~0.78 items/s, so a full batch lands in roughly
+ * seven minutes, well inside the lock. Chunk size is still the crash-safety granularity: a run
+ * that dies loses at most one chunk's classifications.
+ */
+const BATCH_SIZE = 300;
+const CHUNK_SIZE = 50;
+const CONCURRENCY = 15;
 
 type PendingItem = {
   collectionItemId: number;
@@ -57,12 +63,12 @@ export const collectionAiReview = createJob(
       await withDistributedLock(
         // A run that overlaps itself would double-bill and double-notify. maxRetries 0 means a
         // still-running batch is skipped rather than queued behind the lock.
-        { key: `collection-ai-review-run:${collectionId}`, ttl: 900, maxRetries: 0 },
+        { key: `collection-ai-review-run:${collectionId}`, ttl: 1800, maxRetries: 0 },
         () => reviewCollection(collectionId, parsed.data)
       );
     }
   },
-  { lockExpiration: 900 }
+  { lockExpiration: 1800 }
 );
 
 async function reviewCollection(collectionId: number, config: CollectionAiReviewSchema) {

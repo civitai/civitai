@@ -57,13 +57,18 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   applied           UInt8,                  -- 0 when the collection is in dry run
   promptTokens      UInt32,
   completionTokens  UInt32
-) ENGINE = MergeTree
+) ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(createdAt)
-ORDER BY (collectionId, createdAt);
+ORDER BY (collectionId, collectionItemId, createdAt);
 ```
 
-`ORDER BY (collectionId, createdAt)` makes the two expected reads — "what did the model do on
-collection X" and "what did it do in the last N hours" — prefix scans rather than full scans.
+`ReplacingMergeTree` because the tracker delivers at-least-once: it retries on 5xx, and a NATS ack
+timeout means the row landed *and* got retried. `createdAt` is stamped in JS, so a redelivery is
+byte-identical and collapses on merge. Add `FINAL` when a query must not see a duplicate before the
+next merge.
+
+`collectionId` leads the sort key, so both expected reads — "what did the model do on collection X"
+and "what did it do recently" — stay prefix scans.
 `escalations` is `Array(String)` rather than `LowCardinality` because unrecognized-category entries
 interpolate model output and are unbounded.
 
@@ -94,6 +99,10 @@ ORDER BY createdAt DESC LIMIT 100;
 
 ## Operational notes
 
+- **Throughput.** A vision call is ~3s at the median but 13-20s at the tail, and each chunk is a
+  barrier waiting on its slowest straggler. `CONCURRENCY = 15` with `CHUNK_SIZE = 50` measures
+  ~0.78 items/s, so a 300-item batch takes ~7 minutes. Chunk size is the crash-safety granularity —
+  a dying run loses at most one chunk's classifications.
 - **Dry run** (`aiReview.dryRun`) classifies and logs without changing any item's status or sending
   any notification. It exercises the real wiring — config read, image URLs, model call, ClickHouse
   write — which offline calibration does not.
