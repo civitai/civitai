@@ -184,3 +184,18 @@ describe('isNsfwLevelAllowed', () => {
     expect(isUnratedNsfwLevel(level)).toBe(true);
   });
 });
+
+describe('system failure', () => {
+  // escalationAction:'reject' is the default, so without this flag a provider outage would reject
+  // every submission it touched and tell the submitter their entry broke the rules.
+  it('marks an unreadable response as a system failure, not a content judgment', () => {
+    const result = decideFromObservations({});
+    expect(result.systemFailure).toBe(true);
+  });
+
+  it('does not mark a genuine content escalation as a system failure', () => {
+    const result = decideFromObservations({ ...clean, suggestiveStyling: true });
+    expect(result.decision).toBe('escalate');
+    expect(result.systemFailure).toBeFalsy();
+  });
+});

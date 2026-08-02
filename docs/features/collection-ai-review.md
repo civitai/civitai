@@ -100,6 +100,9 @@ ORDER BY createdAt DESC LIMIT 100;
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no
   vision call.
+- **A response the rules cannot parse is a system failure, not a verdict.** It is always left for a
+  human regardless of `escalationAction`, so a provider outage cannot reject submissions and tell
+  the submitters they broke the rules.
 - **`escalationAction: 'leaveForHuman'`** stamps `reviewedById` without changing status, so the job
   does not reclassify (and re-bill) the item on the next run.
 - The job acts as system user `-1` via an in-process `isSystem` flag on

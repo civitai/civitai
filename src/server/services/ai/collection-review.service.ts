@@ -62,6 +62,12 @@ export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
   violations: AiReviewViolation[];
   escalations: string[];
+  /**
+   * We could not read the model, as opposed to the model reading something questionable. Callers
+   * must never turn this into a rejection: the submission is not at fault, and a provider outage
+   * would otherwise reject everything it touched.
+   */
+  systemFailure?: boolean;
 };
 
 /**
@@ -75,7 +81,12 @@ export type AiReviewDecision = {
 export function decideFromObservations(raw: unknown): AiReviewDecision {
   const parsed = aiReviewObservationsSchema.safeParse(raw);
   if (!parsed.success)
-    return { decision: 'escalate', violations: [], escalations: ['unreadable model response'] };
+    return {
+      decision: 'escalate',
+      violations: [],
+      escalations: ['unreadable model response'],
+      systemFailure: true,
+    };
 
   const o = parsed.data;
   const violations: AiReviewViolation[] = [];

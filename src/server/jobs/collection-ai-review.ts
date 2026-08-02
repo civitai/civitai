@@ -168,7 +168,9 @@ async function classifyItem({
   let action: Outcome['action'] = 'stamp';
   let message: string | undefined;
 
-  if (applied) {
+  // A system failure is never the submitter's fault, so it is left for a human no matter how
+  // escalations are configured.
+  if (applied && !decision.systemFailure) {
     if (decision.decision === 'approve') action = 'accept';
     else if (decision.decision === 'reject' || config.escalationAction === 'reject') {
       action = 'reject';
