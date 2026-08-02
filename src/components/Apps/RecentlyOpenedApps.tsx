@@ -1,8 +1,27 @@
-import { Anchor, Avatar, Card, Grid, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Anchor,
+  Avatar,
+  Card,
+  Grid,
+  Group,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import { useReducedMotion } from '@mantine/hooks';
+import { IconExternalLink, IconEye, IconPlayerPlay } from '@tabler/icons-react';
 import Link from 'next/link';
+import clsx from 'clsx';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
-import { getRecentRailTarget, type ResolvedRecentApp } from '~/components/Apps/recentAppsRail';
+import {
+  getRecentRailAction,
+  getRecentRailTarget,
+  type ResolvedRecentApp,
+} from '~/components/Apps/recentAppsRail';
+import classes from './RecentlyOpenedApps.module.scss';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import {
   appInitial,
@@ -110,13 +129,57 @@ export interface RecentlyOpenedListingsViewProps {
   onOpenRecent?: (entry: ResolvedRecentApp) => void;
 }
 
+/** Icon per action — the SAME vocabulary the store card's CTA row uses. */
+const RECENT_ACTION_ICONS = {
+  open: IconPlayerPlay,
+  visit: IconExternalLink,
+  view: IconEye,
+} as const;
+
 /**
- * One compact recents tile: app icon + name, the whole tile being the link. Kept
- * deliberately smaller than `AppListingCard` (no cover, no CTA row, no recommend
- * rollup) — this is a "jump back in" rail above the store, not a second grid —
- * but it reuses the SAME per-app seeded icon placeholder + monogram
+ * One compact recents tile: app icon + name + an icon CTA. Kept deliberately
+ * smaller than `AppListingCard` (no cover, no CTA row, no recommend rollup) —
+ * this is a "jump back in" rail above the store, not a second grid — but it
+ * reuses the SAME per-app seeded icon placeholder + monogram
  * (`listingPlaceholderGradient` / `appInitial`) as the cards below, so one app
  * reads as one identity across both surfaces.
+ *
+ * ── 🔴 STRUCTURE: WHY THIS IS NOT ONE BIG ANCHOR ────────────────────────────
+ * It used to be `<Anchor><Card>…</Card></Anchor>`. Adding an icon button inside
+ * that would nest a `<button>` (or a second `<a>`) inside an `<a>` — INVALID
+ * HTML: the parser reparents the inner interactive element out of the anchor, so
+ * the DOM you get is not the DOM you wrote, keyboard focus order becomes
+ * undefined, and screen readers announce one control where there are two.
+ *
+ * The fix is the standard LINK-OVERLAY idiom, and it inverts the nesting:
+ *   - the `Card` is the positioning context (`.tile` → `position: relative`);
+ *   - the tile link wraps the VISIBLE APP NAME — so it has a real accessible
+ *     name from its own text rather than a bolted-on `aria-label` — and its
+ *     `::after` stretches over the whole card, keeping "click anywhere on the
+ *     tile" intact;
+ *   - the `ActionIcon` is a SIBLING with its own `href`, lifted above the
+ *     overlay (`z-index: 2`) so it receives its own clicks. That LAYERING, not
+ *     the `stopPropagation` below, is what prevents a double navigation — the
+ *     two are siblings, so a click on one never reaches the other. The handler
+ *     is kept as a belt in case the stacking ever changes.
+ * Tab order follows DOM order: app name, then the icon button. Two targets,
+ * both reachable, in the order they read.
+ *
+ * ── MOTION ──────────────────────────────────────────────────────────────────
+ * Hover lift + press-down, both small (2px / 1.5% scale). Gated on
+ * `useReducedMotion()` exactly like `wizardMotion.tsx`: under reduced motion the
+ * `.motion` class is simply absent, so the reduced-motion DOM is identical to a
+ * plain render and is cheap to assert. The hover half is additionally gated in
+ * CSS on `@media (hover: hover) and (pointer: fine)` — on touch, `:hover` sticks
+ * after a tap and would leave the tapped tile looking permanently lifted; touch
+ * feedback comes from `:active`, which is momentary. See the module's SCSS.
+ *
+ * ── RECORDING ───────────────────────────────────────────────────────────────
+ * BOTH the tile link and the icon button call `onOpenRecent`. For an OFF-SITE
+ * entry that click is the only chance to record the open (following the link
+ * leaves the SPA); on-site, the run page records it too and the store dedups.
+ * Two targets means two places that must record — missing either one silently
+ * stops the rail re-ordering for half the ways a viewer uses it.
  */
 function RecentTile({
   entry,
@@ -127,54 +190,87 @@ function RecentTile({
   canOpenPage: boolean;
   onOpenRecent?: (entry: ResolvedRecentApp) => void;
 }) {
+  const reduceMotion = useReducedMotion();
   const target = getRecentRailTarget(entry, { canOpenPage });
+  const { action, label: actionLabel } = getRecentRailAction(entry, { canOpenPage });
+  const ActionGlyph = RECENT_ACTION_ICONS[action];
   const label = entry.name ?? entry.slug;
   // External targets are https-guarded upstream (`safeExternalHref`) and get the
-  // standard new-tab hardening; internal ones route through next/link.
-  const anchorProps = target.external
+  // standard new-tab hardening; internal ones route through next/link. Shared by
+  // the tile link and the icon button so they can never point at different places.
+  const linkProps = target.external
     ? { href: target.href, target: '_blank', rel: 'noopener noreferrer' }
     : { component: Link, href: target.href };
 
   return (
-    <Anchor
-      {...anchorProps}
-      underline="never"
-      c="inherit"
-      data-testid="apps-recent-rail-item"
-      onClick={() => onOpenRecent?.(entry)}
+    <Card
+      withBorder
+      padding="xs"
+      radius="md"
+      className={clsx(classes.tile, !reduceMotion && classes.motion)}
+      data-testid="apps-recent-rail-tile"
     >
-      <Card withBorder padding="xs" radius="md">
-        <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-          <Avatar
-            src={entry.iconUrl ?? undefined}
-            alt=""
-            radius="md"
-            size={32}
-            style={{ flexShrink: 0 }}
-            data-listing-icon-placeholder={entry.iconUrl == null ? '' : undefined}
-            styles={{
-              placeholder: {
-                background: listingPlaceholderGradient({
-                  slug: entry.slug,
-                  category: null,
-                  surface: 'icon',
-                }),
-                color: 'var(--mantine-color-white)',
-                fontWeight: 700,
-              },
-            }}
-          >
-            {appInitial(label, entry.slug)}
-          </Avatar>
-          <TruncatedText size="sm" fw={500} lineClamp={1} tooltipLabel={label} style={{ minWidth: 0 }}>
+      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+        <Avatar
+          src={entry.iconUrl ?? undefined}
+          alt=""
+          radius="md"
+          size={32}
+          style={{ flexShrink: 0 }}
+          data-listing-icon-placeholder={entry.iconUrl == null ? '' : undefined}
+          styles={{
+            placeholder: {
+              background: listingPlaceholderGradient({
+                slug: entry.slug,
+                category: null,
+                surface: 'icon',
+              }),
+              color: 'var(--mantine-color-white)',
+              fontWeight: 700,
+            },
+          }}
+        >
+          {appInitial(label, entry.slug)}
+        </Avatar>
+
+        <Anchor
+          {...linkProps}
+          underline="never"
+          c="inherit"
+          className={classes.overlayLink}
+          data-testid="apps-recent-rail-item"
+          onClick={() => onOpenRecent?.(entry)}
+        >
+          <TruncatedText size="sm" fw={500} lineClamp={1} tooltipLabel={label}>
             {label}
           </TruncatedText>
-          {target.external && (
-            <IconExternalLink size={14} style={{ flexShrink: 0 }} className="opacity-60" />
-          )}
-        </Group>
-      </Card>
-    </Anchor>
+        </Anchor>
+
+        {/* The icon-only CTA needs a REAL accessible name — the glyph alone is
+            not one. `aria-label` supplies it for assistive tech and the `Tooltip`
+            supplies the same string visually, the pattern `CategoryFilterButtons`
+            established. The label names the app too ("Open Gen Matrix"), so a
+            screen-reader user tabbing the rail hears which app each button
+            belongs to rather than six identical "Open"s. */}
+        <Tooltip label={actionLabel} withArrow>
+          <ActionIcon
+            {...linkProps}
+            variant="subtle"
+            color="gray"
+            size="md"
+            aria-label={actionLabel}
+            className={classes.action}
+            data-testid="apps-recent-rail-action"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onOpenRecent?.(entry);
+            }}
+          >
+            <ActionGlyph size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+    </Card>
   );
 }
 

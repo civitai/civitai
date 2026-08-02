@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  getRecentRailAction,
   getRecentRailTarget,
   RECENT_RAIL_LIMIT,
   resolveRecentApp,
@@ -648,5 +649,97 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
       //     from becoming a live bug the moment one of them stops being true.
       expect(offenders).toEqual([]);
     });
+  });
+});
+
+/**
+ * `getRecentRailAction` — the rail tile's icon CTA (added with the tile's
+ * interaction pass). DERIVED from `getRecentRailTarget` rather than re-deciding,
+ * so a play glyph labelled "Open" can never point at a detail page: that would be
+ * a lie in the button's ACCESSIBLE NAME, not merely a cosmetic mismatch.
+ */
+describe('getRecentRailAction', () => {
+  const onsite = (over: Partial<Parameters<typeof getRecentRailAction>[0]> = {}) => ({
+    id: 'ab_1',
+    slug: 'gen-matrix',
+    blockId: 'gen-matrix',
+    kind: 'onsite' as const,
+    hasPage: true,
+    name: 'Gen Matrix',
+    ...over,
+  });
+
+  it('an on-site page app the viewer CAN run → open', () => {
+    expect(getRecentRailAction(onsite(), { canOpenPage: true })).toEqual({
+      action: 'open',
+      label: 'Open Gen Matrix',
+    });
+  });
+
+  it('the pages flag dark → view (matches the detail fallback, never a 404 "Open")', () => {
+    expect(getRecentRailAction(onsite(), { canOpenPage: false })).toEqual({
+      action: 'view',
+      label: 'View details for Gen Matrix',
+    });
+  });
+
+  it('an on-site app with no page → view', () => {
+    expect(getRecentRailAction(onsite({ hasPage: false }), { canOpenPage: true }).action).toBe(
+      'view'
+    );
+  });
+
+  it('an off-site entry with a usable url → visit', () => {
+    expect(
+      getRecentRailAction(
+        {
+          id: 'lst_1',
+          slug: 'ext-app',
+          kind: 'offsite',
+          hasPage: false,
+          externalUrl: 'https://ext.example/app',
+          name: 'Ext App',
+        },
+        { canOpenPage: true }
+      )
+    ).toEqual({ action: 'visit', label: 'Visit Ext App' });
+  });
+
+  it('an off-site entry with NO url falls back to view, matching its target', () => {
+    expect(
+      getRecentRailAction(
+        { id: 'lst_2', slug: 'ext-app', kind: 'offsite', hasPage: false, name: 'Ext App' },
+        { canOpenPage: true }
+      ).action
+    ).toBe('view');
+  });
+
+  it('falls back to the slug when the entry has no name', () => {
+    expect(getRecentRailAction(onsite({ name: undefined }), { canOpenPage: true }).label).toBe(
+      'Open gen-matrix'
+    );
+  });
+
+  it('🔴 NEVER disagrees with getRecentRailTarget, across the whole matrix', () => {
+    // The coupling, asserted directly rather than by inspection: `visit` iff the
+    // target is external, `open` iff the target is the run route. A future edit
+    // that changes one function's branching and not the other's fails here.
+    for (const kind of ['onsite', 'offsite'] as const)
+      for (const hasPage of [true, false])
+        for (const canOpenPage of [true, false])
+          for (const externalUrl of [undefined, 'https://ext.example/app']) {
+            const entry = {
+              id: 'x',
+              slug: 'app',
+              blockId: 'app',
+              kind,
+              hasPage,
+              ...(externalUrl ? { externalUrl } : {}),
+            };
+            const target = getRecentRailTarget(entry, { canOpenPage });
+            const { action } = getRecentRailAction(entry, { canOpenPage });
+            expect(action === 'visit').toBe(target.external);
+            expect(action === 'open').toBe(target.href.startsWith('/apps/run/'));
+          }
   });
 });

@@ -215,6 +215,36 @@ export function getRecentRailTarget(
 }
 
 /**
+ * The three actions a rail tile's icon CTA can represent. Deliberately the SAME
+ * vocabulary as the store card's CTA row (`getListingCta` →
+ * open / visit / view-details), so one action reads identically on both
+ * surfaces: a play glyph always means "run this app here", an external-link
+ * glyph always means "this leaves Civitai", an eye always means "read about it".
+ */
+export type RecentRailAction = 'open' | 'visit' | 'view';
+
+/**
+ * Which action the tile's icon button performs, DERIVED from the same target
+ * `getRecentRailTarget` picks so the two can never disagree — the icon
+ * announcing "Open" while the link goes to the detail page would be a lie in the
+ * accessible name, not just a cosmetic mismatch.
+ *
+ * Additive: `getRecentRailTarget`'s own return shape is untouched (it is pinned
+ * by `__tests__/recentAppsRail.test.ts`), so this is a second read of the same
+ * decision rather than a contract change.
+ */
+export function getRecentRailAction(
+  entry: ResolvedRecentApp,
+  opts: { canOpenPage: boolean }
+): { action: RecentRailAction; label: string } {
+  const target = getRecentRailTarget(entry, opts);
+  if (target.external) return { action: 'visit', label: `Visit ${entry.name ?? entry.slug}` };
+  if (target.href.startsWith('/apps/run/'))
+    return { action: 'open', label: `Open ${entry.name ?? entry.slug}` };
+  return { action: 'view', label: `View details for ${entry.name ?? entry.slug}` };
+}
+
+/**
  * Build the store entry for a listing the viewer just OPENED FOR REAL.
  *
  * Callers (all of them — keep this list true):
