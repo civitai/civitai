@@ -1,5 +1,42 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+/**
+ * 🔴 THE APP'S REAL STYLESHEET CASCADE, imported ON PURPOSE — without it every
+ * geometry assertion in this file is a lie.
+ *
+ * These are exactly the two `_app.tsx` loads, in the same order: the Tailwind
+ * globals and the LAYERED Mantine sheet. Both halves are load-bearing and I got
+ * each of them wrong once:
+ *   - `@mantine/core/styles.css` (the non-layered variant) styles Mantine but
+ *     leaves Tailwind out entirely, so `hidden` / `@container` / every utility
+ *     class is inert. Measured: `container-type: normal`, the responsive Edit
+ *     swap silently did nothing, and BOTH Edit forms rendered at once.
+ *   - Tailwind alone would leave Mantine unstyled and put us back in the
+ *     initial-value trap below.
+ * `styles.layer.css` is what the app ships so Tailwind utilities can win over
+ * Mantine's defaults; using the plain sheet here would test a cascade the app
+ * does not have.
+ *
+ * The shared component harness deliberately does NOT load
+ * `@mantine/core/styles.css`. `Group` styles itself entirely from that
+ * stylesheet, so unstyled it computes `display: block` and `flex-wrap` returns
+ * the CSS INITIAL value `nowrap` — which is true of literally any element.
+ * `expect(getComputedStyle(row).flexWrap).toBe('nowrap')` therefore passed
+ * against a component flipped to `wrap="wrap"`; the companion "Edit and the CTA
+ * share a line" check was the same accident, since with no flex the buttons are
+ * `display: inline` and share a text line no matter what.
+ *
+ * Mutation-proven: with both `<Group wrap="nowrap">` in `AppListingCard.tsx`
+ * flipped to `"wrap"`, this file reported 27 passed / 1 failed — and the ONE
+ * failure was the PRE-EXISTING `--group-wrap` test, not either of these.
+ *
+ * Any `getComputedStyle` assertion whose expected value happens to equal the CSS
+ * initial value (`nowrap`, `visible`, `static`, `auto`, `none`, `0px`) is
+ * suspect for exactly this reason. {@link assertLayoutIsReal} is the guard that
+ * makes the import's failure loud instead of silent.
+ */
+import '~/styles/globals.css';
+import '@mantine/core/styles.layer.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -41,9 +78,76 @@ function base(over: Partial<ListingCard>): ListingCard {
     creator: { id: 5, username: 'alice', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://my-app.civit.ai',
+    },
     ...over,
   };
+}
+
+/**
+ * Render a card inside a fixed-width box.
+ *
+ * `width` is the OUTER box. `Card padding="md" withBorder` eats 2x16 + 2x1, so
+ * the content box — the number the layout measurements below are about — is
+ * `width - 34`.
+ *
+ * The two widths used below, both measured through the real
+ * `AppsPageLayout` + `Grid` rather than assumed:
+ *   - `280` -> a 246px content box = the TRUE 1200px-viewport geometry
+ *     (container 1200 -> column 296 -> card 280 -> row 246);
+ *   - `314` -> a 280px content box, i.e. roughly a 1345 viewport. "280" in the
+ *     original bug report is the CARD width at 1200, not its content box.
+ */
+function Sized({ width, card }: { width: number; card: ListingCard }) {
+  return (
+    <div style={{ width }}>
+      <AppListingCard card={card} canOpenPage />
+    </div>
+  );
+}
+
+/**
+ * 🔴 GUARD ON THE GUARD. Proves the stylesheet cascade above actually applied
+ * before any geometry is trusted. If either import ever silently stops working
+ * (renamed export path, harness change), every measurement below reverts to CSS
+ * initial values and starts passing for the wrong reason — this fails loudly
+ * instead, and names the cause.
+ */
+function assertLayoutIsReal(row: HTMLElement) {
+  expect(
+    getComputedStyle(row).display,
+    'Mantine stylesheet did not apply — every geometry assertion below is vacuous'
+  ).toBe('flex');
+}
+
+/** The action row's three parts, located from the primary CTA. */
+function actionRow(ctaName: string) {
+  const cta = page.getByRole('link', { name: ctaName, exact: true }).element() as HTMLElement;
+  const actions = cta.parentElement as HTMLElement;
+  const row = actions.parentElement as HTMLElement;
+  const rollup = row.firstElementChild as HTMLElement;
+  return { cta, actions, row, rollup };
+}
+
+/**
+ * Two elements share one flex line.
+ *
+ * Compares vertical CENTRES, not `top`. `Group` defaults to `align="center"`, so
+ * a short item (the ~18px recommend rollup) and a tall one (the ~36px action
+ * buttons) legitimately have `top` values ~9px apart while sitting on the SAME
+ * line — a `top`-based check reports them as wrapped and fails against correct
+ * code. Tolerance is half the shorter element's height, which is comfortably
+ * below the ~36px a real wrap would move them.
+ */
+function sameLine(a: Element, b: Element) {
+  const ra = a.getBoundingClientRect();
+  const rb = b.getBoundingClientRect();
+  const centreDelta = Math.abs(ra.top + ra.height / 2 - (rb.top + rb.height / 2));
+  return centreDelta < Math.min(ra.height, rb.height) / 2 + 1;
 }
 
 describe('AppListingCard', () => {
@@ -167,9 +271,7 @@ describe('AppListingCard', () => {
     mocks.currentUser = { id: 5, username: 'alice' }; // owner
     // base() has iconUrl: null + coverUrl: null → below floor.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await expect
-      .element(page.getByTestId('apps-listing-owner-incomplete'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-owner-incomplete')).toBeInTheDocument();
   });
 
   test('OWNER does NOT see the "Incomplete" indicator when icon+cover are present', async () => {
@@ -264,7 +366,10 @@ describe('AppListingCard', () => {
     // An unfetchable URL — the browser fires the <img>'s real `error` event, which
     // is the component's own onError → placeholder path.
     renderWithProviders(
-      <AppListingCard card={base({ coverUrl: 'https://edge.invalid/does-not-exist.png' })} canOpenPage />
+      <AppListingCard
+        card={base({ coverUrl: 'https://edge.invalid/does-not-exist.png' })}
+        canOpenPage
+      />
     );
     await expect.element(page.getByTestId('apps-listing-cover')).toBeInTheDocument();
 
@@ -346,6 +451,301 @@ describe('AppListingCard', () => {
     expect(edit.style.getPropertyValue('--button-height')).toBe('var(--button-height-sm)');
   });
 
+  /**
+   * CTA ICONS (product-feedback pass). Each action gets its own glyph so three
+   * same-shaped buttons become distinguishable at a glance in a dense grid.
+   *
+   * 🔴 The load-bearing property is that the icon is DECORATIVE: the button's
+   * ACCESSIBLE NAME must still be exactly the label text. A Tabler icon that
+   * ever gained a `<title>` (or an `aria-label` added "for clarity") would
+   * silently rename every CTA for screen-reader and automated-test consumers —
+   * `getByRole('link', { name: 'Open' })` would stop matching, and so would the
+   * existing tests above. Both halves are asserted per action.
+   */
+  describe('the CTA icons', () => {
+    /** The action button's own svg glyphs (excludes the recommend-rollup icon). */
+    function ctaIcons(name: string) {
+      const el = page.getByRole('link', { name }).element();
+      return Array.from(el.querySelectorAll('svg'));
+    }
+
+    test('Open (on-site, runnable) renders an icon and keeps the name "Open"', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+      // EXACT name — an icon contributing to the accessible name would make this
+      // "Open " or "Open <something>" and fail.
+      const open = page.getByRole('link', { name: 'Open', exact: true });
+      await expect.element(open).toBeInTheDocument();
+      expect(ctaIcons('Open')).toHaveLength(1);
+    });
+
+    test('Visit (off-site) renders an icon and keeps the name "Visit"', async () => {
+      renderWithProviders(
+        <AppListingCard
+          card={base({
+            kind: 'offsite',
+            kindData: {
+              kind: 'offsite',
+              subKind: 'external-link',
+              externalUrl: 'https://ext.example/app',
+            },
+          })}
+          canOpenPage
+        />
+      );
+      const visit = page.getByRole('link', { name: 'Visit', exact: true });
+      await expect.element(visit).toBeInTheDocument();
+      expect(ctaIcons('Visit')).toHaveLength(1);
+    });
+
+    test('View details (page flag dark) renders an icon and keeps its name', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
+      const view = page.getByRole('link', { name: 'View details', exact: true });
+      await expect.element(view).toBeInTheDocument();
+      await expect.element(view).toHaveAttribute('href', '/apps/store-preview/my-app');
+      expect(ctaIcons('View details')).toHaveLength(1);
+    });
+
+    test('🔴 the action row still holds at NOWRAP with the wider buttons', async () => {
+      // The row is `wrap="nowrap"` with `flexShrink: 0` on the actions for two
+      // documented reasons (a wrapped single-item line left-aligns under
+      // space-between; an OWNER card wrapping at a different width would grow the
+      // height of a whole `h-full` grid row). Icons make the buttons ~22px wider,
+      // so this pins that the row did not quietly gain wrapping to cope.
+      //
+      // Rendered in a NARROW column — the tight case is md/lg (3–4 columns), not
+      // the wide single-column base — and with the OWNER "Edit" button present,
+      // which is the widest configuration the row ever has.
+      mocks.currentUser = { id: 5, username: 'alice' };
+      renderWithProviders(<Sized width={340} card={base({})} />);
+      await expect
+        .element(page.getByRole('link', { name: 'Open', exact: true }))
+        .toBeInTheDocument();
+
+      const { row, actions, rollup } = actionRow('Open');
+      assertLayoutIsReal(row);
+
+      // Now that layout is real, this is a genuine assertion: with the stylesheet
+      // loaded `Group` resolves `flex-wrap` from `--group-wrap`, so flipping the
+      // component to `wrap="wrap"` makes this read `wrap`.
+      expect(getComputedStyle(row).flexWrap).toBe('nowrap');
+      expect(getComputedStyle(actions).flexWrap).toBe('nowrap');
+      expect(getComputedStyle(actions).flexShrink).toBe('0');
+
+      // …and BEHAVIOURALLY: everything is on one line and nothing overflows the
+      // row box. This is the half a `--group-wrap` assertion cannot prove.
+      expect(sameLine(rollup, actions)).toBe(true);
+      expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      // The actions are at their natural width — not squeezed to fake a fit.
+      expect(actions.getBoundingClientRect().width).toBeCloseTo(actions.scrollWidth, 0);
+    });
+
+    /**
+     * 🔴 THE 280px OWNER REGRESSION.
+     *
+     * A 280px card content box is what a **1200px viewport** produces at the
+     * store's 4-column `xl` grid — a very common laptop width, and one my
+     * original 390/768/1440/2560 sweep skipped entirely.
+     *
+     * Measured there (content box px, `Group gap="xs"` between the two sides):
+     *
+     *   | case @280                  | actions | rollup | rollup text |
+     *   |----------------------------|---------|--------|-------------|
+     *   | non-owner + "Open"         |      94 |    139 |         122 |
+     *   | non-owner + "View details" |     138 |    132 |         115 |
+     *   | owner + "Open"             |     188 |     82 |          65 |
+     *   | owner + "View details"     |     232 |     38 |          21 |
+     *
+     * The rollup's natural width is 139 / 122. In the last row it is 38 — the
+     * "91% recommend (100)" text and even the 13px thumb glyph are gone. The
+     * `leftSection` icons cost ~44px and that is exactly the deficit, so my PR
+     * body's "the rollup absorbs the extra width by truncating, as designed" was
+     * wrong for the owner case: below ~360 it does not truncate, it disappears.
+     *
+     * 🔴 THE FIX IS NOT TO LET THE ROW WRAP. Row height is a constant 46px in
+     * every cell above, and nothing overflows — the nowrap + `flexShrink: 0`
+     * design is correct and the file documents why wrapping breaks alignment and
+     * grid-row heights. The fix is to shrink the OWNER-ONLY Edit control to an
+     * icon below a container-query breakpoint, which is the only part of the row
+     * that is optional.
+     */
+    describe('owner cards at a 280px content box (1200px viewport, xl grid)', () => {
+      /**
+       * 🔴 A REVIEWED card, deliberately. The shared `base()` fixture has no
+       * reviews, so its rollup reads "No reviews yet" — only ~96px natural, which
+       * FITS at 280 even for an owner and hides the whole regression. (It did:
+       * the first run of the non-owner test below asserted a threshold taken from
+       * the reviewed measurements and failed at 95.7 against the unreviewed
+       * fixture.) "91% recommend (100)" is 139px natural, which is the content
+       * that actually gets destroyed, and is what the measured table above used.
+       */
+      const REVIEWED = {
+        recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
+        reviewCount: 100,
+      };
+      // The widest CTA ("View details") — the tight cell in the table above. A
+      // connect-kind listing has no external target, so `getListingCta` falls
+      // through to the unified detail. Fully typed (`externalUrl` included)
+      // rather than cast. Two bugs the cast was HIDING, both surfaced the moment
+      // it became a `satisfies`: `externalUrl` was missing, and the subKind was
+      // `'oauth-connect'` — not a member of `OffsiteSubKind` at all
+      // (`'connect' | 'external-link'`). Neither `tsc` error reached vitest,
+      // which type-strips.
+      const OFFSITE_CONNECT = {
+        ...REVIEWED,
+        kind: 'offsite' as const,
+        kindData: {
+          kind: 'offsite',
+          subKind: 'connect',
+          externalUrl: null,
+        } satisfies ListingCard['kindData'],
+      };
+
+      test('🔴 owner + "View details" keeps a LEGIBLE recommend rollup', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+
+        const { row, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(280);
+
+        // 80px is grounded in the measurements above, not invented: the glyph is
+        // 13px + a 4px gap, so 80 leaves ~63px of text — enough for "91% recom…"
+        // to read as a recommendation figure. Pre-fix this is 38 (text 21), which
+        // shows nothing at all; post-fix the icon-only Edit returns ~50px.
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
+
+        // The thumb glyph specifically must survive — it is the affordance that
+        // says "this number is a rating" at a glance.
+        const glyph = rollup.querySelector('svg') as SVGElement;
+        expect(glyph).toBeTruthy();
+        expect(glyph.getBoundingClientRect().width).toBeGreaterThan(0);
+        expect(glyph.getBoundingClientRect().right).toBeLessThanOrEqual(
+          rollup.getBoundingClientRect().right + 1
+        );
+
+        // …and the row still holds its shape: one line, no overflow.
+        expect(sameLine(rollup, actionRow('View details').actions)).toBe(true);
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      /**
+       * 🔴 THE TRUE 1200px GEOMETRY, which is TIGHTER than the case above.
+       *
+       * Measured through the real `AppsPageLayout` + `Grid` at a 1200 viewport:
+       * container 1200 -> grid column 296 -> CARD 280 -> action-row content box
+       * **246**. So "280px" in the original report is the card's OUTER width; the
+       * box the action row actually gets is 246, and a 314px wrapper (content box
+       * 280) corresponds to roughly a 1345 viewport. Testing only at 280 would
+       * have left the real 1200 case unguarded and 34px tighter than anything
+       * asserted.
+       */
+      test('🔴 at the REAL 1200 geometry (246px content box) the rollup still survives', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        const { row, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(246);
+        /**
+         * Measured: 3.6px before the fix, 52.1px after — the glyph (13) + gap (4)
+         * + ~35px of text, i.e. "91%…". Floor set at 50 from that measurement.
+         *
+         * 🔴 STATED HONESTLY: at this, the tightest geometry the store actually
+         * produces, the figure is HARD TRUNCATED. That is a real limitation, not
+         * a clean win — but it is truncation (the documented, designed behaviour
+         * of the flexible side) rather than the total disappearance the icons
+         * caused. Recovering the full "91% recommend (100)" here would mean
+         * shrinking the PRIMARY CTA too, which changes non-owner cards and is out
+         * of scope for this fix.
+         */
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(50);
+        const glyph = rollup.querySelector('svg') as SVGElement;
+        expect(glyph.getBoundingClientRect().width).toBeGreaterThan(0);
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      test('owner + "Open" (the narrower CTA) also keeps the rollup legible', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(REVIEWED)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'Open', exact: true }))
+          .toBeInTheDocument();
+        const { row, rollup } = actionRow('Open');
+        assertLayoutIsReal(row);
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
+      });
+
+      test('🔴 NON-owner cards are byte-unchanged — no icon Edit, same actions width', async () => {
+        // The whole change is owner-only. A non-owner card has no Edit control at
+        // all, so its geometry must be exactly what it was before this fix.
+        mocks.currentUser = null;
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        const { row, actions, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+        expect(page.getByTestId('apps-listing-owner-edit-icon').elements()).toHaveLength(0);
+        // Measured pre-fix values, pinned so an owner-side change cannot leak.
+        expect(Math.round(actions.getBoundingClientRect().width)).toBe(138);
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(130);
+      });
+
+      test('the icon-only Edit keeps a real accessible name and its href', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        const edit = page.getByTestId('apps-listing-owner-edit-icon');
+        await expect.element(edit).toBeInTheDocument();
+        // The glyph alone is not an accessible name (the CategoryFilterButtons
+        // precedent) — and the icon form must go to the SAME place as the text one.
+        await expect.element(edit).toHaveAttribute('aria-label', 'Edit');
+        await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
+        // …and it must not repeat the recents rail's `<a type="button">` leak.
+        // This one uses the polymorphic `component={Link}` rather than
+        // `renderRoot`, so Mantine knows the root is not a <button> and omits
+        // `type` — asserted rather than assumed, since the two paths differ.
+        expect((edit.element() as HTMLElement).getAttribute('type')).toBeNull();
+      });
+
+      test('the icon form is the one SHOWN at 280 and the text form at 460', async () => {
+        // The container query is what decides, so assert on rendered visibility
+        // rather than on which nodes exist.
+        mocks.currentUser = { id: 5, username: 'alice' };
+        const { rerender } = await renderWithProviders(
+          <Sized width={314} card={base(OFFSITE_CONNECT)} />
+        );
+        await expect.element(page.getByTestId('apps-listing-owner-edit-icon')).toBeVisible();
+        await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeVisible();
+
+        await rerender(<Sized width={494} card={base(OFFSITE_CONNECT)} />);
+        await expect.element(page.getByTestId('apps-listing-owner-edit')).toBeVisible();
+        await expect.element(page.getByTestId('apps-listing-owner-edit-icon')).not.toBeVisible();
+      });
+    });
+
+    test('the recommend rollup is the side that absorbs the extra width (it truncates)', async () => {
+      renderWithProviders(<Sized width={340} card={base({})} />);
+      await expect.element(page.getByText('No reviews yet')).toBeInTheDocument();
+      const rollup = page.getByText('No reviews yet').element() as HTMLElement;
+      // Mantine's `data-truncate` attribute AND the resolved style — with the
+      // stylesheet loaded the class-based ellipsis actually computes, so both
+      // halves are real. (Before the stylesheet import this asserted only the
+      // attribute, because `textOverflow` computed to `clip` regardless.)
+      expect(rollup.getAttribute('data-truncate')).toBe('end');
+      expect(getComputedStyle(rollup).textOverflow).toBe('ellipsis');
+      // …and its container is the shrinkable side (`minWidth: 0` is what lets a
+      // flex item shrink below its content width at all), which is the actual
+      // mechanism that keeps the widened action buttons at natural size.
+      expect((rollup.parentElement as HTMLElement).style.minWidth).toBe('0px');
+    });
+  });
+
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
     const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
     // The tooltip is overflow-GATED (TruncatedText disables it unless the label
@@ -354,7 +754,10 @@ describe('AppListingCard', () => {
     // width bound the label never clips and the tooltip stays disabled.
     renderWithProviders(
       <div style={{ width: 200 }}>
-        <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+        <AppListingCard
+          card={base({ creator: { id: 5, username: longName, image: null } })}
+          canOpenPage
+        />
       </div>
     );
     const label = page.getByText(`by ${longName}`);

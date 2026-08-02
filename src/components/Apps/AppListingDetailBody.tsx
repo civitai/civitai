@@ -18,11 +18,9 @@ import {
 import {
   IconApps,
   IconArrowLeft,
-  IconExternalLink,
   IconInfoCircle,
   IconPencil,
   IconPlayerPlay,
-  IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -33,9 +31,11 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
+  type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
@@ -370,15 +370,32 @@ function LivePreview({ detail }: { detail: ListingDetail }) {
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
 
+  // 🔴 Resolve the glyph INSIDE each branch, from the mode that branch has
+  // already established — never once up front from `action.mode`. `href` is
+  // optional on `DetailPrimaryAction`, so an `open`/`visit` action without one
+  // falls through to the informational return at the bottom; a single hoisted
+  // lookup would paint a launch icon there. Not reachable from today's
+  // `getDetailPrimaryAction`, which is exactly why it is worth making
+  // structurally impossible rather than relying on that staying true.
+  //
+  // `open` (in-site nav to /apps/run/<slug>, no target) and `visit` (external
+  // new tab) used to share `IconExternalLink`, which left the CTA carrying no
+  // on-site/off-site signal at all — the signal #3391 removed the kind badges on
+  // the grounds that the CTA already carried. Mapping pinned in
+  // `__tests__/appListingActionGlyph.test.ts`.
+  const glyphFor = (mode: DetailActionMode) => ACTION_GLYPH_ICONS[detailActionGlyph(mode)];
+
   if (action.mode === 'open' && action.href) {
+    const GlyphIcon = glyphFor('open');
     return (
-      <Button component={Link} href={action.href} leftSection={<IconExternalLink size={16} />}>
+      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />}>
         {action.label}
       </Button>
     );
   }
 
   if (action.mode === 'visit' && action.href) {
+    const GlyphIcon = glyphFor('visit');
     return (
       <Stack gap={4} align="flex-end">
         <Button
@@ -386,7 +403,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           href={action.href}
           target="_blank"
           rel="noopener noreferrer"
-          leftSection={<IconExternalLink size={16} />}
+          leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
           // whose viewer can't open the in-host route ("Open live" — the
@@ -410,9 +427,10 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   if (action.mode === 'connect') {
     // Honest stub — no derivable OAuth authorize URL from the public DTO. Inert
     // button + a note so the affordance is never a dead 404 link.
+    const GlyphIcon = glyphFor('connect');
     return (
       <Stack gap={4}>
-        <Button variant="default" leftSection={<IconPlugConnected size={16} />} disabled>
+        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled>
           {action.label}
         </Button>
         {action.note && (
@@ -429,15 +447,21 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   // `info` today (the only such target was the retired `/apps/[appBlockId]`),
   // so the text-only arm is the live one; the link arm is kept as the type's
   // optional-href contract, NOT as a place to reinstate a circular self-link.
+  //
+  // 🔴 Hard-coded to the `info` glyph, NOT `action.mode`. This is the fallthrough
+  // — an `open`/`visit` action that lost its href lands here, and it must wear
+  // the informational icon it is actually rendering, not the launch icon its
+  // mode still claims.
+  const GlyphIcon = glyphFor('info');
   return (
     <Stack gap={4}>
       {action.href ? (
-        <Button component={Link} href={action.href} variant="default" leftSection={<IconInfoCircle size={16} />}>
+        <Button component={Link} href={action.href} variant="default" leftSection={<GlyphIcon size={16} />}>
           {action.label}
         </Button>
       ) : (
         <Group gap={6} c="dimmed">
-          <IconInfoCircle size={16} />
+          <GlyphIcon size={16} />
           <Text size="sm">{action.label}</Text>
         </Group>
       )}

@@ -300,6 +300,184 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(1);
   });
 
+  // ── Primary-action glyph (S6a) ─────────────────────────────────────────────
+  //
+  // 🔴 THIS is the gate for the component wiring. The node suite
+  // (`__tests__/appListingActionGlyph.test.ts`) proves the MAPPING is correct —
+  // it stays fully green if someone hard-codes an icon back into a branch of
+  // `PrimaryAction`, because it never renders the component. Only these tests
+  // fail on that.
+  //
+  // Marker choice: Tabler renders `class="tabler-icon tabler-icon-<name>"`
+  // (`tabler-icon-${iconName}` in the package's `createReactComponent`). That is
+  // stable across a patch bump in a way the raw path `d` is not, and it survives
+  // in browser mode — unlike `data-testid`, which the production compiler strips
+  // (`reactRemoveProperties`), so it must never be the marker on a preview.
+
+  /** The `tabler-icon-*` modifier class on the button's glyph, e.g. `player-play`. */
+  function glyphOf(button: Element): string {
+    const svg = button.querySelector('svg');
+    if (!svg) throw new Error('primary action button rendered no glyph at all');
+    const modifier = Array.from(svg.classList).find(
+      (c) => c.startsWith('tabler-icon-') && c !== 'tabler-icon'
+    );
+    if (!modifier)
+      throw new Error(`glyph carried no tabler-icon-* class: ${svg.getAttribute('class')}`);
+    return modifier.replace('tabler-icon-', '');
+  }
+
+  /** The off-site (external-link) variant of `base()`. */
+  const offsite = () =>
+    base({
+      kind: 'offsite',
+      kindData: {
+        kind: 'offsite',
+        subKind: 'external-link',
+        externalUrl: 'https://ext.app',
+        connectClientId: null,
+      },
+    });
+
+  /**
+   * Render barrier. Measured: a bare `document.querySelector` immediately after
+   * an awaited `renderWithProviders` DID return null here — the same trap the
+   * `.not` comment above describes, in its positive form. Retrying removes it.
+   *
+   * Polls for the CTA itself rather than a text barrier: these tests render
+   * TWICE in one body, so a `page.getByText('My App')` locator would match both
+   * mounts and throw on strict mode. Each variant's href is unique, so each wait
+   * can only be satisfied by its own mount.
+   *
+   * Timeout matches the 10s that `test/component-setup.tsx` deliberately sets as
+   * the project-wide `vi.waitFor` default — its comment names the saturated
+   * preview CI box, where these browser tests share a host with the image build.
+   * `vi.waitUntil` is not covered by that patch, so it is set explicitly.
+   */
+  async function renderAndSettle(
+    ui: Parameters<typeof renderWithProviders>[0],
+    ctaHref: string
+  ): Promise<HTMLAnchorElement> {
+    await renderWithProviders(ui);
+    const cta = await vi.waitUntil(() => document.body.querySelector(`a[href="${ctaHref}"]`), {
+      timeout: 10000,
+      interval: 25,
+    });
+    return cta as HTMLAnchorElement;
+  }
+
+  test('🔴 the in-site Open CTA and the off-site Visit CTA render DIFFERENT glyphs', async () => {
+    // The premise civitai #3391 removed the kind + category badges on: that the
+    // on-site/off-site signal rides the CTA. Before S6a both branches rendered
+    // the byte-identical IconExternalLink, so it did not.
+    const openBtn = await renderAndSettle(
+      <AppListingDetailBody detail={base({})} canOpenPage />,
+      '/apps/run/my-app'
+    );
+    const openGlyph = glyphOf(openBtn);
+
+    const visitBtn = await renderAndSettle(
+      <AppListingDetailBody detail={offsite()} />,
+      'https://ext.app'
+    );
+    const visitGlyph = glyphOf(visitBtn);
+
+    expect(openGlyph).not.toBe(visitGlyph);
+    // Pin the actual values too, so "different" can't be satisfied by regressing
+    // the off-site branch instead of fixing the in-site one.
+    expect(openGlyph).toBe('player-play');
+    expect(visitGlyph).toBe('external-link');
+  });
+
+  test('the glyph change does NOT touch link semantics', async () => {
+    // S6a is iconography only. The in-site CTA must stay a same-tab internal
+    // link, and the off-site one must keep its new-tab + rel hardening.
+    const openBtn = await renderAndSettle(
+      <AppListingDetailBody detail={base({})} canOpenPage />,
+      '/apps/run/my-app'
+    );
+    expect(openBtn.getAttribute('target')).toBeNull();
+    expect(openBtn.getAttribute('rel')).toBeNull();
+
+    const visitBtn = await renderAndSettle(
+      <AppListingDetailBody detail={offsite()} />,
+      'https://ext.app'
+    );
+    expect(visitBtn.getAttribute('target')).toBe('_blank');
+    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  /**
+   * Glyph of the CTA whose visible text is exactly `label`.
+   *
+   * The `connect` and `info` affordances render no anchor — connect is a
+   * DISABLED button and info is a plain `Group` of icon + text — so
+   * `renderAndSettle`'s href key can't reach them. Matching on exact
+   * `textContent` plus "has an svg child" is unambiguous here: the enclosing
+   * `Stack` also carries the note text, so its textContent is longer, and the
+   * inner `<Text>` has the right text but no icon.
+   */
+  async function waitForCtaGlyph(label: string): Promise<string> {
+    const host = await vi.waitUntil(
+      () =>
+        Array.from(document.body.querySelectorAll('button, div')).find(
+          (n) => n.textContent?.trim() === label && n.querySelector('svg')
+        ) ?? null,
+      { timeout: 10000, interval: 25 }
+    );
+    return glyphOf(host as Element);
+  }
+
+  // Regression guards for the per-branch glyph refactor: the four call sites pass
+  // hard-coded mode literals rather than `action.mode`, so a literal copied into
+  // the wrong branch would otherwise be caught by nothing. The open/visit pair is
+  // value-pinned above; these are the other two.
+  //
+  // 🔴 ONE render per test, deliberately. `waitForCtaGlyph` scans the whole
+  // document and takes the first hit, and `afterEach(cleanup)` does NOT run
+  // between two renders inside a single test — so a shared test body would bias
+  // the match toward the OLDER mount if a label ever collided. Separate tests
+  // make each scan unambiguous by construction, and let a connect-branch
+  // mutation and an info-branch mutation each be observed on the same run
+  // instead of the first one short-circuiting the second.
+
+  test('the connect branch keeps its own glyph', async () => {
+    // off-site OAuth → the `connect` stub (disabled button + note).
+    await renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            subKind: 'connect',
+            externalUrl: null,
+            connectClientId: 'oauth-client-1',
+          },
+        })}
+      />
+    );
+    expect(await waitForCtaGlyph('Connect')).toBe('plug-connected');
+  });
+
+  test('the info (model-slot) branch keeps its own glyph', async () => {
+    // on-site app with NO launch page → the informational model-slot affordance.
+    // `liveUrl` is read only inside the `hasPage` guards, so `hasPage: false`
+    // reaches the model-slot return regardless of it — this fixture cannot
+    // silently land on the "Open live" visit branch.
+    await renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'blk-1',
+            hasPage: false,
+            liveUrl: 'https://my-app.civit.ai',
+          },
+        })}
+      />
+    );
+    expect(await waitForCtaGlyph('Runs on model pages')).toBe('info-circle');
+  });
+
   // ── Discovery rail ─────────────────────────────────────────────────────────
 
   test('the related rail renders siblings and EXCLUDES the listing being viewed', async () => {

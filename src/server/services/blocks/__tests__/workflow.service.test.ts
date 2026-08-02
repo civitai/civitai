@@ -36,6 +36,13 @@ import {
 } from '../workflow.service';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
+import {
+  getStepByOrchestratorType,
+  listRegisteredSteps,
+  NATIVELY_EXTRACTED_STEP_TYPES,
+  type AnyBlockStep,
+} from '../steps';
+import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 // REAL param-building path (no mocks): the generation graph validator and the
 // step-metadata snapshot fn are the exact functions the orchestrator's
 // `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
@@ -156,6 +163,141 @@ describe('snapshotFromWorkflow', () => {
     });
     const snap = snapshotFromWorkflow(wf as never);
     expect(snap.imageUrls).toBeUndefined();
+  });
+
+  // ---- #3520: silent model substitutions surfaced on the snapshot ----------
+  //
+  // The substitution happens during graph validation, before anything is
+  // submitted, so it arrives EITHER as an explicit second argument (submit /
+  // estimate replies, where the request's collector is still in scope) OR — and
+  // this is the one that matters — off the workflow's persisted `metadata`, which
+  // is what makes it survive to the TERMINAL POLL, the snapshot a block actually
+  // renders from. The invariant being protected is "a caller billed for model A
+  // and given model B must be able to find that out".
+  it('surfaces modelSubstitutions passed alongside the workflow', () => {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+      modelSubstitutions: [{ requested: 2558804, applied: 2552908, reason: 'wrong-workflow' }],
+    });
+    expect(snap.modelSubstitutions).toEqual([
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+    ]);
+  });
+
+  it('OMITS modelSubstitutions when nothing was substituted (byte-identical to before)', () => {
+    // Three shapes that all mean "nothing to report": no second argument at all
+    // (every pre-existing call site), an empty object, and an empty array. None
+    // may add a key to the wire payload.
+    for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra);
+      expect('modelSubstitutions' in snap).toBe(false);
+    }
+  });
+
+  // ---- 🔴 #3520 FIX 1: the record must SURVIVE TO THE POLL -----------------
+  //
+  // `pollWorkflow` / `cancelWorkflow` call `snapshotFromWorkflow(workflow)` with
+  // NO second argument — they only have a freshly fetched Workflow. The poll is
+  // also the only snapshot that carries `imageUrls`, i.e. the one a block renders
+  // from. A submit-reply-only field is therefore gone before there is anything to
+  // display beside it, and `block_workflows` does not retain the submitted body
+  // to recover it from. These pin the metadata round-trip that closes that.
+  describe('recovered from the workflow metadata (the poll path)', () => {
+    const persisted = [
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+      { requested: 987654321, applied: 2552908, reason: 'unrecognized' },
+    ];
+
+    it('reads modelSubstitutions off workflow.metadata with NO extra argument', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: { params: { prompt: 'a cat' }, modelSubstitutions: persisted },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('is present on the TERMINAL poll shape — alongside the imageUrls it describes', () => {
+      // The shape `pollWorkflow` actually hands to the block: succeeded, with
+      // outputs. This is the exact call the fix exists for.
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          status: 'succeeded',
+          metadata: { modelSubstitutions: persisted },
+          steps: [
+            {
+              $type: 'textToImage',
+              name: 's1',
+              status: 'succeeded',
+              metadata: {},
+              output: {
+                images: [{ id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' }],
+              },
+            },
+          ],
+        }) as never
+      );
+      expect(snap.imageUrls).toEqual(['https://cdn/img1.png']);
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('an EXPLICIT extra wins over the metadata (the submit reply is authoritative)', () => {
+      const fromRequest = [{ requested: 1, applied: 2, reason: 'gated' as const }];
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ metadata: { modelSubstitutions: persisted } }) as never,
+        { modelSubstitutions: fromRequest }
+      );
+      expect(snap.modelSubstitutions).toEqual(fromRequest);
+    });
+
+    it('still OMITS the field when the metadata has none (unchanged wire payload)', () => {
+      for (const metadata of [
+        {},
+        { params: { prompt: 'x' } },
+        { modelSubstitutions: [] },
+        { modelSubstitutions: null },
+        { modelSubstitutions: 'nope' },
+      ]) {
+        const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+        expect('modelSubstitutions' in snap).toBe(false);
+      }
+    });
+
+    // 🔴 The metadata crosses a service boundary and feeds a PUBLIC wire field
+    // whose `reason` is also a bounded prom label, so it is validated, not cast.
+    it.each([
+      ['a non-array', { modelSubstitutions: { requested: 1, applied: 2, reason: 'gated' } }],
+      ['a null entry', { modelSubstitutions: [null] }],
+      [
+        'a non-numeric requested',
+        { modelSubstitutions: [{ requested: '1', applied: 2, reason: 'gated' }] },
+      ],
+      [
+        'a NaN applied',
+        { modelSubstitutions: [{ requested: 1, applied: Number.NaN, reason: 'gated' }] },
+      ],
+      ['a missing reason', { modelSubstitutions: [{ requested: 1, applied: 2 }] }],
+      [
+        'an unknown reason',
+        { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'because' }] },
+      ],
+    ])('DROPS %s from the metadata rather than putting it on the wire', (_label, metadata) => {
+      const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+      expect('modelSubstitutions' in snap).toBe(false);
+    });
+
+    it('keeps the VALID entries when a malformed one rides alongside', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: {
+            modelSubstitutions: [
+              { requested: 1, applied: 2, reason: 'because' },
+              { requested: 3, applied: 4, reason: 'gated' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual([{ requested: 3, applied: 4, reason: 'gated' }]);
+    });
   });
 
   // ---- image extraction across ALL image-producing step types --------------
@@ -1948,6 +2090,205 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       cost: 47,
       createdAt: '2026-07-17T00:00:00.000Z',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 FIX 1 — REGISTERED STEP OUTPUT must be reachable on BOTH read surfaces.
+//
+// Both extractors used to `continue` on any `$type` outside
+// `customComfy | textToImage | imageGen | comfy`, and `convertImage`'s output is
+// `{ blob }` — SINGULAR, not `images` and not `blobs`. So they were blind to a
+// registered step in TWO independent ways: the `$type` AND the key. The lived
+// consequence: an app submits, is charged Buzz, polls to `succeeded`, and
+// `snapshot.imageUrls` is absent on every poll while `queryAppWorkflows` returns
+// `images: []`. It paid for a result it can never retrieve.
+//
+// These tests run over the REAL REGISTRY population, so a step registered
+// tomorrow whose output is unreachable fails here — the property a fourth
+// hardcoded `if ($type === 'convertImage')` branch could never have.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 registered step output — surfaced on the snapshot AND the projection', () => {
+  /**
+   * Build a fake completed workflow carrying the registry entry's OWN canonical
+   * completed-step object, which is itself copied from a real captured
+   * orchestrator response. Nothing here re-describes the output shape — a test
+   * that invented its own would only prove the test agrees with the test.
+   */
+  function workflowWithRegisteredStep(step: AnyBlockStep, variant: string) {
+    return fakeWorkflow({
+      id: 'wf_step',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 1 },
+      steps: [step.canonicalOutputFor(variant)],
+    });
+  }
+
+  it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const expected = step.extractOutput(step.canonicalOutputFor(variant)).map((m) => m.url);
+        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        const snap = snapshotFromWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        expect(
+          snap.imageUrls,
+          `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
+            'result is absent from every poll'
+        ).toEqual(expected);
+      }
+    }
+  });
+
+  it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const expected = step.extractOutput(step.canonicalOutputFor(variant));
+        const projected = projectAppWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        expect(
+          projected.images.map((i) => i.url),
+          `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
+            'generation the app paid for'
+        ).toEqual(expected.map((m) => m.url));
+        expect(projected.images.map((i) => [i.width, i.height])).toEqual(
+          expected.map((m) => [m.width, m.height])
+        );
+      }
+    }
+  });
+
+  // The concrete shape, pinned literally rather than derived from the extractor
+  // — so this fails if `convertImage`'s output key or availability rule changes.
+  it('convert-image: the SINGULAR output.blob reaches both surfaces', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_conv',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 1 },
+      steps: [
+        {
+          $type: 'convertImage',
+          name: 'block-step',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blob: {
+              id: 'b1',
+              url: 'https://orchestration/blobs/out.webp',
+              available: true,
+              width: 797,
+              height: 1024,
+              nsfwLevel: 'pg13',
+            },
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual([
+      'https://orchestration/blobs/out.webp',
+    ]);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      {
+        url: 'https://orchestration/blobs/out.webp',
+        width: 797,
+        height: 1024,
+        // Mapped through the SAME canonical helper the native branches use — the
+        // registry hands over the raw rating string, never a bitflag.
+        nsfwLevel: nsfwLevelFromContentRating('pg13'),
+      },
+    ]);
+  });
+
+  it('convert-image: a NOT-YET-AVAILABLE blob is dropped, not surfaced as a dead link', () => {
+    // The real orchestrator returns `available: false` at submit time and flips
+    // it to true when the blob lands (observed live 2026-08-02).
+    const wf = fakeWorkflow({
+      id: 'wf_conv_pending',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'processing',
+      steps: [
+        {
+          $type: 'convertImage',
+          name: 'block-step',
+          status: 'processing',
+          metadata: {},
+          output: {
+            blob: { id: 'b1', url: 'https://orchestration/blobs/out.webp', available: false },
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // 🔴 NO-REGRESSION. The registry branch is evaluated BEFORE the native `$type`
+  // filter, so this pins that it cannot shadow the pre-existing kinds. The
+  // structural guarantee is the load-time invariant forbidding a registered
+  // entry from claiming a natively-extracted `$type`; this is the behavioural
+  // half of the same claim.
+  it('does NOT change extraction for the natively-handled $types', () => {
+    for (const nativeType of NATIVELY_EXTRACTED_STEP_TYPES) {
+      expect(getStepByOrchestratorType(nativeType)).toBeUndefined();
+    }
+    const wf = fakeWorkflow({
+      id: 'wf_native',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 5 },
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 'txt2img',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [
+              {
+                id: 'i1',
+                url: 'https://cdn/a.png',
+                available: true,
+                width: 8,
+                height: 9,
+                nsfwLevel: 'pg',
+              },
+              { id: 'i2', url: 'https://cdn/b.png', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/a.png']);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      {
+        url: 'https://cdn/a.png',
+        width: 8,
+        height: 9,
+        nsfwLevel: nsfwLevelFromContentRating('pg'),
+      },
+    ]);
+  });
+
+  // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
+  // additive for registered steps only, not a wildcard that starts reading
+  // arbitrary step outputs.
+  it('still skips an unregistered, non-native $type', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_other',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageBackgroundRemoval',
+          name: 'x',
+          status: 'succeeded',
+          metadata: {},
+          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
   });
 });
 

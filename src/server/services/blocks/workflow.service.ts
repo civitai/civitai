@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
+import { getStepByOrchestratorType } from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -8,6 +9,7 @@ import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
+import { isModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
@@ -31,12 +33,88 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
 };
 
 /**
+ * 🔴 KEY under which the submit path stores the request's silent checkpoint
+ * substitutions on the ORCHESTRATOR WORKFLOW's `metadata` (issue #3520).
+ *
+ * WHY THE ORCHESTRATOR AND NOT A COLUMN. The record is produced during graph
+ * validation, which happens once, at submit. But blocks render from the
+ * TERMINAL POLL — that is the only snapshot that carries `imageUrls` — and
+ * `pollWorkflow` / `cancelWorkflow` build their snapshot from a freshly fetched
+ * `Workflow` with no access to that long-gone request context. A submit-reply-
+ * only field is therefore gone by the time there is anything to display beside
+ * it, and `block_workflows` does not retain the submitted body, so it is not
+ * recoverable afterwards either — i.e. the field would not achieve the thing
+ * #3520 asks for ("a caller billed for model A and given model B must be able to
+ * find that out").
+ *
+ * `WorkflowTemplate.metadata` is a free-form `{ [key: string]: unknown }` bag
+ * that the orchestrator persists and echoes back on every read of the workflow,
+ * which makes it the natural carrier: written once at submit, readable on every
+ * subsequent poll, and NO database change (no Prisma migration — which in this
+ * org is a manually-applied, per-environment human operation, not something a
+ * code PR should imply).
+ *
+ * The app already relies on this round-trip for its own non-standard top-level
+ * metadata keys — `remixOfId` and `isPrivateGeneration` are written here at
+ * submit and read back from `workflow.metadata` in
+ * `orchestration-new.service.ts`'s workflow formatter — so this is an existing,
+ * exercised path rather than a new assumption. The formatter builds its
+ * normalized metadata from a fixed key list, so an extra key is inert there.
+ */
+export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
+
+/**
+ * Read substitutions back off a fetched workflow's metadata.
+ *
+ * 🔴 VALIDATED, not cast. This crosses a service boundary: the value is whatever
+ * the orchestrator hands back, and the snapshot it feeds is a public wire
+ * contract whose `reason` is also a bounded prom label. So each entry is checked
+ * structurally and its `reason` narrowed against the code-owned union; anything
+ * else is dropped. Returns `undefined` (not `[]`) when there is nothing to
+ * report, so the caller can keep OMITTING the field entirely.
+ */
+function readModelSubstitutionsFromMetadata(
+  workflow: Workflow
+): BlockWorkflowSnapshot['modelSubstitutions'] {
+  const raw = (workflow.metadata as Record<string, unknown> | null | undefined)?.[
+    WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY
+  ];
+  if (!Array.isArray(raw)) return undefined;
+  const out: NonNullable<BlockWorkflowSnapshot['modelSubstitutions']> = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { requested, applied, reason } = entry as Record<string, unknown>;
+    if (typeof requested !== 'number' || !Number.isFinite(requested)) continue;
+    if (typeof applied !== 'number' || !Number.isFinite(applied)) continue;
+    if (!isModelSubstitutionReason(reason)) continue;
+    out.push({ requested, applied, reason });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
  * Flatten an orchestrator Workflow into the wire-stable shape the iframe
  * receives. Only image URLs that are `available` and have a non-null url are
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
  */
-export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot {
+export function snapshotFromWorkflow(
+  workflow: Workflow,
+  /**
+   * Facts known to the SUBMITTING request that the orchestrator Workflow object
+   * does not itself model — currently only the silent checkpoint substitutions
+   * recorded on the request's `GenerationCtx` (issue #3520).
+   *
+   * Optional, and only an OVERRIDE: when omitted, the same information is
+   * recovered from the workflow's persisted metadata (see
+   * {@link WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY}), which is what lets a
+   * poll — the snapshot a block actually renders from — still report it. Passing
+   * it explicitly is preferred on the submit and estimate replies, where the
+   * request's own collector is in scope and is authoritative for that exact
+   * validation (and where, on the estimate path, nothing was persisted at all).
+   */
+  extra?: { modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'] }
+): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
   for (const step of workflow.steps ?? []) {
@@ -56,6 +134,25 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
       }
       continue;
     }
+    // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
+    // in its registry entry, because the output key is step-type-specific —
+    // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
+    // native `$type` filter below `continue`s on every registered step and its
+    // result is unreachable: the caller is charged, the workflow reaches
+    // `succeeded`, and `imageUrls` is absent on every poll.
+    //
+    // 🔴 ADDITIVE BY CONSTRUCTION. A registry entry may not claim one of the
+    // natively-extracted `$type` values (`NATIVELY_EXTRACTED_STEP_TYPES`,
+    // enforced at registry load), so this branch cannot shadow the customComfy /
+    // textToImage / imageGen / comfy behaviour below — it only reaches `$type`s
+    // that used to fall through to `continue`.
+    const registeredStep = getStepByOrchestratorType(step.$type);
+    if (registeredStep) {
+      for (const media of registeredStep.extractOutput(step)) {
+        imageUrls.push(media.url);
+      }
+      continue;
+    }
     if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
       continue;
     }
@@ -72,6 +169,13 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
   }
   const total = workflow.cost?.total;
   const spentAccountType = primaryDebitedAccountType(workflow.transactions);
+  // #3520 — prefer the CALLER-SUPPLIED record (the submit/estimate reply, where
+  // the request's own collector is still in scope and is authoritative for this
+  // exact validation) and otherwise recover it from the workflow's persisted
+  // metadata, which is what makes the field survive to the terminal poll.
+  const modelSubstitutions = extra?.modelSubstitutions?.length
+    ? extra.modelSubstitutions
+    : readModelSubstitutionsFromMetadata(workflow);
   return {
     // A whatif/estimate workflow has no orchestrator id. The block SDK's
     // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
@@ -89,6 +193,9 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
     ...(spentAccountType ? { spentAccountType } : {}),
+    // Omitted entirely when nothing was substituted — the common case — so a
+    // normal snapshot is unchanged on the wire.
+    ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
   };
 }
 
@@ -169,6 +276,29 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
           nsfwLevel:
             blob.nsfwLevel && blob.nsfwLevel !== 'na'
               ? nsfwLevelFromContentRating(blob.nsfwLevel)
+              : null,
+        });
+      }
+      continue;
+    }
+    // A REGISTERED step type — same registry-declared extraction the snapshot
+    // uses, so a capability is retrievable on BOTH read surfaces from ONE
+    // declaration. Without it `queryAppWorkflows` returns `images: []` for a
+    // step the app paid for. See the snapshotFromWorkflow branch for why this is
+    // additive and cannot shadow the native `$type`s below.
+    const registeredStep = getStepByOrchestratorType(step.$type);
+    if (registeredStep) {
+      for (const media of registeredStep.extractOutput(step)) {
+        images.push({
+          url: media.url,
+          width: media.width,
+          height: media.height,
+          // The RAW orchestrator rating string is mapped by the SAME canonical
+          // helper the native branches use — the registry hands over the string,
+          // never a bitflag, so the mapping stays in one place.
+          nsfwLevel:
+            media.nsfwLevel && media.nsfwLevel !== 'na'
+              ? nsfwLevelFromContentRating(media.nsfwLevel)
               : null,
         });
       }
@@ -908,7 +1038,7 @@ export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
 
 // Format a whole-second timeout as the orchestrator's `HH:MM:SS` step-timeout
 // string (WorkflowStep.timeout). 180 → '00:03:00'.
-function formatStepTimeout(totalSeconds: number): string {
+export function formatStepTimeout(totalSeconds: number): string {
   const s = Math.max(0, Math.ceil(totalSeconds));
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
