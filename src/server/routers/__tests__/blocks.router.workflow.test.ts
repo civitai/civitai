@@ -404,6 +404,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // context's collector, so using the genuine implementation keeps the test
 // honest about the shape it consumes.
 import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -6665,10 +6666,15 @@ describe("step-type registry bridge (kind: 'step')", () => {
 //      does not retain the submitted body, so nothing else can.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('blocks — #3520 model substitution observability', () => {
-  const SUBSTITUTION = { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' as const };
+  type SubstitutionRecord = { requested: number; applied: number; reason: ModelSubstitutionReason };
+  const SUBSTITUTION: SubstitutionRecord = {
+    requested: 2558804,
+    applied: 2552908,
+    reason: 'wrong-workflow',
+  };
 
   /** A server-shaped context whose collector already holds `records`. */
-  function ctxWithSubstitutions(...records: Array<typeof SUBSTITUTION>) {
+  function ctxWithSubstitutions(...records: SubstitutionRecord[]) {
     const collector = createModelSubstitutionCollector(
       (e) => records.find((r) => r.requested === e.requested)?.reason ?? 'unrecognized',
       'block'
@@ -6870,6 +6876,137 @@ describe('blocks — #3520 model substitution observability', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect('modelSubstitutions' in result.snapshot).toBe(false);
+    });
+  });
+
+  // ── The OTHER three exits that quote a cost without submitting.
+  //
+  // The insufficient-budget reply above is not the only one: the per-user daily
+  // Buzz cap, the per-app aggregate spend/velocity cap and the dev-tunnel session
+  // cap all return `cost: { total: cost }` from the SAME whatIf, with
+  // `workflowId: 'failed'` — i.e. no id the caller could poll to find out later
+  // which model that quote was priced for. A distinct substitution record per
+  // exit so a mutation on one exit cannot be killed by a neighbour's assertion.
+  describe('🔴 every cost-quoting exit that does not submit carries the record', () => {
+    const SUB_DAILY_CAP: SubstitutionRecord = {
+      requested: 101,
+      applied: 102,
+      reason: 'wrong-workflow',
+    };
+    const SUB_APP_CAP: SubstitutionRecord = {
+      requested: 201,
+      applied: 202,
+      reason: 'unrecognized',
+    };
+    const SUB_DEV_CAP: SubstitutionRecord = { requested: 301, applied: 302, reason: 'gated' };
+
+    /**
+     * Per-call budget high enough to clear the FIRST gate, so the request runs on
+     * past the insufficient-budget exit and reaches the cap under test. Only the
+     * whatIf submit is stubbed — none of these exits reaches the real submit.
+     *
+     * The three cap drivers are RE-NEUTRALIZED here, not just in `beforeEach`:
+     * the last test drives all three exits inside one `it`, and a cap left armed
+     * from the previous leg would short-circuit the next one at the WRONG exit
+     * (a green test for the wrong reason).
+     */
+    function reachesTheCaps(...records: SubstitutionRecord[]) {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(...records));
+      mockSysRedis.incrBy.mockResolvedValue(0);
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: true,
+        dailyTotal: 0,
+        velocityCount: 1,
+        dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+      });
+      mockGetActiveDevTunnel.mockResolvedValue(null);
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+    }
+
+    it('the DAILY Buzz cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_DAILY_CAP);
+      mockSysRedis.incrBy.mockResolvedValue(50015); // reservation trips the 50,000 cap
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_DAILY_CAP]);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+    });
+
+    it('the PER-APP spend/velocity cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_APP_CAP);
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_APP_CAP]);
+      // The ceiling itself is still not leaked — the message stays number-free.
+      expect(result.snapshot.error).not.toMatch(/\d/);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('the DEV-TUNNEL session cap reply reports what the quote was priced for', async () => {
+      reachesTheCaps(SUB_DEV_CAP);
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 5000 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.modelSubstitutions).toEqual([SUB_DEV_CAP]);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    // 🔴 The no-behaviour-change half: with nothing substituted every one of the
+    // three replies must be byte-identical to what it returned before this PR.
+    it('all three are UNCHANGED when nothing was substituted', async () => {
+      const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+      reachesTheCaps();
+      mockSysRedis.incrBy.mockResolvedValue(50015);
+      const daily = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(daily.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect('modelSubstitutions' in daily.snapshot).toBe(false);
+
+      reachesTheCaps();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 999,
+        velocityCount: 0,
+      });
+      const app = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(app.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect('modelSubstitutions' in app.snapshot).toBe(false);
+
+      reachesTheCaps();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 5000 });
+      const dev = await caller().submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(dev.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      expect('modelSubstitutions' in dev.snapshot).toBe(false);
     });
   });
 

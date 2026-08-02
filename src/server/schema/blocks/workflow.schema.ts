@@ -345,9 +345,11 @@ export type BlockWorkflowSnapshot = {
    * that does not read it is unaffected.
    *
    * WHERE IT APPEARS. On the submit reply, on the `estimateWorkflow` reply, on
-   * the insufficient-budget reply from `generate`, and — because the submit
-   * persists it on the orchestrator workflow's `metadata` — on every subsequent
-   * `pollWorkflow` / `cancelWorkflow` read of that workflow. The poll is the one
+   * EVERY reply from `submitWorkflow` that quotes a cost without submitting
+   * (insufficient per-call budget, the per-user daily / review Buzz cap, the
+   * per-app aggregate spend+velocity cap, the dev-tunnel session cap), and —
+   * because the submit persists it on the orchestrator workflow's `metadata` —
+   * on every subsequent `pollWorkflow` / `cancelWorkflow` read. The poll is the one
    * that matters in practice: it is the snapshot carrying `imageUrls`, i.e. the
    * one a block actually renders from, so the record is present next to the
    * images it describes rather than only on a reply the block may have discarded.

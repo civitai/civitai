@@ -4071,11 +4071,24 @@ export const blocksRouter = router({
       // swapped the checkpoint here, the quote the block is judged on is priced
       // for a model it did not ask for. On the SUCCESS path the real submit
       // re-validates the same input and its record is what the snapshot carries
-      // (identical by construction, and tied to a real workflow id) — so these
-      // are only surfaced on the one exit that returns a quote WITHOUT a submit:
-      // the insufficient-budget reply below, which would otherwise be the single
-      // reply in the whole flow that reports a cost with no way to learn which
-      // model it was for.
+      // (identical by construction, and tied to a real workflow id), so a second
+      // copy there would be redundant.
+      //
+      // THE RULE: every exit that quotes a cost WITHOUT submitting carries this
+      // record. There are FOUR below, all returning this same whatIf `cost` and
+      // no workflow id the caller could poll to learn the answer later:
+      //
+      //   1. insufficient per-call budget            (`cost > claims.buzzBudget`)
+      //   2. per-user daily / review-session Buzz cap (`total > buzzCap`)
+      //   3. per-app aggregate spend + velocity cap   (G8, `!appSpend.allowed`)
+      //   4. dev-tunnel per-session spend backstop    (F4, `!reserved.allowed`)
+      //
+      // 2–4 sit after the idempotency claim, but every one of them RELEASEs it
+      // rather than finalizing, so none of these snapshots is ever cached and
+      // replayed — each is produced fresh from this request's own preflight.
+      // Adding the field leaks nothing the caller does not already own: it is
+      // the caller's own requested id and the id that would have run, never any
+      // cap value (exit 3's message stays deliberately number-free).
       const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
         await createBlockTextToImageStep({
           input: generateInput,
@@ -4202,6 +4215,12 @@ export const blocksRouter = router({
               : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
                 `across your installed apps, this generation costs ${cost}, ` +
                 `daily cap is ${buzzCap}`,
+            // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
+            // when empty, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -4253,6 +4272,12 @@ export const blocksRouter = router({
                   : appSpend.reason === 'unavailable'
                   ? 'generation temporarily unavailable — please retry shortly'
                   : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+              // #3520 exit 3 — quotes `cost` with no workflow. Carries only the
+              // caller's own requested/applied version ids, so it does NOT
+              // weaken the deliberately number-free message above.
+              ...(preflightSubstitutions?.length
+                ? { modelSubstitutions: preflightSubstitutions }
+                : {}),
             },
           };
         }
@@ -4314,6 +4339,12 @@ export const blocksRouter = router({
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
                   `session cap is ${devTunnel.spendCapBuzz}`,
+                // #3520 exit 4 — quotes `cost` with no workflow. This is the
+                // path an app AUTHOR iterating locally hits, i.e. exactly the
+                // audience that needs to see a substituted checkpoint.
+                ...(preflightSubstitutions?.length
+                  ? { modelSubstitutions: preflightSubstitutions }
+                  : {}),
               },
             };
           }

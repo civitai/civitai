@@ -33,6 +33,15 @@ import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substi
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 
+/** The declaration itself — not a call site. */
+const DEFINITION_FILE = 'src/server/services/orchestrator/orchestration-new.service.ts';
+/**
+ * This guard's own source. It mentions `buildGenerationContext(` inside STRING
+ * literals (the grep needle), which `stripComments` deliberately does not touch,
+ * so it has to be excluded by path or it enumerates itself as a call site.
+ */
+const GUARD_FILE = 'src/server/services/orchestrator/__tests__/generation-surface-wiring.test.ts';
+
 /**
  * Every file allowed to build a generation context, and the surface it must
  * declare. Adding a generation entry point means adding a row here — a
@@ -62,8 +71,14 @@ function stripComments(source: string): string {
     .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, (m, lead) => lead + ' '.repeat(m.length - lead.length));
 }
 
-/** Enumerate call sites from the TREE, not from a hand-kept list. */
-function findCallSiteFiles(): string[] {
+/**
+ * Enumerate call sites from the TREE, not from a hand-kept list.
+ *
+ * `includeTests: false` is the PRODUCTION population (what the surface table
+ * below pins). `includeTests: true` adds the test tree, which `tsconfig.json`
+ * EXCLUDES (`src/**\/__tests__/**`) — see the arity guard for why that matters.
+ */
+function findCallSiteFiles({ includeTests }: { includeTests: boolean }): string[] {
   const out = execFileSync(
     'grep',
     ['-rl', '--include=*.ts', '--include=*.tsx', 'buildGenerationContext(', 'src'],
@@ -73,13 +88,8 @@ function findCallSiteFiles(): string[] {
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter(
-      (f) =>
-        // The definition itself, and tests, are not call sites.
-        f !== 'src/server/services/orchestrator/orchestration-new.service.ts' &&
-        !f.includes('__tests__') &&
-        !f.endsWith('.test.ts')
-    )
+    .filter((f) => f !== DEFINITION_FILE && f !== GUARD_FILE)
+    .filter((f) => includeTests || !(f.includes('__tests__') || f.endsWith('.test.ts')))
     .filter(
       (f) =>
         argumentListsOf(
@@ -87,6 +97,47 @@ function findCallSiteFiles(): string[] {
           'buildGenerationContext('
         ).length > 0
     );
+}
+
+/**
+ * Split a call's argument text into its TOP-LEVEL arguments, ignoring commas
+ * nested inside parens / brackets / braces / string literals — so `f('a', {},
+ * {}, 'onsite')` counts 4, not 6.
+ */
+function topLevelArgs(argText: string): string[] {
+  if (argText.trim() === '') return [];
+  const args: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let current = '';
+  for (let i = 0; i < argText.length; i++) {
+    const c = argText[i];
+    if (quote) {
+      if (c === '\\') {
+        current += c + (argText[i + 1] ?? '');
+        i += 1;
+        continue;
+      }
+      if (c === quote) quote = null;
+      current += c;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+      current += c;
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if (c === ')' || c === ']' || c === '}') depth -= 1;
+    if (c === ',' && depth === 0) {
+      args.push(current);
+      current = '';
+      continue;
+    }
+    current += c;
+  }
+  args.push(current);
+  return args.map((a) => a.trim()).filter(Boolean);
 }
 
 /**
@@ -114,7 +165,7 @@ function argumentListsOf(source: string, needle: string): string[] {
 }
 
 describe('generation-context surface wiring', () => {
-  const files = findCallSiteFiles();
+  const files = findCallSiteFiles({ includeTests: false });
 
   it('finds the call sites at all (guard the guard)', () => {
     // Without this, a broken enumeration would make every assertion below pass
@@ -143,6 +194,43 @@ describe('generation-context surface wiring', () => {
       }
     }
   );
+
+  /**
+   * 🔴 THE TEST-CODE HOLE. "Required, not defaulted, so a new entry point is a
+   * compile error" is a claim about what `tsc` sees — and `tsconfig.json`
+   * EXCLUDES `src/[**]/__tests__/[**]`. A three-argument call inside a test tree
+   * therefore typechecks clean, builds a collector with `surface: undefined`,
+   * and no gate anywhere notices. Harmless while such a call only ever runs in a
+   * test, but a test HELPER that wraps `buildGenerationContext` would propagate
+   * unlabelled collectors with nothing catching it.
+   *
+   * Deliberately an ARITY check, NOT a surface-value check. Pinning WHICH
+   * surface a test must pass would false-alarm on legitimate fixtures — a
+   * table-driven test sweeping `GENERATION_SURFACES`, or one passing the value
+   * through a variable, are both perfectly valid and neither carries a literal
+   * this file could predict. Arity is exactly the guarantee `tsc` gives the
+   * production tree, extended to the part of the tree `tsc` never reads, and it
+   * constrains nothing else.
+   */
+  it('🔴 EVERY call site — test code included — passes the 4th `surface` argument', () => {
+    const allFiles = findCallSiteFiles({ includeTests: true });
+    const offenders: string[] = [];
+    let totalCalls = 0;
+
+    for (const file of allFiles) {
+      const source = stripComments(readFileSync(path.join(REPO_ROOT, file), 'utf8'));
+      for (const args of argumentListsOf(source, 'buildGenerationContext(')) {
+        totalCalls += 1;
+        const arity = topLevelArgs(args).length;
+        if (arity !== 4) offenders.push(`${file}: ${arity} args`);
+      }
+    }
+
+    // Guard the guard: a broken enumeration must not pass vacuously.
+    expect(allFiles.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_FILE).length);
+    expect(totalCalls).toBeGreaterThanOrEqual(allFiles.length);
+    expect(offenders).toEqual([]);
+  });
 
   it('the expectation table covers every declared surface (no orphan label)', () => {
     // A surface value with no call site would be a series that can never be
