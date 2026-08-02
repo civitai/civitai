@@ -36,7 +36,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
-import { stickerUsesFromCosmeticData } from '~/server/services/sticker.service';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {

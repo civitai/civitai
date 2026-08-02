@@ -5,7 +5,11 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
-import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
+import {
+  buildCosmeticData,
+  creatorGrantRemaining,
+  patchCosmeticData,
+} from '~/server/services/creator-shop.data';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -1148,7 +1152,15 @@ export const reviewCreatorShopItem = async ({
       meta: true,
       title: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
+      cosmetic: {
+        // type + data feed creatorGrantRemaining below.
+        select: {
+          createdById: true,
+          type: true,
+          data: true,
+          creator: { select: { username: true } },
+        },
+      },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
@@ -1201,6 +1213,7 @@ export const reviewCreatorShopItem = async ({
           userId: item.cosmetic.createdById,
           cosmeticId: item.cosmeticId,
           claimKey: 'creator-shop',
+          remaining: creatorGrantRemaining(item.cosmetic.type, item.cosmetic.data),
         },
       ],
       skipDuplicates: true,

@@ -66,12 +66,14 @@ export function StickerInventoryCard() {
                         objectFit: 'contain',
                       }}
                     />
-                    <Text size="sm" fw={500}>
-                      :{item.slug}:
-                    </Text>
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {item.name}
-                    </Text>
+                    <Stack gap={0}>
+                      <Text size="sm" fw={500} lineClamp={1}>
+                        {item.name}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        :{item.slug}:
+                      </Text>
+                    </Stack>
                   </Group>
                   {exhausted ? (
                     <Text component={Link} href="/shop" size="xs" c="blue.4">

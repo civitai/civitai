@@ -186,8 +186,3 @@ export async function getStickerBalances(userId: number) {
     remaining: unlimited ? null : remaining ?? 0,
   }));
 }
-
-export const stickerUsesFromCosmeticData = (data: Prisma.JsonValue | null | undefined) => {
-  const uses = (data as { uses?: unknown } | null | undefined)?.uses;
-  return typeof uses === 'number' && Number.isFinite(uses) && uses > 0 ? Math.floor(uses) : null;
-};

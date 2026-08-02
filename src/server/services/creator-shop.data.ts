@@ -1,5 +1,9 @@
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import {
+  CREATOR_GRANT_USES_MULTIPLIER,
+  stickerUsesFromCosmeticData,
+} from '~/shared/utils/sticker-token';
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
 // Kept out of creator-shop.service so it can be tested without pulling sharp,
@@ -57,3 +61,23 @@ export const patchCosmeticData = ({
     ...(nextUses ? { uses: nextUses } : {}),
   };
 };
+
+/**
+ * What a creator gets of their own cosmetic on approval.
+ *
+ * Stickers get a finite balance — 10x what a buyer receives — because unlimited
+ * was never chosen, it was what NULL happened to mean. Everything else keeps
+ * granting NULL: `uses` is sticker-specific and a badge has nothing to consume.
+ *
+ * Throws rather than guessing when a sticker has no usable `uses`. That state
+ * shouldn't exist (it also gives *buyers* an unlimited balance, since the
+ * purchase grant reads the same field), so inventing a number here would hide a
+ * data fault behind a plausible-looking grant.
+ */
+export function creatorGrantRemaining(type: CosmeticType, data: unknown): number | null {
+  if (type !== CosmeticType.Sticker) return null;
+  const uses = stickerUsesFromCosmeticData(data);
+  if (!uses)
+    throw new Error('Cannot approve a sticker without a positive integer `uses` in its data');
+  return uses * CREATOR_GRANT_USES_MULTIPLIER;
+}

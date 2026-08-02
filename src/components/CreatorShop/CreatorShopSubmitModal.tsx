@@ -37,7 +37,7 @@ import {
   isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
-import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
+import { CREATOR_GRANT_USES_MULTIPLIER, stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -226,7 +226,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                     </InfoPopover>
                   </Group>
                 }
-                description="How many times a buyer can place this sticker. They buy more by buying it again."
+                description={`How many times a buyer can place this sticker. They buy more by buying it again. You'll receive ${numberWithCommas(
+                  uses * CREATOR_GRANT_USES_MULTIPLIER
+                )} uses of your own once it's approved.`}
                 value={uses}
                 onChange={(v) => setUses(typeof v === 'number' ? v : 1)}
                 min={1}

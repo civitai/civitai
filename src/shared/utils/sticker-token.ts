@@ -211,3 +211,12 @@ export const stickerSurfaceLabels = () => {
     free: surfaces.filter((s) => !s.consumes).map((s) => s.label),
   };
 };
+
+/** `data.uses` when it is a usable positive integer, else null (= unlimited). */
+export const stickerUsesFromCosmeticData = (data: unknown) => {
+  const uses = (data as { uses?: unknown } | null | undefined)?.uses;
+  return typeof uses === 'number' && Number.isFinite(uses) && uses > 0 ? Math.floor(uses) : null;
+};
+
+/** How many uses of their own sticker a creator gets when it is approved. */
+export const CREATOR_GRANT_USES_MULTIPLIER = 10;

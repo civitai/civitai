@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
+import {
+  buildCosmeticData,
+  creatorGrantRemaining,
+  patchCosmeticData,
+} from '~/server/services/creator-shop.data';
 import {
   COSMETIC_PRICE_FLOOR_MIN,
   cosmeticDimensionsLabel,
@@ -12,7 +16,7 @@ import {
   STICKER_MIN_LONG_EDGE,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { CREATOR_GRANT_USES_MULTIPLIER, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 // `buildCosmeticData` is what writes `Cosmetic.data` on both the submit and the
 // update path. The original P4 hole was a missing branch here — asserting on
@@ -172,5 +176,53 @@ describe('creator-shop price floors', () => {
     const members = Array.from({ length: 10 }, () => CosmeticType.Sticker);
     const summed = members.reduce((sum, type) => sum + packItemFloor(type), 0);
     expect(summed).toBe(10 * packItemFloor(CosmeticType.Sticker));
+  });
+});
+
+// The creator's own copy used to be granted with no `remaining`, i.e. NULL, i.e.
+// unlimited — which was what NULL happened to mean, not a decision.
+describe('creator grant on approval', () => {
+  it('gives a sticker creator 10x what a buyer gets', () => {
+    expect(creatorGrantRemaining(CosmeticType.Sticker, { uses: 100 })).toBe(
+      100 * CREATOR_GRANT_USES_MULTIPLIER
+    );
+    expect(creatorGrantRemaining(CosmeticType.Sticker, { uses: 1 })).toBe(
+      CREATOR_GRANT_USES_MULTIPLIER
+    );
+  });
+
+  // The regression that would go unnoticed: `uses` is sticker-specific, and a
+  // badge has nothing to consume. Leaking the sticker branch into the shared
+  // grant path would start writing 0 or NaN for every other type.
+  it.each([
+    CosmeticType.Badge,
+    CosmeticType.ProfileDecoration,
+    CosmeticType.ProfileBackground,
+    CosmeticType.ContentDecoration,
+  ])('still grants %s unlimited', (type) => {
+    expect(creatorGrantRemaining(type, {})).toBeNull();
+    expect(creatorGrantRemaining(type, { uses: 100 })).toBeNull();
+  });
+
+  // Defined outcome rather than `undefined * 10`. Reachable today: `uses` is
+  // optional in the submit schema, and the same missing field would also hand
+  // BUYERS an unlimited balance, so it is a fault worth refusing loudly.
+  it.each([[{}], [{ uses: 0 }], [{ uses: -5 }], [{ uses: 'lots' }], [null], [undefined]])(
+    'refuses to approve a sticker whose uses is %s',
+    (data) => {
+      expect(() => creatorGrantRemaining(CosmeticType.Sticker, data)).toThrow(/positive integer/);
+    }
+  );
+
+  it('never produces NaN', () => {
+    for (const data of [{}, { uses: NaN }, { uses: Infinity }]) {
+      let result: number | null = null;
+      try {
+        result = creatorGrantRemaining(CosmeticType.Sticker, data);
+      } catch {
+        continue;
+      }
+      expect(Number.isNaN(result)).toBe(false);
+    }
   });
 });
