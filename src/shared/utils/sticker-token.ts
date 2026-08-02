@@ -85,6 +85,14 @@ export const STICKER_SIZE = {
 /** Past this many on one line, jumbo becomes a wall of images. */
 export const STICKER_JUMBO_LIMIT = 6;
 
+/**
+ * Stickers render height-driven — the sizes above are heights, and width follows
+ * the artwork. This caps how wide one may get, in either orientation, so a
+ * sticker stays a sticker rather than becoming a banner. Enforced at upload by
+ * `cosmeticImageRequirements` and again as a `max-width` at render.
+ */
+export const STICKER_MAX_ASPECT_RATIO = 2;
+
 export type StickerLine = { parts: StickerContentPart[]; jumbo: boolean };
 
 /**

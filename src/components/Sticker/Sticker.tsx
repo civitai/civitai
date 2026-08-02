@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useStickerContext } from '~/components/Sticker/StickerProvider';
-import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 export function Sticker({
   cosmeticId,
@@ -30,8 +30,16 @@ export function Sticker({
       src={sticker.url}
       alt={`:${sticker.slug}:`}
       title={`:${sticker.slug}:`}
-      options={{ width: size * 2, anim: sticker.animated }}
-      style={{ width: size, height: size, objectFit: 'contain' }}
+      // Sized by height so portrait art isn't fetched at 4x the pixels it shows.
+      // `optimized` is explicit because the automatic small-image optimization
+      // keys on `width`, which we no longer send.
+      options={{ height: size * 2, anim: sticker.animated, optimized: true }}
+      style={{
+        height: size,
+        width: 'auto',
+        maxWidth: size * STICKER_MAX_ASPECT_RATIO,
+        objectFit: 'contain',
+      }}
     />
   );
 }

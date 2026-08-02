@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 /**
  * Creator Shop input contracts. See docs/features/creator-shop.md.
@@ -94,30 +95,42 @@ export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
 export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
   (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
 
-// Per-type artwork requirements. `exact` = dimensions must match exactly,
-// otherwise width/height are treated as minimums.
-export type CosmeticImageRequirement = {
-  width: number;
-  height: number;
-  exact: boolean;
-  requireTransparency: boolean;
-};
+// Stickers render height-driven, so the constraint is on the long edge and the
+// ratio rather than on width and height. The floor is derived from the jumbo
+// render size so it can't drift away from what a 2x screen actually needs.
+export const STICKER_MIN_LONG_EDGE = STICKER_SIZE.jumbo * 2;
+export const STICKER_MAX_LONG_EDGE = 512;
+
+/**
+ * Per-type artwork requirements.
+ * - `exact` — dimensions must match precisely.
+ * - `atLeast` — width/height are minimums, and the upload must keep their ratio.
+ * - `freeform` — any orientation within a ratio cap, sized by the long edge.
+ */
+export type CosmeticImageRequirement = { requireTransparency: boolean } & (
+  | { kind: 'exact'; width: number; height: number }
+  | { kind: 'atLeast'; width: number; height: number }
+  | { kind: 'freeform'; minLongEdge: number; maxLongEdge: number; maxAspectRatio: number }
+);
 export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequirement => {
   switch (type) {
-    // Sizes are minimums + a required aspect ratio (not exact) — a larger upload
-    // at the same ratio (e.g. a 500×500 avatar frame) is fine.
     case CosmeticType.ProfileDecoration:
-      return { width: 120, height: 120, exact: false, requireTransparency: true };
+      return { kind: 'atLeast', width: 120, height: 120, requireTransparency: true };
     case CosmeticType.ProfileBackground:
-      return { width: 450, height: 144, exact: false, requireTransparency: false };
+      return { kind: 'atLeast', width: 450, height: 144, requireTransparency: false };
     case CosmeticType.ContentDecoration:
-      return { width: 256, height: 256, exact: false, requireTransparency: true };
-    // Exact 128×128 so a 48px jumbo render is clean at 2x DPI.
+      return { kind: 'atLeast', width: 256, height: 256, requireTransparency: true };
     case CosmeticType.Sticker:
-      return { width: 128, height: 128, exact: true, requireTransparency: true };
+      return {
+        kind: 'freeform',
+        minLongEdge: STICKER_MIN_LONG_EDGE,
+        maxLongEdge: STICKER_MAX_LONG_EDGE,
+        maxAspectRatio: STICKER_MAX_ASPECT_RATIO,
+        requireTransparency: true,
+      };
     case CosmeticType.Badge:
     default:
-      return { width: 144, height: 144, exact: false, requireTransparency: true };
+      return { kind: 'atLeast', width: 144, height: 144, requireTransparency: true };
   }
 };
 
@@ -130,23 +143,44 @@ export const aspectRatioLabel = (width: number, height: number): string => {
 };
 
 // Dimensions requirement label — shared by the submit form and both validators.
-export const cosmeticDimensionsLabel = (req: CosmeticImageRequirement): string =>
-  req.exact
-    ? `${req.width}×${req.height}px`
-    : `At least ${req.width}×${req.height}px · ${aspectRatioLabel(req.width, req.height)} ratio`;
+export const cosmeticDimensionsLabel = (req: CosmeticImageRequirement): string => {
+  switch (req.kind) {
+    case 'exact':
+      return `${req.width}×${req.height}px`;
+    case 'atLeast':
+      return `At least ${req.width}×${req.height}px · ${aspectRatioLabel(
+        req.width,
+        req.height
+      )} ratio`;
+    case 'freeform':
+      return `${req.minLongEdge}–${req.maxLongEdge}px on the long edge · at most ${req.maxAspectRatio}:1, either orientation`;
+  }
+};
 
-// `exact` types must match WxH exactly; the rest must meet the minimum size AND
-// keep the requirement's aspect ratio (within 2%).
 export const cosmeticDimensionsPass = (
   req: CosmeticImageRequirement,
   width: number,
   height: number
 ): boolean => {
-  if (req.exact) return width === req.width && height === req.height;
-  const meetsMin = width >= req.width && height >= req.height;
-  const targetRatio = req.width / req.height;
-  const ratioMatch = height > 0 && Math.abs(width / height - targetRatio) <= 0.02 * targetRatio;
-  return meetsMin && ratioMatch;
+  if (width <= 0 || height <= 0) return false;
+  switch (req.kind) {
+    case 'exact':
+      return width === req.width && height === req.height;
+    case 'atLeast': {
+      const targetRatio = req.width / req.height;
+      const ratioMatch = Math.abs(width / height - targetRatio) <= 0.02 * targetRatio;
+      return width >= req.width && height >= req.height && ratioMatch;
+    }
+    case 'freeform': {
+      const longEdge = Math.max(width, height);
+      const shortEdge = Math.min(width, height);
+      return (
+        longEdge >= req.minLongEdge &&
+        longEdge <= req.maxLongEdge &&
+        longEdge / shortEdge <= req.maxAspectRatio
+      );
+    }
+  }
 };
 
 // Computed SERVER-SIDE from the uploaded artwork and persisted to item meta so

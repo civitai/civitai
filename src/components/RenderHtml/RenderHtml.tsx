@@ -12,7 +12,11 @@ import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
-import { STICKER_JUMBO_LIMIT, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import {
+  STICKER_JUMBO_LIMIT,
+  STICKER_MAX_ASPECT_RATIO,
+  STICKER_SIZE,
+} from '~/shared/utils/sticker-token';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 // Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
@@ -239,11 +243,16 @@ export function RenderHtml({
           ? STICKER_SIZE.jumbo
           : STICKER_SIZE.inline;
       const img = document.createElement('img');
-      img.src = getEdgeUrl(resolved.url, { width: size * 2, anim: resolved.animated });
+      img.src = getEdgeUrl(resolved.url, {
+        height: size * 2,
+        anim: resolved.animated,
+        optimized: true,
+      });
       img.alt = `:${resolved.slug}:`;
       img.title = `:${resolved.slug}:`;
-      img.style.width = `${size}px`;
       img.style.height = `${size}px`;
+      img.style.width = 'auto';
+      img.style.maxWidth = `${size * STICKER_MAX_ASPECT_RATIO}px`;
       img.style.objectFit = 'contain';
       img.style.display = 'inline-block';
       img.style.verticalAlign = 'text-bottom';

@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { buildCosmeticData, patchCosmeticData } from '~/server/services/creator-shop.data';
 import {
   COSMETIC_PRICE_FLOOR_MIN,
+  cosmeticDimensionsLabel,
+  cosmeticDimensionsPass,
   cosmeticImageRequirements,
   cosmeticPriceFloor,
   creatorCosmeticTypes,
   isCreatorCosmeticType,
   packItemFloor,
+  STICKER_MIN_LONG_EDGE,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 // `buildCosmeticData` is what writes `Cosmetic.data` on both the submit and the
 // update path. The original P4 hole was a missing branch here — asserting on
@@ -29,19 +33,63 @@ describe('creator-shop sticker submission', () => {
     );
   });
 
-  it('requires exactly 128x128 with transparency', () => {
+  it('constrains the long edge and the ratio, not width and height', () => {
     expect(cosmeticImageRequirements(CosmeticType.Sticker)).toEqual({
-      width: 128,
-      height: 128,
-      exact: true,
+      kind: 'freeform',
+      minLongEdge: 96,
+      maxLongEdge: 512,
+      maxAspectRatio: 2,
       requireTransparency: true,
     });
+  });
+
+  it('derives the size floor from the jumbo render so the two cannot drift', () => {
+    expect(STICKER_MIN_LONG_EDGE).toBe(STICKER_SIZE.jumbo * 2);
   });
 
   it('does not fall through to the Badge default for Sticker', () => {
     const sticker = cosmeticImageRequirements(CosmeticType.Sticker);
     expect(sticker).not.toEqual(cosmeticImageRequirements(CosmeticType.Badge));
-    expect(sticker.exact).toBe(true);
+    expect(sticker.kind).toBe('freeform');
+  });
+
+  describe('sticker dimensions', () => {
+    const req = cosmeticImageRequirements(CosmeticType.Sticker);
+    const pass = (w: number, h: number) => cosmeticDimensionsPass(req, w, h);
+
+    it('accepts non-square art in either orientation', () => {
+      expect(pass(273, 241)).toBe(true);
+      expect(pass(241, 273)).toBe(true);
+      expect(pass(128, 128)).toBe(true);
+      expect(pass(256, 128)).toBe(true);
+      expect(pass(128, 256)).toBe(true);
+    });
+
+    it('rejects anything past the ratio cap, both ways round', () => {
+      expect(pass(257, 128)).toBe(false);
+      expect(pass(128, 257)).toBe(false);
+      expect(pass(512, 100)).toBe(false);
+    });
+
+    it('rejects art too small to render a crisp jumbo, and oversized art', () => {
+      expect(pass(95, 95)).toBe(false);
+      expect(pass(96, 96)).toBe(true);
+      expect(pass(512, 512)).toBe(true);
+      expect(pass(513, 513)).toBe(false);
+    });
+
+    it('rejects undecodable art rather than dividing by zero', () => {
+      expect(pass(0, 0)).toBe(false);
+      expect(pass(128, 0)).toBe(false);
+    });
+
+    it('states the actual rule, with no mention of a fixed size', () => {
+      const label = cosmeticDimensionsLabel(req);
+      expect(label).toContain('96');
+      expect(label).toContain('512');
+      expect(label).toContain('2:1');
+      expect(label).not.toContain('128×128');
+    });
   });
 
   it('leaves the other creator types unchanged', () => {
