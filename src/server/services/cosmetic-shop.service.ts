@@ -585,9 +585,11 @@ export const purchaseCosmeticShopItem = async ({
   viaShopUserId,
   payWith = 'default',
   buzzType = 'yellow',
+  stickersEnabled,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   buzzType?: BuzzSpendType;
+  stickersEnabled?: boolean;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -632,6 +634,14 @@ export const purchaseCosmeticShopItem = async ({
 
   // Delisted: still Published so it stays bundlable, but off individual sale.
   if (!shopItem.listed) {
+    throw new Error('Cosmetic is not available');
+  }
+
+  // Every listing path filters stickers out when the flag is off, but filtered
+  // from a list is not the same as refused: with an item id in hand a buyer
+  // could otherwise pay for a sticker they can't place, since the picker is
+  // gated too. Refuse at the mutation, where the cosmetic is already loaded.
+  if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
     throw new Error('Cosmetic is not available');
   }
 

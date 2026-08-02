@@ -118,6 +118,7 @@ export const cosmeticShopRouter = router({
 
       return purchaseCosmeticShopItem({
         ...input,
+        stickersEnabled: ctx.features.stickers,
         userId: ctx.user.id,
         buzzType,
       });

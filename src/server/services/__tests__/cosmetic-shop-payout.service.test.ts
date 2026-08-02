@@ -76,6 +76,7 @@ const shopItemRow = ({
   meta = { sellableByOthers: true, sellerShare: 20 },
   createdById = CREATOR_ID as number | null,
   unitAmount = PRICE,
+  type = 'Badge',
 } = {}) => ({
   id: SHOP_ITEM_ID,
   status: 'Published',
@@ -88,7 +89,7 @@ const shopItemRow = ({
   title: 'Test Badge',
   meta,
   addedById: createdById,
-  cosmetic: { type: 'Badge', createdById },
+  cosmetic: { type, createdById },
   _count: { purchases: 0 },
 });
 
@@ -442,5 +443,43 @@ describe('computeCreatorShopSplit', () => {
       platformCut: 300,
     });
     expect(split.creatorAmount + split.sellerAmount + split.platformCut).toBeLessThanOrEqual(999);
+  });
+});
+
+// Every LISTING path filters stickers out when the flag is off, but filtered
+// from a list is not refused: with a shop item id in hand a buyer could pay for
+// a sticker they then can't place, because the picker is gated too.
+describe('purchaseCosmeticShopItem sticker gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ id: BUYER_ID });
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.createMultiTx.mockResolvedValue(chargeResponse([{ accountType: 'user', amount: PRICE }]));
+  });
+
+  it('refuses to sell a sticker when the flag is off', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('sells a sticker when the flag is on', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+  });
+
+  // The regression that would go unnoticed: the gate must not reach any other type.
+  it('still sells a badge with the flag off', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    await purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID });
+    expect(mocks.createMultiTx).toHaveBeenCalled();
   });
 });
