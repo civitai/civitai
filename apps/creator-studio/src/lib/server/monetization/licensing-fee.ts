@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '$lib/server/db';
 import {
   capMediaType,
@@ -6,6 +7,7 @@ import {
   maxLicensingFeeCeiling,
   raisesOverCap,
 } from '@civitai/buzz';
+import { ModelVersionFlag } from '@civitai/shared';
 import { cappedTier, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
@@ -104,7 +106,21 @@ async function writeFee(
   if (versionIds.length === 0) return 0;
   const result = await dbWrite
     .updateTable('ModelVersion')
-    .set({ licensingFee: normalized == null ? null : normalized.toFixed(2) })
+    .set({
+      licensingFee: normalized == null ? null : normalized.toFixed(2),
+      // A fee-earning version opts out of tips + creator comp, and a cleared one opts back in. The main
+      // app maintains this bit alongside the fee (upsertModelVersion); writing the fee here without it
+      // would leave the two paths disagreeing about whether the version still earns (CU 868kk4j2k).
+      flags:
+        normalized == null
+          ? sql<number>`flags & ~${ModelVersionFlag.DisablePayout}`
+          : sql<number>`flags | ${ModelVersionFlag.DisablePayout}`,
+      // Cleared alongside the fee, matching upsertModelVersion — a leftover type/currency describes a
+      // fee that no longer exists.
+      ...(normalized == null
+        ? { licensingFeeType: null, licensingFeeSettlementCurrency: null }
+        : {}),
+    })
     .where('id', 'in', versionIds)
     .where('modelId', 'in', (eb) =>
       eb
