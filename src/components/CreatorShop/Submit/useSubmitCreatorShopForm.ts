@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
@@ -29,6 +30,7 @@ import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-t
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
 // flags, artwork drop handling, and the create/update mutations. Keeps the modal
@@ -111,10 +113,27 @@ export function useSubmitCreatorShopForm({
   // Matches the server rule: the slug is the token owners type, so it's fixed
   // once the sticker is live.
   const slugLocked = isEdit && item?.status === CosmeticShopItemStatus.Published;
+  const slugFormatOk = isValidStickerSlug(normalizedSlug);
   const slugError =
-    isSticker && normalizedSlug.length > 0 && !isValidStickerSlug(normalizedSlug)
-      ? STICKER_SLUG_ERROR
-      : null;
+    isSticker && normalizedSlug.length > 0 && !slugFormatOk ? STICKER_SLUG_ERROR : null;
+
+  // Convenience only — it saves a creator filling in the whole form for a slug
+  // someone else already has. The submit-time check and the partial unique index
+  // are what actually decide; a slug can be claimed between this and the submit.
+  const [debouncedSlug] = useDebouncedValue(normalizedSlug, 400);
+  const slugCheckEnabled = isSticker && !slugLocked && isValidStickerSlug(debouncedSlug);
+  const { data: slugCheck, isFetching: slugChecking } = trpc.creatorShop.checkStickerSlug.useQuery(
+    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic.id },
+    { enabled: slugCheckEnabled }
+  );
+  const slugTaken = slugCheckEnabled && slugCheck?.available === false;
+  const slugStatus: 'idle' | 'checking' | 'available' | 'taken' = !slugCheckEnabled
+    ? 'idle'
+    : slugChecking || debouncedSlug !== normalizedSlug
+    ? 'checking'
+    : slugTaken
+    ? 'taken'
+    : 'available';
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
@@ -186,7 +205,7 @@ export function useSubmitCreatorShopForm({
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
-    (!isSticker || (isValidStickerSlug(normalizedSlug) && !usesError));
+    (!isSticker || (slugFormatOk && !slugTaken && !usesError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -283,6 +302,7 @@ export function useSubmitCreatorShopForm({
     setSlug,
     slugError,
     slugLocked,
+    slugStatus,
     name,
     setName,
     description,

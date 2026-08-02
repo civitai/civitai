@@ -271,6 +271,13 @@ export const setCreatorShopItemListedSchema = z.object({
   listed: z.boolean(),
 });
 
+export type CheckStickerSlugInput = z.infer<typeof checkStickerSlugSchema>;
+export const checkStickerSlugSchema = z.object({
+  slug: z.string(),
+  // Editing an unpublished sticker: its own slug isn't a conflict with itself.
+  excludeCosmeticId: z.number().optional(),
+});
+
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;
 export const getCreatorShopSchema = z.object({
   userId: z.number(),

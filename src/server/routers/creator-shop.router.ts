@@ -3,6 +3,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
+  checkStickerSlugSchema,
   getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
@@ -37,6 +38,7 @@ import {
   updateCreatorShopItem,
   updateCreatorShopSettings,
 } from '~/server/services/creator-shop.service';
+import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -115,6 +117,9 @@ export const creatorShopRouter = router({
       stickersEnabled: ctx.features.stickers,
     })
   ),
+  checkStickerSlug: creatorShopProcedure
+    .input(checkStickerSlugSchema)
+    .query(({ input }) => isStickerSlugAvailable(input)),
   getResoldItems: creatorShopProcedure.query(({ ctx }) =>
     getResoldItemsForManage({ userId: ctx.user.id })
   ),

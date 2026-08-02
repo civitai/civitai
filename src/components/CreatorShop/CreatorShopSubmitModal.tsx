@@ -4,6 +4,7 @@ import {
   Button,
   Divider,
   Group,
+  Loader,
   Modal,
   NumberInput,
   Paper,
@@ -14,7 +15,7 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { IconAlertTriangle, IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
@@ -51,6 +52,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     setSlug,
     slugError,
     slugLocked,
+    slugStatus,
     priceFloor,
     uses,
     setUses,
@@ -185,8 +187,15 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                 placeholder="party_cat"
                 value={slug}
                 onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
-                error={slugError}
+                error={slugError ?? (slugStatus === 'taken' ? 'That slug is taken' : undefined)}
                 disabled={slugLocked}
+                rightSection={
+                  slugStatus === 'checking' ? (
+                    <Loader size="xs" />
+                  ) : slugStatus === 'available' ? (
+                    <IconCheck size={16} className="text-green-6" />
+                  ) : null
+                }
                 description={
                   slugLocked
                     ? 'Locked once published — owners already type this to use your sticker'

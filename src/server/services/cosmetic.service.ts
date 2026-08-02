@@ -440,17 +440,41 @@ export async function validateStickerCosmetic({
     throw throwBadRequestError(STICKER_SLUG_ERROR);
   }
 
-  const conflict = await dbWrite.cosmetic.findFirst({
-    where: {
-      type: CosmeticType.Sticker,
-      data: { path: ['slug'], equals: slug },
-      ...(id ? { id: { not: id } } : {}),
-    },
-    select: { id: true },
-  });
+  const conflict = await findStickerSlugConflict(dbWrite, slug, id);
   if (conflict) {
     throw throwBadRequestError(`The sticker slug ":${slug}:" is already in use`);
   }
+}
+
+// Both the submit-time check above and the form's live check go through this, so
+// the two can't disagree about what "taken" means.
+function findStickerSlugConflict(client: typeof dbWrite, slug: string, excludeId?: number) {
+  return client.cosmetic.findFirst({
+    where: {
+      type: CosmeticType.Sticker,
+      data: { path: ['slug'], equals: slug },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
+}
+
+/**
+ * Advisory only — tells a creator a slug is taken before they fill in the rest
+ * of the form. It cannot be authoritative: someone can claim the slug between
+ * this call and the submit. `validateStickerCosmetic` and the partial unique
+ * index are what actually decide, and must not be removed as redundant.
+ */
+export async function isStickerSlugAvailable({
+  slug,
+  excludeCosmeticId,
+}: {
+  slug: string;
+  excludeCosmeticId?: number;
+}) {
+  if (!isValidStickerSlug(slug)) return { available: false };
+  const conflict = await findStickerSlugConflict(dbRead, slug, excludeCosmeticId);
+  return { available: !conflict };
 }
 
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
