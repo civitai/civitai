@@ -53,6 +53,9 @@ export const collectionNotifications = createNotificationProcessor({
         : `/collections/${details.collectionId}`,
     }),
   },
+  // No longer sent — `collection-item-rejected` carries the reason instead. Kept because
+  // getNotificationMessage resolves at render time, so removing it would blank out notifications
+  // already delivered to users.
   'beggars-board-rejected': {
     displayName: 'Beggars board entry declined',
     category: NotificationCategory.Buzz,
