@@ -566,11 +566,6 @@ function CreatorShopReviewPage() {
                       Submitted artwork
                       {dims ? ` · ${dims.width}×${dims.height} PNG` : ''}
                     </Text>
-                    {!!stickerSlug && (
-                      <Text size="xs" c="dimmed" ta="center">
-                        Typed as <b>:{stickerSlug}:</b>
-                      </Text>
-                    )}
                     <div>
                       <Text size="sm" fw={600} mb={4}>
                         In-context preview
@@ -738,6 +733,16 @@ function CreatorShopReviewPage() {
                             </Text>
                           }
                         />
+                        {!!stickerSlug && (
+                          <DetailRow
+                            label="Slug"
+                            value={
+                              <Text size="sm" fw={500}>
+                                :{stickerSlug}:
+                              </Text>
+                            }
+                          />
+                        )}
                         <DetailRow
                           label="Description"
                           last
