@@ -258,21 +258,34 @@ describe('RecentlyOpenedListingsView', () => {
       );
     });
 
-    test('the ACTION matches the destination: run → Open, detail → View details, external → Visit', async () => {
-      // A play glyph labelled "Open" pointing at a detail page would be a lie in
-      // the accessible name, not just a cosmetic mismatch — hence deriving both
-      // from the same `getRecentRailTarget` decision.
-      const { rerender } = await renderWithProviders(
-        <RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />
-      );
+    /**
+     * The ACTION must match the DESTINATION: a play glyph labelled "Open"
+     * pointing at a detail page would be a lie in the accessible name, not just
+     * a cosmetic mismatch — hence deriving both from the same
+     * `getRecentRailTarget` decision.
+     *
+     * Three separate mounts, NOT one mount with `rerender`. The rerender form
+     * was tried and the third case never resolved: swapping the `entries` array
+     * for a different-`id` entry remounts a keyed child, and the assertion raced
+     * that remount for the full 15s timeout. Three mounts is slower by
+     * milliseconds and cannot race. (The exhaustive kind × hasPage × canOpenPage
+     * × externalUrl matrix is pinned in the node suite,
+     * `__tests__/recentAppsRail.test.ts` — this is the wiring.)
+     */
+    test('a runnable on-site app → an "Open" action', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
       await expect.element(page.getByRole('link', { name: 'Open Gen Matrix' })).toBeInTheDocument();
+    });
 
-      await rerender(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage={false} />);
+    test('the pages flag dark → a "View details" action, matching the detail fallback', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage={false} />);
       await expect
         .element(page.getByRole('link', { name: 'View details for Gen Matrix' }))
         .toBeInTheDocument();
+    });
 
-      await rerender(
+    test('an off-site entry → a "Visit" action', async () => {
+      renderWithProviders(
         <RecentlyOpenedListingsView
           entries={[
             {

@@ -198,8 +198,17 @@ function RecentTile({
   // External targets are https-guarded upstream (`safeExternalHref`) and get the
   // standard new-tab hardening; internal ones route through next/link. Shared by
   // the tile link and the icon button so they can never point at different places.
+  //
+  // 🔴 `component="a"` on the external branch is LOAD-BEARING for the ActionIcon,
+  // not decoration. `Anchor` renders an `<a>` by default so it was fine without
+  // it, but `ActionIcon` renders a `<button>` — an `href` on a button is an inert
+  // attribute the browser ignores, so the off-site icon CTA rendered as a
+  // dead button with a stray `href` and no `role="link"`. It LOOKED correct in
+  // the DOM and did nothing on click. Caught by the "an off-site entry → a
+  // Visit action" test asserting `getByRole('link', …)`; do not "simplify" this
+  // back to a bare `href`.
   const linkProps = target.external
-    ? { href: target.href, target: '_blank', rel: 'noopener noreferrer' }
+    ? { component: 'a' as const, href: target.href, target: '_blank', rel: 'noopener noreferrer' }
     : { component: Link, href: target.href };
 
   return (
