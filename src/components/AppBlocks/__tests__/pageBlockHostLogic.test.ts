@@ -1,16 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import {
+  advanceReviewConsentLatch,
   AUTO_RETRY_BACKOFF_MS,
+  buildReviewConsentNotification,
   decideAutoRetry,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
   isAuthTerminalStatus,
   isAutoRetryableStatus,
   MAX_AUTO_REMINTS,
   MAX_AUTO_RETRIES,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  shouldEmitMidSessionLossBeacon,
+  type MidSessionLossBeaconArgs,
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -109,6 +116,214 @@ describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview 
     expect(
       resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
     ).toEqual(['apps:storage:read']);
+  });
+});
+
+describe('resolveReviewConsentNotice (mod review — silent REQUEST_CONSENT → visible notice)', () => {
+  const granted = ['models:read:self', 'user:read:self', 'collections:read:self'];
+
+  it('notifies and NAMES the un-granted scopes the review mint stripped', () => {
+    expect(resolveReviewConsentNotice(['buzz:read:self'], granted)).toEqual({
+      notify: true,
+      scopes: ['buzz:read:self'],
+    });
+  });
+
+  it('notifies with NO hint at all — the regression: the fire-and-forget SDK call sends none', () => {
+    // Unlike the prod path (which stays silent because it cannot tell "already
+    // granted" from "clamped"), review has nothing to tell apart: consent can
+    // never be granted here, so a hint-less request is still a dead end.
+    expect(resolveReviewConsentNotice(undefined, granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([], granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice('nope', granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([1, null, ''], granted)).toEqual({
+      notify: true,
+      scopes: [],
+    });
+  });
+
+  it('stays SILENT for the benign already-granted re-request (nothing is actually blocked)', () => {
+    expect(resolveReviewConsentNotice(['models:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+    expect(resolveReviewConsentNotice(['models:read:self', 'user:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+  });
+
+  it('🔴 drops UNKNOWN scope strings from the mod-facing set (untrusted manifest text)', () => {
+    // The hint comes from the reviewed app's own frame. Only the fixed platform
+    // vocabulary may ever reach a string rendered at the moderator.
+    const out = resolveReviewConsentNotice(
+      ['<img src=x onerror=alert(1)>', 'totally:made:up', 'buzz:read:self'],
+      granted
+    );
+    expect(out.notify).toBe(true);
+    expect(out.scopes).toEqual(['buzz:read:self']);
+  });
+
+  it('still notifies (generically) when EVERY un-granted scope is unknown', () => {
+    const out = resolveReviewConsentNotice(['totally:made:up'], granted);
+    expect(out).toEqual({ notify: true, scopes: [] });
+  });
+
+  it('dedupes + sorts the named scopes and ignores the ones already granted', () => {
+    const out = resolveReviewConsentNotice(
+      ['social:tip:self', 'buzz:read:self', 'social:tip:self', 'models:read:self'],
+      granted
+    );
+    expect(out.scopes).toEqual(['buzz:read:self', 'social:tip:self']);
+  });
+
+  it('🔴 drops inherited Object.prototype keys (isKnownBlockScope prototype-chain bypass)', () => {
+    // `payload.scopes` is untrusted runtime input from the reviewed app's frame
+    // and reaches NO regex shape-check on this path (unlike the manifest
+    // validator's SCOPE_RE). While `isKnownBlockScope` used `in`, every inherited
+    // Object.prototype key answered "known scope" and would have been printed
+    // verbatim into the moderator-facing toast.
+    expect(resolveReviewConsentNotice(['constructor', '__proto__'], granted).scopes).toEqual([]);
+    expect(
+      resolveReviewConsentNotice(
+        ['toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf', 'buzz:read:self'],
+        granted
+      ).scopes
+    ).toEqual(['buzz:read:self']);
+    // Still a real, un-grantable request — the mod gets the GENERIC copy, not silence.
+    expect(resolveReviewConsentNotice(['constructor'], granted)).toEqual({
+      notify: true,
+      scopes: [],
+    });
+  });
+});
+
+describe('advanceReviewConsentLatch (🔴 anti-spam bound + the generic→named upgrade)', () => {
+  it('shows the first notice of either kind', () => {
+    expect(advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false)).toEqual({
+      show: true,
+      next: { shown: true, named: false },
+    });
+    expect(advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, true)).toEqual({
+      show: true,
+      next: { shown: true, named: true },
+    });
+  });
+
+  it('allows exactly ONE upgrade generic → named (the first-notice-wins bug)', () => {
+    // The SDK's `scopes` hint is OPTIONAL, so a hint-less request on load is an
+    // ordinary path. Under a plain boolean latch it won the latch and the app's
+    // later, specific request was suppressed for the rest of the mount — the mod
+    // never learned WHICH permission was blocked.
+    const afterGeneric = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false).next;
+    const upgrade = advanceReviewConsentLatch(afterGeneric, true);
+    expect(upgrade.show).toBe(true);
+    expect(upgrade.next).toEqual({ shown: true, named: true });
+  });
+
+  it('suppresses a repeat GENERIC after a generic (it adds nothing)', () => {
+    const afterGeneric = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false).next;
+    expect(advanceReviewConsentLatch(afterGeneric, false)).toEqual({
+      show: false,
+      next: afterGeneric,
+    });
+  });
+
+  it('suppresses EVERYTHING once a named notice has been shown (no downgrade, no repeat)', () => {
+    const afterNamed = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, true).next;
+    expect(advanceReviewConsentLatch(afterNamed, true).show).toBe(false);
+    expect(advanceReviewConsentLatch(afterNamed, false).show).toBe(false);
+  });
+
+  it('🔴 BOUND: a hostile flood of ANY mix of requests emits at most TWO notices', () => {
+    // This is the security property the latch exists for — an untrusted app can
+    // post REQUEST_CONSENT in a loop. Exercise every ordering of a long flood.
+    const floods: boolean[][] = [
+      Array.from({ length: 200 }, () => true),
+      Array.from({ length: 200 }, () => false),
+      Array.from({ length: 200 }, (_, i) => i % 2 === 0),
+      Array.from({ length: 200 }, (_, i) => i % 2 === 1),
+      Array.from({ length: 200 }, () => Math.random() < 0.5),
+    ];
+    for (const flood of floods) {
+      let latch = INITIAL_REVIEW_CONSENT_LATCH;
+      let shows = 0;
+      for (const isNamed of flood) {
+        const r = advanceReviewConsentLatch(latch, isNamed);
+        latch = r.next;
+        if (r.show) shows++;
+      }
+      expect(shows).toBeLessThanOrEqual(2);
+      expect(shows).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('never mutates the latch it is given', () => {
+    const latch = { shown: false, named: false };
+    advanceReviewConsentLatch(latch, true);
+    expect(latch).toEqual({ shown: false, named: false });
+    expect(INITIAL_REVIEW_CONSENT_LATCH).toEqual({ shown: false, named: false });
+  });
+});
+
+describe('buildReviewConsentNotification (🔴 mode-specific ids + honest Run-for-real copy)', () => {
+  const build = (runForReal: boolean, scopes: string[] = []) =>
+    buildReviewConsentNotification({ appBlockId: 'pubreq_X', runForReal, scopes });
+
+  it('🔴 render-only and run-for-real produce DISTINCT ids', () => {
+    // Mantine no-ops showNotification for an id already displayed/queued (default
+    // autoClose 4000ms). A single shared id meant: notice fires in render-only →
+    // mod clicks "Run for real…" → host remounts → latch resets by design → the
+    // app re-requests within 4s → the run-for-real notice is SILENTLY SWALLOWED,
+    // re-creating the original silent-drop bug in the other mode.
+    expect(build(false).id).not.toBe(build(true).id);
+    expect(build(false, ['buzz:read:self']).id).not.toBe(build(true, ['buzz:read:self']).id);
+    expect(build(false).id).toBe('review-consent-pubreq_X-render');
+    expect(build(true).id).toBe('review-consent-pubreq_X-real');
+  });
+
+  it('🔴 the generic and the named upgrade use DISTINCT ids, and the upgrade supersedes the generic', () => {
+    // Same dedupe trap in the other direction: reusing the generic id would make
+    // the upgrade a no-op while the generic is still displayed, and
+    // updateNotification would drop it once the generic had auto-closed.
+    for (const runForReal of [false, true]) {
+      const generic = build(runForReal);
+      const named = build(runForReal, ['buzz:read:self']);
+      expect(named.id).not.toBe(generic.id);
+      expect(generic.supersedesId).toBeNull();
+      expect(named.supersedesId).toBe(generic.id);
+    }
+  });
+
+  it('names the scopes when it has them, and falls back to generic copy when it does not', () => {
+    expect(build(false, ['buzz:read:self', 'social:tip:self']).message).toContain(
+      'buzz:read:self, social:tip:self'
+    );
+    expect(build(false).message).toContain('doesn’t have here');
+  });
+
+  it('🔴 render-only copy states that "Run for real…" spends the MODERATOR\'S OWN Buzz', () => {
+    // Untrusted code can emit this toast unprompted right after BLOCK_READY, and
+    // it is the one surface pointing a reviewer at the opt-in. The opt-in grants
+    // `ai:write:budgeted` against the mod's OWN account under a session Buzz cap,
+    // so the copy must not read as a free "make it work" button.
+    const message = build(false, ['buzz:read:self']).message;
+    expect(message).toContain('Run for real');
+    expect(message).toContain('your own account and Buzz');
+  });
+
+  it('run-for-real copy does NOT point at the opt-in the mod already took', () => {
+    const message = build(true, ['buzz:read:self']).message;
+    expect(message).not.toContain('Run for real');
+    expect(message).not.toContain('your own account and Buzz');
+  });
+
+  it('keeps a stable, non-empty title in every variant', () => {
+    for (const runForReal of [false, true]) {
+      for (const scopes of [[], ['buzz:read:self']]) {
+        expect(build(runForReal, scopes).title).toBe('Permission unavailable in review');
+      }
+    }
   });
 });
 
@@ -549,5 +764,111 @@ describe('decideAutoRetry — the bounded automatic recovery loop', () => {
     // A shorter table would silently reuse the last delay; assert they line up so
     // a future bump of MAX_AUTO_RETRIES has to extend the table deliberately.
     expect(AUTO_RETRY_BACKOFF_MS.length).toBeGreaterThanOrEqual(MAX_AUTO_RETRIES);
+  });
+});
+
+/**
+ * MID-SESSION credential-loss beacon.
+ *
+ * 🔴 THE MEASURED DEFECT (production, 2026-07-31): a real revocation teardown was
+ * driven against a live app and the platform recorded ZERO error beacons. The
+ * host's single emit-once ref had already been spent on the `ok` impression when
+ * it reached `ready`, so the launch-failure beacon was inert by construction and
+ * the incident's only trace was a record saying the app rendered fine.
+ *
+ * These cases pin the four conditions that make the replacement signal both
+ * REACHABLE (a real teardown emits) and HONEST (nothing else does).
+ */
+describe('shouldEmitMidSessionLossBeacon', () => {
+  /** A host that launched, then had its credential settle as permanently gone. */
+  const teardown: MidSessionLossBeaconArgs = {
+    status: 'error',
+    reachedReady: true,
+    tokenTerminal: true,
+    hasToken: false,
+    alreadyEmitted: false,
+  };
+
+  it('🔴 EMITS on the real mid-session teardown (the case that recorded nothing)', () => {
+    expect(shouldEmitMidSessionLossBeacon(teardown)).toBe(true);
+  });
+
+  it('🔴 does NOT emit for a LAUNCH failure — that is the existing beacon’s job', () => {
+    // `loading → error` (mint hard-failed before the block ever rendered). The
+    // launch-failure beacon covers it with errorClass 'error'; emitting here too
+    // would double-count one failed page load as two failures.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, reachedReady: false })).toBe(false);
+  });
+
+  it('🔴 does NOT emit while recovery is still pending (transient blip)', () => {
+    // The upstream hook retries a failed refresh on a bounded backoff. Reporting
+    // a teardown that the platform then recovers from would inflate the failure
+    // signal with events no user ever saw.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, tokenTerminal: false })).toBe(false);
+  });
+
+  it('🔴 does NOT emit while a usable token remains', () => {
+    // `terminal` with a token still in hand is not a teardown — the host is not
+    // torn down either (the effect gates on `!token` identically).
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, hasToken: true })).toBe(false);
+  });
+
+  it('🔴 is at-most-once per mount', () => {
+    // The effect re-runs on token/status/prop churn; without this latch each
+    // re-render would fire another beacon for one incident.
+    expect(shouldEmitMidSessionLossBeacon({ ...teardown, alreadyEmitted: true })).toBe(false);
+  });
+
+  it('does NOT re-tag a BLOCK failure as a credential loss', () => {
+    // A block that reached ready and then crashed / stopped acking is a different
+    // failure with its own class. Only the `error` status is a credential loss.
+    for (const status of ['fatal', 'timeout', 'no_token', 'ready', 'loading'] as PageHostStatus[]) {
+      expect(shouldEmitMidSessionLossBeacon({ ...teardown, status })).toBe(false);
+    }
+  });
+
+  it('requires EVERY condition — no single one is sufficient', () => {
+    // Guards against a future simplification that collapses the conjunction.
+    const off: MidSessionLossBeaconArgs = {
+      status: 'loading',
+      reachedReady: false,
+      tokenTerminal: false,
+      hasToken: true,
+      alreadyEmitted: true,
+    };
+    expect(shouldEmitMidSessionLossBeacon(off)).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, status: 'error' })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, reachedReady: true })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, tokenTerminal: true })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, hasToken: false })).toBe(false);
+    expect(shouldEmitMidSessionLossBeacon({ ...off, alreadyEmitted: false })).toBe(false);
+  });
+
+  it('🔴 uses a class that is DISTINCT from every launch-failure class', () => {
+    // If it collided with one of these, the whole point (telling "never launched"
+    // apart from "launched, then revoked") would be lost.
+    expect(['timeout', 'fatal', 'no_token', 'error', 'error_boundary']).not.toContain(
+      MID_SESSION_LOSS_ERROR_CLASS
+    );
+  });
+});
+
+/**
+ * 🔴 CROSS-MODULE CONTRACT. The beacon route clamps `errorClass` to a code-owned
+ * server-side allowlist; anything outside it collapses to 'other'. A client class
+ * that is not on that list is therefore INERT — it reaches the server, is
+ * accepted, and then silently merges into the generic bucket, which is exactly
+ * the "computed, sent, bounded, then dropped" failure this work exists to fix.
+ * This test fails if the two halves ever drift apart.
+ */
+describe('MID_SESSION_LOSS_ERROR_CLASS survives the server-side allowlist', () => {
+  it('is preserved as its own error_class label, not bucketed to "other"', async () => {
+    const { normalizeErrorClass } = await import('~/server/metrics/app-block-runtime.metrics');
+    expect(normalizeErrorClass('error', MID_SESSION_LOSS_ERROR_CLASS)).toBe(
+      MID_SESSION_LOSS_ERROR_CLASS
+    );
+    // Control: an unknown class really does collapse, so the assertion above is
+    // proving membership rather than proving normalizeErrorClass is a no-op.
+    expect(normalizeErrorClass('error', 'not_a_real_class')).toBe('other');
   });
 });

@@ -15,13 +15,14 @@
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
+  import { monetizationLimits } from '$lib/monetization/paid-access';
   import type { CreatorCaps } from '$lib/server/membership';
   import {
     MIN_ACCESS_PRICE,
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-  } from '$lib/monetization/early-access';
+  } from '$lib/monetization/paid-access';
 
   // Bulk permanent-paid-access bar, scoped to one usage type (the toggle drives a `usage` list filter in
   // the parent so the price fields are unambiguous). Owns its own pricing state + confirm dialog; the
@@ -52,7 +53,9 @@
 
   const permanentCap = $derived(caps.permanentCap);
   const permanentUsed = $derived(caps.permanentUsed);
-  const priceCap = $derived(caps.priceCap);
+  // One price lands on a mixed selection, so the STRICTEST ceiling governs — no baseModel means image,
+  // which is the lower of the two. Mirrors strictestCapMediaType on the server.
+  const priceCap = $derived(monetizationLimits({ tier: caps.capTier }).access.maxPrice);
 
   const bulkGenOnly = $derived(usage === 'generation');
   // Permanent slots still available (null cap = unlimited) — "max minus current".
@@ -114,7 +117,7 @@
           ? `${selected.size} selected`
           : `Select ${bulkGenOnly ? 'generation-only' : 'downloadable'} versions`}
       </span>
-      <span class="text-xs text-dark-3">
+      <span class="text-xs text-dark-2">
         {#if permanentCap === null}
           {permanentUsed} permanent · unlimited on your tier
         {:else}

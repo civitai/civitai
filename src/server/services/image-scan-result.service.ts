@@ -3,6 +3,7 @@ import { getWorkflow, type MediaRatingOutput, type WorkflowEvent } from '@civita
 import type { NextApiRequest } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
@@ -66,6 +67,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { decreaseDate } from '~/utils/date-helpers';
+import { withRetries } from '~/utils/errorHandling';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -273,7 +275,44 @@ export async function processImageScanWorkflow({
     return;
   }
 
-  const { wdTags, mediaRating, mediaHash } = parseScanSteps({ steps, workflowId });
+  // A workflow can succeed and still carry nothing usable — most often a video whose frame
+  // extraction returned zero frames. Record it like any other scan failure so the retry
+  // ceiling can terminalize it, and ACK: the workflow is terminal, so redelivering it would
+  // only reproduce the same parse failure.
+  let parsed: ReturnType<typeof parseScanSteps>;
+  try {
+    parsed = parseScanSteps({ steps, workflowId });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    const { retryCount, mediaType, failureClass } = await markImageScanError({
+      workflowId,
+      imageId,
+      status,
+      failureType: 'unusable-result',
+      failedSteps: extractFailedSteps(steps),
+      reason,
+    });
+    logToAxiom(
+      {
+        name: 'image-scan-result',
+        type: 'warning',
+        message: 'succeeded workflow had no usable result',
+        source: 'image-scan-result.service',
+        failureType: 'unusable-result',
+        reason,
+        failureClass,
+        imageId,
+        mediaType,
+        workflowId,
+        retryCount,
+      },
+      'webhooks'
+    ).catch(() => null);
+    if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
+    return;
+  }
+
+  const { wdTags, mediaRating, mediaHash } = parsed;
   const pHash = computePerceptualHash(mediaHash?.hashes?.perceptual);
 
   // Log (don't act on) perceptual-hash matches against known-blocked content.
@@ -331,11 +370,28 @@ export async function processImageScanWorkflow({
 
   await applyIngestionSideEffects({ image, outcome });
 
-  await signalClient.send({
-    target: SignalMessages.ImageIngestionStatus,
-    data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
-    userId: image.userId,
-  });
+  // Last step, after everything is committed — throwing here would 400 a finished webhook
+  // and make the orchestrator re-run it.
+  await signalClient
+    .send({
+      target: SignalMessages.ImageIngestionStatus,
+      data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
+      userId: image.userId,
+    })
+    .catch((error) =>
+      logToAxiom(
+        {
+          name: 'image-scan-result',
+          type: 'warning',
+          message: `signal send failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          imageId: image.id,
+          source: 'image-scan-result.service',
+        },
+        'webhooks'
+      ).catch(() => null)
+    );
 }
 
 // Step parsing
@@ -356,33 +412,37 @@ function parseScanSteps({ steps, workflowId }: { steps: ScanResultStep[]; workfl
       `Incomplete workflow: ${workflowId}. Missing steps: ${missingSteps.join(', ')}`
     );
 
+  // Not "invalid media…" — that substring reads as a permanently-bad file to
+  // classifyImageScanFailure, and an 'na' rating arrives in bursts, so it is recoverable.
   if (mediaRating?.nsfwLevel === 'na')
-    throw new Error(`invalid media rating for workflow: ${workflowId}`);
+    throw new Error(`media rating unavailable for workflow: ${workflowId}`);
 
   return { wdTags: wdTagging!.tags, mediaRating: mediaRating!, mediaHash };
 }
 
-function computePerceptualHash(perceptual?: string) {
-  if (!perceptual) return undefined;
-  return BigInt.asIntN(64, BigInt('0x' + perceptual));
+// All-or-nothing, not a filter: nsfwLevel aggregates as a max and isBlocked as an OR, so
+// dropping a frame can only ever under-rate the video.
+function hasEveryFrameOutput(frames: Array<{ output?: unknown }>) {
+  return frames.length > 0 && frames.every((x) => isDefined(x?.output));
 }
 
 function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
   const step = steps.find(
-    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'wdTagging'
-  ) as RepeatStep;
+    (x) => x.$type === 'repeat' && x.output?.steps?.[0]?.$type === 'wdTagging'
+  ) as RepeatStep | undefined;
   if (!step) return;
 
   const wdTaggingSteps = step.output.steps as WdTaggingStep[];
+  if (!hasEveryFrameOutput(wdTaggingSteps)) return;
 
   return wdTaggingSteps.reduce<WdTaggingStep['output']>(
     (acc, step) => {
-      for (const [tag, confidence] of Object.entries(step.output.tags)) {
+      for (const [tag, confidence] of Object.entries(step.output.tags ?? {})) {
         const current = acc.tags[tag];
         if (!current) acc.tags[tag] = confidence;
         else if (confidence > current) acc.tags[tag] = confidence;
       }
-      for (const [rating, confidence] of Object.entries(step.output.rating)) {
+      for (const [rating, confidence] of Object.entries(step.output.rating ?? {})) {
         const current = acc.rating[rating];
         if (!current) acc.rating[rating] = confidence;
         else if (confidence > current) acc.rating[rating] = confidence;
@@ -395,11 +455,12 @@ function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
 
 function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
   const step = steps.find(
-    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'mediaRating'
-  ) as RepeatStep;
+    (x) => x.$type === 'repeat' && x.output?.steps?.[0]?.$type === 'mediaRating'
+  ) as RepeatStep | undefined;
   if (!step) return;
 
   const mediaRatingSteps = step.output.steps as MediaRatingStep[];
+  if (!hasEveryFrameOutput(mediaRatingSteps)) return;
 
   return mediaRatingSteps.reduce<MediaRatingStep['output']>(
     (acc, step) => {
@@ -450,17 +511,38 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
 async function getIsImageBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  const [{ count }] = await clickhouse.$query<{ count: number }>`
-    SELECT cast(count() as int) as count
-    FROM blocked_images
-    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-  `;
+  const client = clickhouse;
+  // $query has no retry of its own, and the observed failure is a dropped socket.
+  const rows = await withRetries(
+    () => client.$query<{ count: number }>`
+      SELECT cast(count() as int) as count
+      FROM blocked_images
+      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
+    `,
+    2,
+    250
+  );
 
-  return count > 0;
+  return (rows?.[0]?.count ?? 0) > 0;
 }
 
 async function logPerceptualHashMatch({ imageId, pHash }: { imageId: number; pHash: bigint }) {
-  const pHashBlocked = await getIsImageBlocked(pHash);
+  // Nothing branches on this result, so an exhausted retry must not fail the webhook and
+  // discard a scan that already produced tags and a rating.
+  const pHashBlocked = await getIsImageBlocked(pHash).catch((error) => {
+    logToAxiom(
+      {
+        name: 'image-phash-match',
+        type: 'warning',
+        message: 'pHash blocklist check failed',
+        imageId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        source: 'image-scan-result.service',
+      },
+      'webhooks'
+    ).catch(() => null);
+    return false;
+  });
   if (!pHashBlocked) return;
 
   // blockedReason = 'Similar to blocked content';

@@ -1,9 +1,9 @@
-// Shared (client + server) early-access shape and UI constraints. The server-only
-// write client lives in $lib/server/monetization/early-access.ts; keep this file
-// free of server imports so the editor UI can import it too.
+// Shared (client + server) paid-access shape and UI constraints — both the timed early-access window and
+// the permanent gate. The server-only write client lives in $lib/server/monetization/paid-access.ts; keep
+// this file free of server imports so the editor UI can import it too.
 //
-// Constraints mirror the main app's paid-access form (formEarlyAccessConfigSchema) — UI hints only;
-// the /api/v1/model-versions/early-access endpoint is the source of truth.
+// Constraints mirror the main app's form — UI hints only; the /api/v1/model-versions/early-access
+// endpoint (named for the original feature, now handling both) is the source of truth.
 export const MIN_ACCESS_PRICE = 100;
 export const MIN_GENERATION_PRICE = 50;
 export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
@@ -52,17 +52,49 @@ export function earlyAccessQuantityForScore(modelsScore: number): number {
 
 // Per-tier paid-access caps. In @civitai/buzz because the onsite model-version form sets access too, and the
 // main app enforces the caps server-side.
-export { maxPermanentAccessModels, maxPaidAccessPrice } from '@civitai/buzz';
+export {
+  maxPermanentAccessModels,
+  maxPaidAccessPrice,
+  tierCapRows,
+  shouldUpsellCap,
+  nextCapTier,
+  capUpsellRows,
+  monetizationLimits,
+  resolveCapTier,
+} from '@civitai/buzz';
+export type { TierCapAmounts, TierCapRow, CapTier } from '@civitai/buzz';
 
-export type EarlyAccessConfig = {
+export type PaidAccessConfig = {
   timeframe: number;
   permanent?: boolean;
   // "Price for access" — buying it unlocks download + generation (the bundle). Required when gating.
   accessPrice?: number;
   // Optional cheaper generation-only tier; defaults to the access price when unset.
   generationPrice?: number;
+  // Gate the download but leave generation free for everyone (no price, no trial limit).
+  freeGeneration?: boolean;
   // Free generations a non-buyer gets before purchase is required.
   freePreviewGenerations: number;
   donationGoalEnabled: boolean;
   donationGoal?: number;
 };
+
+// The two usage controls a creator may choose for a version. InternalGeneration/ExternalGeneration are
+// moderator-only in the main app, so a version already on one of those is shown read-only instead.
+export const CREATOR_USAGE_CONTROLS = [
+  {
+    value: 'Download',
+    label: 'Download + generation',
+    hint: 'Buyers can download the files and generate on-site.',
+  },
+  {
+    value: 'Generation',
+    label: 'Generation only',
+    hint: 'On-site generation only — the files are never downloadable.',
+  },
+] as const;
+
+export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
+
+export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
+  CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

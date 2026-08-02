@@ -1,10 +1,20 @@
 import { Button, Center, Grid, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconApps, IconExternalLink, IconLayoutGrid, IconSearch } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import { CategoryFilterButtons } from '~/components/Apps/CategoryFilterButtons';
+import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
+import {
+  selectRecentRailEntries,
+  type ResolvedRecentApp,
+} from '~/components/Apps/recentAppsRail';
+import {
+  getRecentlyOpenedApps,
+  recordRecentlyOpenedApp,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type {
@@ -92,6 +102,39 @@ export function AppListingsMarketplaceBody() {
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
+  // "Recently opened" rail (client-only personalisation from localStorage).
+  // SEEDED EMPTY so SSR and the first client render match — reading
+  // localStorage during render would be a hydration mismatch — and the real
+  // list loads in a post-mount effect. A viewer with no recents therefore sees
+  // the page exactly as before: `RecentlyOpenedListingsView` renders null for an
+  // empty list, so nothing (not even a spacer) is added. The rail is rendered
+  // BELOW the search/sort/filter controls precisely because of this one-frame
+  // late hydration — see the comment at its render site.
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps());
+  }, []);
+  const recentEntries = useMemo(() => selectRecentRailEntries(recents), [recents]);
+
+  // Re-opening from the rail moves that app back to the front of the store. For
+  // an OFF-SITE entry this is the only chance to record it (following the link
+  // leaves the SPA); for an on-site one the run page records it too, and the
+  // store dedups, so double-recording is harmless.
+  function handleOpenRecent(entry: ResolvedRecentApp) {
+    setRecents(
+      recordRecentlyOpenedApp({
+        id: entry.id,
+        slug: entry.slug,
+        kind: entry.kind,
+        hasPage: entry.hasPage,
+        ...(entry.blockId ? { blockId: entry.blockId } : {}),
+        ...(entry.externalUrl ? { externalUrl: entry.externalUrl } : {}),
+        ...(entry.name ? { name: entry.name } : {}),
+        ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
+      })
+    );
+  }
+
   const {
     data,
     isLoading,
@@ -171,6 +214,26 @@ export function AppListingsMarketplaceBody() {
 
       {/* Category icon toggles — reuses the live marketplace component + taxonomy. */}
       <CategoryFilterButtons value={category} onChange={setCategory} />
+
+      {/* RECENTLY OPENED — BELOW the search/sort/filter controls and ABOVE the
+          grid.
+          🔴 Deliberately not at the very top. The rail is seeded EMPTY for SSR +
+          the first client render (reading localStorage during render is a
+          hydration mismatch) and hydrates in a post-mount effect, so for a
+          viewer WITH recents it appears one frame late. Above the search input
+          that insertion pushes the whole page down by ~90px after paint — a pure
+          CLS hit on the primary controls, and one we would actually see, since
+          Faro RUM reports web-vitals for this page. Below the controls, the late
+          insertion only moves the grid, which the viewer has not yet aimed at.
+          The rail is still above the fold and above every result card, so the
+          "jump back in" shortcut keeps its priority over browsing.
+          Renders null when empty → a first-time viewer's layout is byte-identical
+          to before, and nothing shifts at all. */}
+      <RecentlyOpenedListingsView
+        entries={recentEntries}
+        canOpenPage={!!features.appBlocksPages}
+        onOpenRecent={handleOpenRecent}
+      />
 
       {isLoading ? (
         <Center py="xl">

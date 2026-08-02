@@ -11,14 +11,20 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   decideAutoRetry,
+  advanceReviewConsentLatch,
+  buildReviewConsentNotification,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
+  shouldEmitMidSessionLossBeacon,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -49,7 +55,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -259,6 +265,40 @@ export interface PageBlockHostProps {
    * the preview surface, not here.
    */
   reviewRunForReal?: boolean;
+  /**
+   * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
+   * where it gates the "Recently run" menu — that section's ONLY link shape is
+   * that route, which 404s fail-closed unless the viewer holds BOTH `appBlocks`
+   * and `appBlocksPages`.
+   *
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER:
+   * `!!(features.appBlocks && features.appBlocksPages)` — the exact conjunction
+   * `/apps/run/[slug]`'s own `getServerSideProps` checks, no more and no less.
+   * Two ways to get it wrong, both of which have been written here:
+   *
+   *   - A PER-SURFACE CONSTANT, justified with "the surfaces gate on DIFFERENT
+   *     flags". That conflates what gates the SURFACE with what gates the LINK
+   *     TARGET. The dev tunnel's own gate and mod review's reviewer check say
+   *     nothing about whether the menu's links resolve. Hardcoding it per
+   *     surface is what silently killed the menu for mods on three of four
+   *     surfaces.
+   *   - HALF THE CONJUNCTION (`!!features.appBlocksPages`). `appBlocks` is the
+   *     block-runtime kill-switch and a Flipt override can disable as well as
+   *     enable, so pages-on/blocks-off is a reachable state in which every one
+   *     of these links 404s. All four surfaces happen to sit behind their own
+   *     `appBlocks` check today, so the one-flag form is not currently a live
+   *     bug — but that makes the menu gate depend on an invariant held in four
+   *     other functions, which is exactly the kind of distant coupling that
+   *     produced the original defect. Encode the target route's predicate here.
+   *
+   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
+   * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
+   * mounter cannot quietly omit it or downgrade it to one flag.
+   *
+   * Default false → a mounter that hasn't wired it shows no dead links.
+   */
+  canOpenPage?: boolean;
 }
 
 export function PageBlockHost({
@@ -286,6 +326,7 @@ export function PageBlockHost({
   onRetryToken,
   reviewMode = false,
   reviewRunForReal = false,
+  canOpenPage = false,
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -334,10 +375,91 @@ export function PageBlockHost({
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
 
+  // 🔴 A SEPARATE at-most-once latch for the MID-SESSION credential-loss beacon,
+  // and it MUST NOT be `blockRenderEmittedRef`.
+  //
+  // `blockRenderEmittedRef` encodes an ANALYTICS invariant — exactly ONE
+  // impression per host mount — that the `blockRenders` denominator and the
+  // BlockRenderFailureRate alert both depend on. Reusing it here would be wrong
+  // in both directions: a `ready` host has already consumed it (so the beacon
+  // would never fire — the precise reason a real prod revocation recorded zero
+  // error beacons on 2026-07-31), and clearing/relaxing it to make room would
+  // retroactively change what the already-sent `ok` impression means.
+  //
+  // The teardown is a genuinely DIFFERENT event from the page load, so it gets a
+  // different latch. Net effect on the wire for a revoked session: `ok` (the load
+  // really did succeed) followed by ONE
+  // `error{error_class="token_lost_midsession"}` (it was later revoked). Bounded
+  // per mount by this ref; the impression accounting above is untouched.
+  const midSessionLossEmittedRef = useRef<boolean>(false);
+  // Latches on the first committed `ready`. This is what tells a `ready → error`
+  // teardown apart from a `loading → error` launch failure — `status === 'error'`
+  // alone cannot (both transitions land on it). A ref, not state: it must not
+  // cause a render, and `handleRetry` deliberately does not clear it (a mount
+  // that ever launched has launched).
+  const reachedReadyRef = useRef<boolean>(false);
+
+  // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
+  //
+  // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
+  // `_app.tsx` renders <Component> with no key either — so a SOFT navigation
+  // between two apps (appA → appB, e.g. via the "Recently run" menu) reuses this
+  // component instance: same mount, different `blockInstanceId`.
+  //
+  // Left alone, app A's latches would leak onto app B and produce a WRONG,
+  // MISATTRIBUTED signal: B's launch failure would inherit `reachedReady === true`
+  // and be reported as `token_lost_midsession` for an app that never launched —
+  // exactly the launch-vs-teardown confusion this whole feature exists to avoid.
+  // (Conversely a spent emit-latch would silently swallow B's genuine loss.)
+  //
+  // So the latches are scoped to the block INSTANCE, not the React mount.
+  //
+  // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
+  // from `status`, because under host reuse `status` is itself STALE (it is still
+  // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
+  //
+  // Be precise about the cost, because it is NOT an edge case. `status` inherited
+  // from app A can still move FORWARD out of 'ready' (→ 'error' on a terminal
+  // token, → 'fatal' on BLOCK_ERROR) — it is not frozen. What it cannot do is go
+  // BACK: every `setStatus` here is gated on the current value, and the only
+  // unconditional reset to 'loading' is `performRetry`. Since re-reaching 'ready'
+  // requires passing through 'loading', app B can never earn a genuine `ready`
+  // after a soft nav, so the latch re-arms only via a manual or automatic Retry.
+  //
+  // That costs nothing real TODAY, because on the same path app B never gets a
+  // working session to lose: `shouldStartInit` returns false for any non-'loading'
+  // status, so BLOCK_INIT is never sent and app B cannot reach a genuine ready
+  // state. The missed beacon is therefore unreachable — it describes a state the
+  // pre-existing host-reuse bug already prevents. Net vs. before this reset:
+  // strictly better (we traded a FALSE POSITIVE on app B's launch failure for a
+  // beacon that could not have fired anyway). Under-reporting, never
+  // mis-reporting — the right side to err on for an alerting signal.
+  //
+  // 🔴 The DECLARATION ORDER below is load-bearing: this effect must be declared
+  // BEFORE the status-sync effect that sets `reachedReadyRef`, so that a commit
+  // changing both `blockInstanceId` and `status` resets first and latches second.
+  // No current test detects a swap (no reachable case distinguishes them today) —
+  // so if you reorder these, reason it through rather than trusting the suite.
+  //
+  // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
+  // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
+  // impression) both predate this change. The real fix is `key={blockInstanceId}`
+  // on the run page, which would also change impression COUNTS, so it belongs in
+  // its own PR rather than riding along on an observability change.
+  useEffect(() => {
+    reachedReadyRef.current = false;
+    midSessionLossEmittedRef.current = false;
+  }, [blockInstanceId]);
+
   // Keep statusRef tracking the live status so handleRetry can branch on the
   // prior terminal state without reading it inside the setStatus updater.
   useEffect(() => {
     statusRef.current = status;
+    // Latch "this mount reached ready" off the COMMITTED status, for the same
+    // reason the impression beacon does (see its comment): keying off a
+    // setStatus updater's side effect silently drops the observation whenever
+    // another state update is already queued on this component.
+    if (status === 'ready') reachedReadyRef.current = true;
   }, [status]);
 
   // BOUNDED AUTO-RETRY — the single decision both consumers read (the scheduling
@@ -542,14 +664,65 @@ export function PageBlockHost({
   // (an `error` status is an AUTH terminal, so its one automatic attempt spends a
   // re-mint) and surfaces the prominent manual Retry once that settles too.
   //
-  // 🔴 NO SECOND BEACON. A host that reached `ready` already fired its ONE `ok`
-  // impression, and `blockRenderEmittedRef` is per-mount — so the failure beacon
-  // below is inert here by construction. The episode stays one beacon, reporting
-  // that the page load itself succeeded (which it did).
+  // 🔴 THE IMPRESSION BEACON IS STILL EXACTLY ONE. A host that reached `ready`
+  // already fired its ONE `ok` impression, and `blockRenderEmittedRef` is
+  // per-mount — so the launch-failure beacon below remains inert here by
+  // construction, and the `ok` already sent still means what it always meant
+  // (the page load succeeded — which it did). The teardown is reported by the
+  // SEPARATE mid-session beacon effect immediately after this one, on its own
+  // latch, so observability is gained without touching impression accounting.
   useEffect(() => {
     if (!tokenTerminal || token) return;
     setStatus((current) => (current === 'ready' ? 'error' : current));
   }, [tokenTerminal, token]);
+
+  // MID-SESSION credential-loss render beacon — the observability half of the
+  // teardown above.
+  //
+  // 🔴 WHY THIS EXISTS AT ALL (measured on production 2026-07-31): a real
+  // revocation teardown was driven end-to-end against a live app and the
+  // platform recorded ZERO error beacons for it. The only trace of the incident
+  // was the earlier successful `ok` impression, so every render metric said the
+  // app was healthy while it was dead in the viewer's tab. A mid-session
+  // teardown is exactly the failure mode a third-party app platform must be able
+  // to see — it is what a delist/suspend/revoke looks like from the runtime.
+  //
+  // Keys off the COMMITTED `status` (not a setStatus updater's side effect) for
+  // the same batching reason documented on the impression beacon below. The full
+  // decision — including WHY it is gated on `reachedReady` and on the settled
+  // `tokenTerminal` rather than a bare `tokenError` — lives in the pure,
+  // unit-tested `shouldEmitMidSessionLossBeacon`.
+  useEffect(() => {
+    if (
+      !shouldEmitMidSessionLossBeacon({
+        status,
+        reachedReady: reachedReadyRef.current,
+        tokenTerminal,
+        hasToken: !!token,
+        alreadyEmitted: midSessionLossEmittedRef.current,
+      })
+    )
+      return;
+    midSessionLossEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op. `errorClass` is a member of
+    // the server-side KNOWN_ERROR_CLASSES allowlist, so it survives as a real
+    // `error_class` prom label instead of collapsing into 'other'.
+    //
+    // 🔴 `secondary: true` is REQUIRED here, not decorative. This mount already
+    // sent its `ok` impression, and the `blockRenders` CH row carries no status —
+    // so without this flag the follow-up would write a SECOND byte-identical row
+    // for one mount, un-de-duplicatable, inflating every CH-derived impression
+    // figure for exactly the sessions that were revoked. The flag keeps the prom
+    // counter firing (that is what the alert reads) while skipping the insert.
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      status: 'error',
+      errorClass: MID_SESSION_LOSS_ERROR_CLASS,
+      secondary: true,
+    });
+  }, [status, tokenTerminal, token, appBlockId, blockInstanceId]);
 
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.
@@ -694,6 +867,12 @@ export function PageBlockHost({
     });
   }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
+  // MOD REVIEW SANDBOX — anti-spam latch for the reduced-permissions notice in
+  // the consent handler below. Bounded to at most TWO per host MOUNT (one generic
+  // + one scope-named upgrade — see `advanceReviewConsentLatch`). The review
+  // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
+  // gets its own budget, and the notification ids are mode-specific to match.
+  const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -713,10 +892,6 @@ export function PageBlockHost({
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
-      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
-      // let untrusted review code pop a permission modal at the mod. Fire-and-
-      // forget ⇒ dropping it never hangs the block.
-      if (reviewMode) return;
       // PageBlockHost's local Status carries an extra terminal `'error'` variant
       // (a hard mint failure) the shared gate's HostStatus union doesn't model.
       // The gate only ever grants when status === 'ready', and `'error'` is a
@@ -727,6 +902,53 @@ export function PageBlockHost({
       // Only act on a post-handshake request; a pre-handshake block never gets a
       // modal OR a toast (same posture as the consent gate itself).
       if (gateStatus !== 'ready') return;
+
+      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
+      // let untrusted review code pop a permission modal at the mod. That stays
+      // absolute; the request is still fire-and-forget (dropping the GRANT never
+      // hangs the block). What changed: dropping it SILENTLY meant the reviewer
+      // got nothing at all — no modal, no toast, no error — while the app parked
+      // forever on its consent card, which reads as "this app is broken" rather
+      // than "the preview deliberately withholds this permission". So review mode
+      // now emits a PASSIVE, non-interactive notice (never a modal, nothing to
+      // click, no scope is granted) pointing at the existing opt-in escape hatch.
+      if (reviewMode) {
+        const notice = resolveReviewConsentNotice(payload?.scopes, grantedScopes);
+        if (!notice.notify) return;
+        // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
+        // code and can post REQUEST_CONSENT in a loop, so one toast per message
+        // would let a hostile submission carpet-bomb the reviewing mod's screen
+        // (and bury the review chrome). The latch caps this at TWO notices per
+        // host mount — one generic, plus at most one upgrade to the scope-NAMED
+        // copy. It is NOT a plain "already notified" boolean: the SDK's `scopes`
+        // hint is optional, so a hint-less request on load would otherwise win
+        // the latch and permanently suppress the later, informative one.
+        const { show, next } = advanceReviewConsentLatch(
+          reviewConsentLatchRef.current,
+          notice.scopes.length > 0
+        );
+        reviewConsentLatchRef.current = next;
+        if (!show) return;
+        // `notice.scopes` is filtered to the known block-scope vocabulary, so no
+        // attacker-controlled text can reach this string; Mantine renders
+        // `message` as React text (escaped) — never as HTML.
+        const notification = buildReviewConsentNotification({
+          appBlockId,
+          runForReal: reviewRunForReal,
+          scopes: notice.scopes,
+        });
+        // Upgrade path only: retire the generic notice this one replaces, so the
+        // reviewer sees ONE notice, not a stack. A no-op when it already closed.
+        if (notification.supersedesId) hideNotification(notification.supersedesId);
+        showNotification({
+          id: notification.id,
+          color: 'yellow',
+          title: notification.title,
+          message: notification.message,
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         dialogStore.trigger({
@@ -772,6 +994,7 @@ export function PageBlockHost({
     appName,
     onConsentGranted,
     reviewMode,
+    reviewRunForReal,
   ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a
@@ -906,7 +1129,9 @@ export function PageBlockHost({
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+    const off = onMessage<
+      { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
+    >(
       'SUBMIT_WORKFLOW',
       async (raw) => {
         if (reviewNack) {
@@ -922,11 +1147,20 @@ export function PageBlockHost({
         }
         if (!raw || typeof raw.requestId !== 'string' || !token) return;
         const requestId = raw.requestId;
+        // Idempotency (item 2, gen half): forward the OPTIONAL client key to the
+        // server so a lost-response retry collapses to one Buzz charge. Host-first:
+        // accept it defensively (only when a non-empty string) so older SDKs that
+        // never send it are unaffected and a garbage value is ignored.
+        const idempotencyKey =
+          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+            ? raw.idempotencyKey
+            : undefined;
         try {
           const { snapshot } = await submitWorkflowMutation.mutateAsync({
             blockToken: token,
             // Schema-validated server-side; the host never trusts this shape.
             body: raw.body as never,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
           });
           send('WORKFLOW_SUBMITTED', { requestId, snapshot });
         } catch (err) {
@@ -2825,6 +3059,7 @@ export function PageBlockHost({
         appBlockId={appBlockId}
         appName={appName}
         slotId={PAGE_SLOT_ID}
+        canOpenPage={canOpenPage}
       />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —

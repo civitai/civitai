@@ -39,9 +39,14 @@ export type WinnerPayoutEntry = {
  * Fold a freshly-picked winner entry onto the placement that is actually persisted.
  *
  * - Fresh insert (`created: true`) — nothing to reconcile, the row matches what we picked.
- * - `null` — the create neither inserted nor resolved to a readable row (structurally unreachable:
- *   (challengeId, userId) is the table's only unique constraint). Left untouched deliberately, so
- *   this fix can never turn into an UNDER-payment; the create path logs it loudly instead.
+ * - `null` — the create neither inserted nor resolved to a readable row. This is NOT structurally
+ *   unreachable: (challengeId, userId) is not the table's only unique constraint, `id Int @id
+ *   @default(autoincrement())` is one too, so a sequence left behind by a restore or a manual insert
+ *   collides on `id` and the (challengeId, userId) re-read that follows finds nothing. Left
+ *   untouched deliberately, so this fix can never turn into an UNDER-payment — which does mean the
+ *   entry is paid under an unreconciled place. The create path logs it loudly and increments
+ *   `challenge_winner_conflict_unresolved_total`; it is the one remaining branch there that can
+ *   settle a second transaction id for a user.
  * - Existing row — its place/prize win. Paying the freshly-picked place instead is exactly the
  *   double-mint: the user was already paid under the recorded place's transaction id.
  *
@@ -84,9 +89,18 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
  * the unique key means a creator has at most one row per challenge, so a repeat of that creator is
  * always a duplicate of the same award and never a second one they were owed.
  *
- * The FIRST occurrence wins. Entries are built in placement order, so the first holds the best
- * place and therefore the largest prize — keeping a later, worse placement instead would turn a
- * duplicate pick into an under-payment.
+ * The FIRST occurrence wins — which means the BEST PLACE, and that is not the same claim as the
+ * largest prize. Entries are built in placement order, so the survivor is the lowest-numbered place;
+ * but nothing makes prizes descend with place. `prizeDistributionSchema` validates only three values
+ * in 1..100 summing to 100, descending order is not enforced, and `distributePrizes` maps the
+ * percentages positionally — so `[20, 50, 30]` is a legal distribution under which place 1 pays LESS
+ * than place 2 and first-wins keeps the smaller prize.
+ *
+ * Kept anyway, because place is the payout's IDENTITY rather than a ranking: the externalTransactionId
+ * embeds it and the `ChallengeWinner` row records it, so the surviving entry has to be the one the
+ * stored row will agree with. "Keep whichever pays more" would select a placement no row will hold
+ * and put the record and the ledger back into the disagreement this module exists to prevent. Which
+ * duplicate survives is payout semantics, not telemetry, and changing it is out of scope here.
  *
  * Lives in this module rather than beside `buildWinnerPayoutTransactions` for a mundane but real
  * reason: `challenge-funding` is mocked with an explicit export list by 15 test files, so a new

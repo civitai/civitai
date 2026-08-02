@@ -43,8 +43,6 @@ import type {
   DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
-  calculateWeightedScore,
-  SCORE_WEIGHTS,
   challengeToLegacyFormat,
   deriveChallengeNsfwLevel,
   endChallenge,
@@ -54,7 +52,10 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
+import {
+  calculateWeightedCategoryScore,
+  FIXED_JUDGING_CATEGORIES,
+} from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
@@ -668,10 +669,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
-  // Any challenge that stores judgingCategories is judged by them; those without fall back to the
-  // default theme/wittiness/humor/aesthetic rubric (generateReview resolves DEFAULT_CATEGORY_ROWS
-  // from the DB). Parse defensively — a malformed value falls back to the fixed schema instead of
-  // failing the review.
+  // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
+  // review.
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
     challengeRecord?.judgingCategories
   );
@@ -1830,59 +1829,26 @@ export async function getJudgedEntries(
   source: ChallengeSource = ChallengeSource.System,
   categories?: ChallengeJudgingCategory[]
 ) {
-  // Challenges scored against creator-defined category labels (any challenge that stored
-  // judgingCategories — see the callers) can't use the fixed
-  // theme/aesthetic/humor/wittiness SQL ordering below — rank those in JS instead (see the
-  // branch after the winner-cooldown filter). The caller already resolved whether categories
-  // apply (including the fixed-schema fallback for malformed values), so route on their
-  // presence alone rather than re-checking source here.
-  const useWeightedCategories = !!categories?.length;
+  // A challenge with no usable stored rubric (only a malformed value now that every challenge is
+  // seeded) is ranked by the same fixed split the judge scored it against.
+  const rubric = categories?.length ? categories : FIXED_JUDGING_CATEGORIES;
 
-  // Get each user's BEST entry only (by AI score), so users with many entries
-  // don't have an advantage over users with fewer entries
-  const userBestEntries = useWeightedCategories
-    ? await dbRead.$queryRaw<JudgedEntry[]>`
-        SELECT
-          ci."imageId",
-          i."userId",
-          u."username",
-          ci.note
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        JOIN "User" u ON u.id = i."userId"
-        WHERE ci."collectionId" = ${collectionId}
-        AND ci."tagId" = ${config.judgedTagId}
-        AND ci.note IS NOT NULL
-        AND ci.status = 'ACCEPTED'
-      `
-    : await dbRead.$queryRaw<JudgedEntry[]>`
-        WITH ranked AS (
-          SELECT
-            ci."imageId",
-            i."userId",
-            u."username",
-            ci.note,
-            ROW_NUMBER() OVER (
-              PARTITION BY i."userId"
-              ORDER BY (
-                (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
-                (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
-                (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
-                (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
-              ) DESC
-            ) as rn
-          FROM "CollectionItem" ci
-          JOIN "Image" i ON i.id = ci."imageId"
-          JOIN "User" u ON u.id = i."userId"
-          WHERE ci."collectionId" = ${collectionId}
-          AND ci."tagId" = ${config.judgedTagId}
-          AND ci.note IS NOT NULL
-          AND ci.status = 'ACCEPTED'
-        )
-        SELECT "imageId", "userId", username, note
-        FROM ranked
-        WHERE rn = 1
-      `;
+  // Every judged entry — the per-user best is picked below, after the theme gate has had a chance
+  // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
+  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      ci.note
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    AND ci.note IS NOT NULL
+    AND ci.status = 'ACCEPTED'
+  `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
     return [];
@@ -1946,43 +1912,27 @@ export async function getJudgedEntries(
     cooldown: cooldownSource,
   });
 
-  if (useWeightedCategories) {
-    // categories is non-empty here (useWeightedCategories guard above)
-    const cats = categories!;
-    const ranked = eligibleEntries
-      .map(({ note, ...entry }) => {
-        const { score, summary } = JSON.parse(note);
-        const weightedRating = calculateWeightedCategoryScore(score, cats);
-        return { ...entry, summary, score, weightedRating };
-      })
-      .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
-
-    // Best entry per user (entries aren't deduped in SQL for this path)
-    const bestPerUser = new Map<number, (typeof ranked)[number]>();
-    for (const entry of ranked) {
-      const current = bestPerUser.get(entry.userId);
-      if (!current || entry.weightedRating > current.weightedRating) {
-        bestPerUser.set(entry.userId, entry);
-      }
-    }
-
-    return [...bestPerUser.values()]
-      .sort((a, b) => b.weightedRating - a.weightedRating)
-      .slice(0, config.finalReviewAmount);
-  }
-
-  // Rank entries by weighted AI judge score with theme gate rules
-  const judgedEntries = eligibleEntries
+  const ranked = eligibleEntries
     .map(({ note, ...entry }) => {
       const { score, summary } = JSON.parse(note);
-      const weightedRating = calculateWeightedScore(score);
+      const weightedRating = calculateWeightedCategoryScore(score, rubric);
       return { ...entry, summary, score, weightedRating };
     })
     .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
-  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
 
-  // Take top entries for final judgment (already one per user from the query)
-  return judgedEntries.slice(0, config.finalReviewAmount);
+  const bestPerUser = new Map<number, (typeof ranked)[number]>();
+  for (const entry of ranked) {
+    const current = bestPerUser.get(entry.userId);
+    if (!current || entry.weightedRating > current.weightedRating) {
+      bestPerUser.set(entry.userId, entry);
+    }
+  }
+
+  // Ties are shuffled rather than resolved by query order — entries scored 0-10 on a handful of
+  // categories tie often, and the tied set is what gets cut at finalReviewAmount.
+  return [...bestPerUser.values()]
+    .sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5)
+    .slice(0, config.finalReviewAmount);
 }
 
 // Types

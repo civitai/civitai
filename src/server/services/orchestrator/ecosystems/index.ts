@@ -66,6 +66,7 @@ import { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
+import { createMiniMaxInput } from './minimax.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createLTXInput } from './ltx.handler';
 import { createMochiInput } from './mochi.handler';
@@ -190,6 +191,9 @@ export type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 /** Kling context */
 export type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 
+/** MiniMax (Hailuo) context */
+export type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMax' };
+
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
@@ -258,6 +262,7 @@ export { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 export { createWanSteps } from './wan.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
+export { createMiniMaxInput } from './minimax.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createLTXInput } from './ltx.handler';
 export { createMochiInput } from './mochi.handler';
@@ -461,6 +466,10 @@ async function createEcosystemStep(
     // Kling
     case 'Kling':
       return createKlingInput(normalizedData, handlerCtx);
+
+    // MiniMax (Hailuo)
+    case 'MiniMax':
+      return createMiniMaxInput(normalizedData, handlerCtx);
 
     // Hunyuan (HyV1)
     case 'HyV1':

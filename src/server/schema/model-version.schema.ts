@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms } from '@civitai/buzz';
-import { MAX_LICENSING_FEE } from '@civitai/buzz';
+import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import {
   MAX_DONATION_GOAL,
@@ -459,7 +459,9 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   uploadType: z.enum(ModelUploadType).optional(),
   usageControl: z.enum(ModelUsageControl).optional(),
-  licensingFee: z.number().min(0).max(MAX_LICENSING_FEE).multipleOf(0.01).nullish(),
+  // Ceiling only — the real limit is the creator's per-tier cap, asserted server-side against the
+  // version's media type. Video allows 5x, so the schema has to admit the highest of the two.
+  licensingFee: z.number().min(0).max(maxLicensingFeeCeiling('video')).multipleOf(0.01).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
   // Inherit another version's licensing fee (a LicensingRoot for this baseModel).

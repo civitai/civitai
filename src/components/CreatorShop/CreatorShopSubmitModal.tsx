@@ -53,6 +53,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     animated,
     sellableByOthers,
     sellerShare,
+    acceptsBlueBuzz,
     offsets,
     offsetsChanged,
     imageId,
@@ -88,8 +89,14 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
       description !== (item?.description ?? '') ||
       price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
       offsetsChanged ||
+      form.acceptsBlueBuzzChanged ||
       !!localUrl
-    : !!imageId || !!name.trim() || !!description.trim() || sellableByOthers || offsetsChanged;
+    : !!imageId ||
+      !!name.trim() ||
+      !!description.trim() ||
+      sellableByOthers ||
+      acceptsBlueBuzz ||
+      offsetsChanged;
 
   const handleCancel = () => {
     if (!isDirty) return dialog.onClose();
@@ -262,6 +269,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           </Text>
         </Group>
 
+        <Switch
+          checked={acceptsBlueBuzz}
+          onChange={(e) => form.setAcceptsBlueBuzz(e.currentTarget.checked)}
+          label="Accept Blue Buzz"
+          description="Buyers can pay with Blue Buzz — fully, or combined with their regular Buzz. You're paid blue for the blue-paid portion."
+        />
         {!isEdit && (
           <Stack gap={6}>
             <Switch
@@ -281,7 +294,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                   onChange={(v) =>
                     form.setSellerShare(typeof v === 'number' ? Math.min(70, Math.max(0, v)) : 0)
                   }
-                  description="The % of each resale the seller keeps (they set their own price)."
+                  description="The % of each resale the seller earns. Resales use your price and inventory."
                 />
                 <Paper withBorder radius="md" p="sm">
                   <Text size="xs" c="dimmed" mb={4}>

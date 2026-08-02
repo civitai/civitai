@@ -21,6 +21,7 @@ import {
   IconExternalLink,
   IconInfoCircle,
   IconPencil,
+  IconPlayerPlay,
   IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -38,6 +39,15 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
+import {
+  getListingPreview,
+  LISTING_PREVIEW_HEIGHT,
+  LISTING_PREVIEW_SANDBOX,
+  shouldMountPreviewIframe,
+} from '~/components/Apps/appListingPreview';
+import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
+import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
@@ -62,15 +72,24 @@ import type {
  * app icon + name + tagline + creator chip + kind badge + Steam-style recommend
  * breakdown + a screenshot gallery + a `CustomMarkdown` description + the
  * kind-aware primary action (`getDetailPrimaryAction`). Mirrors the visual
- * language of the LIVE per-app detail (`/apps/[appBlockId]` + `AppDetailsModal`)
- * — same screenshot-grid + description + external-link discipline — so listings
- * feel native.
+ * language of the per-app detail it supersedes (the now-retired
+ * `/apps/[appBlockId]`) and of `AppDetailsModal` — same screenshot-grid +
+ * description + external-link discipline — so listings feel native.
  *
  * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
  * surface AND, in read-only `preview` mode (see props), by the moderator
- * listing-media review as a store preview of an unapproved shadow listing. The
- * live `/apps/[appBlockId]` detail + `AppDetailsModal` + default `/apps` are
- * byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
+ * listing-media review as a store preview of an unapproved shadow listing.
+ *
+ * 🔴 This body is now the DESTINATION of the retired `/apps/[appBlockId]` route
+ * (#3493 redirects it here for any app with an approved listing), so nothing in
+ * this file may link back to `/apps/<appBlockId>` — that is a redirect loop onto
+ * the page the viewer is already reading. See `getDetailPrimaryAction`'s
+ * model-slot branch. `AppDetailsModal` + the default `/apps` are byte-unchanged.
+ *
+ * ⚠️ KNOWN GAP (tracked by #3493, deliberately NOT closed here): this body has
+ * no INSTALL surface, so a model-slot app — one that installs into a slot rather
+ * than opening a page — has nowhere on the store detail to install from. Vacuous
+ * today (every approved on-site listing declares a page).
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
@@ -223,6 +242,130 @@ function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryS
   );
 }
 
+/**
+ * In-page LIVE PREVIEW — poster first, iframe only on click.
+ *
+ * 🔴 The `<iframe>` is NOT in the tree until the viewer activates it. Booting a
+ * third-party app frame on page load would make every shopper pay that app's
+ * full JS/network cost just to read the listing, on every listing. Before the
+ * click we show a static poster (the listing's own cover → first screenshot →
+ * a neutral placeholder) with an explicit activate affordance.
+ *
+ * "No poster available" is a normal case (several approved listings ship neither
+ * a cover nor screenshots) — the placeholder still activates, so a listing
+ * without art never loses its preview.
+ *
+ * SANDBOX/REFERRER PARITY with the preview on the now-retired
+ * `/apps/[appBlockId]` page. The block is served from its OWN `<slug>.civit.ai`
+ * origin, so `allow-same-origin` grants the frame ITS OWN origin — not
+ * civitai.com's — which is what lets the block use its own storage. See
+ * `appListingPreview.ts` for the full note; the token list itself is
+ * single-sourced there.
+ *
+ * 🔴 NOT an HTTP-caching change. Block HTML is deliberately `Cache-Control:
+ * no-store` at the platform layer so CSP/CORS changes propagate; "cache the
+ * preview" here means poster-then-activate and nothing else.
+ */
+function LivePreview({ detail }: { detail: ListingDetail }) {
+  const [activated, setActivated] = useState(false);
+  const preview = getListingPreview(detail);
+  if (!preview) return null;
+  const mounted = shouldMountPreviewIframe({ preview, activated });
+
+  return (
+    <>
+      <Divider />
+      <Stack gap="xs" data-testid="apps-listing-preview">
+        <Title order={4}>Live preview</Title>
+        <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+          {mounted ? (
+            <iframe
+              src={preview.liveUrl}
+              title={preview.frameTitle}
+              sandbox={LISTING_PREVIEW_SANDBOX}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              data-testid="apps-listing-preview-frame"
+              style={{
+                width: '100%',
+                height: LISTING_PREVIEW_HEIGHT,
+                border: 0,
+                display: 'block',
+              }}
+            />
+          ) : (
+            <Box
+              component="button"
+              type="button"
+              onClick={() => setActivated(true)}
+              aria-label={`Start the live preview of ${detail.name}`}
+              data-testid="apps-listing-preview-activate"
+              style={{
+                position: 'relative',
+                display: 'block',
+                width: '100%',
+                height: LISTING_PREVIEW_HEIGHT,
+                padding: 0,
+                border: 0,
+                cursor: 'pointer',
+                // No poster → the listing's own seeded gradient (same identity
+                // the cover/icon placeholders use), never a blank grey box.
+                background: preview.posterUrl
+                  ? undefined
+                  : listingPlaceholderGradient({
+                      slug: detail.slug,
+                      category: detail.category,
+                      surface: 'cover',
+                    }),
+              }}
+            >
+              {preview.posterUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={preview.posterUrl}
+                  alt=""
+                  aria-hidden
+                  loading="lazy"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+              )}
+              {/* Activate affordance, above the poster. */}
+              <Group
+                justify="center"
+                style={{ position: 'relative', height: '100%' }}
+                data-testid="apps-listing-preview-poster"
+              >
+                <Group
+                  gap={8}
+                  wrap="nowrap"
+                  px="md"
+                  py="xs"
+                  style={{
+                    borderRadius: 'var(--mantine-radius-xl)',
+                    background: 'rgba(0,0,0,0.65)',
+                    color: 'var(--mantine-color-white)',
+                  }}
+                >
+                  <IconPlayerPlay size={18} />
+                  <Text size="sm" fw={600} c="white">
+                    Run live preview
+                  </Text>
+                </Group>
+              </Group>
+            </Box>
+          )}
+        </Card>
+      </Stack>
+    </>
+  );
+}
+
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
@@ -237,15 +380,30 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
 
   if (action.mode === 'visit' && action.href) {
     return (
-      <Button
-        component="a"
-        href={action.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        leftSection={<IconExternalLink size={16} />}
-      >
-        {action.label}
-      </Button>
+      <Stack gap={4} align="flex-end">
+        <Button
+          component="a"
+          href={action.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          leftSection={<IconExternalLink size={16} />}
+          data-testid="apps-listing-open-live"
+          // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
+          // whose viewer can't open the in-host route ("Open live" — the
+          // raw-origin escape hatch, see `getDetailPrimaryAction`). Either way,
+          // following this link IS the moment the app is opened, and it leaves
+          // the SPA — so it is the only chance to record the open. A detail-page
+          // VIEW never records.
+          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
+        >
+          {action.label}
+        </Button>
+        {action.note && (
+          <Text size="xs" c="dimmed" ta="right" maw={260}>
+            {action.note}
+          </Text>
+        )}
+      </Stack>
     );
   }
 
@@ -266,7 +424,11 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
     );
   }
 
-  // Informational (`info`) — optional "learn more" internal link + a note.
+  // Informational (`info`) — a note plus, if the action ever carries one, an
+  // internal "learn more" link. `getDetailPrimaryAction` produces NO href for
+  // `info` today (the only such target was the retired `/apps/[appBlockId]`),
+  // so the text-only arm is the live one; the link arm is kept as the type's
+  // optional-href contract, NOT as a place to reinstate a circular self-link.
   return (
     <Stack gap={4}>
       {action.href ? (
@@ -440,6 +602,12 @@ export function AppListingDetailBody({
         </>
       )}
 
+      {/* IN-PAGE LIVE PREVIEW (poster → click to activate). Placed above the
+          screenshot gallery: a runnable app outranks static stills. Omitted in
+          read-only mod preview along with every other live surface — a shadow
+          listing's block may not even be deployed. */}
+      {!preview && <LivePreview detail={detail} />}
+
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
       {/* Description — shared CustomMarkdown (no dangerouslySetInnerHTML). */}
@@ -464,6 +632,19 @@ export function AppListingDetailBody({
             permissions.
           </Alert>
         )}
+
+      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
+          Placed AFTER the description/disclosure but BEFORE the comments: the
+          comment thread is unbounded, so a rail below it would be buried behind
+          an arbitrary amount of scrolling for the viewers most likely to want
+          it (the ones who read the listing and didn't convert). Omitted in
+          read-only preview — it is a live, tRPC-backed surface. */}
+      {!preview && (
+        <>
+          <Divider />
+          <RelatedListings listingId={detail.id} category={detail.category} />
+        </>
+      )}
 
       {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
           on the listing's Thread (`entityType="appListing"`, integer surrogate).

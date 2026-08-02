@@ -7,11 +7,19 @@
 // (no new infra, no ClickHouse migration) and are scraped by the same
 // /api/metrics endpoint that exposes every other app metric.
 //
-// Two signals:
+// Three signals:
 //   1. Per-app REST RED — emitted from block-scope.middleware for every
 //      block-JWT-authed /api/v1/blocks/* call.
 //   2. Render-failure signal — emitted from the /api/track/block-render beacon
 //      route (ok at BLOCK_READY, error on a host render failure).
+//   3. Cap-limit DEGRADE signal — emitted from app-cap-limits.service when the
+//      per-app spend/velocity resolver falls back to the strictest tier.
+//   4. Spend-cap REJECTION signal — emitted from app-spend-cap.service for every
+//      generation submit the per-app aggregate cap actually DENIES. (3) counts
+//      how often the LIMITS could not be resolved; (4) counts how many real
+//      generations were turned away. They are not substitutes: (3) is
+//      rate-capped by a 5s fallback cache, so a 10-submit degrade and a
+//      10,000-submit degrade produce the same counter value.
 //
 // prom-client GOTCHA: Next.js can import a module twice (hot reload / route
 // bundling), and prom-client throws if a metric name is registered twice. Every
@@ -36,6 +44,7 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  */
 export type AppBlockEndpoint =
   | 'tip'
+  | 'tip_allowance'
   | 'images'
   | 'models'
   | 'model_detail'
@@ -57,6 +66,59 @@ export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' 
 
 export type AppBlockRenderResult = 'ok' | 'error';
 
+/**
+ * Why `resolveAppCapLimits` fell back to `STRICTEST_APP_CAP_LIMITS` instead of
+ * resolving the app's real ceilings. The two mean DIFFERENT things and an
+ * operator responds to them differently, which is the whole reason this is a
+ * label and not one undifferentiated counter:
+ *
+ *   - `db_error`    — the `app_blocks` read THREW (DB unreachable, pool
+ *                     exhausted, the override columns not yet applied in this
+ *                     environment). INFRA trouble; usually fleet-wide and
+ *                     correlated with other DB symptoms. Every app degrades at
+ *                     once. This is the page-worthy one.
+ *   - `missing_row` — the read SUCCEEDED and returned nothing. There is no such
+ *                     app: a newly created app racing its first submit, an app
+ *                     deleted mid-session, or a synthetic dev id that slipped
+ *                     the caller's `claims.dev` exclusion. Scoped to ONE app,
+ *                     and a steady non-zero rate here means a real bug in an
+ *                     id-minting path, not a database problem.
+ *
+ * 🔴 Both resolve to a REAL, enforced ceiling (today's shipped 5,000,000/120) —
+ * never to "uncapped". The signal exists because the degrade is otherwise
+ * INVISIBLE: an app silently pinned to the strictest tier looks exactly like an
+ * app that is simply busy, right up until its users start seeing abuse
+ * rejections it did not earn.
+ */
+export type AppCapLimitsDegradeReason = 'db_error' | 'missing_row';
+
+/**
+ * Why `reserveAppSpend` REJECTED one block-initiated generation submit. This is
+ * the SINGLE SOURCE for the union — `ReserveAppSpendResult['reason']` in
+ * `app-spend-cap.service.ts` is this same type (imported type-only, so nothing
+ * pulls prom-client into that module's static graph). Keeping one declaration is
+ * what stops the label set and the service's own contract from drifting apart:
+ * a new rejection cause cannot be returned without appearing here, and adding
+ * one here is a deliberate, reviewable widening of the metric's cardinality.
+ *
+ *   - `daily`       — the per-app daily Buzz ceiling would be exceeded. The
+ *                     MONEY bound: this app's viewers have collectively spent
+ *                     its budget for the UTC day. Expected to be sticky (it
+ *                     stays denied until the day rolls over).
+ *   - `velocity`    — the per-app short-window generation ceiling was exceeded.
+ *                     The RATE bound: bursty and self-clearing within one
+ *                     window, and the one a legitimately busy app trips first.
+ *   - `unavailable` — a Redis error, or a limit-resolution throw, on the reserve
+ *                     path → fail closed (deny, no spend). NOT an abuse signal
+ *                     at all: it is infra, and every app is denied at once.
+ *
+ * 🔴 EXACTLY THESE THREE, and `reason` is the ONLY label. See the counter below
+ * for why no app/user/block id may join them.
+ */
+export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailable'] as const;
+
+export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
+
 /** Known render slots. Anything else is bucketed to 'other' to bound the label. */
 const KNOWN_SLOT_IDS = new Set([
   'app.page',
@@ -72,9 +134,30 @@ const KNOWN_SLOT_IDS = new Set([
  *   - no_token       — the block token never resolved
  *   - error          — a hard token-mint failure (PageBlockHost only)
  *   - error_boundary — the host React tree threw (BlockErrorBoundary caught it)
+ *   - token_lost_midsession — the host had ALREADY reached `ready` and then lost its
+ *                      credential terminally (delist/suspend/revoke → the mint
+ *                      settled on a terminal 4xx with nothing usable left). This is
+ *                      the ONLY class that describes a teardown of a page load that
+ *                      had already SUCCEEDED, which is exactly why it must be
+ *                      distinguishable from the launch-failure classes above: on the
+ *                      wire it arrives as a SECOND beacon for a mount whose first
+ *                      beacon said `ok`. See the mid-session effect in PageBlockHost.
  * Anything else is bucketed to 'other'. A successful render uses 'none'.
+ *
+ * 🔴 THE ALLOWLIST IS THE CARDINALITY BOUND. `errorClass` arrives in a public,
+ * client-supplied beacon body (schema-capped at 64 chars but otherwise free-form).
+ * Adding a member here is the ONLY way a new value can become a prom label — every
+ * other string collapses to the single 'other' bucket in `normalizeErrorClass`
+ * below. Keep this set small and code-owned; never derive it from input.
  */
-const KNOWN_ERROR_CLASSES = new Set(['timeout', 'fatal', 'no_token', 'error', 'error_boundary']);
+const KNOWN_ERROR_CLASSES = new Set([
+  'timeout',
+  'fatal',
+  'no_token',
+  'error',
+  'error_boundary',
+  'token_lost_midsession',
+]);
 
 /**
  * Clamp a client-supplied slotId to the enumerated slot set (unknown → 'other')
@@ -149,6 +232,8 @@ type Bundle = {
   rendersTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
+  capLimitsDegradedTotal: Counter<string>;
+  spendCapRejectionsTotal: Counter<string>;
 };
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
@@ -194,17 +279,18 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     // default buckets are fine for this REST surface
   );
 
-  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 7 error_class ≈ 1785 at
+  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 8 error_class ≈ 2040 at
   // A=50, where A = approved apps (+1 for the 'other' bucket), slot_id = 4 known
-  // + 'other', and error_class = 'none' + 5 known + 'other' (7). `result` is NOT
+  // + 'other', and error_class = 'none' + 6 known + 'other' (8). `result` is NOT
   // an independent multiplier — it's coupled to error_class ('none' pairs only
-  // with result=ok; the 5-known+'other' pair only with result=error), so the 7
+  // with result=ok; the 6-known+'other' pair only with result=error), so the 8
   // error_class values already encode the result split. Every factor is strictly
-  // bounded, so the series count stays small.
+  // bounded (see the KNOWN_* sets + boundAppBlockIdLabel), so the series count
+  // stays small and CANNOT be grown by client input — only by a code change here.
   const rendersTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_renders_total',
-    'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|other on error)',
+    'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|token_lost_midsession|other on error)',
     ['app_block_id', 'slot_id', 'result', 'error_class']
   );
 
@@ -242,13 +328,110 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     CUSTOMCOMFY_WALLCLOCK_BUCKETS
   );
 
+  // ── per-app cap-limit DEGRADE ────────────────────────────────────────────────
+  // 🔴 NO `app_block_id` LABEL, deliberately. `missing_row` fires precisely for
+  // ids that are NOT in the app catalog, so the label set would be seeded from
+  // exactly the unbounded population `known-app-blocks.service.ts` exists to
+  // clamp — and prom-client retains every distinct label set in the Node heap
+  // forever (the --max-old-space-size exit-139 OOM class). The usual clamp
+  // (`boundAppBlockIdLabel`) is unusable here twice over: it needs a DB read,
+  // which is the very thing that is broken on the `db_error` path, and a
+  // `missing_row` id can never be in the approved set, so it would collapse to
+  // 'other' in the one case an operator most wants attributed.
+  //
+  // So the split is: this counter is the ALERTABLE aggregate (2 series total),
+  // and the paired `console.warn` in app-cap-limits.service carries the specific
+  // `appBlockId` for the operator who is already looking. Alert on the metric,
+  // attribute from the log.
+  const capLimitsDegradedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_cap_limits_degraded_total',
+    'App Block per-app spend/velocity cap-limit resolutions that DEGRADED to the strictest tier, by reason (db_error = the app_blocks read threw, i.e. infra; missing_row = the read succeeded but there is no such app)',
+    ['reason']
+  );
+
+  // ── per-app spend-cap REJECTIONS ─────────────────────────────────────────────
+  // The signal that can size USER IMPACT. `capLimitsDegradedTotal` above counts
+  // cap-limit RESOLUTIONS that fell back — and it is rate-capped by the 5s
+  // fallback cache + single-flight, so a degrade affecting 10 submits and one
+  // affecting 10,000 produce the SAME counter value. It structurally cannot
+  // answer "how many generations were turned away", which is the question the
+  // whole cap-observability arc exists for ("users hitting abuse rejections they
+  // did not earn"). This counter answers it: one increment per DENIED submit, no
+  // cache in front of it.
+  //
+  // 🔴 EXACTLY ONE LABEL, `reason`, over a 3-value code-owned union → 3 series,
+  // TOTAL, forever. Deliberately NO `app_block_id` / `user_id` / block id: this
+  // fires once per denied submit (unlike the degrade counter, nothing caches or
+  // rate-limits it), so a per-app label would multiply an unbounded-ish
+  // population by a per-request emit rate, and prom-client retains every distinct
+  // label set in the Node heap forever (the --max-old-space-size exit-139 OOM
+  // class) across ~130 scraped pods. Attribution belongs in the caller's log line
+  // / trace, which already carries appBlockId, userId, and the resolved ceilings
+  // (`ReserveAppSpendResult.limits`). Alert on the metric, attribute from the log
+  // — the same split as the degrade counter above.
+  const spendCapRejectionsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_spend_cap_rejections_total',
+    'App Block generation submits DENIED by the per-app aggregate spend/velocity cap, by reason (daily = the per-app daily Buzz ceiling would be exceeded; velocity = the per-app short-window gen ceiling was exceeded; unavailable = a Redis/limit-resolution error, fail-closed deny)',
+    ['reason']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
+    capLimitsDegradedTotal,
+    spendCapRejectionsTotal,
   };
+}
+
+/**
+ * Fail-soft emit of one per-app cap-limit DEGRADE (the resolver fell back to
+ * `STRICTEST_APP_CAP_LIMITS`). Called from `app-cap-limits.service`.
+ *
+ * 🔴 TOTAL, like the customComfy emitters above. The thing this instruments is a
+ * fail-closed SAFETY path; a metrics error (registry collision, label mismatch)
+ * must never propagate into it and turn "degraded but still generating" into
+ * "generation down". The caller guards too — two layers, because the guarantee
+ * must not depend on either one alone.
+ *
+ * COST: one in-heap counter increment on an already-degraded path. The hot path
+ * (a warm cap-limits cache hit) never reaches here at all, and neither does a
+ * cache miss that RESOLVES — only an actual degrade emits.
+ */
+export function recordAppCapLimitsDegrade(reason: AppCapLimitsDegradeReason): void {
+  try {
+    const { capLimitsDegradedTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    capLimitsDegradedTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the cap guardrail */
+  }
+}
+
+/**
+ * Fail-soft emit of one per-app spend-cap REJECTION (`reserveAppSpend` denied a
+ * submit). Called from `app-spend-cap.service`.
+ *
+ * 🔴 TOTAL, like every emitter in this module. The thing it instruments is the
+ * money/abuse guardrail on the generation submit path: a metrics error (registry
+ * collision, label mismatch) must never propagate, or an intended 402/429
+ * rejection becomes a 500 — i.e. the observability would convert a working
+ * guardrail into an outage. The caller guards independently too; the duplication
+ * is deliberate, because the guarantee must not rest on either layer alone.
+ *
+ * COST: one in-heap counter increment on an already-rejecting path. An ALLOWED
+ * submit never reaches here, so the steady state on a healthy app is zero emits.
+ */
+export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): void {
+  try {
+    const { spendCapRejectionsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    spendCapRejectionsTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the spend guardrail */
+  }
 }
 
 /**

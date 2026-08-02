@@ -1,8 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import { capMediaType, maxLicensingFee, raisesOverCap } from '@civitai/buzz';
 import {
   assertPaidAccessCaps,
-  getPaidAccess,
+  getViewerMonetization,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
@@ -284,7 +284,20 @@ const loadModelVersion = async ({
     // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
     // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
     // modelVersion.donationGoal instead.
-    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const { paidAccess, licensingFee } = (
+      await getViewerMonetization({
+        versions: [
+          {
+            id,
+            ownerId: version.model.user.id,
+            licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+            modelType: version.model.type,
+            baseModel: version.baseModel,
+          },
+        ],
+        viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+      })
+    )[id];
     const isOwnerOrMod =
       !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
     const eaDonationGoal =
@@ -294,7 +307,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
-      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+      licensingFee,
       canGenerate,
       wildcardSetId,
       paidAccess: toModelVersionPaidAccessDto(paidAccess),
@@ -397,6 +410,7 @@ export const upsertModelVersionHandler = async ({
       versionId: input.id,
       paidAccess: input.paidAccess,
       tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+      baseModel: input.baseModel,
     });
 
     await assertUserEarlyAccessLimits({
@@ -430,7 +444,7 @@ export const upsertModelVersionHandler = async ({
       if (!ctx.user.isModerator) {
         const toCents = (v: number) => Math.round(v * 100);
         const model = await getModel({ id: input.modelId, select: { type: true } });
-        const cap = maxLicensingFee(await actorTier(), model?.type);
+        const cap = maxLicensingFee(await actorTier(), model?.type, capMediaType(input.baseModel));
         const stored = toCents(Number(existing?.licensingFee ?? 0));
         if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
           throw throwBadRequestError(

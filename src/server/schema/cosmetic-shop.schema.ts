@@ -54,6 +54,9 @@ export const cosmeticShopItemMeta = z.object({
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),
   sellerShare: z.number().optional(),
+  // Creator opt-in: buyers may pay with Blue Buzz (fully or partially). The
+  // creator is paid blue for the blue-paid portion of each sale.
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -104,6 +107,9 @@ export type CosmeticShopSectionMeta = z.infer<typeof cosmeticShopSectionMeta>;
 export const cosmeticShopSectionMeta = z.object({
   hideTitle: z.boolean().optional(),
   availableItemsMax: z.number().optional(),
+  // Renders the sitewide community-cosmetics feed in place of hand-picked
+  // items, so mods control the hub's placement/banner/copy like any section.
+  communityHub: z.boolean().optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
@@ -131,6 +137,10 @@ export const purchaseCosmeticShopItemInput = z.object({
   // The creator whose shop this was bought through — used to credit a reseller
   // (Creator Shop cross-creator selling). Verified server-side.
   viaShopUserId: z.number().optional(),
+  // Buyer's payment choice for items that accept Blue Buzz: the domain color
+  // only (default), or blue first with the remainder in the domain color.
+  // Rejected server-side if the item doesn't accept blue.
+  payWith: z.enum(['default', 'blue-first']).optional(),
 });
 
 export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;

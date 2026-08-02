@@ -30,6 +30,15 @@ import {
   checkBlockPublishRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
+  BLOCK_IDEMPOTENCY_KEY_REGEX,
+  claimGenIdempotency,
+  composeBlockExternalId,
+  finalizeGenIdempotency,
+  mintServerBlockExternalId,
+  releaseGenIdempotency,
+  type BlockGenIdempotencyClaim,
+} from '~/server/utils/block-gen-idempotency';
+import {
   blockBuzzAccountTypes,
   getMyBuzzAccountsInput,
   getMyBuzzTransactionsInput,
@@ -39,11 +48,13 @@ import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   getAppDetailSchema,
+  getAppSpendCapConfigSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
   listAppBlockReviewsSchema,
   listAvailableSchema,
   setAppReviewExcludedSchema,
+  setAppSpendCapConfigSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
   toPublicBlockManifest,
@@ -1891,6 +1902,37 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ONE-OFF moderator-only backfill — flip every EXISTING in-review snapshot
+   * repo to private (#3498). New snapshots are created private, but the create
+   * call is idempotent on an existing repo, so pre-change snapshots keep their
+   * original visibility until this walks the org and patches them.
+   *
+   * 🔴 A human must run this ONCE for the privacy fix to be complete. Safe to
+   * re-run: already-private repos are skipped, a vanished repo counts `missing`,
+   * and per-repo failures are collected rather than thrown. `dryRun` reports
+   * exactly which slugs a real run would touch without changing anything.
+   */
+  backfillReviewRepoPrivacy: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError(
+          'Review snapshot privacy backfill is restricted to civitai team'
+        );
+      }
+      const { backfillReviewRepoPrivacy } = await import(
+        '~/server/services/blocks/review-repo-privacy.service'
+      );
+      return backfillReviewRepoPrivacy({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  /**
    * Reject a pending publish request. Reason is required
    * (≥`PUBLISH_REJECTION_REASON_MIN` — the shared `OFFSITE_MOD_REASON_MIN`, 3 —
    * chars) and shown to the dev inline on /apps/my-submissions.
@@ -2754,6 +2796,61 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY read of one app's generation-cap configuration — its SPEND tier,
+   * any per-app override, and the RESOLVED ceilings the submit path enforces.
+   * Seeds the moderator form and lets an operator confirm the effective number
+   * after a write (including when a deploy-time BLOCK_APP_SPEND_* clamp binds
+   * below what they set).
+   *
+   * 🔴 MOD-ONLY ON PURPOSE. The exact ceiling is withheld from apps themselves
+   * (the submit rejection above is deliberately number-free) so a hostile app
+   * cannot probe where its limit sits and tune a Sybil ring just under it.
+   */
+  getAppSpendCapConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppSpendCapConfigSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      const config = await BlockRegistry.getAppSpendCapConfig(input.appBlockId);
+      if (!config) throw throwNotFoundError('App block not found');
+      return config;
+    }),
+
+  /**
+   * MOD-ONLY write of the per-app generation SPEND TIER and the cap OVERRIDE on
+   * top of it.
+   *
+   * 🔴 SPEND IS A SEPARATE AXIS FROM `trustTier`. This procedure never touches
+   * `trustTier`, and the tier-setting mod surfaces never touch these fields.
+   * `trustTier` decides iframe-sandbox / renderMode privileges (browser
+   * isolation); `spendTier` decides money. Granting one must not grant the
+   * other — an earlier revision derived the ceilings from `trustTier`, which
+   * would have silently handed a 5x money ceiling to every app a moderator had
+   * tiered `internal` for RENDERING.
+   *
+   * GATING / SECURITY (mirrors setMarketplaceMeta):
+   *   - `moderatorProcedure` + a re-asserted `ctx.user?.isModerator` belt. There
+   *     is intentionally NO publisher path: an app must never be able to raise
+   *     its own abuse ceiling, which is also why none of these fields exist in
+   *     the manifest or in any developer-reachable input.
+   *   - `enforceAppBlocksFlag` keeps it behind the dark mod segment.
+   *   - Bounds/normalisation live in the schema AND are re-applied in the
+   *     service with the reader's own rules, so a stored value can never mean
+   *     something different from what the reserve path will enforce.
+   */
+  setAppSpendCapConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppSpendCapConfigSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      return BlockRegistry.setAppSpendCapConfig(input);
+    }),
+
+  /**
    * Install-time config for ONE approved app block, keyed on appBlockId.
    *
    * Why this exists (F-E E1 regression fix): the marketplace listing
@@ -3536,11 +3633,15 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is a PAGE-ONLY
+        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
         // feature. Custom Generators is a page app; model-bound img2img is out
         // of scope and unvetted for 2a, so reject it fail-closed on the model
         // path (mirrors the additionalResources guard above).
-        if (input.body.sourceImage) {
+        //
+        // BOTH wire shapes are gated identically — the deprecated singular
+        // `sourceImage` AND the array `sourceImages`. Gating only one would
+        // leave a model-bound token a way in through the other.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3657,7 +3758,28 @@ export const blocksRouter = router({
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
-    .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        body: blockWorkflowBodySchema,
+        // OPTIONAL client idempotency key (item 2, gen half). Threaded to
+        // `body.externalId` (namespaced `block:<appBlockId>:<key>`) so a
+        // lost-response / timeout RETRY that re-submits with the SAME key collapses
+        // to the existing workflow instead of a second orchestrator submit — the
+        // orchestrator dedupes on `(userId, externalId)` and returns the ORIGINAL
+        // transactions (no second Buzz charge). Absent → the server MINTS a
+        // per-request `bls<uuid>` externalId instead (audit 🔴-1), which dedupes
+        // `submitWorkflow`'s own 3× internal retry of THIS call but — being unique
+        // per request — does NOT dedupe a CLIENT-level retry; that still needs a
+        // client key. NOTE: the civitai-side Redis
+        // spend-CAP counters (per-user daily / per-app) still INCR on a replay —
+        // they are keyed on `(userId, day)`, not externalId — which over-counts the
+        // ABUSE cap (stricter direction), never a real double-debit.
+        // Charset-restricted (audit 🟢): a UUID-ish alphabet so no control chars /
+        // newlines / colons flow into the orchestrator `externalId`.
+        idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
       if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
@@ -3673,8 +3795,36 @@ export const blocksRouter = router({
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({ ctx, claims, body: input.body });
+        return await submitCustomComfyWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
       }
+      // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
+      // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
+      // `userId-`), so a key can never collide across apps or users.
+      //
+      // 🔴 ALWAYS SET (audit 🔴-1). When the block sends no key we MINT one
+      // server-side instead of leaving `externalId` undefined. The double-charge
+      // this closes is server-side and unconditional: `submitWorkflow` retries the
+      // real submit up to 3× with no per-attempt timeout, and a 502/504 AFTER the
+      // orchestrator created + charged the workflow makes each retry create another
+      // one. Gating `externalId` on a client key closed nothing in practice — NO
+      // shipped client sends one. Minted ONCE here (not per attempt): the body built
+      // below is the same object `submitWorkflowWithRetry` reuses on every attempt,
+      // so all attempts of THIS request present the same id while a genuinely
+      // different submit gets a different UUID. The `bls` origin tag keeps the
+      // minted namespace disjoint from the client-key `blk` namespace.
+      //
+      // NOTE the civitai-side redis SET-NX claim below stays gated on the CLIENT key
+      // — a server-minted id is unique per request, so claiming on it could never
+      // dedupe anything (it would only add two redis round-trips and a stuck-sentinel
+      // failure mode). Keyed clients therefore behave EXACTLY as before.
+      const blockExternalId = input.idempotencyKey
+        ? composeBlockExternalId(claims.appBlockId, input.idempotencyKey)
+        : mintServerBlockExternalId();
       // `input.body` is now the textToImage member. Capture it so the narrowing
       // survives into the fire-and-forget spend-attribution CLOSURE below (TS
       // drops discriminated-union property narrowing at nested-function
@@ -3707,10 +3857,12 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is PAGE-ONLY.
+        // IMAGE bridge (Phase-2a): img2img via source images is PAGE-ONLY.
         // Reject it fail-closed on the model path (see estimateWorkflow for the
-        // same guard). Custom Generators is a page app.
-        if (input.body.sourceImage) {
+        // same guard). Custom Generators is a page app. BOTH wire shapes — the
+        // deprecated singular `sourceImage` and the array `sourceImages` — are
+        // gated identically; gating only one would leave a way in.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3877,13 +4029,64 @@ export const blocksRouter = router({
       // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
       // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
       // every refund site below keys off the returned `buzzCapKey`, unchanged).
-      const {
-        total,
-        key: buzzCapKey,
-        cap: buzzCap,
-      } = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      //
+      // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1). Taken BEFORE the cap reservation +
+      //    orchestrator submit, so two CONCURRENT same-key submits (a double-click /
+      //    SDK auto-retry) can't BOTH reserve + BOTH charge before the orchestrator's
+      //    own (userId, externalId) dedupe engages. Placing it before the reservation
+      //    ALSO stops a replay from double-INCRing the daily/per-app cap counters
+      //    (audit 🟡-2 — they key on (userId|app, day), not externalId). Absent key →
+      //    no claim → byte-identical to today. Fail-CLOSED on a redis error (matches
+      //    the fail-closed reservation it fronts). A resolved submit FINALIZEs the
+      //    cached snapshot; every non-committed exit (cap reject / throw) RELEASEs so
+      //    a genuine retry can re-run. The orchestrator externalId dedupe stays as a
+      //    SECOND defense layer for the cross-process / post-TTL case this can't cover.
+      let genClaimKey: string | null = null;
+      if (input.idempotencyKey) {
+        let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+        try {
+          claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+            userId,
+            claims.appBlockId,
+            input.idempotencyKey
+          );
+        } catch {
+          // Fail-CLOSED — a money path must not dedupe blind; surface a retryable
+          // error (mirrors the fail-closed cap reservation below).
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'generation idempotency unavailable; please retry',
+          });
+        }
+        if (claim.state === 'replay') {
+          // A prior attempt already resolved — replay its cached snapshot VERBATIM.
+          // No second reservation, no second orchestrator submit.
+          return claim.result;
+        }
+        if (claim.state === 'in_progress') {
+          // The first attempt is still in flight (or a lost/garbage record) — never
+          // race a live first attempt into a 2nd reservation + charge.
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'a generation with this idempotency key is already in progress',
+          });
+        }
+        genClaimKey = claim.key; // state === 'acquired' — we own the first attempt.
+      }
+
+      // The reservation THROWS fail-closed on a redis error; release the claim first
+      // (no money moved → a genuine retry must be allowed to re-run) then re-throw.
+      let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+      try {
+        reservation = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      } catch (e) {
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        throw e;
+      }
+      const { total, key: buzzCapKey, cap: buzzCap } = reservation;
       if (total > buzzCap) {
         await refundBlockBuzzSpend(buzzCapKey, cost);
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
           snapshot: {
             workflowId: 'failed',
@@ -3931,6 +4134,9 @@ export const blocksRouter = router({
           // doesn't burn the viewer's own daily ceiling for a spend that never
           // happened.
           await refundBlockBuzzSpend(buzzCapKey, cost);
+          // No money moved → release the idempotency claim so a genuine retry can
+          // re-run (the app cap may clear; the "retry shortly" messages are transient).
+          if (genClaimKey) await releaseGenIdempotency(genClaimKey);
           return {
             snapshot: {
               workflowId: 'failed',
@@ -3994,6 +4200,8 @@ export const blocksRouter = router({
               );
               await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
             }
+            // No money moved → release the idempotency claim so a genuine retry runs.
+            if (genClaimKey) await releaseGenIdempotency(genClaimKey);
             return {
               snapshot: {
                 workflowId: 'failed',
@@ -4062,6 +4270,13 @@ export const blocksRouter = router({
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
+            // OWN internal 3× retry of THIS call — collapses to the existing
+            // workflow on the orchestrator (dedupe on (userId, externalId)) → no
+            // second Buzz charge. Always present (client-keyed or server-minted).
+            // Only set on the REAL submit — the whatIf preflight stays keyless (it
+            // never creates a workflow, and must never occupy a dedupe slot).
+            externalId: blockExternalId,
           },
         });
         snapshot = snapshotFromWorkflow(submitted);
@@ -4088,8 +4303,22 @@ export const blocksRouter = router({
           );
           await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
         }
+        // No resolved submit → NO money moved and NO reservation stands; release the
+        // idempotency claim so a genuine retry with the same key can re-run (the
+        // orchestrator externalId dedupe still protects a retry that DID create a
+        // workflow server-side despite a lost response).
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         throw e;
       }
+
+      // A resolved submit is money-COMMITTED (the reservation is kept regardless of
+      // snapshot status). Cache the terminal result under the idempotency key so a
+      // lost-response retry replays it WITHOUT re-reserving or re-submitting. Done
+      // immediately (before the best-effort attribution closures below) so even a
+      // later throw on this path leaves a correct cached success. Best-effort — a
+      // failed finalize just falls back to the orchestrator externalId dedupe.
+      const genResult = { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+      if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
       // Log the workflow submission to the per-user activity feed so
       // /apps/installed → Activity shows "this app ran a workflow on
@@ -4301,7 +4530,8 @@ export const blocksRouter = router({
         });
       }
 
-      return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+      // Same object already cached under the idempotency key (see genResult above).
+      return genResult;
     }),
 
   /**
@@ -5591,8 +5821,19 @@ async function submitCustomComfyWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
   body: CustomComfyBody;
+  /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
+  idempotencyKey?: string;
 }) {
-  const { ctx, claims, body } = opts;
+  const { ctx, claims, body, idempotencyKey } = opts;
+  // Namespaced idempotency externalId — same shape as the txt2img branch, and like
+  // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
+  // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
+  // charge for) a second workflow after a 502/504. Minted ONCE here — the body built
+  // below is the object the retry wrapper reuses across attempts. See the txt2img
+  // branch for the full rationale + the client-vs-server namespace split.
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
 
   // ── Page-only guard (mirror the model-token sourceImage rejection ~:3294).
   if (!isPageToken(claims)) {
@@ -5698,17 +5939,53 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1) — same guard as the txt2img path. Taken
+  //    BEFORE the cap reservation + orchestrator submit so two CONCURRENT same-key
+  //    submits can't BOTH reserve + BOTH charge, and a replay can't double-INCR the
+  //    cap counters (🟡-2). Absent key → no claim → byte-identical to today. Fail-
+  //    CLOSED on a redis error; a resolved submit FINALIZEs, every non-committed
+  //    exit RELEASEs. The orchestrator externalId dedupe stays as a 2nd layer.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
   // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
   // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
   // reserves against the tight per-(mod, publishRequestId) session ceiling; every
   // other token keeps the per-user 50k/day cap (byte-identical).
-  const {
-    total,
-    key: buzzCapKey,
-    cap: buzzCap,
-  } = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  // The reservation THROWS fail-closed on a redis error; release the claim first.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
   if (total > buzzCap) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return {
       snapshot: {
         workflowId: 'failed',
@@ -5735,6 +6012,8 @@ async function submitCustomComfyWorkflow(opts: {
       // Roll back the per-user reservation so a rejected submit doesn't burn the
       // viewer's own daily ceiling for a spend that never happened.
       await refundBlockBuzzSpend(buzzCapKey, ceiling);
+      // No money moved → release the idempotency claim so a genuine retry runs.
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
       return {
         snapshot: {
           workflowId: 'failed',
@@ -5791,6 +6070,8 @@ async function submitCustomComfyWorkflow(opts: {
           );
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
+        // No money moved → release the idempotency claim so a genuine retry runs.
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
           snapshot: {
             workflowId: 'failed',
@@ -5837,6 +6118,10 @@ async function submitCustomComfyWorkflow(opts: {
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
+        // internal 3× retry of THIS call — collapses to the existing workflow on the
+        // orchestrator → no second Buzz charge. Always present.
+        externalId: blockExternalId,
       },
     });
     snapshot = snapshotFromWorkflow(submitted);
@@ -5856,8 +6141,18 @@ async function submitCustomComfyWorkflow(opts: {
       );
       await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
     }
+    // No resolved submit → no money moved; release the idempotency claim so a
+    // genuine retry can re-run (orchestrator externalId dedupe still covers a retry
+    // that DID create a workflow server-side despite a lost response).
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
   }
+
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key BEFORE the (awaited) settle-record persist below, so a lost-
+  // response retry replays it even if that persist throws. Best-effort.
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
   // ── Persist the settle record (AWAITED — see custom-comfy-settle.service). The
   // terminal poll/cancel hook reads it and refunds `ceiling - actual` on the
@@ -5995,7 +6290,8 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  return { snapshot };
+  // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
 }
 
 /**

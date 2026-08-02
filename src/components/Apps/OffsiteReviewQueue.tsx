@@ -46,6 +46,17 @@ import {
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
+import {
+  assetSlotDriftLabel,
+  computeListingRevisionDrift,
+  driftPanelState,
+  identicalAssetsNotice,
+  listingAssetSnapshot,
+  revisionApplyScope,
+  screenshotDriftSummary,
+  uncomparedApplyFieldsSentence,
+  type AssetSlotDrift,
+} from '~/components/Apps/listingRevisionDrift';
 import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
@@ -110,6 +121,13 @@ export type OffsitePendingRow = {
     connectRequestedScopes?: number | null;
     connectScopeJustifications?: Record<string, string> | null;
     connectClient?: { name: string | null } | null;
+    /**
+     * Set when `appListingId` points at a SHADOW revision — it is the LIVE parent's
+     * `AppListing.id`. `submissionSelect` has always projected it; nothing in the
+     * review UI resolved the parent from it, which is exactly why a mod could not
+     * see what a media revision was about to replace. The drift panel uses it.
+     */
+    revisionOfId?: string | null;
   } | null;
   submittedBy: OffsiteUser | null;
 };
@@ -617,6 +635,10 @@ export function OffsiteReviewModalBody({
           </Stack>
         </Card>
 
+        {/* 🔴 The BEFORE, immediately above the AFTER. Renders nothing unless the
+            request targets a shadow revision (`revisionOfId` set). */}
+        <RevisionDriftSection request={request} />
+
         <ListingPreviewSection request={request} />
 
         {isConnect && (
@@ -916,6 +938,217 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
       <Card withBorder p="md" data-testid="apps-listing-preview-detail">
         <AppListingDetailBody detail={detail} preview />
       </Card>
+    </Stack>
+  );
+}
+
+/** Badge colour for a slot verdict — only a REMOVAL is alarming on its own. */
+function slotDriftColor(drift: AssetSlotDrift): string {
+  if (drift === 'removed') return 'red';
+  if (drift === 'same') return 'gray';
+  return 'blue';
+}
+
+/**
+ * 🔴 CURRENTLY LIVE — the before/after a revision review needs and did not have.
+ *
+ * Every query in this modal keys on `request.appListingId`, which for a revision IS
+ * the shadow id, so the mod was shown the proposal alone: an icon, never "the icon is
+ * going backwards". There is no baseline column and no parent fetch anywhere else in
+ * the review surface. #3383 gave the reviewer a SAFETY signal (maturity / cap) and
+ * #3412 a PRESENTATION signal (card + detail preview); this is the missing CHANGE
+ * signal.
+ *
+ * It matters because `applyApprovedRevision` copies the shadow's icon/cover over the
+ * parent's unconditionally and does a DESTRUCTIVE FULL REPLACE of the screenshot set
+ * (`deleteMany({ appListingId: parentId })`, then move the shadow's rows). A revision
+ * with no screenshots therefore DELETES every live screenshot — reachable with no
+ * unusual behaviour from anyone, since the mod-only `backfillListingAssets` can add
+ * screenshots to a parent and screenshots are not in the publish floor.
+ *
+ * Read-only and additive: it reuses the EXISTING mod-gated `getAssets` +
+ * `getListingPreviewForReview` procs against the PARENT id, so there is no new server
+ * surface and no second image-URL builder. Renders nothing at all for a non-revision
+ * request (`revisionOfId == null`) — a first-time submission has no "before".
+ */
+function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
+  const features = useFeatureFlags();
+  const parentId = request.appListing?.revisionOfId ?? null;
+  const enabled = !!features?.appBlocks && !!parentId;
+
+  // The LIVE parent's assets + its store projection — same procs the shadow half of
+  // the modal already uses, pointed at the parent.
+  const parentAssetsQuery = trpc.appListings.getAssets.useQuery(
+    { listingId: parentId ?? '' },
+    { enabled, retry: false }
+  );
+  const parentPreviewQuery = trpc.appListings.getListingPreviewForReview.useQuery(
+    { listingId: parentId ?? '' },
+    { enabled, retry: false }
+  );
+  const shadowAssetsQuery = trpc.appListings.getAssets.useQuery(
+    { listingId: request.appListingId ?? '' },
+    { enabled: enabled && !!request.appListingId, retry: false }
+  );
+
+  if (!parentId) return null;
+
+  const live = listingAssetSnapshot(parentAssetsQuery.data);
+  const proposed = listingAssetSnapshot(shadowAssetsQuery.data);
+  // 🔴 Only compare once BOTH sides have loaded. An unloaded parent read as "empty"
+  // would flag every revision as a destructive replace — warning fatigue that makes
+  // the real signal worthless.
+  //
+  // 🔴 The apply scope is threaded from the row's KIND. An off-site apply also copies
+  // the listing scalars (name/tagline/description/category/link + the requested OAuth
+  // SCOPES), so the "changes nothing" claim below is licensed only for onsite. See
+  // `listingRevisionDrift`.
+  const applyScope = revisionApplyScope(request.kind);
+  const drift =
+    live && proposed ? computeListingRevisionDrift(live, proposed, { applyScope }) : null;
+  // 🔴 `retry: false` on both queries means an error is TERMINAL. Without this the
+  // panel sat on an indefinite "Comparing with the live listing…" spinner — a mod
+  // next to the destructive-replace case would see a spinner, not "could not load".
+  const driftError = parentAssetsQuery.error ?? shadowAssetsQuery.error ?? null;
+  const panelState = driftPanelState({ hasError: driftError != null, drift });
+
+  return (
+    <Stack gap="xs" data-testid="apps-listing-revision-drift">
+      <Divider
+        label={
+          <Group gap={6}>
+            <IconHistory size={14} />
+            <Text size="sm" fw={600}>
+              Currently live
+            </Text>
+          </Group>
+        }
+        labelPosition="left"
+      />
+      <Text size="xs" c="dimmed">
+        This is a revision of a LIVE listing. Approving REPLACES the media below — screenshots are
+        replaced wholesale, not merged.
+        {applyScope === 'assets-and-scalars' && uncomparedApplyFieldsSentence()}
+      </Text>
+
+      {panelState === 'error' ? (
+        <Alert
+          color="orange"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Couldn’t load the live listing"
+          data-testid="apps-listing-revision-drift-error"
+        >
+          <Stack gap={6} align="flex-start">
+            <Text size="sm">
+              The before/after comparison is unavailable. Approving still REPLACES the live media
+              wholesale — review manually before deciding.
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="light"
+              loading={parentAssetsQuery.isFetching || shadowAssetsQuery.isFetching}
+              onClick={() => {
+                void parentAssetsQuery.refetch();
+                void shadowAssetsQuery.refetch();
+              }}
+              data-testid="apps-listing-revision-drift-retry"
+            >
+              Retry
+            </Button>
+          </Stack>
+        </Alert>
+      ) : panelState === 'loading' || drift == null ? (
+        <Group gap={8} data-testid="apps-listing-revision-drift-loading">
+          <Loader size={14} />
+          <Text size="xs" c="dimmed">
+            Comparing with the live listing…
+          </Text>
+        </Group>
+      ) : (
+        <Stack gap={6}>
+          {drift.screenshots.destructiveReplace && (
+            <Alert
+              color="red"
+              variant="light"
+              icon={<IconAlertTriangle size={16} />}
+              title="This revision deletes every live screenshot"
+              data-testid="apps-listing-revision-drift-destructive"
+            >
+              <Text size="sm">{screenshotDriftSummary(drift.screenshots)}.</Text>
+            </Alert>
+          )}
+          {/* 🔴 The claim is KIND-SCOPED. `noOpApproval` (grey, "changes nothing") is
+              reachable only when the compared set IS the apply set — onsite. An
+              off-site revision with identical media still copies its scalars,
+              INCLUDING the requested OAuth scopes, so it gets the amber notice that
+              names what was not compared instead of a false all-clear. */}
+          {!drift.assetsChanged && (
+            <Alert
+              color={drift.noOpApproval ? 'gray' : 'yellow'}
+              variant="light"
+              icon={<IconInfoCircle size={16} />}
+              data-testid={
+                drift.noOpApproval
+                  ? 'apps-listing-revision-drift-none'
+                  : 'apps-listing-revision-drift-assets-only'
+              }
+            >
+              <Text size="sm">{identicalAssetsNotice(drift)}</Text>
+            </Alert>
+          )}
+          <Group gap={12} data-testid="apps-listing-revision-drift-badges">
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">
+                Icon
+              </Text>
+              <Badge
+                size="sm"
+                variant="light"
+                color={slotDriftColor(drift.icon)}
+                data-testid="apps-listing-revision-drift-icon"
+              >
+                {assetSlotDriftLabel(drift.icon)}
+              </Badge>
+            </Group>
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">
+                Cover
+              </Text>
+              <Badge
+                size="sm"
+                variant="light"
+                color={slotDriftColor(drift.cover)}
+                data-testid="apps-listing-revision-drift-cover"
+              >
+                {assetSlotDriftLabel(drift.cover)}
+              </Badge>
+            </Group>
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">
+                Screenshots
+              </Text>
+              <Badge
+                size="sm"
+                variant="light"
+                color={drift.screenshots.destructiveReplace ? 'red' : 'blue'}
+                data-testid="apps-listing-revision-drift-screenshots"
+              >
+                {drift.screenshots.liveCount} → {drift.screenshots.proposedCount}
+              </Badge>
+              <Text size="xs" c="dimmed">
+                {screenshotDriftSummary(drift.screenshots)}
+              </Text>
+            </Group>
+          </Group>
+        </Stack>
+      )}
+
+      {parentPreviewQuery.data && (
+        <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
+          <AppListingCard card={parentPreviewQuery.data.card} />
+        </div>
+      )}
     </Stack>
   );
 }

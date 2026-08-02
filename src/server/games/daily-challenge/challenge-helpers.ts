@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeOperationSpentBuzz,
+  recordChallengeWinnerConflictUnresolved,
   recordChallengeWinnerPlaceDivergence,
 } from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
@@ -17,7 +18,10 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
+import {
+  CHALLENGE_JOB_BATCH_SIZE,
+  DEFAULT_CATEGORY_ROWS,
+} from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -431,6 +435,7 @@ export type CreateChallengeInput = {
   source?: ChallengeSource;
   status?: ChallengeStatus;
   metadata?: Record<string, unknown>;
+  judgingCategories?: ChallengeJudgingCategory[];
 };
 
 /**
@@ -510,6 +515,11 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,
       metadata: input.metadata as Prisma.InputJsonValue,
+      // Every challenge stores a rubric so scoring and display have exactly one path. Uses the
+      // static rows rather than resolveJudgingCategories so an unseeded ChallengeCategory table
+      // can't fail the nightly creation cron.
+      judgingCategories: (input.judgingCategories ??
+        DEFAULT_CATEGORY_ROWS) as unknown as Prisma.InputJsonValue,
     },
     select: { id: true },
   });
@@ -558,8 +568,9 @@ export type CreateWinnerInput = {
  * Create the `ChallengeWinner` record for one winner and return the placement that is actually
  * PERSISTED — which is not always the placement passed in.
  *
- * The table is uniquely keyed on (challengeId, userId), so a user who was already recorded as a
- * winner of this challenge cannot get a second row: the insert conflicts (P2002) and the stored
+ * The table has a (challengeId, userId) unique key — note it is NOT the only one, see the P2002
+ * handling below — so a user already recorded as a winner of this challenge normally cannot get a
+ * second row: the insert conflicts (P2002) and the stored
  * row keeps its ORIGINAL place. This used to return `null` on that conflict, which read as "record
  * skipped, carry on" — and the caller then paid the freshly-picked place. Because the winner-prize
  * externalTransactionId embeds the place, that paid under a brand-new key and MINTED A SECOND
@@ -594,9 +605,11 @@ export async function createChallengeWinner(
     });
     return { ...winner, created: true };
   } catch (error) {
-    // P2002 = unique constraint violation on (challengeId, userId) — this user is already recorded
-    // as a winner of this challenge, from an earlier run of the same completion or from a
-    // concurrent run that re-picked winners.
+    // P2002 = unique constraint violation. USUALLY that is (challengeId, userId) — this user is
+    // already recorded as a winner of this challenge, from an earlier run of the same completion or
+    // from a concurrent run that re-picked winners. Do NOT read it as a guarantee that such a row
+    // exists: this table carries more than one unique key, so the re-read below can legitimately
+    // come back empty. That case is handled and instrumented at the end of this block.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       // Read from the PRIMARY: the row we are conflicting with may have been written moments ago,
       // and a replica read that missed it would send us straight back down the mint path.
@@ -606,10 +619,23 @@ export async function createChallengeWinner(
       });
 
       if (!persisted) {
-        // Structurally unreachable — (challengeId, userId) is this table's only unique constraint,
-        // so a P2002 here means the row exists. Surfaced loudly rather than silently, and the
-        // caller is deliberately left on its in-memory placement: refusing to pay would introduce
-        // an UNDER-payment failure mode on a path where nobody has ever been underpaid.
+        // NOT structurally unreachable. (challengeId, userId) is not this table's only unique
+        // constraint — `id Int @id @default(autoincrement())` is one too — so a P2002 here does not
+        // imply that a (challengeId, userId) row exists. A sequence that has fallen behind the
+        // table, the routine aftermath of a restore or a manual insert, makes the INSERT collide on
+        // `id`; that conflict says nothing about (challengeId, userId), and the re-read above
+        // correctly finds nothing.
+        //
+        // This is the only branch left in this function that can settle an unreconciled payout key.
+        // The caller is deliberately left on its in-memory placement — refusing to pay would
+        // introduce an UNDER-payment failure mode on a path where nobody has ever been underpaid —
+        // so the prize goes out under a freshly-picked `-place-N` id with NO ChallengeWinner row to
+        // key it to. Nothing durable then records what was paid, and a later completion that re-picks
+        // this user at any other place settles a second, non-conflicting id.
+        //
+        // Hence a counter of its own, not the divergence counter below it: that one means "the
+        // payout was reconciled onto the stored row", which is exactly what did NOT happen here, and
+        // it reads 0 on this path.
         logToAxiom({
           type: 'warning',
           name: 'challenge-winner-conflict-unresolved',
@@ -618,6 +644,7 @@ export async function createChallengeWinner(
           userId: input.userId,
           attemptedPlace: input.place,
         });
+        recordChallengeWinnerConflictUnresolved();
         return null;
       }
 
@@ -964,11 +991,9 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
 
 /**
  * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
- * Any challenge that stores judgingCategories is judged by them; those without fall back to the
- * default rubric (generateReview resolves DEFAULT_CATEGORY_ROWS from the DB). Parse defensively —
- * a malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring schema
- * instead of failing the review. Mirrors reviewEntriesForChallenge
- * (~/server/jobs/daily-challenge-processing.ts).
+ * Every challenge is judged by its stored rubric; only a malformed/corrupt value resolves to
+ * `undefined`, which falls back to the fixed theme/wittiness/humor/aesthetic scoring schema.
+ * Mirrors reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts).
  */
 export async function resolveChallengeReviewInputs(challenge: {
   source: ChallengeSource;

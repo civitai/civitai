@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
@@ -155,7 +156,7 @@ vi.mock('~/utils/notifications', () => ({
 // Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
 // link ("does not provide an export named X") and the whole file collects 0 tests.
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/trpc')>();
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation =
     (name: string) =>
     (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
@@ -251,7 +252,7 @@ describe('CombinedReviewModal', () => {
     await expect.element(page.getByRole('tab', { name: /Scopes/ })).toBeInTheDocument();
     await expect.element(page.getByRole('tab', { name: /Code review/ })).toBeInTheDocument();
     // Code section: the on-site bundle affordance.
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
 
     // Media section: the listing PREVIEW (card + detail) + the content-review surface.
     await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();

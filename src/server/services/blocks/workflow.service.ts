@@ -7,8 +7,11 @@ import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.con
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
+import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
+  BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
@@ -425,13 +428,47 @@ function isBlockImageWorkflowType(workflow: string): workflow is BlockImageWorkf
 }
 
 /**
+ * THE single place the two source-image wire shapes collapse into one.
+ *
+ * `sourceImage` (singular) is a DEPRECATED ALIAS — the published developer docs
+ * and `@civitai/app-sdk` still ship it — and `sourceImages` is the current
+ * field. Everything downstream of this function sees ONLY an array, so no code
+ * path can accidentally handle one shape and miss the other.
+ *
+ * Supplying both is rejected at the WIRE schema (ambiguous), so it cannot reach
+ * here; the `sourceImages`-first order below is defensive, not a preference.
+ * Returns an empty array when the body carries neither — that is the txt2img
+ * case. An explicitly EMPTY `sourceImages: []` never reaches here either: the
+ * schema's `.min(1)` rejects it rather than let it degrade into a txt2img
+ * generation the caller did not ask for.
+ */
+export function normalizeBlockSourceImages(
+  body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>
+): BlockSourceImage[] {
+  if (body.sourceImages?.length) return body.sourceImages;
+  if (body.sourceImage) return [body.sourceImage];
+  return [];
+}
+
+/**
  * Resolve which image graph workflow a block body maps to when combined with the
  * checkpoint's ecosystem:
- *   - no source image                          → `txt2img`
+ *   - no source image + txt2img-capable eco    → `txt2img`
+ *   - no source image + EDIT-ONLY ecosystem    → BAD_REQUEST
  *   - source image + SD-family ecosystem       → `img2img`      (Image Variations)
  *   - source image + edit-capable ecosystem    → `img2img:edit` (OpenAI / Qwen /
  *                                                Flux Kontext / … — EDIT_IMG_IDS)
  *   - source image + neither variant available → BAD_REQUEST
+ *
+ * The EDIT-ONLY rejection is the ecosystem-level half of the "silently produced
+ * the wrong graph" guard (see `assertCheckpointVersionSupportsWorkflow` for the
+ * VERSION-level half, which is what actually bites today). An ecosystem that
+ * supports `img2img:edit` but NOT `txt2img` cannot honour a bare body at all;
+ * without this it would build a txt2img graph the ecosystem has no route for.
+ * No image ecosystem is edit-only in the CURRENT config (every member of
+ * EDIT_IMG_IDS is also in TXT2IMG_IDS), so this is a fail-closed guard against
+ * a future edit-only ecosystem, derived from `isWorkflowAvailable` rather than
+ * from a hardcoded list so it can never go stale.
  *
  * Variant selection is DETERMINISTIC via `isWorkflowAvailable` (the same
  * availability check the generation graph uses) — it never leans on
@@ -445,7 +482,28 @@ export function resolveBlockImageWorkflowType(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
   ecosystemId?: number
 ): BlockImageWorkflowType {
-  if (!body.sourceImage) return 'txt2img';
+  // 🔴 UNION OF TWO CHANGES — the CONDITION comes from the sourceImages[] work,
+  // the guard BODY from the edit-only work. Reading the NORMALIZED array (not the
+  // deprecated singular `body.sourceImage`) is load-bearing: an array-only body
+  // has `sourceImage` undefined, so the old literal check would route it to
+  // `txt2img`, silently DROP the images, and bill the caller for a text-to-image
+  // generation. That is the exact silent-wrong-answer class both changes exist to
+  // close, so it must not be reintroduced by a conflict resolution.
+  if (normalizeBlockSourceImages(body).length === 0) {
+    if (
+      ecosystemId != null &&
+      !isWorkflowAvailable('txt2img', ecosystemId) &&
+      isWorkflowAvailable('img2img:edit', ecosystemId)
+    ) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          "this checkpoint's ecosystem is edit-only — it supports img2img:edit but not " +
+          'txt2img. Send a `sourceImage` to run an edit, or pick a text-to-image checkpoint.',
+      });
+    }
+    return 'txt2img';
+  }
   if (ecosystemId != null && isWorkflowAvailable('img2img', ecosystemId)) return 'img2img';
   if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId))
     return 'img2img:edit';
@@ -455,6 +513,159 @@ export function resolveBlockImageWorkflowType(
       'img2img (source image) is not supported for this checkpoint — its ecosystem supports ' +
       'neither img2img (SD-family) nor img2img:edit (edit-capable: OpenAI/Qwen/Flux Kontext/…)',
   });
+}
+
+/**
+ * Reject a checkpoint version the target workflow does not offer, when the
+ * ecosystem scopes its checkpoint versions BY WORKFLOW.
+ *
+ * THE BUG THIS CLOSES. Several image ecosystems ship DIFFERENT checkpoint
+ * versions per workflow (`createCheckpointGraph({ workflowVersions })` in
+ * qwen-graph / boogu-graph / mage-flow-graph). Qwen model 2268063, for example,
+ * hosts BOTH `2558804` ("Image Edit 2511", offered only on `img2img:edit`) and
+ * `2552908` (offered only on `txt2img`).
+ *
+ * The block bridge picks its workflow purely from `sourceImage` presence, so a
+ * body naming the EDIT version with no `sourceImage` resolved to `txt2img` —
+ * and the generation graph did NOT reject it. It returned success with a
+ * DIFFERENT checkpoint: `model.id` 2558804 → 2552908. The caller was billed,
+ * got images, and never learned about the swap.
+ *
+ * THE MECHANISM is the `modelLocked` clamp in `createCheckpointGraph`'s
+ * `checkpointInputSchema` (`shared/data-graph/generation/common.ts`, the
+ * `if (modelLocked && modelVersionId && val.id !== modelVersionId)` branch):
+ * on a `modelLocked` ecosystem, ANY id not in the CURRENT workflow's visible
+ * version list is replaced with that workflow's `defaultModelId`.
+ *
+ * It is NOT `buildModelTransform`'s same-index sibling mapping. That transform
+ * is gated on `depsChanged && !isDirectUpdate` (`libs/data-graph/data-graph.ts`)
+ * — a one-shot `safeParse` that passes `model` explicitly, which is exactly what
+ * this bridge does, IS a direct update, so the transform never runs at all here.
+ * It belongs to the interactive form path, where the workflow changes underneath
+ * a model the user did not just set. Measured: 0 invocations across these
+ * inputs, and stubbing it to `undefined` changes no output.
+ *
+ * That distinction is not cosmetic: it decides which inputs are affected, and
+ * it is pinned by an executed discriminator (see the `SILENTLY SUBSTITUTES to
+ * the workflow DEFAULT` tests). Index-mapping and the default-clamp predict
+ * different outputs for the index-0 edit version 2133258 — 2110043 vs 2552908.
+ * The real graph returns 2552908. Every id lands on the default, regardless of
+ * its position or whether the ecosystem has ever heard of it.
+ *
+ * Nothing in the response, the snapshot, or the `block_workflows` read-model
+ * reveals the substitution, which makes it the worst available failure mode: a
+ * successful-looking wrong answer.
+ *
+ * SCOPE — this guard deliberately closes only a SUBSET of that class: a version
+ * that IS one of the ecosystem's workflow-scoped versions but belongs to a
+ * DIFFERENT workflow, in the txt2img direction only. Two parts stay open:
+ *
+ *  - An UNRECOGNIZED id (a community checkpoint, a brand-new upload) on a
+ *    `modelLocked` ecosystem is also clamped to the workflow default —
+ *    `{ workflow: 'txt2img', ecosystem: 'Qwen', model: { id: 987654321 } }`
+ *    returns success with `model.id` 2552908. It is NOT "left alone". 23 of the
+ *    35 image ecosystems are `modelLocked`, so this is the wide part of the
+ *    class, and rejecting it here would reject ids the graph is willing to run.
+ *  - The reverse direction (a txt2img-only version sent WITH a `sourceImage`)
+ *    is substituted the same way and is likewise not rejected here.
+ *
+ * The broader class is tracked in #3520. `resolveVersionWorkflowScope` is
+ * already direction-agnostic, so flipping the reverse direction on is a
+ * one-line change — held deliberately, not overlooked.
+ */
+export function assertCheckpointVersionSupportsWorkflow(opts: {
+  ecosystem: string;
+  ecosystemId?: number;
+  workflow: BlockImageWorkflowType;
+  checkpointVersionId: number;
+}): void {
+  const { ecosystem, ecosystemId, workflow, checkpointVersionId } = opts;
+
+  // Only the image workflows the block bridge can produce are candidates, and
+  // only those the ecosystem actually supports — asking about a route the
+  // ecosystem has no config for would just yield noise.
+  const candidateWorkflows = BLOCK_IMAGE_WORKFLOW_TYPES.filter(
+    (w) => ecosystemId != null && isWorkflowAvailable(w, ecosystemId)
+  );
+
+  const scope = resolveVersionWorkflowScope({
+    ecosystem,
+    workflow,
+    candidateWorkflows,
+    versionId: checkpointVersionId,
+  });
+  if (scope.kind !== 'wrong-workflow') return;
+
+  const isEditOnly = scope.offeredFor.every((w) => w.startsWith('img2img'));
+  const remedy = isEditOnly
+    ? 'send a `sourceImage` to run it as an image edit'
+    : `send this version on ${scope.offeredFor.join(' / ')} instead`;
+  const alternative = scope.suggestedVersionId
+    ? `, or use modelVersionId ${scope.suggestedVersionId} for ${workflow}`
+    : '';
+
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      `modelVersion ${checkpointVersionId} is not available for '${workflow}' on the ` +
+      `${ecosystem} ecosystem — it is offered for ${scope.offeredFor.join(' / ')} only. ` +
+      `Either ${remedy}${alternative}.`,
+  });
+}
+
+/**
+ * Enforce the PER-ECOSYSTEM source-image cap.
+ *
+ * The cap is not a constant — it is declared per ecosystem in the graph's own
+ * `imagesNode({ min, max })` and the spread is wide: Boogu / Flux.1 Kontext /
+ * MAI / SD-family accept 1, Qwen / Qwen2 / MageFlow 3, Reve / HiDream-O1 4,
+ * WanImage 5, Flux.2 / Klein / OpenAI / NanoBanana / Seedream / Grok 7. A flat
+ * constant would over-allow the 1-image ecosystems and under-allow the 7-image
+ * ones, so `getImagesLimit` reads the real graph config instead.
+ *
+ * WHY REJECT RATHER THAN LET THE GRAPH HANDLE IT: `imagesNode`'s INPUT
+ * transform does `arr.slice(0, effectiveMax)` — an over-cap array is silently
+ * TRUNCATED, and the caller is billed for a generation conditioned on fewer
+ * images than it sent, with nothing in the response saying so. Same
+ * silent-wrong-answer class the ecosystem/variant guard above exists to stop.
+ *
+ * FAIL CLOSED when the limit cannot be determined: `getImagesLimit` returns
+ * `undefined` for a pair with no images node, which for a resolved img2img
+ * workflow means our routing and the graph's disagree. Rejecting is correct
+ * there — proceeding would hand the graph an `images` array it has no node for.
+ * The ecosystem/variant guard upstream makes that unreachable today (and a test
+ * enumerates every img2img-capable ecosystem to prove each one HAS a readable
+ * limit), so this is defense-in-depth against the two guards drifting apart —
+ * exported so it can be exercised directly rather than left unverified.
+ *
+ * The MINIMUM is deliberately NOT re-checked here. Every image workflow's
+ * `imagesNode` has `min: 1` today, and we only call this with `count >= 1`; if
+ * a future ecosystem raises its minimum, the graph's own OUTPUT schema
+ * (`.min(effectiveMin, 'At least N images are required')`) rejects LOUDLY
+ * during `safeParse` — that failure mode is already an error, not a silent
+ * wrong answer, so duplicating it here would only add a second place to drift.
+ */
+export function assertSourceImageCount(opts: {
+  ecosystem: string;
+  workflow: BlockImageWorkflowType;
+  count: number;
+}): void {
+  const { ecosystem, workflow, count } = opts;
+  const limit = getImagesLimit(ecosystem, workflow);
+  if (!limit) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `workflow '${workflow}' does not accept source images on the ${ecosystem} ecosystem`,
+    });
+  }
+  if (count > limit.max) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        `too many source images: ${count} sent, but the ${ecosystem} ecosystem accepts at most ` +
+        `${limit.max} for '${workflow}'`,
+    });
+  }
 }
 
 /**
@@ -554,6 +765,28 @@ export function buildImageWorkflowInput(
     });
   }
 
+  // Version-level guard (see assertCheckpointVersionSupportsWorkflow). Placed
+  // HERE rather than inside resolveBlockImageWorkflowType so it covers BOTH the
+  // derive path and the `workflowTypeOverride` seam, and because the CHECKPOINT
+  // version (not `body.modelVersionId`) is what the graph anchors on — for a
+  // LoRA-bound install those differ.
+  //
+  // SCOPED TO txt2img ON PURPOSE. The symmetric case — a txt2img-only version
+  // sent WITH a `sourceImage`, which today is silently substituted the same way
+  // in the other direction — is left alone in this change: it is a separate
+  // behaviour change with its own blast radius, and no live traffic could be
+  // measured either way (the submitted body is not retained anywhere; see the
+  // PR description). Flipping this to guard every resolved workflowType is a
+  // one-line follow-up — the helper is already direction-agnostic.
+  if (workflowType === 'txt2img') {
+    assertCheckpointVersionSupportsWorkflow({
+      ecosystem,
+      ecosystemId: ecoRecord?.id,
+      workflow: workflowType,
+      checkpointVersionId: resolved.checkpointVersionId,
+    });
+  }
+
   const dims = defaultDimensions(resolved.checkpointBaseModel);
   const width = body.params.width ?? dims.width;
   const height = body.params.height ?? dims.height;
@@ -608,19 +841,22 @@ export function buildImageWorkflowInput(
     // qwen-graph: `images` node shown `when: !workflow.startsWith('txt')`). The
     // denoise/edit node applies at its default and output dimensions derive from
     // the source (SD) or the ecosystem's aspectRatio default (edit) — so
-    // aspectRatio is OMITTED here. `sourceImage` is guaranteed present (the
-    // variant only resolves to an img2img* type when the body carries one); the
-    // fallback keeps the types honest for an explicit-type caller. The graph's
-    // imagesNode reads { url, width, height }; extra fields are stripped by its
-    // object parse.
-    if (body.sourceImage) {
-      input.images = [
-        {
-          url: body.sourceImage.url,
-          width: body.sourceImage.width,
-          height: body.sourceImage.height,
-        },
-      ];
+    // aspectRatio is OMITTED here. The graph's imagesNode reads
+    // { url, width, height }; extra fields are stripped by its object parse.
+    //
+    // MULTI-IMAGE: the source images are the NORMALIZED array, so the singular
+    // deprecated `sourceImage` and the array `sourceImages` produce identical
+    // downstream shapes. The count is checked against the ECOSYSTEM's real cap
+    // BEFORE emitting — the graph would otherwise silently truncate an over-cap
+    // array (see assertSourceImageCount).
+    const sourceImages = normalizeBlockSourceImages(body);
+    if (sourceImages.length) {
+      assertSourceImageCount({ ecosystem, workflow: workflowType, count: sourceImages.length });
+      input.images = sourceImages.map((img) => ({
+        url: img.url,
+        width: img.width,
+        height: img.height,
+      }));
     }
     return input;
   }

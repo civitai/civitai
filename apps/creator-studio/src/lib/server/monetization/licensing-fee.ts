@@ -1,11 +1,20 @@
 import { z } from 'zod';
+import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '$lib/server/db';
-import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import {
+  capMediaType,
+  maxLicensingFee,
+  maxLicensingFeeCeiling,
+  raisesOverCap,
+} from '@civitai/buzz';
+import { ModelVersionFlag } from '@civitai/shared';
 import { cappedTier, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
-// Mirrors the main app's MAX_LICENSING_FEE. Fractional to 0.01 buzz/image (the DECIMAL(10,2) column).
-export const MAX_LICENSING_FEE = 100;
+// Absolute ceiling for the write path, not the creator's actual limit — that's the per-tier cap applied
+// below, which also knows the version's media type. Video allows 5x, so the ceiling has to admit the
+// higher of the two and let the tier cap reject anything the creator hasn't earned.
+const MAX_LICENSING_FEE = maxLicensingFeeCeiling('video');
 
 const IMAGE_VALUES: readonly number[] = FEE_IMAGE_OPTIONS;
 
@@ -97,7 +106,21 @@ async function writeFee(
   if (versionIds.length === 0) return 0;
   const result = await dbWrite
     .updateTable('ModelVersion')
-    .set({ licensingFee: normalized == null ? null : normalized.toFixed(2) })
+    .set({
+      licensingFee: normalized == null ? null : normalized.toFixed(2),
+      // A fee-earning version opts out of tips + creator comp, and a cleared one opts back in. The main
+      // app maintains this bit alongside the fee (upsertModelVersion); writing the fee here without it
+      // would leave the two paths disagreeing about whether the version still earns (CU 868kk4j2k).
+      flags:
+        normalized == null
+          ? sql<number>`flags & ~${ModelVersionFlag.DisablePayout}`
+          : sql<number>`flags | ${ModelVersionFlag.DisablePayout}`,
+      // Cleared alongside the fee, matching upsertModelVersion — a leftover type/currency describes a
+      // fee that no longer exists.
+      ...(normalized == null
+        ? { licensingFeeType: null, licensingFeeSettlementCurrency: null }
+        : {}),
+    })
     .where('id', 'in', versionIds)
     .where('modelId', 'in', (eb) =>
       eb
@@ -135,7 +158,11 @@ export async function setLicensingFee(
     };
 
   // Anyone may charge; the tier caps how much, and it varies by model type (CU 868kj4q49).
-  const cap = maxLicensingFee(cappedTier(membership), owned[0].modelType);
+  const cap = maxLicensingFee(
+    cappedTier(membership),
+    owned[0].modelType,
+    capMediaType(owned[0].baseModel)
+  );
   if (raisesOverCap(normalized, owned[0].currentFee, cap))
     return {
       ok: false,
@@ -238,7 +265,7 @@ export async function previewLicensingFeeChanges(
       skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
       continue;
     }
-    const cap = maxLicensingFee(tier, o.modelType);
+    const cap = maxLicensingFee(tier, o.modelType, capMediaType(o.baseModel));
     if (raisesOverCap(fee, o.current ?? 0, cap)) {
       skipped.push({ versionId, row, reason: `above your ${cap} ⚡ cap for ${o.modelType}` });
       continue;
@@ -305,7 +332,7 @@ export async function bulkSetLicensingFeeVaried(
       skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
       continue;
     }
-    const cap = maxLicensingFee(tier, o.modelType);
+    const cap = maxLicensingFee(tier, o.modelType, capMediaType(o.baseModel));
     if (raisesOverCap(fee, o.currentFee, cap)) {
       skipped.push({ versionId, row, reason: `above your ${cap} ⚡ cap for ${o.modelType}` });
       continue;
@@ -353,10 +380,16 @@ export async function bulkSetLicensingFee(
     // grandfathered fee across a selection stays possible after a lapse.
     const tier = cappedTier(membership);
     const raised = owned.filter((v) =>
-      raisesOverCap(normalized, v.currentFee, maxLicensingFee(tier, v.modelType))
+      raisesOverCap(
+        normalized,
+        v.currentFee,
+        maxLicensingFee(tier, v.modelType, capMediaType(v.baseModel))
+      )
     );
     if (raised.length > 0) {
-      const strictest = Math.min(...raised.map((v) => maxLicensingFee(tier, v.modelType)));
+      const strictest = Math.min(
+        ...raised.map((v) => maxLicensingFee(tier, v.modelType, capMediaType(v.baseModel)))
+      );
       return {
         ok: false,
         status: 403,

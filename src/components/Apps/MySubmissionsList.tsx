@@ -45,6 +45,7 @@ import {
   groupSubmissionsByApp,
   OWNER_STATUS_BUCKETS,
   sortGroups,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SubmissionAccessors,
   type SubmissionGroup,
@@ -619,65 +620,80 @@ export function MySubmissionsList({
 
   const renderTable = (groups: SubmissionGroup<Submission>[]) => (
     <Card withBorder p={0}>
-      <Table verticalSpacing="md" horizontalSpacing="md">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>App</Table.Th>
-            <Table.Th>Version</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Submitted</Table.Th>
-            <Table.Th>Reviewed</Table.Th>
-            <Table.Th>Installs</Table.Th>
-            <Table.Th>Usage (30d)</Table.Th>
-            <Table.Th />
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {groups.map((g) => {
-            const isExpanded = expanded.has(g.identity);
-            // Single source of truth for the "live" badge + "Open live" button:
-            // the newest approved version across this listing's history.
-            const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
-            return (
-              <Fragment key={g.identity}>
-                <OnsiteRow
-                  s={g.latest}
-                  nested={false}
-                  isCurrentlyPublished={g.latest.id === publishedId}
-                  onWithdraw={onWithdraw}
-                  withdrawing={withdrawing}
-                  owner={owner}
-                  canOpenPage={canOpenPage}
-                  toggle={
-                    g.older.length > 0 ? (
-                      <VersionToggle
-                        expanded={isExpanded}
-                        count={g.versionCount}
-                        onToggle={() => toggle(g.identity)}
-                        variant="subtle"
-                        testId={`apps-submissions-versions-${g.identity}`}
+      {/*
+        `.mantine-Card-root` is `overflow: hidden`, and this row's action cell is a
+        `wrap="nowrap"` group of up to six buttons — so without a scroll container the
+        card silently CLIPS the actions (measured: 138 px cut at a 1497 px viewport,
+        no scrollbar). `type="native"` deliberately, not Mantine's default ScrollArea:
+        ScrollArea defaults to `type="hover"` (scrollbars hidden until hover), and the
+        whole defect is a MISSING affordance. A native `overflow-x: auto` box shows the
+        platform scrollbar and keeps native keyboard/trackpad scrolling.
+      */}
+      <Table.ScrollContainer
+        minWidth={SUBMISSIONS_TABLE_MIN_WIDTH}
+        type="native"
+        data-testid="apps-submissions-table-scroll"
+      >
+        <Table verticalSpacing="md" horizontalSpacing="md">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>App</Table.Th>
+              <Table.Th>Version</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Submitted</Table.Th>
+              <Table.Th>Reviewed</Table.Th>
+              <Table.Th>Installs</Table.Th>
+              <Table.Th>Usage (30d)</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {groups.map((g) => {
+              const isExpanded = expanded.has(g.identity);
+              // Single source of truth for the "live" badge + "Open live" button:
+              // the newest approved version across this listing's history.
+              const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
+              return (
+                <Fragment key={g.identity}>
+                  <OnsiteRow
+                    s={g.latest}
+                    nested={false}
+                    isCurrentlyPublished={g.latest.id === publishedId}
+                    onWithdraw={onWithdraw}
+                    withdrawing={withdrawing}
+                    owner={owner}
+                    canOpenPage={canOpenPage}
+                    toggle={
+                      g.older.length > 0 ? (
+                        <VersionToggle
+                          expanded={isExpanded}
+                          count={g.versionCount}
+                          onToggle={() => toggle(g.identity)}
+                          variant="subtle"
+                          testId={`apps-submissions-versions-${g.identity}`}
+                        />
+                      ) : undefined
+                    }
+                  />
+                  {isExpanded &&
+                    g.older.map((older) => (
+                      <OnsiteRow
+                        key={older.id}
+                        s={older}
+                        nested
+                        isCurrentlyPublished={older.id === publishedId}
+                        onWithdraw={onWithdraw}
+                        withdrawing={withdrawing}
+                        owner={owner}
+                        canOpenPage={canOpenPage}
                       />
-                    ) : undefined
-                  }
-                />
-                {isExpanded &&
-                  g.older.map((older) => (
-                    <OnsiteRow
-                      key={older.id}
-                      s={older}
-                      nested
-                      isCurrentlyPublished={older.id === publishedId}
-                      onWithdraw={onWithdraw}
-                      withdrawing={withdrawing}
-                      owner={owner}
-                      canOpenPage={canOpenPage}
-                    />
-                  ))}
-              </Fragment>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
+                    ))}
+                </Fragment>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
     </Card>
   );
 
@@ -720,7 +736,10 @@ export function MySubmissionsList({
  * {@link getDetailPrimaryAction} matrix (identical to the store detail):
  *   - page app + canOpenPage → **Open** → `/apps/run/<slug>` (internal in-host page).
  *   - page app + !canOpenPage → **Open live** → the standalone `<slug>.civit.ai` origin.
- *   - model-slot app (no page) → informational "Runs on model pages" → the block detail.
+ *   - model-slot app (no page) → informational "Runs on model pages", TEXT ONLY.
+ *     It used to link to `/apps/<appBlockId>`; #3493 retired that route (it now
+ *     302s to `/apps/store-preview/<slug>` or 404s), so `getDetailPrimaryAction`
+ *     returns no href for this arm at all and the text fallback is what renders.
  */
 function OpenLiveAction({
   submission,
@@ -774,8 +793,13 @@ function OpenLiveAction({
       </Button>
     );
   }
-  // Model-slot / no launchable page → informational; links to the block detail where
-  // the install affordance lives, never a dead standalone link.
+  // Model-slot / no launchable page → informational. `getDetailPrimaryAction`
+  // produces NO href for `info` today (its only such target was the retired
+  // `/apps/[appBlockId]`) and `connect` never carried one, so the TEXT arm below
+  // is the live one. The link arm is kept, unreachable, as the type's
+  // optional-href contract-keeper — mirroring `AppListingDetailBody`'s `info`
+  // renderer so the two consumers of this matrix stay shaped the same — NOT as a
+  // place to reinstate a link to the retired route.
   if (action.href) {
     return (
       <Button

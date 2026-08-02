@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import {
+  getViewerMonetization,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -261,10 +264,16 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
-    const paidAccessByVersion = await getPaidAccess(
-      'ModelVersion',
-      filteredVersions.map((x) => x.id)
-    );
+    const monetizationByVersion = await getViewerMonetization({
+      versions: filteredVersions.map((x) => ({
+        id: x.id,
+        ownerId: model.user.id,
+        licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
+        modelType: model.type,
+        baseModel: x.baseModel,
+      })),
+      viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+    });
     // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
     // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
     const donationGoalsByVersion = isOwner
@@ -351,7 +360,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const paidAccess = paidAccessByVersion[version.id];
+      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -416,7 +425,7 @@ export const getModelHandler = async ({
 
       return {
         ...version,
-        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+        licensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {

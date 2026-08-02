@@ -198,6 +198,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     isSelectableInGenerator,
     canDownload: hasDownloadPermissions,
     canGenerate: hasGeneratePermissions,
+    generationRequiresPurchase,
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
@@ -516,48 +517,48 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
 
   const downloadSection = showDownloadSection ? (
-      <Card withBorder>
-        <Card.Section withBorder inheritPadding py="xs" px="sm">
-          <Group justify="space-between">
-            <Text size="sm" fw={600}>
-              Download
+    <Card withBorder>
+      <Card.Section withBorder inheritPadding py="xs" px="sm">
+        <Group justify="space-between">
+          <Text size="sm" fw={600}>
+            Download
+          </Text>
+          <Group gap="xs">
+            {isOwnerOrMod && (
+              <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                <Text c="blue.4" size="xs">
+                  Manage
+                </Text>
+              </RoutedDialogLink>
+            )}
+            <Text size="xs" c="dimmed">
+              {modelFilesVisible.length} variant
+              {modelFilesVisible.length !== 1 ? 's' : ''} available
             </Text>
-            <Group gap="xs">
-              {isOwnerOrMod && (
-                <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
-                  <Text c="blue.4" size="xs">
-                    Manage
-                  </Text>
-                </RoutedDialogLink>
-              )}
-              <Text size="xs" c="dimmed">
-                {modelFilesVisible.length} variant
-                {modelFilesVisible.length !== 1 ? 's' : ''} available
-              </Text>
-            </Group>
           </Group>
-        </Card.Section>
-        <Card.Section>
-          <DownloadVariantDropdown
-            files={filesVisible}
-            versionId={version.id}
-            modelType={model.type}
-            userPreferences={user?.filePreferences}
-            selectedFileId={selectedFileId}
-            onSelectFileId={setSelectedFileId}
-            canDownload={canDownload}
-            downloadPrice={
-              !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
-                ? paidAccessTerms.download.price
-                : undefined
-            }
-            isLoadingAccess={isLoadingAccess}
-            archived={archived}
-            onPurchase={() => onPurchase('download')}
-          />
-        </Card.Section>
-      </Card>
-    ) : null;
+        </Group>
+      </Card.Section>
+      <Card.Section>
+        <DownloadVariantDropdown
+          files={filesVisible}
+          versionId={version.id}
+          modelType={model.type}
+          userPreferences={user?.filePreferences}
+          selectedFileId={selectedFileId}
+          onSelectFileId={setSelectedFileId}
+          canDownload={canDownload}
+          downloadPrice={
+            !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
+              ? paidAccessTerms.download.price
+              : undefined
+          }
+          isLoadingAccess={isLoadingAccess}
+          archived={archived}
+          onPurchase={() => onPurchase('download')}
+        />
+      </Card.Section>
+    </Card>
+  ) : null;
 
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
@@ -710,7 +711,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       data-activity="create:model"
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
-                        !hasGeneratePermissions && !isLoadingAccess && paidAccessTerms
+                        generationRequiresPurchase && !isLoadingAccess && paidAccessTerms
                           ? generationPrice(paidAccessTerms)
                           : undefined
                       }

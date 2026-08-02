@@ -380,8 +380,16 @@ export async function reportPoolFundingShortfall({
   }).catch(() => {});
 }
 
-/** The idempotency key a winner-prize payout is settled under. */
-export function winnerPayoutExternalId(challengeId: number, userId: number, position: number) {
+/**
+ * The idempotency key a winner-prize payout is settled under.
+ *
+ * Module-private on purpose. It has no consumer outside this file, and 15 test suites mock
+ * `challenge-funding` with an explicit export list — so an unused export here is a live tripwire:
+ * the first file to import it gets `undefined` under those mocks rather than a missing-export error.
+ * Tests that assert on payout keys spell the string out literally instead, deliberately, so that a
+ * change to the format fails them rather than being mirrored into the expectation.
+ */
+function winnerPayoutExternalId(challengeId: number, userId: number, position: number) {
   return `challenge-winner-prize-${challengeId}-${userId}-place-${position}`;
 }
 

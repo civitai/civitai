@@ -1,12 +1,19 @@
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
-import { buildModelVersionTerms, gatePrices, type ModelVersionTerms } from '@civitai/buzz';
+import {
+  buildModelVersionTerms,
+  capMediaType,
+  gatePrices,
+  type CapMediaType,
+  type ModelVersionTerms,
+} from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
-import { dbRead } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
-import type { EarlyAccessConfig } from '$lib/monetization/early-access';
+import { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetization/paid-access';
+import type { PaidAccessConfig } from '$lib/monetization/paid-access';
 
-// Early access is written through the MAIN APP, not kysely: the write has real
+// Paid access is written through the MAIN APP, not kysely: the write has real
 // side effects (donation-goal rows, buzzTransactionId bookkeeping, publish-state
 // guards, cache/search invalidation) that only the main app owns. We POST to its
 // REST endpoint, forwarding the caller's shared .civitai.com session cookie so it
@@ -14,14 +21,15 @@ import type { EarlyAccessConfig } from '$lib/monetization/early-access';
 const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
 const ENDPOINT = '/api/v1/model-versions/early-access';
 
-export type { EarlyAccessConfig } from '$lib/monetization/early-access';
-export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/early-access';
+export type { PaidAccessConfig } from '$lib/monetization/paid-access';
+export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/paid-access';
+export { isCreatorUsageControl, type CreatorUsageControl } from '$lib/monetization/paid-access';
 
-export type EarlyAccessResult = { ok: true } | { ok: false; status: number; error: string };
+export type PaidAccessResult = { ok: true } | { ok: false; status: number; error: string };
 
-// Validates the early-access editor form → an EarlyAccessConfig. Light shape validation only; the main-app
+// Validates the paid-access editor form → a PaidAccessConfig. Light shape validation only; the main-app
 // endpoint (updateEarlyAccessConfigSchema) is the source of truth for prices, per-user limits, side effects.
-export const earlyAccessFormSchema = z
+export const paidAccessFormSchema = z
   .object({
     timeframe: z.coerce.number().int().min(0),
     permanent: checkbox,
@@ -29,6 +37,7 @@ export const earlyAccessFormSchema = z
     usageControl: z.string().optional(),
     accessPrice: optionalBuzz,
     generationPrice: optionalBuzz,
+    freeGeneration: checkbox,
     freePreviewGenerations: freePreviewsField(),
     donationGoalEnabled: checkbox,
     donationGoal: optionalBuzz,
@@ -45,17 +54,17 @@ export const earlyAccessFormSchema = z
     { message: 'Generation-only price cannot be greater than the access price.' }
   );
 
-// versionId + config (null clears early access). `cookie` is the incoming request's raw Cookie header,
+// versionId + config (null clears the gate). `cookie` is the incoming request's raw Cookie header,
 // forwarded verbatim for auth. `genOnly` = the version is on-site-generation-only (no download tier), so
 // the single "price for access" (accessPrice) is written as the generation price instead.
-export async function setEarlyAccessConfig(
+export async function setPaidAccessConfig(
   cookie: string,
   versionId: number,
-  config: EarlyAccessConfig | null,
+  config: PaidAccessConfig | null,
   genOnly = false
-): Promise<EarlyAccessResult> {
+): Promise<PaidAccessResult> {
   try {
-    // Map the editor's EarlyAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
+    // Map the editor's PaidAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
     // donationGoal }). A null config clears the gate. Permanent carries no timeframe.
     const terms =
       config && config.accessPrice != null
@@ -64,6 +73,7 @@ export async function setEarlyAccessConfig(
             generationPrice: config.generationPrice,
             freePreviewGenerations: config.freePreviewGenerations ?? 0,
             genOnly,
+            freeGeneration: config.freeGeneration,
           })
         : {};
     const paidAccess = !config
@@ -105,7 +115,7 @@ export async function setEarlyAccessConfig(
 
 // Counts the creator's permanent paid-access versions, excluding the one being edited. Permanent =
 // timeframeDays IS NULL (endsAt stays NULL on unpublished timed gates too, so it can't distinguish
-// them). Feeds the tier cap in the setEarlyAccess action.
+// them). Feeds the tier cap in the setPaidAccess action.
 export async function countPermanentAccessVersions(
   userId: number,
   excludeVersionId?: number
@@ -178,10 +188,10 @@ export async function bulkSetPermanentAccess(
       continue;
     }
     const genOnly = usage === 'Generation';
-    const config: EarlyAccessConfig = {
+    const config: PaidAccessConfig = {
       timeframe: 0,
       permanent: true,
-      // The access price is the single charge; for gen-only versions setEarlyAccessConfig writes it as the
+      // The access price is the single charge; for gen-only versions setPaidAccessConfig writes it as the
       // generation price. The optional cheaper generation tier only applies to downloadable versions.
       accessPrice: pricing.accessPrice,
       generationPrice: pricing.generationPrice,
@@ -189,7 +199,7 @@ export async function bulkSetPermanentAccess(
       donationGoalEnabled: false,
       donationGoal: undefined,
     };
-    const res = await setEarlyAccessConfig(cookie, id, config, genOnly);
+    const res = await setPaidAccessConfig(cookie, id, config, genOnly);
     if (res.ok) updated++;
     else {
       failed++;
@@ -203,6 +213,34 @@ export async function bulkSetPermanentAccess(
 // Whether a version currently has a permanent gate (timeframeDays IS NULL). Lets the save action skip
 // the membership/cap gates when re-saving an already-permanent version, so a lapsed or at-cap creator
 // can't be locked out of editing their own version (mirrors the main-app carve-out).
+/**
+ * Set a version's usage control. Ownership is enforced in the WHERE rather than a prior read, so a
+ * version the caller doesn't own simply updates 0 rows — same shape as the licensing-fee writes.
+ *
+ * Must run BEFORE the paid-access write: the main-app endpoint validates the gate against the STORED
+ * usage control, so persisting it second would have it reject a gen-only save for still carrying a
+ * download tier (or accept one it shouldn't).
+ */
+export async function setUsageControl(
+  userId: number,
+  versionId: number,
+  usageControl: CreatorUsageControl
+): Promise<boolean> {
+  const result = await dbWrite
+    .updateTable('ModelVersion')
+    .set({ usageControl })
+    .where('id', '=', versionId)
+    .where('modelId', 'in', (eb) =>
+      eb
+        .selectFrom('Model')
+        .select('id')
+        .where('userId', '=', userId)
+        .where('deletedAt', 'is', null)
+    )
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
 export async function isVersionPermanent(versionId: number): Promise<boolean> {
   const row = await dbRead
     .selectFrom('PaidAccess')
@@ -226,6 +264,23 @@ export async function currentAccessPrices(
     .where('entityId', '=', versionId)
     .executeTakeFirst();
   return gatePrices(row?.terms as ModelVersionTerms | undefined);
+}
+
+/**
+ * The media axis a set of versions must be capped on. A bulk edit applies ONE price to every selected
+ * version, so the whole set is held to the strictest applicable ceiling — image unless every version is
+ * video. Matches how bulkSetLicensingFee picks the strictest model-type cap.
+ */
+export async function strictestCapMediaType(versionIds: number[]): Promise<CapMediaType> {
+  if (!versionIds.length) return 'image';
+  const rows = await dbRead
+    .selectFrom('ModelVersion')
+    .select('baseModel')
+    .where('id', 'in', versionIds)
+    .execute();
+  return rows.length && rows.every((r) => capMediaType(r.baseModel) === 'video')
+    ? 'video'
+    : 'image';
 }
 
 // Counts versions in a *currently running* timed early-access window (permanent ones are capped separately,

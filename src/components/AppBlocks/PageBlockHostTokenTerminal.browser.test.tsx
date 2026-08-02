@@ -114,11 +114,16 @@ let fetchSpy: ReturnType<typeof vi.spyOn>;
 const isBeacon = (call: unknown[]) =>
   typeof call[0] === 'string' && (call[0] as string).includes('/api/track/block-render');
 const beaconCalls = () => fetchSpy.mock.calls.filter(isBeacon);
-const beaconStatuses = (): string[] =>
+const beaconBodies = (): Array<{ status?: string; errorClass?: string; secondary?: boolean }> =>
   beaconCalls().map((c: unknown[]) => {
     const init = c[1] as RequestInit | undefined;
-    return (JSON.parse(String(init?.body ?? '{}')) as { status?: string }).status ?? 'ok';
+    return JSON.parse(String(init?.body ?? '{}')) as {
+      status?: string;
+      errorClass?: string;
+      secondary?: boolean;
+    };
   });
+const beaconStatuses = (): string[] => beaconBodies().map((b) => b.status ?? 'ok');
 
 beforeEach(() => {
   fetchSpy = vi
@@ -235,7 +240,24 @@ describe('a READY page whose credential is GONE for good', () => {
     expect(document.querySelector('[data-block-fallback-retry="true"]')).not.toBeNull();
   });
 
-  test('🔴 emits NO second beacon — the mount already reported its outcome', async () => {
+  test('🔴 REPORTS the teardown — exactly one extra beacon, tagged as a credential loss', async () => {
+    /**
+     * 🔴 THIS ASSERTION IS INVERTED FROM WHAT IT ORIGINALLY SAID, deliberately.
+     *
+     * It used to assert `['ok']` — no second beacon — on the reasoning that the
+     * page LOAD did succeed and a second beacon would corrupt the impression
+     * denominator. The load-succeeded half is still true (and still asserted:
+     * the first beacon is untouched). The no-second-beacon half was a MEASURED
+     * production defect: on 2026-07-31 a real revocation teardown was driven
+     * against a live app and the platform recorded ZERO error beacons for it.
+     * Its only record of the incident was that `ok` impression, so every render
+     * metric read "healthy" while the app was dead in the viewer's tab.
+     *
+     * The fix does NOT relax the impression latch (that would retroactively
+     * change what the `ok` means). The teardown gets its OWN at-most-once latch
+     * and its OWN error class, so the two events stay separable: one `ok` (the
+     * load) plus one `error{token_lost_midsession}` (the revocation).
+     */
     const { rerender } = await renderWithProviders(
       <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
     );
@@ -253,13 +275,78 @@ describe('a READY page whose credential is GONE for good', () => {
       />
     );
     await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
-    // Let #3480's bounded auto-retry run its whole course too.
+    // Let #3480's bounded auto-retry run its whole course too — the re-arm walks
+    // back through 'loading' and lands on 'error' again, which is exactly the
+    // re-entry the at-most-once latch has to absorb.
     await new Promise((r) => setTimeout(r, 9_000));
 
-    // Exactly one, and it still says `ok`: the page LOAD did succeed. Counting an
-    // `error` here would corrupt the denominator the BlockRenderFailureRate alert
-    // is built on ("page loads the platform could not recover on its own").
+    // Exactly TWO, in order, and the impression is still the untouched `ok`.
+    expect(beaconStatuses()).toEqual(['ok', 'error']);
+    const bodies = beaconBodies();
+    // The original impression is byte-identical to before: no status, no class,
+    // and NOT flagged secondary — it is the mount's first beacon and must still
+    // write its ClickHouse impression row.
+    expect(bodies[0].status).toBeUndefined();
+    expect(bodies[0].errorClass).toBeUndefined();
+    expect(bodies[0].secondary).toBeUndefined();
+    // The teardown carries the class that makes it distinguishable from a launch
+    // failure ('error'/'no_token'/'timeout'/'fatal') in `sum by(error_class)`.
+    //
+    // 🔴 …and `secondary: true`, WITHOUT which the server would write a second
+    // byte-identical `blockRenders` row for this one mount, inflating every
+    // CH-derived impression figure for revoked sessions.
+    expect(bodies[1]).toMatchObject({
+      status: 'error',
+      errorClass: 'token_lost_midsession',
+      secondary: true,
+    });
+  }, 20_000);
+
+  test('🔴 emits the teardown beacon AT MOST ONCE despite the host RE-ENTERING `error`', async () => {
+    /**
+     * 🔴 THIS IS THE TEST THAT PROVES THE LATCH IS REACHABLE, and it has to drive
+     * a REAL re-entry to do it. Re-rendering with identical props does NOT
+     * exercise the latch — the effect's deps are unchanged, so React never
+     * re-runs it and the assertion passes with the latch deleted (verified: an
+     * earlier version of this test did exactly that and stayed green under a
+     * mutation that defeated the latch entirely).
+     *
+     * The re-entry that actually happens in production is the bounded auto-retry:
+     * a re-mint ATTEMPT briefly clears the failure props (host → 'loading'), the
+     * mint fails again, and the host lands back on 'error'. Without the per-mount
+     * latch that second pass emits a second beacon for ONE incident — which is
+     * how a single revocation would inflate the failure count.
+     */
+    function Harness({ dead }: { dead: boolean }) {
+      const [failing, setFailing] = useState(true);
+      const gone = dead && failing;
+      return (
+        <PageBlockHost
+          {...baseProps}
+          token={dead ? null : baseProps.token}
+          tokenError={gone}
+          tokenTerminal={gone}
+          onConsentGranted={vi.fn()}
+          onRetryToken={() => {
+            // Mirrors useBlockToken.refresh: an attempt clears the terminal, then
+            // it re-fails — walking the host error → loading → error.
+            setFailing(false);
+            setTimeout(() => setFailing(true), 10);
+          }}
+        />
+      );
+    }
+
+    const { rerender } = await renderWithProviders(<Harness dead={false} />);
+    await driveToReady();
     expect(beaconStatuses()).toEqual(['ok']);
+
+    await rerender(<Harness dead />);
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    // Long enough for the whole bounded auto-retry sequence to run and re-enter.
+    await new Promise((r) => setTimeout(r, 9_000));
+
+    expect(beaconStatuses()).toEqual(['ok', 'error']);
   }, 20_000);
 
   test("re-arms #3480's bounded auto-retry, which re-mints ONCE then settles", async () => {
@@ -315,9 +402,86 @@ describe('a READY page whose credential is GONE for good', () => {
     // manual Retry — the path forward, never a dead end.
     expect(document.querySelector('[data-block-fallback="token_error"]')).not.toBeNull();
     expect(document.querySelector('[data-block-fallback-retry-prominent="true"]')).not.toBeNull();
-    // And still exactly one beacon for the whole episode.
-    expect(beaconStatuses()).toEqual(['ok']);
+    // And still exactly TWO beacons for the whole episode — the impression plus
+    // ONE credential-loss report, no matter how many times the re-mint loop
+    // re-enters the terminal.
+    expect(beaconStatuses()).toEqual(['ok', 'error']);
   }, 25_000);
+});
+
+describe('app → app soft navigation (the host is NOT remounted)', () => {
+  /**
+   * 🔴 `/apps/run/[slug]` renders <PageBlockHost> with NO `key`, and `_app.tsx`
+   * renders <Component> with no key either — so navigating appA → appB (the
+   * "Recently run" menu) REUSES this component instance: same React mount, new
+   * `blockInstanceId`.
+   *
+   * The credential-loss latches are per-MOUNT refs, so without scoping them to
+   * the block instance they leak across that boundary and produce a WRONG,
+   * MISATTRIBUTED signal: app B's LAUNCH failure inherits app A's
+   * `reachedReady === true` and gets reported as `token_lost_midsession` for an
+   * app that never launched — the exact launch-vs-teardown confusion this
+   * feature exists to eliminate, now with the wrong app's id on it.
+   *
+   * (The wider host-reuse breakage — stale `status`, and app B losing its `ok`
+   * impression to the leaked `blockRenderEmittedRef` — is PRE-EXISTING and not
+   * fixed here. This only pins that the new signal cannot be misattributed.)
+   */
+  test('🔴 does NOT report app B’s launch failure as app A’s mid-session loss', async () => {
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+    expect(beaconStatuses()).toEqual(['ok']);
+
+    // Soft-navigate to a DIFFERENT app: same mount, new identifiers.
+    const appB = {
+      ...baseProps,
+      appBlockId: 'apb_other',
+      blockInstanceId: 'page_apb_other',
+      blockId: 'other-page-app',
+      slug: 'other-page-app',
+    };
+
+    // App B's mint fails terminally — it NEVER reached ready.
+    await rerender(
+      <PageBlockHost
+        {...appB}
+        token={null}
+        tokenError
+        tokenTerminal
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 9_000));
+
+    // THE assertion: no `token_lost_midsession` may be attributed to app B.
+    const midSession = beaconBodies().filter((b) => b.errorClass === 'token_lost_midsession');
+    expect(midSession).toEqual([]);
+
+    // And pin the FULL beacon set, which documents the pre-existing host-reuse
+    // state this PR deliberately does NOT fix: app B emits NOTHING AT ALL — not
+    // even its own launch-failure `error` — because `blockRenderEmittedRef` is
+    // per-mount and was already spent by app A's impression, so the whole
+    // soft-nav session is under-reported.
+    //
+    // Scope of that pin, stated exactly so it isn't misread: this test renders
+    // PageBlockHost DIRECTLY and unkeyed, so it pins the HOST's behaviour under
+    // instance reuse. Landing the real fix (`key={blockInstanceId}` on the run
+    // page) would NOT fail this test — it removes the scenario in production
+    // while this test keeps reproducing it here. The only change that would trip
+    // `['ok']` is scoping `blockRenderEmittedRef` per instance, which this PR
+    // reasons against above (the per-mount impression invariant). So it is
+    // over-specified BY DESIGN and unlikely to obstruct the named follow-up.
+    //
+    // 🔴 Asserting the whole set matters: an earlier version of this test added a
+    // second "nothing attributed to app B's id" filter that looked like an extra
+    // guard but was VACUOUS — the filtered list is empty, so the assertion held
+    // trivially and would have held with the fix deleted. This line pins the real
+    // observable state instead.
+    expect(beaconStatuses()).toEqual(['ok']);
+  }, 20_000);
 });
 
 describe('backward compatibility', () => {

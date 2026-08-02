@@ -30,7 +30,10 @@ export default AuthedEndpoint(
     }
     const input = parsed.data;
 
-    const version = await getVersionById({ id: input.id, select: { modelId: true } });
+    const version = await getVersionById({
+      id: input.id,
+      select: { modelId: true, baseModel: true },
+    });
     if (!version) return res.status(404).json({ error: 'Model version not found' });
 
     if (!user.isModerator) {
@@ -60,6 +63,7 @@ export default AuthedEndpoint(
         versionId: input.id,
         paidAccess,
         tier: await getCapTier(user.id),
+        baseModel: version.baseModel,
       });
 
       // Shared user-level EA caps (max days + max concurrent). Throws BAD_REQUEST → mapped to 400 below.

@@ -120,6 +120,11 @@ export type SubmitVersionResult = {
 
 const MANIFEST_PATH = 'block.manifest.json';
 
+/** Org holding the per-slug in-review snapshot repos a review preview builds
+ *  from. Deliberately separate from the canonical build org so commits here
+ *  never fire the production build webhook. */
+const REVIEW_REPO_ORG = 'civitai-apps-review';
+
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
 // scannable in the mod-review UI.
@@ -1204,7 +1209,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: 'civitai-apps-review',
+      org: REVIEW_REPO_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -3776,11 +3781,143 @@ export type PreviewRequestResult = {
 };
 
 /**
- * Start a review preview for a PENDING publish request. Reads the in-review repo
- * HEAD (the pending bundle's source), triggers a REVIEW build (separate image +
- * host from production), stamps state `preview-building`, and returns the review
- * URL the UI polls toward. The build-callback (review-build-callback) advances
- * deploying → live, or flips to failed.
+ * Git's object id for a file's BYTES: `sha1("blob " + <byteLength> + "\0" + bytes)`.
+ *
+ * This is the same id Forgejo reports as a tree entry's `sha`, so computing it
+ * locally lets us compare a reconstructed file set against a repo's tree listing
+ * WITHOUT fetching a single blob back. Verified against `git hash-object` for
+ * text, empty and binary (NUL + high-byte) inputs.
+ *
+ * `byteLength` — not `.length` — is deliberate: a Buffer's `length` happens to be
+ * its byte count today, but the git header is defined in bytes and the explicit
+ * property makes that non-accidental.
+ */
+function gitBlobSha(content: Buffer): string {
+  return createHash('sha1')
+    .update(`blob ${content.byteLength}\0`)
+    .update(content)
+    .digest('hex');
+}
+
+/**
+ * True ONLY when the in-review repo's `main` already holds EXACTLY `files` —
+ * the same set of paths in BOTH directions, and identical bytes at every path.
+ *
+ * Why both directions: the mirror commits with `replaceAllFiles: true`, so a
+ * path that exists in the repo but NOT in `files` would be DELETED by mirroring.
+ * Treating that as "unchanged" would leave a stale file served in the preview,
+ * which is the exact class of bug this whole change exists to remove. The
+ * size-equality check plus a per-path hit for every reconstructed file (with a
+ * duplicate-path guard) is what makes the comparison symmetric.
+ *
+ * FAILS TOWARD CORRECTNESS: any error — the repo or branch not existing yet, a
+ * truncated tree, a transport failure — returns false, i.e. mirror anyway. A
+ * needless mirror costs one commit; a wrong `true` serves a stale preview.
+ */
+async function reviewRepoAlreadyHoldsTree(
+  slug: string,
+  files: Array<{ path: string; content: Buffer }>
+): Promise<boolean> {
+  try {
+    const { listRepoTree } = await import('./forgejo.service');
+    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    if (tree.size !== files.length) return false;
+    const seen = new Set<string>();
+    for (const file of files) {
+      // A duplicate path makes the count argument unsound — refuse to reason.
+      if (seen.has(file.path)) return false;
+      seen.add(file.path);
+      const existing = tree.get(file.path);
+      if (!existing) return false;
+      if (existing !== gitBlobSha(file.content)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the sha the review build should clone + tag for a PENDING publish
+ * request, and make sure the in-review repo actually holds that tree first.
+ *
+ * A pending request has exactly one of two origins, and they do NOT share a
+ * review source:
+ *
+ *   - ZIP submission (`submitVersion`): a real `bundleKey`. That call already
+ *     pushed the submitted files into the in-review repo (replaceAllFiles), so
+ *     its HEAD *is* this version's source. Unchanged behaviour.
+ *   - git push (`recordPendingFromPush`): empty `bundleKey` + the pushed
+ *     `forgejoCommitSha`. Nothing was ever written to the in-review repo for
+ *     this version — the developer's own repo at the pushed commit is the
+ *     reviewable artifact. Reading the in-review HEAD here would build whatever
+ *     an OLDER ZIP submission left behind (a silently WRONG preview), or 404 on
+ *     a slug that has only ever been pushed to. So mirror the reviewed commit's
+ *     tree into the in-review repo first, using the same reconstruct → extract
+ *     pipeline `approveRequest` uses for this origin, and build the sha that
+ *     mirror produced.
+ *
+ * REPEAT-PREVIEW SHORT-CIRCUIT: on the push path, mirror only when the tree
+ * actually differs. `commitFiles` does NOT compare content — for an existing
+ * path it always emits an `update` op — so without this guard every "Rebuild
+ * preview" click would mint a NEW commit, hence a new sha, a new preview host
+ * and a new resource set for an unchanged tree. Three downstream guards are
+ * keyed on the sha being stable across rebuilds (the replay-dedup key, the
+ * concurrent-preview cap that excludes the current request, and the
+ * deploying-state callback write), so a churning sha silently weakens all
+ * three. Comparing first also means a byte-identical rebuild never has to rely
+ * on the remote accepting a batch of no-op update ops.
+ *
+ * INVARIANT: neither pointer set means the request cannot be attributed to a
+ * source tree at all — throw rather than fall through to the in-review HEAD and
+ * preview an unrelated version. (Mirrors `approveRequest`'s two-origin split;
+ * what actually SHIPS is still driven by the pinned commit there, untouched.)
+ */
+async function resolveReviewSourceSha(request: {
+  id: string;
+  slug: string;
+  bundleKey: string;
+  forgejoCommitSha: string | null;
+}): Promise<string> {
+  const { getReviewRepoHeadSha, ensureReviewRepo, commitFiles } = await import('./forgejo.service');
+
+  if (request.bundleKey) return getReviewRepoHeadSha(request.slug);
+
+  if (!request.forgejoCommitSha) {
+    throw new Error(`publish request ${request.id} has neither a bundle nor a commit to preview`);
+  }
+
+  const bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+  const files = await extractBundleFilesFromBuffer(bundleBuffer);
+  await ensureReviewRepo(request.slug);
+
+  // Unchanged tree (a repeat "Rebuild preview" on the same commit) → reuse the
+  // commit that already holds it, so the preview sha/host stay stable. Compares
+  // what would ACTUALLY be committed — the reconstructed file set — rather than
+  // the source tree listing, so a divergence introduced by the reconstruct →
+  // extract pipeline can never be mistaken for "nothing changed".
+  if (await reviewRepoAlreadyHoldsTree(request.slug, files)) {
+    return getReviewRepoHeadSha(request.slug);
+  }
+
+  const { sha } = await commitFiles({
+    org: REVIEW_REPO_ORG,
+    slug: request.slug,
+    files,
+    message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
+    replaceAllFiles: true,
+  });
+  return sha;
+}
+
+/**
+ * Start a review preview for a PENDING publish request. Resolves the pending
+ * version's source tree (see {@link resolveReviewSourceSha} — the in-review repo
+ * HEAD for a ZIP submission, the mirrored push commit for a git-push one),
+ * triggers a REVIEW build (separate image + host from production), stamps state
+ * `preview-building`, and returns the review URL the UI polls toward. The
+ * build-callback (review-build-callback) advances deploying → live, or flips to
+ * failed.
  *
  * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
  * fails — the router maps it. The whole feature is dark behind the mod-only
@@ -3794,12 +3931,14 @@ export async function previewRequest(
     import('~/server/db/client'),
     import('~/env/server'),
   ]);
-  const { getReviewRepoHeadSha } = await import('./forgejo.service');
   const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
 
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    select: { id: true, status: true, slug: true },
+    // bundleKey + forgejoCommitSha are the ORIGIN discriminator (ZIP upload vs
+    // git push). Without them this cannot tell which repo holds the pending
+    // version's source — see resolveReviewSourceSha.
+    select: { id: true, status: true, slug: true, bundleKey: true, forgejoCommitSha: true },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
@@ -3826,9 +3965,11 @@ export async function previewRequest(
     );
   }
 
-  // The in-review repo HEAD is the pending bundle's source (submitVersion pushed
-  // it there; one pending per slug). Build clones + tags at this sha.
-  const sha = await getReviewRepoHeadSha(request.slug);
+  // Resolve the pending version's source tree. ZIP submissions read the
+  // in-review repo HEAD (submitVersion pushed it there; one pending per slug);
+  // git-push submissions mirror the reviewed commit in first. Build clones +
+  // tags at this sha.
+  const sha = await resolveReviewSourceSha(request);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
@@ -4716,8 +4857,9 @@ async function getPreviousApprovedFiles(
  * Re-fetches the pending bundle (MinIO ZIP path or Forgejo push path, mirroring
  * getPublishRequestScreenshots) + the previous approved bundle's bytes, then
  * runs the pure, bounded computeBundleLineDiff. Binary / oversized / huge-diff
- * files are explicitly marked elided (never inlined) so the UI shows the Forgejo
- * fallback. First version ⇒ every file is a whole-file add.
+ * files are explicitly marked elided (never inlined) so the UI labels them with
+ * the reason instead of rendering them. First version ⇒ every file is a
+ * whole-file add.
  *
  * Mod-only at the router layer.
  */

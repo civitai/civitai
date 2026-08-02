@@ -1,6 +1,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The announcement banner cannot be destroyed by an interrupted or failed upload.
@@ -50,7 +51,7 @@ vi.mock('~/hooks/useCFImageUpload', async () => {
 // Partial mock: other modules in the graph import unrelated named exports from here
 // (`setTrpcBatchingEnabled`), and replacing the module wholesale breaks their import.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     useUtils: () => ({
       announcement: { getAnnouncementsPaged: { invalidate: vi.fn() } },

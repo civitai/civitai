@@ -9,6 +9,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@civitai/shared": "workspace:*",
     "zod": "^4.0.17"
   }
 }

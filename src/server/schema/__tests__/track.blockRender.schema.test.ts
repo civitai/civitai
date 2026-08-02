@@ -25,6 +25,21 @@ describe('blockRenderSchema — status/errorClass', () => {
     expect(blockRenderSchema.safeParse({ ...base, status: 'weird' }).success).toBe(false);
   });
 
+  it('defaults `secondary` to false so an ordinary beacon still writes its CH row', () => {
+    // The CH insert is suppressed only for an explicit follow-up. A legacy or
+    // launch-failure beacon that sends no flag must keep being recorded.
+    expect(blockRenderSchema.parse(base).secondary).toBe(false);
+    expect(blockRenderSchema.parse({ ...base, status: 'error', errorClass: 'no_token' }).secondary).toBe(
+      false
+    );
+  });
+
+  it('accepts an explicit `secondary: true` follow-up beacon', () => {
+    expect(blockRenderSchema.parse({ ...base, status: 'error', secondary: true }).secondary).toBe(
+      true
+    );
+  });
+
   it('rejects an over-long errorClass (bounded to 64 chars)', () => {
     expect(
       blockRenderSchema.safeParse({ ...base, errorClass: 'x'.repeat(65) }).success

@@ -1,5 +1,6 @@
 import {
   Anchor,
+  Avatar,
   Badge,
   Card,
   Center,
@@ -15,8 +16,11 @@ import {
   Title,
 } from '@mantine/core';
 import { IconExternalLink, IconLock, IconShieldCheck } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useMemo } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
@@ -62,9 +66,12 @@ function scopeLabel(scope: string): string {
  *
  * Data sources (all the anon-safe public allowlist — no private manifest data):
  *   - title / description / screenshots / scopes / version → `blocks.getAppDetail`
- *     (PublicAppDetail). Title/author also fall back to the listing `block` so
- *     the header renders before the detail query resolves.
- *   - author → the app owner (`block.appName` / `detail.appName`).
+ *     (PublicAppDetail). Title falls back to the listing `block` so the header
+ *     renders before the detail query resolves.
+ *   - author → `PublicAppDetail.owner`, the app's REAL owner chip, via the pure
+ *     `getAppDetailAuthor`. 🔴 NEVER `appName`/`appId` — see that module. There
+ *     is no listing-row fallback because `AvailableBlock` carries no owner, so
+ *     the line is simply absent until the detail query resolves.
  *   - reviews → the existing block-reviews queries inside <AppBlockReviews>.
  *
  * The modal fetches its own subscriptions (mirroring the detail page) so the
@@ -107,7 +114,19 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   // Title/author render from the listing row immediately; the detail query
   // enriches them (and is the only source for screenshots/scopes/version).
   const name = detail?.manifest.name ?? block.manifest.name ?? block.blockId;
-  const author = detail?.appName ?? block.appName ?? block.appId;
+  // AUTHOR — the app's REAL owner, never `appName`/`appId`. `appName` is the
+  // OAuth CLIENT's name, and for every approved block in prod it equals the
+  // app's own TITLE (verified: `appblk-gen-matrix` → OauthClient name "Gen
+  // Matrix", real owner `zachlowdenzx`), so `by {appName}` rendered the app's
+  // own title in the author slot and `?? appId` fell back to an opaque internal
+  // id. The whole decision — including "no username → render NOTHING rather than
+  // a wrong name" — lives in the pure `getAppDetailAuthor`.
+  //
+  // The owner only exists on the resolved `PublicAppDetail`; the listing row
+  // (`AvailableBlock`) carries no owner at all, so while the detail query is in
+  // flight there is simply no attribution line. That is deliberate: a blank
+  // beats a wrong name for the time the query takes.
+  const author = getAppDetailAuthor(detail);
   const description = detail?.manifest.description ?? block.manifest.description ?? '';
   const screenshots = detail?.screenshots ?? [];
   const scopes = detail?.scopes ?? [];
@@ -129,9 +148,31 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
       <Stack gap="lg">
         {/* Header — title (modal title) + author + description. */}
         <Stack gap={4}>
-          <Text c="dimmed" size="sm">
-            by {author}
-          </Text>
+          {/* Real-owner chip, linked to the profile — mirrors the store detail's
+              `CreatorChip`. Null-safe: no resolvable owner → no line at all. */}
+          {author && (
+            <Anchor
+              component={Link}
+              href={author.href}
+              underline="hover"
+              c="dimmed"
+              data-testid="app-detail-author"
+            >
+              <Group gap={6} wrap="nowrap">
+                <Avatar
+                  src={author.image ? getEdgeUrl(author.image, { width: 64 }) : undefined}
+                  alt=""
+                  radius="xl"
+                  size={20}
+                >
+                  {author.username.charAt(0).toUpperCase()}
+                </Avatar>
+                <Text c="dimmed" size="sm">
+                  by {author.username}
+                </Text>
+              </Group>
+            </Anchor>
+          )}
           {/* Off-site (external-link) app: the external URL is the PRIMARY CTA
               (open in a new tab). For an on-platform app keep the standalone
               "Open live" affordance. */}

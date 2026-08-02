@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * PR3 — OAuth-connect mod review UI. Two seams:
@@ -32,7 +33,7 @@ vi.mock('~/utils/notifications', () => ({
 // Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
 // link ("does not provide an export named X") and the whole file collects 0 tests.
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/trpc')>();
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
     ...actual,

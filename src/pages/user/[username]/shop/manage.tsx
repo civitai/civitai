@@ -1,6 +1,5 @@
 import { Center, Loader, Stack } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import {
@@ -17,9 +16,7 @@ import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner
 import { useManageItems } from '~/components/CreatorShop/Manage/manage.util';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { OnboardingSteps } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Flags } from '~/shared/utils/flags';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -47,16 +44,6 @@ function ManageShopPage() {
   const manageUserId = isOwner ? undefined : user?.id;
   const queriesEnabled = isOwner || (isModerator && !!user?.id);
 
-  // Membership = the creator has joined the program (a valid subscription alone
-  // isn't enough). The upsell lives on the storefront — send a non-member owner
-  // there instead of showing them the (unusable) manage page.
-  const isCreatorProgramMember =
-    !!currentUser && Flags.hasFlag(currentUser.onboarding ?? 0, OnboardingSteps.CreatorProgram);
-
-  useEffect(() => {
-    if (isOwner && !isCreatorProgramMember) router.replace(`/user/${username}/shop`);
-  }, [isOwner, isCreatorProgramMember, username, router]);
-
   const { items, isLoading } = useQueryCreatorShopManage(queriesEnabled, manageUserId);
   const { settings } = useQueryCreatorShopSettings(queriesEnabled, manageUserId);
   const { archiveItem, unarchiveItem, deleteItem, updateSettings } = useMutateCreatorShop();
@@ -65,16 +52,6 @@ function ManageShopPage() {
 
   if (!username) return <NotFound />;
   if (currentUser && !canManage) return <NotFound />;
-
-  // Creator Shop is a Creator Program member benefit — a non-member owner is
-  // redirected to the storefront (see the effect above); moderators may manage
-  // any shop regardless.
-  if (isOwner && !isCreatorProgramMember)
-    return (
-      <Center py="xl">
-        <Loader />
-      </Center>
-    );
 
   const showControls = !isLoading && items.length > 0;
 

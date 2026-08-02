@@ -97,11 +97,48 @@ const blockAdditionalResourceSchema = z.object({
 // intentionally tighter than the platform's server `sourceImageSchema`
 // (`.includes('image.civitai.com')`) — a substring check would accept
 // `https://evil.example/?x=image.civitai.com`; a hostname check rejects it and
-// also rejects non-https, userinfo, and host-confusion tricks. Kept LOCAL
-// (rather than importing the server orchestrator schema) so this module stays
-// client-safe — it is `import type`'d by a client component (failureSnapshot).
+// also rejects non-https and userinfo. Kept LOCAL (rather than importing the
+// server orchestrator schema) so this module stays client-safe — it is
+// `import type`'d by a client component (failureSnapshot).
+//
+// 🔴 A hostname check ALONE is not sufficient, because it validates a PARSED
+// url while the schema used to emit the ORIGINAL string. Every consumer
+// downstream (the graph's `imagesNode` is `url: z.string()` — no URL check —
+// so this schema is the only gate) then re-parses those original bytes, and a
+// parser that disagrees with WHATWG about them sees a DIFFERENT host than the
+// one we approved. Two concrete WHATWG-specific behaviours were being relied on
+// as security properties, both verified to pass the bare hostname check:
+//   - backslash-in-authority: WHATWG treats `\` as `/` for special schemes, so
+//     `https://civitai.com\@evil.com/x.png` parses with host `civitai.com`. A
+//     parser that splits the authority on the last `@` without treating `\` as
+//     a delimiter reads host = `evil.com`.
+//   - tab/CR/LF deletion: WHATWG strips `\t\r\n` from ANYWHERE in the url, so
+//     `https://evil.com\r\n.civitai.com/x.png` normalizes to the (nonexistent)
+//     subdomain `evil.com.civitai.com` and passes — while the raw string, CRLF
+//     intact, is what got forwarded. CRLF inside a value a consumer
+//     concatenates into a request line or header is a request-splitting /
+//     log-injection primitive.
+// So the bound is enforced in three layers, in this order:
+//   1. REJECT ambiguous bytes before parsing (below). No legitimate url carries
+//      a raw backslash or control byte — they must be percent-encoded — so this
+//      costs nothing, and it closes the differential class at the door rather
+//      than silently rewriting a plainly hostile input into an accepted one.
+//   2. Validate the parsed hostname (unchanged).
+//   3. CANONICALIZE to `URL.href`, so the bytes we emit are exactly the bytes
+//      we validated. This is the posture fix: it also covers normalization
+//      classes beyond the four bytes above (percent-encoding, default-port
+//      stripping, empty-path → `/`, host case-folding).
 const CIVITAI_IMAGE_HOSTS = ['civitai.com', 'civitai.red', 'civitai.green'] as const;
+// Backslash + C0 controls + DEL. Superset of the `\t\r\n` WHATWG deletes and
+// the leading/trailing C0 it strips, so no byte that the parser silently
+// removes or reinterprets can survive into the value we approve.
+const URL_AMBIGUOUS_BYTES = /[\\\u0000-\u001f\u007f]/;
+// Bound applies to BOTH the raw input and the canonicalized output: percent-
+// encoding can inflate a string ~9x (a 2048-char path of CJK canonicalizes to
+// 18272 chars), so the pre-transform cap does NOT bound what we emit.
+export const SOURCE_IMAGE_URL_MAX = 2048;
 function isCivitaiHostedImageUrl(raw: string): boolean {
+  if (URL_AMBIGUOUS_BYTES.test(raw)) return false;
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -114,15 +151,39 @@ function isCivitaiHostedImageUrl(raw: string): boolean {
 }
 
 const blockSourceImageSchema = z.object({
+  // Order is load-bearing. A `.transform()` that THROWS propagates out of
+  // `safeParse` (it does not become a parse failure) — so `new URL()` here must
+  // be total. Zod skips the transform entirely when an earlier check on the
+  // same string failed (verified against zod 4), so by the time it runs, the
+  // refine above has already proven the string parses. Do not reorder these.
   url: z
     .string()
-    .max(2048)
-    .refine(isCivitaiHostedImageUrl, 'source image must be a Civitai-hosted https image URL'),
+    .max(SOURCE_IMAGE_URL_MAX)
+    .refine(isCivitaiHostedImageUrl, 'source image must be a Civitai-hosted https image URL')
+    .transform((raw) => new URL(raw).href)
+    .refine(
+      (href) => href.length <= SOURCE_IMAGE_URL_MAX,
+      'source image URL exceeds the maximum length once canonicalized'
+    ),
   // Dimension hints for the graph's denoise/aspect derivation. Bounded to the
   // same block caps as params so an iframe can't send absurd dimensions.
   width: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
   height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
 });
+
+export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
+
+// ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
+// ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
+// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
+// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
+// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
+// Grok 7). This constant only stops an untrusted iframe from posting an
+// unbounded array before the body is even parsed — it is set ABOVE the largest
+// per-ecosystem cap on purpose so a future ecosystem raising its own limit is
+// not silently clamped here. Every element is validated individually against
+// `blockSourceImageSchema` (Civitai-host + dimension bounds), never just [0].
+export const BLOCK_SOURCE_IMAGES_WIRE_MAX = 10;
 
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
@@ -148,7 +209,34 @@ const blockTextToImageBodySchema = z.object({
   // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
   // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
   // never relying on the graph's safeParse auto-correction).
+  //
+  // 🔴 DEPRECATED ALIAS — kept working indefinitely. The published developer
+  // docs and `@civitai/app-sdk` both ship `sourceImage` today, so removing it
+  // would break every deployed block. `sourceImages` (below) is the current
+  // field; the server normalizes the singular into a 1-element array
+  // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
+  // Multi-image conditioning. The graph layer has always supported N images
+  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
+  // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
+  // per-image posture as the singular one, with no "first element only" gap.
+  //
+  // Bounds: `.min(1)` — an EMPTY array is REJECTED rather than silently treated
+  // as "no source image". A caller that sends `sourceImages: []` computed an
+  // empty list and meant to send images; quietly downgrading that to a txt2img
+  // generation would bill them for something they did not ask for, which is the
+  // silent-wrong-answer failure mode this bridge has already been bitten by.
+  // Omit the field entirely for txt2img. `.max()` is the absolute wire bound —
+  // the REAL cap is per-ecosystem and enforced in buildImageWorkflowInput.
+  //
+  // Supplying BOTH `sourceImage` and `sourceImages` is rejected as ambiguous
+  // (see the union-level check below) rather than picking a winner.
+  sourceImages: z
+    .array(blockSourceImageSchema)
+    .min(1, 'sourceImages must not be empty — omit the field for text-to-image')
+    .max(BLOCK_SOURCE_IMAGES_WIRE_MAX)
+    .optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
   // present, blocks.router moves it to the FRONT of the domain-allowed currency
@@ -185,6 +273,21 @@ const blockTextToImageBodySchema = z.object({
   }),
 });
 
+// Supplying BOTH the deprecated `sourceImage` and the current `sourceImages` is
+// AMBIGUOUS — we refuse rather than pick a winner. Silently preferring one is
+// exactly how a caller ends up conditioning on an image it thought it had
+// replaced. Enforced at the WIRE schema so both `estimateWorkflow` and
+// `submitWorkflow` inherit it from the single parse, with no way to reach the
+// translator holding both.
+const blockTextToImageBodySchemaChecked = blockTextToImageBodySchema.refine(
+  (body) => !(body.sourceImage && body.sourceImages),
+  {
+    path: ['sourceImages'],
+    message:
+      'send either `sourceImage` (deprecated) or `sourceImages`, not both — they are ambiguous together',
+  }
+);
+
 // App Blocks customComfy bridge (v1). Coarse fail-closed wire gate only:
 //  - `recipe` MUST be a REGISTERED recipe id (derived from the recipe registry
 //    keys) — an unregistered id is rejected at the union, before any translator
@@ -204,7 +307,7 @@ export const blockCustomComfyBodySchema = z
 
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
-  blockTextToImageBodySchema,
+  blockTextToImageBodySchemaChecked,
   blockCustomComfyBodySchema,
 ]);
 

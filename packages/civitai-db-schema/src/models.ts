@@ -20,6 +20,8 @@ export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle" | "Civitai";
 
+export type MembershipGiftStatus = "Pending" | "Fulfilled" | "Failed" | "Refunded" | "Revoked";
+
 export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
@@ -478,6 +480,8 @@ export interface User {
   createdAt: Date;
   deletedAt: Date | null;
   subscriptions?: CustomerSubscription[];
+  membershipGiftsGiven?: MembershipGift[];
+  membershipGiftsReceived?: MembershipGift[];
   mutedAt: Date | null;
   muted: boolean;
   muteExpiresAt: Date | null;
@@ -509,6 +513,7 @@ export interface User {
   oauthClients?: OauthClient[];
   oauthConsents?: OauthConsent[];
   roles?: UserRole[];
+  membershipOverride?: UserMembershipOverride | null;
   links?: UserLink[];
   comments?: Comment[];
   commentReactions?: CommentReaction[];
@@ -671,6 +676,27 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface MembershipGift {
+  id: string;
+  gifterId: number;
+  gifter?: User;
+  recipientId: number;
+  recipient?: User;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: MembershipGiftStatus;
+  message: string | null;
+  anonymous: boolean;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Product {
@@ -1796,6 +1822,16 @@ export interface Role {
   members?: UserRole[];
 }
 
+export interface UserMembershipOverride {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  user?: User;
+}
+
 export interface AppBlock {
   id: string;
   appId: string;
@@ -1821,6 +1857,9 @@ export interface AppBlock {
   featuredOrder: number | null;
   screenshots: JsonValue | null;
   externalUrl: string | null;
+  spendTier: string;
+  spendCapBuzzPerDay: number | null;
+  spendVelocityMaxGens: number | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;
@@ -2580,6 +2619,8 @@ export interface Cosmetic {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: bigint | null;
+  pHashUrl: string | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];

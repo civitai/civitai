@@ -1,4 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
+import { resolveCapTier, type CapTier } from '@civitai/buzz';
 
 // Read membership off SessionUser (resolved by the shared session cache / hub) rather than re-querying.
 
@@ -42,17 +43,19 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
 // the caps nor the UI ever needs to tell them apart.
 export const displayTier = (m: Membership): string => m.tier ?? 'free';
 
-/** The tier the caps resolve against. A lapsed membership falls back to free, never to "no access". */
-export const cappedTier = (m: Membership): string => (m.isMember ? displayTier(m) : 'free');
+/**
+ * The tier the caps resolve against. Delegates to the shared rule so the spoke and the main app can't
+ * disagree about what a lapse, an unknown tier, or founder resolves to.
+ */
+export const cappedTier: (m: Membership) => CapTier = resolveCapTier;
 
 /** Every capacity fact the models page ships to its editors. `null` cap = unlimited. */
 export type CreatorCaps = {
   /** Display label only — cap math uses `capTier`, which drops to free on a lapse. */
   tier: string;
-  capTier: string;
+  capTier: CapTier;
   permanentUsed: number;
   permanentCap: number | null;
-  priceCap: number | null;
   maxEarlyAccessDays: number;
   earlyAccessUsed: number;
   earlyAccessCap: number;

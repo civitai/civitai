@@ -225,7 +225,6 @@ const MembershipLapsedCard = () => {
 
           <div className="flex flex-col gap-2.5">
             <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
-            <LapsedBenefitRow text="Re-open your creator shop" />
             <LapsedBenefitRow text="Earn real cash from your creations" />
           </div>
 
@@ -906,8 +905,8 @@ const WithdrawCashCard = () => {
     return null; // Failed to load.
   }
 
-  const canWithdraw =
-    (userCash?.ready ?? 0) >= MIN_WITHDRAWAL_AMOUNT || (userCash?.withdrawn ?? 0) > 0;
+  const hasMinBalance = (userCash?.ready ?? 0) >= MIN_WITHDRAWAL_AMOUNT;
+  const canWithdraw = hasMinBalance || (userCash?.withdrawn ?? 0) > 0;
 
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
@@ -976,7 +975,7 @@ const WithdrawCashCard = () => {
           </Table.Tbody>
         </Table>
 
-        {!canWithdraw && (
+        {!hasMinBalance && (
           <Alert color="red" className="mt-auto p-2">
             <div className="flex items-center gap-2">
               <IconLock size={24} className="shrink-0" />

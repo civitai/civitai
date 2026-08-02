@@ -167,6 +167,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   );
               }
             } else if (checkoutSession.mode === 'payment') {
+              if (checkoutSession.metadata?.type === 'membershipGift') {
+                const giftId = checkoutSession.metadata.giftId;
+                if (!giftId) throw new Error('membershipGift checkout session missing giftId');
+                const { fulfillMembershipGift } = await import(
+                  '~/server/services/membership-gift.service'
+                );
+                // Throws propagate to the outer catch → 400 → Stripe retries.
+                // fulfillMembershipGift is re-runnable (Fulfilled rows bail early).
+                await fulfillMembershipGift({
+                  giftId,
+                  paymentIntentId:
+                    typeof checkoutSession.payment_intent === 'string'
+                      ? checkoutSession.payment_intent
+                      : checkoutSession.payment_intent?.id,
+                });
+                break;
+              }
+
               // First, check if this payment is for Civitai AIR
 
               if (
@@ -348,6 +366,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               }
             } catch {
               // lookup failed — still try with PI id so buzz-purchase path revokes
+            }
+            if (paymentIntentId) {
+              const { revokeMembershipGift } = await import(
+                '~/server/services/membership-gift.service'
+              );
+              await revokeMembershipGift({
+                paymentIntentId,
+                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
+              }).catch((err) => {
+                log({
+                  type: 'error',
+                  stage: 'membership-gift-revoke',
+                  eventType: event.type,
+                  paymentIntentId,
+                  error: (err as Error)?.message,
+                });
+                return false;
+              });
             }
             for (const sourceEventId of [paymentIntentId, invoiceId].filter(Boolean) as string[]) {
               await revokeForChargeback({
