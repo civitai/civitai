@@ -37,8 +37,17 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/edit']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/revenue']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/get-started']).toBe(1100);
+  });
+
+  test('the RETIRED /apps/[appBlockId] is redirect-only, not a width', () => {
+    // It was listed as a rendering route with the comment "still renders for a
+    // direct hit". The page's own docstring says RETIRED and its
+    // `getServerSideProps` unconditionally redirects to
+    // `/apps/store-preview/<slug>`, so a width there was unreachable AND made
+    // this module assert a false fact about the app.
+    expect(APPS_PAGE_WIDTHS).not.toHaveProperty('/apps/[appBlockId]');
+    expect(APPS_REDIRECT_ONLY_PAGES).toContain('/apps/[appBlockId]');
   });
 
   test('every width is one of the TWO decided values — no third hand-picked number', () => {
@@ -137,6 +146,49 @@ describe('every /apps page on disk is classified', () => {
       `Unclassified /apps route(s). Add each to APPS_PAGE_WIDTHS (with a width), ` +
         `APPS_FULL_BLEED_PAGES (full-viewport iframe/shell) or APPS_REDIRECT_ONLY_PAGES ` +
         `(getServerSideProps always redirects/404s) in src/components/Apps/appsPageWidths.ts.`
+    ).toEqual([]);
+  });
+
+  /**
+   * 🔴 CONSUMPTION — the cheap half of "is this entry real?".
+   *
+   * The completeness walk only proves a route is LISTED. It cannot notice that a
+   * listed route's width is never read, which is exactly how
+   * `/apps/[appBlockId]` came to carry a `Container size=` that its own
+   * always-redirecting `getServerSideProps` made unreachable.
+   *
+   * Two pages read their width through a NAMED ALIAS instead of indexing the map
+   * directly — the store via `LISTING_STORE_CONTAINER_SIZE` (paired with the grid
+   * span) and my-submissions via `MY_SUBMISSIONS_CONTAINER_SIZE` (paired with the
+   * table scroll floor). Both alias constants are defined as
+   * `APPS_PAGE_WIDTHS[<route>]`, so they are genuine consumers; they are listed
+   * here rather than special-cased silently.
+   *
+   * ⚠️ WHAT THIS STILL CANNOT CATCH: a route that is listed, consumes its width,
+   * and yet never renders (because something upstream always redirects). That
+   * remains a judgement made by reading the page — see the module docstring.
+   */
+  test('every APPS_PAGE_WIDTHS entry is actually consumed by its page', () => {
+    const ALIASES: Record<string, string> = {
+      '/apps': 'LISTING_STORE_CONTAINER_SIZE',
+      '/apps/my-submissions': 'MY_SUBMISSIONS_CONTAINER_SIZE',
+    };
+    const unconsumed: string[] = [];
+    for (const route of Object.keys(APPS_PAGE_WIDTHS)) {
+      const rel = route === '/apps' ? '/apps/index' : route;
+      const file = path.resolve(PAGES_DIR, '..', `${rel.replace(/^\/apps\//, 'apps/')}.tsx`);
+      if (!fs.existsSync(file)) {
+        unconsumed.push(`${route} (no page file at ${file})`);
+        continue;
+      }
+      const src = fs.readFileSync(file, 'utf8');
+      const token = ALIASES[route] ?? `APPS_PAGE_WIDTHS['${route}']`;
+      if (!src.includes(token)) unconsumed.push(`${route} (expected ${token})`);
+    }
+    expect(
+      unconsumed,
+      'Listed route(s) whose page never reads the width — either wire the page up ' +
+        'or move the route to APPS_FULL_BLEED_PAGES / APPS_REDIRECT_ONLY_PAGES.'
     ).toEqual([]);
   });
 

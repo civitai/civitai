@@ -56,6 +56,24 @@ export const APPS_READABLE_PAGE_WIDTH = 1100;
  * {@link APPS_FULL_BLEED_PAGES}/{@link APPS_REDIRECT_ONLY_PAGES} — enforced by a
  * unit test that walks `src/pages/apps` on disk, so a NEW apps page cannot ship
  * without an explicit width decision.
+ *
+ * 🔴 WHAT THE GUARDS DO AND DO NOT ENFORCE — read this before trusting the
+ * taxonomy below, because it has already been wrong once.
+ *
+ * The tests enforce exactly two things:
+ *   1. COMPLETENESS — every `/apps/*` page file on disk is listed somewhere, and
+ *      every listed route has a page file (the fs walk).
+ *   2. CONSUMPTION — every route in `APPS_PAGE_WIDTHS` has a page that actually
+ *      reads its width from here, so an entry cannot be dead code.
+ *
+ * They do NOT enforce CORRECTNESS OF CLASSIFICATION. Nothing checks that a route
+ * listed as rendering really renders. `/apps/[appBlockId]` was listed here with
+ * the comment "still renders for a direct hit" while the page's own docstring
+ * said RETIRED and its `getServerSideProps` unconditionally redirects — so the
+ * width was unreachable AND this module asserted a false fact about the app.
+ * Deciding which list a route belongs in is a JUDGEMENT that has to be made by
+ * reading the page's `getServerSideProps`; a passing test suite is not evidence
+ * that it was made correctly.
  */
 export const APPS_PAGE_WIDTHS = {
   // ── Wide: grids + wide tables ────────────────────────────────────────────
@@ -82,8 +100,6 @@ export const APPS_PAGE_WIDTHS = {
   '/apps/[appBlockId]/edit': APPS_READABLE_PAGE_WIDTH,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_PAGE_WIDTH,
-  /** Retired legacy app detail (still renders for a direct hit). */
-  '/apps/[appBlockId]': APPS_READABLE_PAGE_WIDTH,
   /** The developer get-started explainer — prose. */
   '/apps/get-started': APPS_READABLE_PAGE_WIDTH,
 } as const satisfies Record<string, number>;
@@ -110,4 +126,14 @@ export const APPS_REDIRECT_ONLY_PAGES = [
   '/apps/store-preview',
   '/apps/[appBlockId]/edit-manifest',
   '/apps/[appBlockId]/listing',
+  /**
+   * RETIRED (S8/PR-2). Its `getServerSideProps` unconditionally redirects to
+   * `/apps/store-preview/<slug>`; the component body is retained only so a stale
+   * bookmark resolves through the hop, and is documented in that file as
+   * unreachable. It was briefly listed in {@link APPS_PAGE_WIDTHS} above with the
+   * comment "still renders for a direct hit" — which the page itself contradicts.
+   * A width there was dead code AND, worse, made this module's own taxonomy
+   * assert a false fact about the app.
+   */
+  '/apps/[appBlockId]',
 ] as const;
