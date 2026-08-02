@@ -18,6 +18,7 @@ import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawP
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -144,18 +145,23 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
 
+  // Autocomplete and the input rule are insertion paths just like the picker, so
+  // they answer to the same flag. StickerPicker gates itself at its own mount
+  // point; this is the equivalent for the two that don't go through it.
+  const stickersEnabled = useFeatureFlags().stickers && addStickers;
   const { sticker: ownedStickers } = useOwnedSticker();
   const { data: stickerBalances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
-    enabled: addStickers,
+    enabled: stickersEnabled,
   });
   // Exhausted stickers stay out of autocomplete and the input rule — offering
   // one from a menu that never mentions the balance just fails at submit.
   const availableStickers = useMemo(() => {
+    if (!stickersEnabled) return [];
     const spent = new Set(
       (stickerBalances ?? []).filter((b) => b.remaining === 0).map((b) => b.cosmeticId)
     );
     return ownedStickers.filter((x) => !spent.has(x.id));
-  }, [ownedStickers, stickerBalances]);
+  }, [stickersEnabled, ownedStickers, stickerBalances]);
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -302,10 +308,10 @@ export function RichTextEditor({
   // Written into per-editor storage rather than passed as an extension option:
   // ownership loads async, and changing the extension array rebuilds the editor.
   useEffect(() => {
-    if (!editor || !addStickers) return;
+    if (!editor || !stickersEnabled) return;
     const storage = editor.extensionStorage.sticker;
     if (storage) storage.available = availableStickers;
-  }, [editor, addStickers, availableStickers]);
+  }, [editor, stickersEnabled, availableStickers]);
 
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({
