@@ -1,7 +1,7 @@
 import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
-import { spendStickerUses } from '~/server/services/sticker.service';
+import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -155,8 +155,13 @@ export const upsertComment = async ({
   entityId,
   parentThreadId,
   isModerator,
+  track,
   ...data
-}: UpsertCommentV2Input & { userId: number; isModerator?: boolean }) => {
+}: UpsertCommentV2Input & {
+  userId: number;
+  isModerator?: boolean;
+  track?: Parameters<typeof recordStickerUsage>[0]['track'];
+}) => {
   await throwOnBlockedLinkDomain(data.content);
   if (!data.id) await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
   // only check for threads on comment create
@@ -173,7 +178,7 @@ export const upsertComment = async ({
   const previous = data.id
     ? await dbWrite.commentV2.findUnique({ where: { id: data.id }, select: { content: true } })
     : null;
-  await spendStickerUses({
+  const chargedStickers = await spendStickerUses({
     userId,
     surface: 'comment',
     content: data.content ?? '',
@@ -196,7 +201,7 @@ export const upsertComment = async ({
           select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
         });
       }
-      return await tx.commentV2.create({
+      const created = await tx.commentV2.create({
         data: {
           userId,
           ...data,
@@ -204,9 +209,29 @@ export const upsertComment = async ({
         },
         select: commentV2Select,
       });
+      recordStickerUsage({
+        track,
+        userId,
+        charged: chargedStickers,
+        entityType: 'comment',
+        entityId: created.id,
+      });
+      return created;
     });
   }
-  return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
+  const updated = await dbWrite.commentV2.update({
+    where: { id: data.id },
+    data,
+    select: commentV2Select,
+  });
+  recordStickerUsage({
+    track,
+    userId,
+    charged: chargedStickers,
+    entityType: 'comment',
+    entityId: updated.id,
+  });
+  return updated;
 };
 
 export const getComment = async ({ id }: GetByIdInput): Promise<Comment> => {

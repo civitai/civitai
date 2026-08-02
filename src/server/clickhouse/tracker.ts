@@ -748,6 +748,16 @@ export class Tracker {
     );
   }
 
+  // One row per sticker PLACEMENT, matching the consumption rule — a comment
+  // with the same sticker three times emits three rows. Append-only history;
+  // the authoritative balance is UserCosmetic.remaining in Postgres.
+  public async stickerUsage(
+    rows: { userId: number; cosmeticId: number; entityType: string; entityId: number }[]
+  ) {
+    if (!rows.length) return;
+    return this.trackMany('stickerUsageEvents', rows, { skipActorMeta: true });
+  }
+
   public retoolAudit(values: {
     action: string;
     privileged: boolean;

@@ -5,7 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
-import { spendStickerUses } from '~/server/services/sticker.service';
+import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -180,8 +180,13 @@ export const getUserReactionByCommentId = ({
 
 export const createOrUpdateComment = async ({
   ownerId,
+  track,
   ...input
-}: CommentUpsertInput & { ownerId: number; locked: boolean }) => {
+}: CommentUpsertInput & {
+  ownerId: number;
+  locked: boolean;
+  track?: Parameters<typeof recordStickerUsage>[0]['track'];
+}) => {
   const { id, locked, ...commentInput } = input;
 
   // If we are editing, but the comment is locked
@@ -197,7 +202,7 @@ export const createOrUpdateComment = async ({
   const previous = id
     ? await dbWrite.comment.findUnique({ where: { id }, select: { content: true } })
     : null;
-  await spendStickerUses({
+  const chargedStickers = await spendStickerUses({
     userId: ownerId,
     surface: 'comment',
     content: commentInput.content ?? '',
@@ -214,6 +219,13 @@ export const createOrUpdateComment = async ({
       content: true,
       nsfw: true,
     },
+  });
+  recordStickerUsage({
+    track,
+    userId: ownerId,
+    charged: chargedStickers,
+    entityType: 'commentOld',
+    entityId: result.id,
   });
   await preventReplicationLag('commentModel', input.modelId);
   return result;

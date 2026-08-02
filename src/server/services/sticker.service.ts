@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { netNewStickerPlacements } from '~/shared/utils/sticker-token';
 
@@ -32,10 +33,10 @@ export async function spendStickerUses({
   content: string;
   previousContent?: string;
 }) {
-  if (!CONSUMES[surface]) return;
+  if (!CONSUMES[surface]) return new Map<number, number>();
 
   const delta = netNewStickerPlacements(content, previousContent ?? '');
-  if (!delta.size) return;
+  if (!delta.size) return delta;
 
   await dbWrite.$transaction(async (tx) => {
     for (const [cosmeticId, count] of delta) {
@@ -79,7 +80,59 @@ export async function spendStickerUses({
       }
     }
   });
+
+  return delta;
 }
+
+/**
+ * Append-only usage history. One row per placement, emitted only after the spend
+ * has committed — a usage row for a charge that failed is worse than a missing
+ * one. `charged` comes straight from `spendStickerUses`, so the CONSUMES map
+ * stays the single source of truth for which surfaces record.
+ *
+ * Fire-and-forget: the authoritative balance is in Postgres, so a failed write
+ * here must never fail the user's submission.
+ */
+export function recordStickerUsage({
+  track,
+  userId,
+  charged,
+  entityType,
+  entityId,
+}: {
+  track?: { stickerUsage: (rows: StickerUsageRow[]) => Promise<unknown> };
+  userId: number;
+  charged: Map<number, number>;
+  entityType: string;
+  entityId: number;
+}) {
+  if (!track || !charged.size) return;
+
+  const rows: StickerUsageRow[] = [];
+  for (const [cosmeticId, count] of charged)
+    for (let i = 0; i < count; i++) rows.push({ userId, cosmeticId, entityType, entityId });
+
+  void track.stickerUsage(rows).catch((error) =>
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'sticker-usage-track-failed',
+        userId,
+        entityType,
+        entityId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'civitai-prod'
+    ).catch(() => undefined)
+  );
+}
+
+export type StickerUsageRow = {
+  userId: number;
+  cosmeticId: number;
+  entityType: string;
+  entityId: number;
+};
 
 /** Remaining balance per owned sticker; NULL entries are unlimited. */
 export async function getStickerBalances(userId: number) {
