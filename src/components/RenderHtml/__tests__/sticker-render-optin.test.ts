@@ -65,7 +65,9 @@ describe('sticker rendering is opt-in', () => {
     const registers = walk(SRC, [], ['.ts', '.tsx'])
       .filter((file) => /StickerNode|StickerEditNode/.test(fs.readFileSync(file, 'utf8')))
       .map(relative)
-      .filter((file) => !file.startsWith('components/RenderHtml/__tests__/'))
+      // Tests don't ship, and both the guard itself and the editor's own browser
+      // tests have to name the node to assert on it.
+      .filter((file) => !file.includes('/__tests__/'))
       .sort();
 
     expect(registers).toEqual([...MAY_REGISTER_STICKER_NODE].sort());

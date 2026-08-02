@@ -8,7 +8,7 @@ import {
   useRootThreadContext,
 } from '~/components/CommentsV2/CommentsProvider';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
-import { StickerPicker } from '~/components/Sticker/StickerPicker';
+import { StickerPickerXX } from '~/components/Sticker/StickerPickerXX';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import type { UpsertCommentV2Input } from '~/server/schema/commentv2.schema';
 import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
@@ -194,7 +194,7 @@ export const CommentForm = ({
           <Group justify="space-between">
             {/* This composer hides the toolbar, so the picker can't ride in it
                 the way it does on surfaces that show one. */}
-            <StickerPicker
+            <StickerPickerXX
               position="top-start"
               onSelect={(sticker) =>
                 editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug })
