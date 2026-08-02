@@ -26,7 +26,15 @@ Decisions are written to ClickHouse **before** the status write. `collection-gam
 hard-deletes rejected Buzz Beggars Board rows within the hour, so a decision that is not recorded
 here leaves no trace of what the model did or why.
 
-Apply manually — we do not auto-run ClickHouse DDL.
+Apply manually — we do not auto-run ClickHouse DDL. The tracker route must exist too. If it does
+not, `send` gets a 4xx and logs to Axiom rather than failing the job, so confirm provisioning after
+the first dry run with:
+
+```
+['civitai-prod'] | where name == 'Failed to track (4xx)' and details.table == 'collectionAiReviewEvents'
+```
+
+An empty result plus rows in ClickHouse means the audit trail is live.
 
 ```sql
 CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
