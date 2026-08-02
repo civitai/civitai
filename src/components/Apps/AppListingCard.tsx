@@ -12,7 +12,14 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
+import {
+  IconApps,
+  IconExternalLink,
+  IconEye,
+  IconPencil,
+  IconPlayerPlay,
+  IconThumbUp,
+} from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
@@ -371,7 +378,32 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
 
             {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
                 or the unified detail). External Visit → new-tab anchor; everything
-                else → an internal Link. */}
+                else → an internal Link.
+
+                ICONS (product-feedback pass). Each action carries its own glyph so
+                the three CTAs are distinguishable at a glance in a dense grid
+                rather than three same-shaped buttons differing only in wording:
+                  open   → IconPlayerPlay   (run the app here)
+                  visit  → IconExternalLink (leaves Civitai — already the case)
+                  detail → IconEye          (read about it)
+                The rail tile's icon button uses the SAME vocabulary
+                (`RECENT_ACTION_ICONS` in `RecentlyOpenedApps.tsx`, driven by
+                `getRecentRailAction`) so one action reads identically on both
+                surfaces.
+
+                🔴 The icon is DECORATIVE — the label text stays the accessible
+                name. Tabler icons render `<svg>` with no `<title>`, so they
+                contribute nothing to the name; the button's name is still
+                exactly "Open" / "Visit" / "View details". Asserted in
+                `AppListingCard.browser.test.tsx`.
+
+                🔴 WIDTH: `leftSection` makes each button ~22px wider, and the row
+                is `wrap="nowrap"` with `flexShrink: 0` on the actions (see the
+                block comment above — wrapping breaks alignment AND row height).
+                The pressure is absorbed where it was designed to be: the
+                recommend rollup on the left is the flexible side and truncates.
+                The tight case is `md`/`lg` (3–4 columns), not `base` (one wide
+                column); verified at 390/768/1440/2560 in the PR's viewport sweep. */}
             {cta.external ? (
               <Button
                 component="a"
@@ -396,6 +428,9 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
+                leftSection={
+                  cta.action === 'open' ? <IconPlayerPlay size={16} /> : <IconEye size={16} />
+                }
               >
                 {cta.label}
               </Button>

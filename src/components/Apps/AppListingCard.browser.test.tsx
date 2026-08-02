@@ -346,6 +346,113 @@ describe('AppListingCard', () => {
     expect(edit.style.getPropertyValue('--button-height')).toBe('var(--button-height-sm)');
   });
 
+  /**
+   * CTA ICONS (product-feedback pass). Each action gets its own glyph so three
+   * same-shaped buttons become distinguishable at a glance in a dense grid.
+   *
+   * 🔴 The load-bearing property is that the icon is DECORATIVE: the button's
+   * ACCESSIBLE NAME must still be exactly the label text. A Tabler icon that
+   * ever gained a `<title>` (or an `aria-label` added "for clarity") would
+   * silently rename every CTA for screen-reader and automated-test consumers —
+   * `getByRole('link', { name: 'Open' })` would stop matching, and so would the
+   * existing tests above. Both halves are asserted per action.
+   */
+  describe('the CTA icons', () => {
+    /** The action button's own svg glyphs (excludes the recommend-rollup icon). */
+    function ctaIcons(name: string) {
+      const el = page.getByRole('link', { name }).element();
+      return Array.from(el.querySelectorAll('svg'));
+    }
+
+    test('Open (on-site, runnable) renders an icon and keeps the name "Open"', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+      // EXACT name — an icon contributing to the accessible name would make this
+      // "Open " or "Open <something>" and fail.
+      const open = page.getByRole('link', { name: 'Open', exact: true });
+      await expect.element(open).toBeInTheDocument();
+      expect(ctaIcons('Open')).toHaveLength(1);
+    });
+
+    test('Visit (off-site) renders an icon and keeps the name "Visit"', async () => {
+      renderWithProviders(
+        <AppListingCard
+          card={base({
+            kind: 'offsite',
+            kindData: {
+              kind: 'offsite',
+              subKind: 'external-link',
+              externalUrl: 'https://ext.example/app',
+            },
+          })}
+          canOpenPage
+        />
+      );
+      const visit = page.getByRole('link', { name: 'Visit', exact: true });
+      await expect.element(visit).toBeInTheDocument();
+      expect(ctaIcons('Visit')).toHaveLength(1);
+    });
+
+    test('View details (page flag dark) renders an icon and keeps its name', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
+      const view = page.getByRole('link', { name: 'View details', exact: true });
+      await expect.element(view).toBeInTheDocument();
+      await expect.element(view).toHaveAttribute('href', '/apps/store-preview/my-app');
+      expect(ctaIcons('View details')).toHaveLength(1);
+    });
+
+    test('🔴 the action row still holds at NOWRAP with the wider buttons', async () => {
+      // The row is `wrap="nowrap"` with `flexShrink: 0` on the actions for two
+      // documented reasons (a wrapped single-item line left-aligns under
+      // space-between; an OWNER card wrapping at a different width would grow the
+      // height of a whole `h-full` grid row). Icons make the buttons ~22px wider,
+      // so this pins that the row did not quietly gain wrapping to cope.
+      //
+      // Rendered in a NARROW column — the tight case is md/lg (3–4 columns), not
+      // the wide single-column base — and with the OWNER "Edit" button present,
+      // which is the widest configuration the row ever has.
+      mocks.currentUser = { id: 5, username: 'alice' };
+      renderWithProviders(
+        <div style={{ width: 320 }}>
+          <AppListingCard card={base({})} canOpenPage />
+        </div>
+      );
+      // Await FIRST — `render()` commits on a later task, so a synchronous
+      // `.element()` observes an empty container.
+      await expect
+        .element(page.getByRole('link', { name: 'Open', exact: true }))
+        .toBeInTheDocument();
+      const cta = page.getByRole('link', { name: 'Open', exact: true }).element() as HTMLElement;
+      const actions = cta.parentElement as HTMLElement;
+      const row = actions.parentElement as HTMLElement;
+      expect(getComputedStyle(row).flexWrap).toBe('nowrap');
+      expect(getComputedStyle(actions).flexWrap).toBe('nowrap');
+      expect(getComputedStyle(actions).flexShrink).toBe('0');
+      // …and the actions really are on ONE line: Edit and the CTA share a row.
+      const edit = page.getByTestId('apps-listing-owner-edit').element() as HTMLElement;
+      expect(Math.abs(edit.getBoundingClientRect().top - cta.getBoundingClientRect().top)).toBeLessThan(2);
+    });
+
+    test('the recommend rollup is the side that absorbs the extra width (it truncates)', async () => {
+      renderWithProviders(
+        <div style={{ width: 320 }}>
+          <AppListingCard card={base({})} canOpenPage />
+        </div>
+      );
+      await expect.element(page.getByText('No reviews yet')).toBeInTheDocument();
+      const rollup = page.getByText('No reviews yet').element() as HTMLElement;
+      // ⚠️ Asserted via Mantine's `data-truncate` ATTRIBUTE, not
+      // `getComputedStyle(...).textOverflow`. The harness does not load
+      // `@mantine/core/styles.css`, so the class-based `text-overflow: ellipsis`
+      // computes to `clip` here regardless — an assertion on it fails against
+      // correct code and would have been "fixed" by deleting the truncation.
+      expect(rollup.getAttribute('data-truncate')).toBe('end');
+      // …and its container is the shrinkable side (`minWidth: 0` is what lets a
+      // flex item shrink below its content width at all), which is the actual
+      // mechanism that keeps the widened action buttons at natural size.
+      expect((rollup.parentElement as HTMLElement).style.minWidth).toBe('0px');
+    });
+  });
+
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
     const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
     // The tooltip is overflow-GATED (TruncatedText disables it unless the label
