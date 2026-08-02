@@ -141,18 +141,20 @@ describe('AppsSubmitEditView — routing', () => {
       error: null,
       refetch: vi.fn(),
     };
-    // 🔴 The ceiling must be long enough that the loader is still up when the
-    // RETRYING matcher below first polls. At 30ms this test raced its own
-    // fixture: the loader self-destructs before the first poll can see it, so
-    // `toBeInTheDocument` retried against an element that was already gone and
-    // timed out after ~15s — a red that tracked machine load, not the code.
-    // 200ms is what the sibling ceiling test below uses and passes reliably on.
-    // The assertion's INTENT is unchanged: a component that ignored the ceiling
-    // would still never surface the alert, so this still fails a pre-fix build.
-    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={200} />);
-    // Loader shows first…
-    await expect.element(page.getByTestId('apps-offsite-edit-loading')).toBeInTheDocument();
-    // …then the ceiling elapses and the recoverable alert takes over.
+    // 🔴 This test used to assert the loader is PRESENT before asserting the
+    // fall-through, with a 30ms ceiling — a race against its own fixture. The
+    // loader self-destructs at the ceiling, so a RETRYING matcher that first
+    // polls after 30ms can never succeed; it timed out at ~15s. That is what
+    // made `preview / component-tests` red, on machine load rather than on code.
+    //
+    // The pre-ceiling assertion is DELETED rather than given a wider window,
+    // because widening only makes the race rarer — and it was redundant: the
+    // first test in this file already asserts the loader renders, at the
+    // PRODUCTION ceiling (15s), with no timing dependency at all. What this test
+    // uniquely owns is the FALL-THROUGH, and both assertions below only ever
+    // WAIT, so a short ceiling makes them fast and deterministic.
+    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={30} />);
+    // The ceiling elapses and the recoverable alert takes over.
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });

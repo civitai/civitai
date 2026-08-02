@@ -35,12 +35,19 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // 🔴 IframeHost calls useFeatureFlags() (added by #3497 for the in-host "open the
 // page" affordance) and the REAL hook THROWS without a FeatureFlagsProvider, which
-// this scaffold does not mount. Without this the whole subtree crashes at mount:
-// `BlockHost` renders NOTHING, `waitForIframe` times out as "iframe never mounted",
-// and — worse — the three absence-asserting tests still PASS, because an empty DOM
-// trivially satisfies "collapsed to null". Same whole-module-factory shape and the
-// same dark-flag defaults as the sibling IframeHost.browser.test.tsx, deliberately
-// not an `importOriginal` spread.
+// this scaffold does not mount. Without this mock, every test that gets far enough
+// to MOUNT IframeHost crashes: `BlockHost` renders nothing and `waitForIframe`
+// times out as "iframe never mounted".
+//
+// Precisely which tests: only the three that reach a successful mint. The other
+// three set `respondWith(() => mintFail)` BEFORE rendering, so `useBlockToken`
+// never yields a token, `BlockHost` returns `<BlockFallback>` (see BlockHost.tsx),
+// and IframeHost — the only `useFeatureFlags()` caller in this render graph —
+// never mounts at all. Those three were unaffected and passed legitimately; they
+// assert PRESENCE on the fallback node, which an empty DOM would fail.
+//
+// Same whole-module-factory shape and the same dark-flag defaults as the sibling
+// IframeHost.browser.test.tsx, deliberately not an `importOriginal` spread.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
