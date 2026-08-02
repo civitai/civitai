@@ -135,8 +135,19 @@ function storageErrorMessage(err: unknown): string {
  *     its page but can't push the host off to an arbitrary route.
  */
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
-const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`.
+ *
+ * 🔴 EXPORTED for the browser tests, which drive these windows on a VIRTUAL clock
+ * (`vi.useFakeTimers`) instead of sleeping through them in real time. Waiting them
+ * out for real cost ~99s in one file and was the single largest contributor to the
+ * component suite overrunning its CI budget; importing the real constants keeps the
+ * tests pinned to the host's actual windows rather than to copies that can drift.
+ */
+export const BLOCK_READY_TIMEOUT_MS = 10_000;
+export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
