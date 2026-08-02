@@ -168,9 +168,9 @@ async function classifyItem({
   let action: Outcome['action'] = 'stamp';
   let message: string | undefined;
 
-  // A system failure is never the submitter's fault, so it is left for a human no matter how
+  // Escalations flagged neverReject are our own uncertainty, so they go to a human no matter how
   // escalations are configured.
-  if (applied && !decision.systemFailure) {
+  if (applied && !decision.neverReject) {
     if (decision.decision === 'approve') action = 'accept';
     else if (decision.decision === 'reject' || config.escalationAction === 'reject') {
       action = 'reject';
@@ -214,16 +214,26 @@ async function applyOutcomes({
 }) {
   if (!outcomes.length) return;
 
-  await dbWrite.$executeRaw`
+  // Minutes can pass between selecting an item and writing its outcome. Claiming the row only
+  // while it is still untouched means a moderator who decided it in the meantime keeps their
+  // decision and their attribution — and the status write below skips whatever we did not claim.
+  const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "CollectionItem"
     SET "reviewedById" = ${SYSTEM_USER_ID}, "reviewedAt" = now(), "updatedAt" = now()
     WHERE "collectionId" = ${collectionId}
       AND id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
+      AND status = 'REVIEW'
+      AND "reviewedById" IS NULL
+    RETURNING id
   `;
+  if (!claimed.length) return;
 
-  const accepted = outcomes.filter((o) => o.action === 'accept').map((o) => o.collectionItemId);
+  const claimedIds = new Set(claimed.map((row) => row.id));
+  const applicable = outcomes.filter((o) => claimedIds.has(o.collectionItemId));
+
+  const accepted = applicable.filter((o) => o.action === 'accept').map((o) => o.collectionItemId);
   const rejected = new Map<string, number[]>();
-  for (const outcome of outcomes) {
+  for (const outcome of applicable) {
     if (outcome.action !== 'reject') continue;
     const message = outcome.message ?? '';
     rejected.set(message, [...(rejected.get(message) ?? []), outcome.collectionItemId]);

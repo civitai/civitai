@@ -42,10 +42,21 @@ describe('decideFromObservations', () => {
     expect(result.escalations).toContain('unreadable model response');
   });
 
-  it('escalates when the model is unsure whether a subject is a minor', () => {
-    const result = decideFromObservations({ ...clean, minorUncertain: true });
+  // These collections are mostly stylized art, which is exactly what the prompt tells the model it
+  // may be unsure about. Escalating on the hedge alone would sweep up ordinary submissions.
+  it('approves an age-ambiguous subject when nothing else is flagged', () => {
+    expect(decideFromObservations({ ...clean, minorUncertain: true }).decision).toBe('approve');
+  });
+
+  it('escalates an age-ambiguous subject in a suggestive context', () => {
+    const result = decideFromObservations({
+      ...clean,
+      minorUncertain: true,
+      suggestiveStyling: true,
+    });
     expect(result.decision).toBe('escalate');
-    expect(result.escalations).toContain('possible minor');
+    expect(result.escalations).toContain('possible minor in suggestive context');
+    expect(result.neverReject).toBe(true);
   });
 
   // The prompt asks for 'R+', but models reach for the labels they know.
@@ -185,17 +196,23 @@ describe('isNsfwLevelAllowed', () => {
   });
 });
 
-describe('system failure', () => {
-  // escalationAction:'reject' is the default, so without this flag a provider outage would reject
-  // every submission it touched and tell the submitter their entry broke the rules.
-  it('marks an unreadable response as a system failure, not a content judgment', () => {
-    const result = decideFromObservations({});
-    expect(result.systemFailure).toBe(true);
+describe('neverReject', () => {
+  // escalationAction:'reject' is the default, so without this flag our own uncertainty becomes a
+  // rejection telling the submitter their entry broke a rule.
+  it.each([
+    ['an unreadable response', {}],
+    ['a refusal', { error: "I can't assist with that" }],
+    [
+      'an age-ambiguous subject in a suggestive context',
+      { ...clean, minorUncertain: true, suggestiveStyling: true },
+    ],
+  ])('flags %s as never-reject', (_label, response) => {
+    expect(decideFromObservations(response).neverReject).toBe(true);
   });
 
-  it('does not mark a genuine content escalation as a system failure', () => {
+  it('does not flag a genuine content escalation as never-reject', () => {
     const result = decideFromObservations({ ...clean, suggestiveStyling: true });
     expect(result.decision).toBe('escalate');
-    expect(result.systemFailure).toBeFalsy();
+    expect(result.neverReject).toBeFalsy();
   });
 });

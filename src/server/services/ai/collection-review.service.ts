@@ -63,11 +63,11 @@ export type AiReviewDecision = {
   violations: AiReviewViolation[];
   escalations: string[];
   /**
-   * We could not read the model, as opposed to the model reading something questionable. Callers
-   * must never turn this into a rejection: the submission is not at fault, and a provider outage
-   * would otherwise reject everything it touched.
+   * The escalation is our uncertainty, not a finding against the submission — an unreadable
+   * response, or a subject whose age the model could not determine. Callers must never turn this
+   * into a rejection; nobody should be told they broke a rule because we could not tell.
    */
-  systemFailure?: boolean;
+  neverReject?: boolean;
 };
 
 /**
@@ -85,7 +85,7 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
       decision: 'escalate',
       violations: [],
       escalations: ['unreadable model response'],
-      systemFailure: true,
+      neverReject: true,
     };
 
   const o = parsed.data;
@@ -94,14 +94,17 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
 
   if (o.depictsMinor && o.minorIsPhotorealistic) escalations.push('photorealistic minor');
   if (o.depictsMinor && o.minorInappropriate) escalations.push('minor depicted inappropriately');
-  // The prompt offers this as the model's way of saying "I can't tell if this is a child", so it
-  // has to lead somewhere other than approve.
-  if (o.minorUncertain) escalations.push('possible minor');
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
   const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
   if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
+
+  // Section B of the prompt invites this hedge on the stylized art these collections are mostly
+  // made of, so on its own it would escalate a large share of perfectly ordinary submissions. An
+  // ambiguous age only matters where the presentation is also sexualized.
+  const uncertainAgeInSexualContext = o.minorUncertain && (o.suggestiveStyling || o.sexualContent);
+  if (uncertainAgeInSexualContext) escalations.push('possible minor in suggestive context');
 
   for (const entry of o.otherViolations ?? []) {
     const value = entry.toLowerCase().trim();
@@ -113,7 +116,12 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
   if (!o.hasBuzzReference) violations.push('no buzz reference');
 
   const decision = escalations.length ? 'escalate' : violations.length ? 'reject' : 'approve';
-  return { decision, violations, escalations };
+  return {
+    decision,
+    violations,
+    escalations,
+    neverReject: uncertainAgeInSexualContext || undefined,
+  };
 }
 
 /**
