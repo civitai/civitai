@@ -1422,6 +1422,9 @@ importers:
       lodash-es:
         specifier: ^4.17.21
         version: 4.17.21
+      lru-cache:
+        specifier: ^11.2.2
+        version: 11.5.1
       msgpackr:
         specifier: ^1.10.2
         version: 1.11.5
