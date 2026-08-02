@@ -1,4 +1,6 @@
 import { InputRule } from '@tiptap/core';
+import type { Node as PMNode } from '@tiptap/pm/model';
+import { useEffect, useState } from 'react';
 import type { ReactNodeViewProps } from '@tiptap/react';
 import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import Suggestion from '@tiptap/suggestion';
@@ -6,7 +8,12 @@ import { getStickerSuggestions } from '~/components/RichTextEditor/sticker-sugge
 import { Sticker } from '~/components/Sticker/Sticker';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { StickerNode } from '~/shared/tiptap/sticker.node';
-import { isValidStickerSlug, STICKER_SLUG_PATTERN } from '~/shared/utils/sticker-token';
+import {
+  isValidStickerSlug,
+  STICKER_JUMBO_LIMIT,
+  STICKER_SIZE,
+  STICKER_SLUG_PATTERN,
+} from '~/shared/utils/sticker-token';
 
 export type StickerNodeStorage = {
   /**
@@ -86,11 +93,49 @@ export const StickerEditNode = StickerNode.extend<unknown, StickerNodeStorage>({
   },
 });
 
-function StickerEditComponent({ node }: ReactNodeViewProps<HTMLSpanElement>) {
+/**
+ * Same rule the chat and comment renderers apply: a block holding nothing but
+ * stickers draws them large. Re-derived from the document rather than shared with
+ * `parseStickerLines`, which reads a token string — here the source of truth is
+ * the ProseMirror node.
+ */
+function isJumboBlock(parent: PMNode) {
+  let stickers = 0;
+  let hasOtherContent = false;
+  parent.forEach((child) => {
+    if (child.type.name === 'sticker') stickers++;
+    else if (child.isText ? !!child.text?.trim() : true) hasOtherContent = true;
+  });
+  return !hasOtherContent && stickers > 0 && stickers <= STICKER_JUMBO_LIMIT;
+}
+
+function StickerEditComponent({ node, editor, getPos }: ReactNodeViewProps<HTMLSpanElement>) {
   const { id } = node.attrs as { id: string };
+  const [jumbo, setJumbo] = useState(false);
+
+  // Typing beside a sticker changes its parent block without changing the node
+  // itself, so the node view doesn't re-render on its own — recompute per
+  // transaction or the size sticks at whatever it was when first drawn.
+  useEffect(() => {
+    const update = () => {
+      const pos = typeof getPos === 'function' ? getPos() : undefined;
+      if (pos == null) return;
+      try {
+        setJumbo(isJumboBlock(editor.state.doc.resolve(pos).parent));
+      } catch {
+        // Position can be stale mid-transaction; the next one resolves it.
+      }
+    };
+    update();
+    editor.on('transaction', update);
+    return () => {
+      editor.off('transaction', update);
+    };
+  }, [editor, getPos]);
+
   return (
     <NodeViewWrapper as="span" data-drag-handle style={{ display: 'inline' }}>
-      <Sticker cosmeticId={Number(id)} />
+      <Sticker cosmeticId={Number(id)} size={jumbo ? STICKER_SIZE.jumbo : STICKER_SIZE.inline} />
     </NodeViewWrapper>
   );
 }

@@ -6,13 +6,16 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import { STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 // The node view renders <Sticker>, which resolves artwork over tRPC. Not what
 // these tests are about, and pulling it in would make the editor need a network
 // layer — stub it to something assertable instead.
 vi.mock('~/components/Sticker/Sticker', () => ({
-  Sticker: ({ cosmeticId }: { cosmeticId: number }) => (
-    <span data-testid="sticker-node">sticker:{cosmeticId}</span>
+  Sticker: ({ cosmeticId, size }: { cosmeticId: number; size?: number }) => (
+    <span data-testid="sticker-node" data-size={String(size)}>
+      sticker:{cosmeticId}
+    </span>
   ),
 }));
 
@@ -161,5 +164,28 @@ describe('the : trigger stays quiet', () => {
     renderWithProviders(<Harness />);
     await typeInto(' :g');
     expect(document.body.textContent).not.toContain(':gumdong_heart:');
+  });
+});
+
+// Justin asked for the editor to draw the sticker at the same jumbo/inline sizes
+// a posted comment uses. The failure mode is silent: typing next to a sticker
+// changes its parent block but not the node, so a size computed once sticks.
+describe('editor sizing tracks the block', () => {
+  test('a sticker alone on a line draws jumbo, and shrinks when text joins it', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto(':gumdong_heart:');
+    const node = page.getByTestId('sticker-node').first();
+    await expect.element(node).toHaveAttribute('data-size', String(STICKER_SIZE.jumbo));
+
+    await userEvent.type(page.getByRole('textbox').first(), ' hello');
+    await expect.element(node).toHaveAttribute('data-size', String(STICKER_SIZE.inline));
+  });
+
+  test('a sticker typed after text is inline from the start', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto('hey :gumdong_heart:');
+    await expect
+      .element(page.getByTestId('sticker-node').first())
+      .toHaveAttribute('data-size', String(STICKER_SIZE.inline));
   });
 });
