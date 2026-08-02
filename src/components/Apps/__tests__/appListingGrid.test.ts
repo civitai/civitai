@@ -42,9 +42,13 @@ describe('LISTING_GRID_SPAN', () => {
 });
 
 describe('LISTING_STORE_CONTAINER_SIZE', () => {
-  test('the store container width is UNTOUCHED at 1600', () => {
-    // The extra card width comes from the column-count drop, NOT from widening
-    // the page. If this ever changes, the grid span above must be re-derived.
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(1600);
+  test('the store container is the WIDE apps-page width (1920)', () => {
+    // Moved 1600 → 1920 by the full-width pass. The span above was deliberately
+    // NOT re-tuned: four columns at 1920 is ~460 px per card, i.e. WIDER than the
+    // ~383 px the larger-cover pass shipped at 1600, so the cover change is
+    // amplified rather than undone. The container/span arithmetic is pinned in
+    // `__tests__/appsPageWidths.test.ts`; the number itself is single-sourced
+    // from `appsPageWidths.ts`.
+    expect(LISTING_STORE_CONTAINER_SIZE).toBe(1920);
   });
 });

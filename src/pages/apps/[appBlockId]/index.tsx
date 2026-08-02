@@ -28,6 +28,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import {
@@ -286,7 +287,7 @@ export default function AppDetailPage() {
         description={description || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
-      <Container size="md" py="md">
+      <Container size={APPS_PAGE_WIDTHS['/apps/[appBlockId]']} py="md">
         <Stack gap="lg">
           <Anchor component={Link} href="/apps" size="sm">
             <Group gap={4}>
