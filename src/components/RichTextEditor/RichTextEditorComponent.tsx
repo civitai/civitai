@@ -17,6 +17,7 @@ import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertI
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -32,6 +33,7 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 
@@ -141,6 +143,19 @@ export function RichTextEditor({
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
+
+  const { sticker: ownedStickers } = useOwnedSticker();
+  const { data: stickerBalances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: addStickers,
+  });
+  // Exhausted stickers stay out of autocomplete and the input rule — offering
+  // one from a menu that never mentions the balance just fails at submit.
+  const availableStickers = useMemo(() => {
+    const spent = new Set(
+      (stickerBalances ?? []).filter((b) => b.remaining === 0).map((b) => b.cosmeticId)
+    );
+    return ownedStickers.filter((x) => !spent.has(x.id));
+  }, [ownedStickers, stickerBalances]);
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -283,6 +298,14 @@ export function RichTextEditor({
   useEffect(() => {
     if (editor && !editorRef.current) editorRef.current = editor;
   }, [editor]);
+
+  // Written into per-editor storage rather than passed as an extension option:
+  // ownership loads async, and changing the extension array rebuilds the editor.
+  useEffect(() => {
+    if (!editor || !addStickers) return;
+    const storage = editor.extensionStorage.sticker;
+    if (storage) storage.available = availableStickers;
+  }, [editor, addStickers, availableStickers]);
 
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({
