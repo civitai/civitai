@@ -585,14 +585,17 @@ describe('AppListingCard', () => {
       // The widest CTA ("View details") — the tight cell in the table above. A
       // connect-kind listing has no external target, so `getListingCta` falls
       // through to the unified detail. Fully typed (`externalUrl` included)
-      // rather than cast: the cast version compiled under vitest but failed
-      // `tsc` with TS2352, since the shape did not overlap `ListingCardKindData`.
+      // rather than cast. Two bugs the cast was HIDING, both surfaced the moment
+      // it became a `satisfies`: `externalUrl` was missing, and the subKind was
+      // `'oauth-connect'` — not a member of `OffsiteSubKind` at all
+      // (`'connect' | 'external-link'`). Neither `tsc` error reached vitest,
+      // which type-strips.
       const OFFSITE_CONNECT = {
         ...REVIEWED,
         kind: 'offsite' as const,
         kindData: {
           kind: 'offsite',
-          subKind: 'oauth-connect',
+          subKind: 'connect',
           externalUrl: null,
         } satisfies ListingCard['kindData'],
       };
