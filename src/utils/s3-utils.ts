@@ -752,7 +752,48 @@ export async function getGetUrlByKey(
   return { url, bucket, key };
 }
 
-export async function checkFileExists(key: string, s3: S3Client | null = null) {
+/** A HeadObject rejection that definitively means "this key is not in the bucket". */
+function isNotFoundError(e: unknown) {
+  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404
+  );
+}
+
+/**
+ * HeadObject existence probe.
+ *
+ * 🔴 TRI-STATE on purpose:
+ *  - `true`  — the object is present.
+ *  - `false` — the bucket answered, definitively, that the key is absent (404/NotFound).
+ *  - `null`  — the bucket could not be consulted at all: missing credentials, a 403 from a
+ *              rotated key, a network blip.
+ *
+ * A caller that REJECTS on absence must treat `null` as "don't know" and fail open.
+ * Collapsing `null` into `false` (as this helper used to) turns an infrastructure hiccup
+ * into a user-facing rejection — the same fail-open discipline the announcement media
+ * check applies for the same reason.
+ *
+ * 🔴 `abortSignal` is how a caller on a USER-FACING path bounds this. The client is built with
+ * SDK-default retries and no request timeout, so an unbounded probe against a degraded backend
+ * turns a guard into a hang. The signal is passed once and shared by every retry attempt, so it
+ * bounds every network attempt — but it is NOT a wall-clock cap on the call: the SDK's retry
+ * middleware sleeps between attempts with a plain, non-abort-aware timer, so a deadline landing
+ * mid-backoff lets that sleep run to completion and only the NEXT attempt short-circuits.
+ * Worst-case wall time is therefore the budget plus one backoff. (Measured against the installed
+ * SDK: a 300 ms budget with a ~5 s backoff in flight returned in ~4.7 s.) An abort surfaces as a
+ * plain `AbortError` (no `$metadata`), which is not a not-found shape and is not classified
+ * retryable — so the call ends there, lands on `null`, and the caller fails open exactly like any
+ * other "could not consult the bucket" outcome.
+ */
+export async function checkFileExists(
+  key: string,
+  {
+    s3,
+    bucket,
+    abortSignal,
+  }: { s3?: S3Client | null; bucket?: string; abortSignal?: AbortSignal } = {}
+): Promise<boolean | null> {
   if (!s3) s3 = getS3Client();
 
   try {
@@ -760,11 +801,12 @@ export async function checkFileExists(key: string, s3: S3Client | null = null) {
     await s3.send(
       new HeadObjectCommand({
         Key: parsedKey,
-        Bucket: parsedBucket ?? env.S3_UPLOAD_BUCKET,
-      })
+        Bucket: parsedBucket ?? bucket ?? env.S3_UPLOAD_BUCKET,
+      }),
+      { abortSignal }
     );
-  } catch {
-    return false;
+  } catch (e) {
+    return isNotFoundError(e) ? false : null;
   }
 
   return true;
