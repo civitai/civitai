@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { countStickerPlacements, netNewStickerPlacements } from '~/shared/utils/sticker-token';
+import {
+  countStickerPlacements,
+  netNewStickerPlacements,
+  STICKER_SURFACES,
+  surfaceMayContainStickers,
+} from '~/shared/utils/sticker-token';
 
 const span = (id: number) => `<span data-type="sticker" data-id="${id}"></span>`;
 
@@ -87,5 +92,31 @@ describe('netNewStickerPlacements', () => {
     expect(netNewStickerPlacements(`<p>${span(2)}</p>`, `<p>${span(1)}</p>`)).toEqual(
       new Map([[2, 1]])
     );
+  });
+});
+
+// The containment half and the charging half read from this one table. Keeping
+// them together is the point: a surface that may hold sticker markup but never
+// charges is exactly the shape that made stickers free on ~30 surfaces.
+describe('STICKER_SURFACES', () => {
+  it('denies any surface not listed', () => {
+    expect(surfaceMayContainStickers('article')).toBe(false);
+    expect(surfaceMayContainStickers('modelDescription')).toBe(false);
+    expect(surfaceMayContainStickers('bounty')).toBe(false);
+  });
+
+  it('allows the two that gate ownership', () => {
+    expect(surfaceMayContainStickers('chat')).toBe(true);
+    expect(surfaceMayContainStickers('comment')).toBe(true);
+  });
+
+  it('pairs each surface with the form it actually renders', () => {
+    expect(STICKER_SURFACES.chat.form).toBe('token');
+    expect(STICKER_SURFACES.comment.form).toBe('span');
+  });
+
+  it('keeps DMs free and comments charged', () => {
+    expect(STICKER_SURFACES.chat.consumes).toBe(false);
+    expect(STICKER_SURFACES.comment.consumes).toBe(true);
   });
 });

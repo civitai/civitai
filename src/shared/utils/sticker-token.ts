@@ -167,3 +167,23 @@ export function netNewStickerPlacements(
 
   return delta;
 }
+
+export type StickerSurface = 'chat' | 'comment';
+
+/**
+ * Everything that varies per surface, in one table.
+ *
+ * These three facts are the same decision seen from different sides, and they
+ * were previously spread across the sanitizer opt-in, a CONSUMES map and a
+ * CONTENT_FORM map. Splitting them let content be *containable* somewhere that
+ * never charged — which is how sticker markup ended up free on ~30 rich-text
+ * surfaces. A surface not listed here is denied by default everywhere.
+ */
+export const STICKER_SURFACES = {
+  // Free and unlimited by decision (§4b.3), so it stores tokens and never charges.
+  chat: { form: 'token', consumes: false },
+  comment: { form: 'span', consumes: true },
+} as const satisfies Record<StickerSurface, { form: StickerContentForm; consumes: boolean }>;
+
+/** Whether a surface may hold sticker markup at all. Anything absent is denied. */
+export const surfaceMayContainStickers = (surface: string): boolean => surface in STICKER_SURFACES;

@@ -5,6 +5,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
 
 export const commentRateLimits: RateLimit[] = [
   { limit: 10, period: CacheTTL.hour },
@@ -40,9 +41,10 @@ export const commentUpsertInput = z.object({
   parentId: z.number().nullish(),
   content: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
-    // Comments charge a use per sticker placement, so they may carry them.
-    // Every other rich-text surface is denied by default.
-    allowStickers: true,
+    // Read from STICKER_SURFACES rather than hardcoded, so "may contain a
+    // sticker" and "charges for one" can't drift apart — that split is what let
+    // sticker markup be containable on surfaces that never charged.
+    allowStickers: surfaceMayContainStickers('comment'),
   })
     .refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';

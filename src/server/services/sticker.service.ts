@@ -3,28 +3,20 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { isPreview, isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import type { StickerContentForm } from '~/shared/utils/sticker-token';
-import { netNewStickerPlacements } from '~/shared/utils/sticker-token';
+import type { StickerSurface } from '~/shared/utils/sticker-token';
+import { netNewStickerPlacements, STICKER_SURFACES } from '~/shared/utils/sticker-token';
 
 /**
  * Where a sticker was placed. Required, never inferred: DMs are free and
  * unlimited, so a caller that forgot to say where it was would silently get the
  * free path.
  */
-export type StickerSurface = 'chat' | 'comment';
-
-/** Surfaces that spend a use. DMs are deliberately free (§4b.3). */
-const CONSUMES: Record<StickerSurface, boolean> = { chat: false, comment: true };
-
 /**
- * How each surface stores a sticker. Only the form a surface actually renders
- * counts — a comment shows spans, so literal `:sticker:12:` text in one is just
- * text and must not be charged.
+ * Where a sticker was placed. Required, never inferred: DMs are free and
+ * unlimited, so a caller that forgot to say where it was would silently get the
+ * free path. Per-surface behaviour lives in STICKER_SURFACES.
  */
-const CONTENT_FORM: Record<StickerSurface, StickerContentForm> = {
-  chat: 'token',
-  comment: 'span',
-};
+export type { StickerSurface };
 
 /**
  * Spends one use per placement, all-or-nothing.
@@ -51,9 +43,13 @@ export async function spendStickerUses({
   previousContent?: string;
   tx?: Prisma.TransactionClient;
 }) {
-  if (!CONSUMES[surface]) return new Map<number, number>();
+  if (!STICKER_SURFACES[surface].consumes) return new Map<number, number>();
 
-  const delta = netNewStickerPlacements(content, previousContent ?? '', CONTENT_FORM[surface]);
+  const delta = netNewStickerPlacements(
+    content,
+    previousContent ?? '',
+    STICKER_SURFACES[surface].form
+  );
   if (!delta.size) return delta;
 
   const spend = async (tx: Prisma.TransactionClient) => {
@@ -111,7 +107,7 @@ export async function spendStickerUses({
 /**
  * Append-only usage history. One row per placement, emitted only after the spend
  * has committed — a usage row for a charge that failed is worse than a missing
- * one. `charged` comes straight from `spendStickerUses`, so the CONSUMES map
+ * one. `charged` comes straight from `spendStickerUses`, so STICKER_SURFACES
  * stays the single source of truth for which surfaces record.
  *
  * Fire-and-forget: the authoritative balance is in Postgres, so a failed write
