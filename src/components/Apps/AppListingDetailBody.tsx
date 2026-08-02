@@ -18,11 +18,9 @@ import {
 import {
   IconApps,
   IconArrowLeft,
-  IconExternalLink,
   IconInfoCircle,
   IconPencil,
   IconPlayerPlay,
-  IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -33,6 +31,8 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
+import { ACTION_GLYPH_ICONS } from '~/components/Apps/appListingActionGlyphIcons';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
@@ -370,9 +370,17 @@ function LivePreview({ detail }: { detail: ListingDetail }) {
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
 
+  // 🔴 Every branch below renders THIS icon — do not hard-code a glyph in a
+  // branch. `open` (in-site nav to /apps/run/<slug>, no target) and `visit`
+  // (external new tab) used to share `IconExternalLink`, which made the CTA
+  // carry no on-site/off-site signal at all — the signal #3391 removed the kind
+  // badges on the grounds that the CTA already carried. The mapping is pinned in
+  // `__tests__/appListingActionGlyph.test.ts`.
+  const GlyphIcon = ACTION_GLYPH_ICONS[detailActionGlyph(action.mode)];
+
   if (action.mode === 'open' && action.href) {
     return (
-      <Button component={Link} href={action.href} leftSection={<IconExternalLink size={16} />}>
+      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />}>
         {action.label}
       </Button>
     );
@@ -386,7 +394,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           href={action.href}
           target="_blank"
           rel="noopener noreferrer"
-          leftSection={<IconExternalLink size={16} />}
+          leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
           // whose viewer can't open the in-host route ("Open live" — the
@@ -412,7 +420,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
     // button + a note so the affordance is never a dead 404 link.
     return (
       <Stack gap={4}>
-        <Button variant="default" leftSection={<IconPlugConnected size={16} />} disabled>
+        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled>
           {action.label}
         </Button>
         {action.note && (
@@ -432,12 +440,12 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   return (
     <Stack gap={4}>
       {action.href ? (
-        <Button component={Link} href={action.href} variant="default" leftSection={<IconInfoCircle size={16} />}>
+        <Button component={Link} href={action.href} variant="default" leftSection={<GlyphIcon size={16} />}>
           {action.label}
         </Button>
       ) : (
         <Group gap={6} c="dimmed">
-          <IconInfoCircle size={16} />
+          <GlyphIcon size={16} />
           <Text size="sm">{action.label}</Text>
         </Group>
       )}

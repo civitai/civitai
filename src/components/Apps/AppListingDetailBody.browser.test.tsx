@@ -300,6 +300,106 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(1);
   });
 
+  // ── Primary-action glyph (S6a) ─────────────────────────────────────────────
+  //
+  // 🔴 THIS is the gate for the component wiring. The node suite
+  // (`__tests__/appListingActionGlyph.test.ts`) proves the MAPPING is correct —
+  // it stays fully green if someone hard-codes an icon back into a branch of
+  // `PrimaryAction`, because it never renders the component. Only these tests
+  // fail on that.
+  //
+  // Marker choice: Tabler renders `class="tabler-icon tabler-icon-<name>"`
+  // (`tabler-icon-${iconName}` in the package's `createReactComponent`). That is
+  // stable across a patch bump in a way the raw path `d` is not, and it survives
+  // in browser mode — unlike `data-testid`, which the production compiler strips
+  // (`reactRemoveProperties`), so it must never be the marker on a preview.
+
+  /** The `tabler-icon-*` modifier class on the button's glyph, e.g. `player-play`. */
+  function glyphOf(button: Element): string {
+    const svg = button.querySelector('svg');
+    if (!svg) throw new Error('primary action button rendered no glyph at all');
+    const modifier = Array.from(svg.classList).find(
+      (c) => c.startsWith('tabler-icon-') && c !== 'tabler-icon'
+    );
+    if (!modifier) throw new Error(`glyph carried no tabler-icon-* class: ${svg.getAttribute('class')}`);
+    return modifier.replace('tabler-icon-', '');
+  }
+
+  /** The off-site (external-link) variant of `base()`. */
+  const offsite = () =>
+    base({
+      kind: 'offsite',
+      kindData: {
+        kind: 'offsite',
+        subKind: 'external-link',
+        externalUrl: 'https://ext.app',
+        connectClientId: null,
+      },
+    });
+
+  /**
+   * Render barrier. `renderWithProviders` resolves before React has necessarily
+   * committed the CTA, so a bare `document.querySelector` right after it reads
+   * a pre-commit DOM and returns null — which is the SAME trap the `.not`
+   * comment above describes, in its positive form. Every DOM read below waits
+   * on a retrying locator first.
+   */
+  async function renderAndSettle(
+    ui: Parameters<typeof renderWithProviders>[0],
+    ctaHref: string
+  ): Promise<HTMLAnchorElement> {
+    await renderWithProviders(ui);
+    // Poll for the CTA itself rather than a text barrier: this test renders
+    // twice in one body, so a `page.getByText('My App')` locator would match
+    // both mounts and throw on strict mode. The href is unique per variant.
+    const cta = await vi.waitUntil(() => document.body.querySelector(`a[href="${ctaHref}"]`), {
+      timeout: 5000,
+      interval: 25,
+    });
+    return cta as HTMLAnchorElement;
+  }
+
+  test('🔴 the in-site Open CTA and the off-site Visit CTA render DIFFERENT glyphs', async () => {
+    // The premise civitai #3391 removed the kind + category badges on: that the
+    // on-site/off-site signal rides the CTA. Before S6a both branches rendered
+    // the byte-identical IconExternalLink, so it did not.
+    const openBtn = await renderAndSettle(
+      <AppListingDetailBody detail={base({})} canOpenPage />,
+      '/apps/run/my-app'
+    );
+    const openGlyph = glyphOf(openBtn);
+
+    const visitBtn = await renderAndSettle(
+      <AppListingDetailBody detail={offsite()} />,
+      'https://ext.app'
+    );
+    const visitGlyph = glyphOf(visitBtn);
+
+    expect(openGlyph).not.toBe(visitGlyph);
+    // Pin the actual values too, so "different" can't be satisfied by regressing
+    // the off-site branch instead of fixing the in-site one.
+    expect(openGlyph).toBe('player-play');
+    expect(visitGlyph).toBe('external-link');
+  });
+
+  test('the glyph change does NOT touch link semantics', async () => {
+    // S6a is iconography only. The in-site CTA must stay a same-tab internal
+    // link, and the off-site one must keep its new-tab + rel hardening.
+    const openBtn = await renderAndSettle(
+      <AppListingDetailBody detail={base({})} canOpenPage />,
+      '/apps/run/my-app'
+    );
+    expect(openBtn.getAttribute('target')).toBeNull();
+    expect(openBtn.getAttribute('rel')).toBeNull();
+
+    const visitBtn = await renderAndSettle(
+      <AppListingDetailBody detail={offsite()} />,
+      'https://ext.app'
+    );
+    expect(visitBtn.getAttribute('target')).toBe('_blank');
+    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
   // ── Discovery rail ─────────────────────────────────────────────────────────
 
   test('the related rail renders siblings and EXCLUDES the listing being viewed', async () => {
