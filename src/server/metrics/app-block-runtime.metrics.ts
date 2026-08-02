@@ -234,6 +234,7 @@ type Bundle = {
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
+  stepPriceDivergenceTotal: Counter<string>;
 };
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
@@ -377,6 +378,30 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['reason']
   );
 
+  // ── `kind: 'step'` prepaidFixed PRICE DIVERGENCE ─────────────────────────────
+  // 🔴 This counter instruments the ONE input to the step bridge's money path
+  // that could not be verified before shipping: the orchestrator's ACTUAL price
+  // for a `prepaidFixed` step type. The registry DECLARES an exact price, gates
+  // the block token's per-call budget against it, and reserves it on every cap
+  // before submit. If the orchestrator ever bills MORE than the declared price,
+  // the declaration is wrong and the entry needs a higher price — or a different
+  // billing mode entirely, because "deterministic cost knowable before
+  // execution" would have turned out to be false for it.
+  //
+  // The submit path corrects the cap counters for the overage itself; this
+  // counter is what makes the correction VISIBLE instead of silent. A non-zero
+  // rate here is a registry bug, not a user problem.
+  //
+  // Cardinality: one `step` label, drawn from the code-owned registry keys
+  // (never client input — the wire enum is derived from those same keys, so an
+  // unregistered id cannot reach here). One series per registered step type.
+  const stepPriceDivergenceTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_step_price_divergence_total',
+    "App Block `kind:'step'` submits whose REALIZED orchestrator cost exceeded the registry's DECLARED prepaidFixed price, by step id. Non-zero means the declared price is wrong.",
+    ['step']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
@@ -385,7 +410,25 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
+    stepPriceDivergenceTotal,
   };
+}
+
+/**
+ * Fail-soft emit of one `prepaidFixed` step price divergence (realized cost
+ * exceeded the registry's declared price). Called from the step submit path
+ * AFTER the money has already moved.
+ *
+ * 🔴 TOTAL, like every emitter in this module. It reports on an already-billed
+ * submit; a metrics error must never turn a successful generation into a 500.
+ */
+export function recordStepPriceDivergence(step: string): void {
+  try {
+    const { stepPriceDivergenceTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    stepPriceDivergenceTotal.inc({ step });
+  } catch {
+    /* instrument-only — never let a metrics error touch an already-billed submit */
+  }
 }
 
 /**

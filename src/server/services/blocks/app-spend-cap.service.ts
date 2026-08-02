@@ -342,3 +342,35 @@ export async function refundAppSpend(key: AppSpendDailyKey, cost: number): Promi
     /* best-effort — a lost refund over-counts (stricter cap), never looser */
   });
 }
+
+/**
+ * Add `cost` to the per-app daily counter on the EXACT key a previous
+ * `reserveAppSpend` returned, with NO allow/deny semantics — the exact mirror of
+ * `refundAppSpend`.
+ *
+ * 🔴 WHY THIS IS NOT `reserveAppSpend`. This is an ACCOUNTING CORRECTION for
+ * money that has ALREADY been spent, not a gate on a spend that has not happened
+ * yet. `reserveAppSpend` is a gate: when the increment would breach the ceiling
+ * it REFUNDS its own increment and denies, because the correct response to "this
+ * submit would exceed the cap" is "don't run this submit". That behaviour is
+ * exactly wrong here — the submit already ran and the viewer was already
+ * charged, so rolling the increment back would leave the counter UNDER-reading
+ * real spend, which is the one direction an abuse cap must never drift.
+ *
+ * The caller is the `kind: 'step'` prepaidFixed path, when the orchestrator's
+ * realized cost came in above the registry's declared price: it reserved the
+ * declared price before submit, so the counter is short by the difference. This
+ * makes it exact regardless of what the orchestrator actually charged.
+ *
+ * Best-effort and never throws into the caller (the submit is already
+ * committed). A lost correction under-counts by the overage only — which is why
+ * the paired `civitai_app_block_step_price_divergence_total` counter is the
+ * signal to fix the declared price rather than rely on this correction.
+ */
+export async function chargeAppSpendOverage(key: AppSpendDailyKey, cost: number): Promise<void> {
+  const amount = Math.ceil(cost);
+  if (amount <= 0) return;
+  await sysRedis.incrBy(key, amount).catch(() => {
+    /* best-effort — a lost correction under-counts by the overage only */
+  });
+}

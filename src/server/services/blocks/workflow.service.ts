@@ -908,7 +908,7 @@ export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
 
 // Format a whole-second timeout as the orchestrator's `HH:MM:SS` step-timeout
 // string (WorkflowStep.timeout). 180 → '00:03:00'.
-function formatStepTimeout(totalSeconds: number): string {
+export function formatStepTimeout(totalSeconds: number): string {
   const s = Math.max(0, Math.ceil(totalSeconds));
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;

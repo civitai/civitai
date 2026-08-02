@@ -155,12 +155,16 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
 const {
   mockReserveAppSpend,
   mockRefundAppSpend,
+  mockChargeAppSpendOverage,
   mockUpsertBlockWorkflow,
   mockListMyBlockWorkflows,
   mockUpdateBlockWorkflowStatus,
 } = vi.hoisted(() => ({
   mockReserveAppSpend: vi.fn(),
   mockRefundAppSpend: vi.fn(async () => undefined),
+  // `kind:'step'` prepaidFixed price-divergence correction — a plain INCRBY on
+  // the pinned daily key with no allow/deny semantics (see the service).
+  mockChargeAppSpendOverage: vi.fn(async () => undefined),
   mockUpsertBlockWorkflow: vi.fn(async () => undefined),
   mockListMyBlockWorkflows: vi.fn(),
   // G6 — the read-model terminal flip pollWorkflow fires best-effort when it
@@ -171,6 +175,7 @@ const {
 vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   reserveAppSpend: (...a: unknown[]) => mockReserveAppSpend(...(a as [])),
   refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+  chargeAppSpendOverage: (...a: unknown[]) => mockChargeAppSpendOverage(...(a as [])),
 }));
 vi.mock('~/server/services/blocks/block-workflows.service', () => ({
   upsertBlockWorkflowOnSubmit: (...a: unknown[]) => mockUpsertBlockWorkflow(...(a as [])),
@@ -492,6 +497,7 @@ beforeEach(() => {
     mockRefundDevSessionBuzz,
     mockReserveAppSpend,
     mockRefundAppSpend,
+    mockChargeAppSpendOverage,
     mockUpsertBlockWorkflow,
     mockListMyBlockWorkflows,
     mockUpdateBlockWorkflowStatus,
@@ -508,6 +514,7 @@ beforeEach(() => {
     dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
   });
   mockRefundAppSpend.mockResolvedValue(undefined);
+  mockChargeAppSpendOverage.mockResolvedValue(undefined);
   mockUpsertBlockWorkflow.mockResolvedValue(undefined);
   mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
   // G6 read-model flip: default to a resolved 1-row UPDATE. Tests exercising the
@@ -5800,6 +5807,475 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         workflowId: 'wf_cc_1',
         actualCost: 12,
       });
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
+//
+// 🔴 THE POINT OF THIS SUITE IS THE MONEY PATH. A step submit opens a NEW spend
+// surface, and the requirement is that it is covered by the SAME guardrails as
+// every other kind — above all the per-app aggregate `reserveAppSpend` cap
+// (daily Buzz + velocity). If it were not, the cap would silently not apply to
+// this whole class of generation and the
+// `civitai_app_block_spend_cap_rejections_total` counter would never fire for
+// it either, so the gap would also be invisible in monitoring.
+//
+// The `reserveAppSpend` assertions below are mutation-proven: deleting the
+// reserve call from the router makes them fail on their OWN assertion (see the
+// mutation table in the PR body).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("step-type registry bridge (kind: 'step')", () => {
+  const STEP_ID = 'convert-image';
+  const STEP_PRICE = 1; // CONVERT_IMAGE_PRICE_BUZZ — the declared prepaidFixed price.
+
+  // A PAGE token (ctx.entityType==='none') — registry steps are page-only in v1.
+  function stepClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      ctx: { entityType: 'none', slotId: 'page' },
+      appBlockId: 'apb_test',
+      buzzBudget: 50,
+      ...over,
+    });
+  }
+
+  function stepBody(over: Record<string, unknown> = {}) {
+    return {
+      kind: 'step' as const,
+      step: STEP_ID,
+      params: {
+        image: 'https://image.civitai.com/source.png',
+        output: { format: 'webp', quality: 90 },
+      },
+      ...over,
+    };
+  }
+
+  function happyStepSubmit(cost = 1) {
+    mockSubmitWorkflow.mockResolvedValue({
+      id: 'wf_step_1',
+      status: 'processing',
+      steps: [{ $type: 'convertImage', output: {} }],
+      cost: { total: cost },
+    });
+  }
+
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe('estimateWorkflow', () => {
+    it('returns the registry DISPLAY estimate with NO orchestrator round-trip', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'wf_estimate',
+        status: 'pending',
+        cost: { total: STEP_PRICE },
+      });
+      // 🔴 "Deterministic cost knowable BEFORE execution" — no whatIf, no submit.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the estimate EQUALS what submit reserves and charges', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', estimate.snapshot.cost.total);
+    });
+
+    it('REJECTS an out-of-bounds param through the step .strict() schema', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: { image: 'https://evil.example/x.png', output: { format: 'webp' } },
+          }),
+        })
+      ).rejects.toThrow();
+    });
+
+    it('REJECTS a model token (registry steps are page-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token (ctx.modelId)
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
+
+  describe('🔴 submitWorkflow — the money path', () => {
+    it('reserves the EXACT declared price on the per-user daily cap AND the PER-APP cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('wf_step_1');
+      // per-user cumulative cap
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+      // 🔴 THE REQUIREMENT: the per-app aggregate spend/velocity cap.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', STEP_PRICE);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+    });
+
+    it('reserves the per-app cap BEFORE the orchestrator submit (never after the spend)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const order: string[] = [];
+      mockReserveAppSpend.mockImplementation(async () => {
+        order.push('reserveAppSpend');
+        return {
+          allowed: true,
+          dailyTotal: 0,
+          velocityCount: 1,
+          dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+        };
+      });
+      mockSubmitWorkflow.mockImplementation(async () => {
+        order.push('submitWorkflow');
+        return { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 1 } };
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(order).toEqual(['reserveAppSpend', 'submitWorkflow']);
+    });
+
+    it('a per-app DAILY cap rejection returns the daily reason and NEVER submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 0,
+        velocityCount: 0,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'failed',
+        status: 'failed',
+        cost: { total: STEP_PRICE },
+      });
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // The viewer's OWN daily ceiling is given back — a rejected submit must not
+      // burn it for a spend that never happened.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('a per-app VELOCITY cap rejection returns the velocity reason and NEVER submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'velocity',
+        dailyTotal: 0,
+        velocityCount: 999,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.error).toMatch(/app generation rate limit reached/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a fail-closed cap (redis unavailable) rejects without exposing the ceiling', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'unavailable',
+        dailyTotal: 0,
+        velocityCount: 0,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.error).toMatch(/temporarily unavailable/);
+      // A hostile app must not be able to probe its exact ceiling from the message.
+      expect(result.snapshot.error).not.toMatch(/\d{3,}/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('refunds the PER-APP reservation when the orchestrator submit throws', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        STEP_PRICE
+      );
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('SKIPS the per-app cap for a DEV token (synthetic non-FK appBlockId), like every other kind', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ dev: true }));
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      // The per-user cap still applies.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('IDEMPOTENCY: a replayed submit does NOT double-charge (one reserve, one submit)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      const first = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody(),
+        idempotencyKey: 'step-key',
+      });
+      const second = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody(),
+        idempotencyKey: 'step-key',
+      });
+      expect(first.snapshot.workflowId).toBe('wf_step_1');
+      expect(second.snapshot.workflowId).toBe('wf_step_1');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      // The single real submit carried the namespaced externalId (2nd defense layer).
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.externalId).toBe('blk08apb_teststep-key');
+    });
+
+    it('a concurrent same-key submit is a 409 with NO reserve and NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockClaimGen.mockResolvedValue({ state: 'in_progress' });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody(), idempotencyKey: 'k' })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('an over-budget price fails the STATIC gate before any reservation or submit', async () => {
+      // buzzBudget below the declared price → deterministic rejection, no redis,
+      // no orchestrator. (The gate is reachable: nothing earlier rejects a
+      // well-formed body with a small budget.)
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 0.5 }));
+      happyUser();
+      happyStepSubmit();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('failed');
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(
+        /insufficient buzz budget: step price 1 exceeds budget 0.5/
+      );
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submitWorkflow — prepaidFixed settle behaviour', () => {
+    it('does NOT touch the post-paid settle machinery (no settle record persisted)', async () => {
+      // 🔴 The defining property of `prepaidFixed`: the price is exact, so the
+      // reservation is FINAL. A settle record would make the terminal poll refund
+      // `ceiling - actual`, which for a fixed price is refunding money that was
+      // correctly charged.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    it('still writes the durable audit + attribution trail (a step bills real Buzz)', async () => {
+      // Not in the shared beforeEach reset list — clear so this test's detached
+      // call is the one asserted.
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+      expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          appBlockId: 'apb_test',
+          scope: 'ai:write:budgeted',
+          endpoint: 'workflow:submit:wf_step_1',
+        })
+      );
+      expect(mockRecordSpendAttribution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          workflowId: 'wf_step_1',
+          appBlockId: 'apb_test',
+          modelId: null,
+          sharedContentKey: null,
+        })
+      );
+    });
+
+    it('emits the step id (never txt2img) as the workflow-type tag, preserving app-block provenance', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      const tags: string[] = mockSubmitWorkflow.mock.calls[0][0].body.tags;
+      expect(tags).toContain('step');
+      expect(tags).toContain(STEP_ID);
+      expect(tags).not.toContain('txt2img');
+      expect(tags).toContain('app-block');
+      expect(tags).toContain('app-block:instance:bki_test');
+    });
+
+    it('stamps NO step timeout for a prepaidFixed step (a timeout is not its cap)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
+      expect(step.$type).toBe('convertImage');
+      expect(step.timeout).toBeUndefined();
+      expect(step.input).toMatchObject({
+        image: 'https://image.civitai.com/source.png',
+        output: { format: 'webp', quality: 90, hideMetadata: true },
+      });
+    });
+  });
+
+  describe('submitWorkflow — prepaidFixed PRICE DIVERGENCE correction', () => {
+    it('CORRECTS both cap counters when the orchestrator bills ABOVE the declared price', async () => {
+      // The one input to this money path that could not be verified locally: the
+      // orchestrator's real price. If it comes in high, the caps are short by the
+      // difference — correct them, or the per-app abuse cap runs that much looser
+      // for every subsequent submit.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit(9); // realized 9 vs declared 1 → overage 8
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        8
+      );
+      // The per-user counter is topped up by the same overage.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        8
+      );
+    });
+
+    it('does NOT correct when the realized cost is at or below the declared price', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit(1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+
+      mockChargeAppSpendOverage.mockClear();
+      happyStepSubmit(0);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+    });
+
+    it('a failing correction NEVER breaks an already-billed submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit(9);
+      mockChargeAppSpendOverage.mockRejectedValue(new Error('redis down'));
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('wf_step_1');
+    });
+  });
+
+  describe('submitWorkflow — fail-closed seams', () => {
+    it('an unregistered step id is rejected at the WIRE SCHEMA (never reaches the handler)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: { kind: 'step', step: 'no-such-step', params: {} } as never,
+        })
+      ).rejects.toThrow();
+      // The schema rejected it — the token was never even verified.
+      expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('an UNKNOWN param is REJECTED, not silently dropped', async () => {
+      // 🔴 The `.strict()` requirement, at the request boundary. A dropped param
+      // on a money path is a wrong-generation bug: this is the class that let an
+      // older host strip `sourceImages` and bill the wrong generation.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/source.png',
+              output: { format: 'webp' },
+              upscaleFactor: 4, // not in the schema
+            },
+          }),
+        })
+      ).rejects.toThrow();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a NON-Civitai image host is rejected before any spend (SSRF bound)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://evil.example/?x=image.civitai.com',
+              output: { format: 'webp' },
+            },
+          }),
+        })
+      ).rejects.toThrow();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a MODEL token is rejected fail-closed BEFORE any spend (page-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a token without ai:write:budgeted is rejected', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ scopes: [] }));
+      happyUser();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
   });
 });
