@@ -1,3 +1,4 @@
+import type { AppSpendCapRejectionReason } from '~/server/metrics/app-block-runtime.metrics';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS,
@@ -140,8 +141,15 @@ export type ReserveAppSpendResult = {
    *   - 'velocity'    the per-app short-window gen ceiling was exceeded
    *   - 'unavailable' a Redis error → fail closed (deny, no spend)
    * Undefined when allowed.
+   *
+   * 🔴 The union is declared ONCE, in `app-block-runtime.metrics.ts`, because it
+   * is simultaneously this contract and the `reason` label of
+   * `civitai_app_block_spend_cap_rejections_total`. One declaration means a new
+   * rejection cause cannot be added on one side only — which would either emit
+   * an unlabelled series or leave a whole rejection class uncounted. The import
+   * is TYPE-ONLY, so prom-client stays out of this module's static graph.
    */
-  reason?: 'daily' | 'velocity' | 'unavailable';
+  reason?: AppSpendCapRejectionReason;
   /** Running per-app daily Buzz total AFTER this reservation (for logging). */
   dailyTotal: number;
   /** Running per-app velocity count in the current window (for logging). */
@@ -162,6 +170,47 @@ export type ReserveAppSpendResult = {
    */
   limits: AppCapLimits;
 };
+
+/**
+ * THE SINGLE EXIT for every denied reservation: emit the rejection signal, then
+ * build the `allowed: false` result. Every `return` on a deny path in
+ * `reserveAppSpend` goes through here, so instrumenting a rejection is not a
+ * thing a future rejection cause can forget to do — the counter and the contract
+ * are produced by the same call.
+ *
+ * 🔴 THE EMIT CAN NEVER BREAK THE REQUEST. A rejection is a deliberate,
+ * user-visible 402/429 on the generation submit path; a metrics module that
+ * failed to import, or an emitter that threw, must not convert that into a 500.
+ * So the whole signal is swallowed here, and `recordAppSpendCapRejection` is
+ * independently total on its own side — two layers, because the guarantee must
+ * not depend on either alone. (The `unavailable` call site is inside
+ * `reserveAppSpend`'s own `catch`, where there is no outer belt left at all: an
+ * unguarded throw there escapes the function entirely.)
+ *
+ * The metrics module is dynamically imported, matching `app-cap-limits.service`
+ * — it keeps prom-client out of the deliberately-light static import graph of
+ * the spend-cap path.
+ *
+ * VOLUME. Unlike the degrade signal (bounded by a 5s fallback cache), this emits
+ * once per DENIED submit, with nothing in front of it — that is the entire point:
+ * a cached signal cannot size how many generations were actually turned away.
+ * The cost is one in-heap increment on a path that is already returning a
+ * failure, over a label set fixed at 3 series.
+ */
+async function denyAppSpend(
+  reason: AppSpendCapRejectionReason,
+  fields: { dailyTotal: number; velocityCount: number; limits: AppCapLimits }
+): Promise<ReserveAppSpendResult> {
+  try {
+    const { recordAppSpendCapRejection } = await import(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    recordAppSpendCapRejection(reason);
+  } catch {
+    /* observability must never break the guardrail it observes */
+  }
+  return { allowed: false, reason, ...fields };
+}
 
 /**
  * Atomically reserve one block-initiated generation against this APP's
@@ -187,6 +236,15 @@ export type ReserveAppSpendResult = {
  *
  * On a Redis error anywhere, best-effort roll back any partial daily
  * reservation and deny (`reason: 'unavailable'`) — fail-safe, no spend.
+ *
+ * 🔴 EVERY DENY IS COUNTED. All three deny paths exit through `denyAppSpend`
+ * below, which emits `civitai_app_block_spend_cap_rejections_total{reason}`.
+ * This is the signal that can size USER IMPACT — the motivation for the whole
+ * cap-observability arc is "users hitting abuse rejections they did not earn",
+ * and a rejection is precisely that event. Its sibling
+ * `civitai_app_block_cap_limits_degraded_total` cannot answer it: that one counts
+ * limit RESOLUTIONS and is rate-capped by a 5s fallback cache, so 10 affected
+ * submits and 10,000 affected submits read identically.
  */
 export async function reserveAppSpend(
   appBlockId: string,
@@ -220,7 +278,13 @@ export async function reserveAppSpend(
       if (dailyTotal > limits.dailyBuzz) {
         // Over the daily cap → refund the full cost (all-or-nothing) and deny.
         await refundAppSpend(dailyKey, want);
-        return { allowed: false, reason: 'daily', dailyTotal, velocityCount: 0, limits };
+        // `return await` (not a bare `return`) keeps the deny inside this try, so
+        // a throw from the signal would be caught here rather than escaping. It
+        // is defence-in-depth ONLY: `denyAppSpend` is fully guarded, so with the
+        // guard in place the two spellings are behaviourally identical —
+        // mutating `return await` → `return` kills no test, and deliberately so.
+        // It buys something only in the both-guards-removed case.
+        return await denyAppSpend('daily', { dailyTotal, velocityCount: 0, limits });
       }
     }
 
@@ -238,7 +302,7 @@ export async function reserveAppSpend(
       // velocity counter itself is left incremented (a rejected attempt still
       // consumed a rate slot; the bucket self-expires).
       if (dailyReserved > 0) await refundAppSpend(dailyKey, dailyReserved);
-      return { allowed: false, reason: 'velocity', dailyTotal, velocityCount, limits };
+      return await denyAppSpend('velocity', { dailyTotal, velocityCount, limits });
     }
 
     return {
@@ -253,7 +317,7 @@ export async function reserveAppSpend(
     // back any daily reservation we managed to make so the counter doesn't
     // over-count a denied submit, then deny with no spend.
     if (dailyReserved > 0) await refundAppSpend(dailyKey, dailyReserved);
-    return { allowed: false, reason: 'unavailable', dailyTotal, velocityCount: 0, limits };
+    return denyAppSpend('unavailable', { dailyTotal, velocityCount: 0, limits });
   }
 }
 

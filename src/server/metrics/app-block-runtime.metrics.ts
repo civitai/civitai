@@ -14,6 +14,12 @@
 //      route (ok at BLOCK_READY, error on a host render failure).
 //   3. Cap-limit DEGRADE signal — emitted from app-cap-limits.service when the
 //      per-app spend/velocity resolver falls back to the strictest tier.
+//   4. Spend-cap REJECTION signal — emitted from app-spend-cap.service for every
+//      generation submit the per-app aggregate cap actually DENIES. (3) counts
+//      how often the LIMITS could not be resolved; (4) counts how many real
+//      generations were turned away. They are not substitutes: (3) is
+//      rate-capped by a 5s fallback cache, so a 10-submit degrade and a
+//      10,000-submit degrade produce the same counter value.
 //
 // prom-client GOTCHA: Next.js can import a module twice (hot reload / route
 // bundling), and prom-client throws if a metric name is registered twice. Every
@@ -85,6 +91,33 @@ export type AppBlockRenderResult = 'ok' | 'error';
  * rejections it did not earn.
  */
 export type AppCapLimitsDegradeReason = 'db_error' | 'missing_row';
+
+/**
+ * Why `reserveAppSpend` REJECTED one block-initiated generation submit. This is
+ * the SINGLE SOURCE for the union — `ReserveAppSpendResult['reason']` in
+ * `app-spend-cap.service.ts` is this same type (imported type-only, so nothing
+ * pulls prom-client into that module's static graph). Keeping one declaration is
+ * what stops the label set and the service's own contract from drifting apart:
+ * a new rejection cause cannot be returned without appearing here, and adding
+ * one here is a deliberate, reviewable widening of the metric's cardinality.
+ *
+ *   - `daily`       — the per-app daily Buzz ceiling would be exceeded. The
+ *                     MONEY bound: this app's viewers have collectively spent
+ *                     its budget for the UTC day. Expected to be sticky (it
+ *                     stays denied until the day rolls over).
+ *   - `velocity`    — the per-app short-window generation ceiling was exceeded.
+ *                     The RATE bound: bursty and self-clearing within one
+ *                     window, and the one a legitimately busy app trips first.
+ *   - `unavailable` — a Redis error, or a limit-resolution throw, on the reserve
+ *                     path → fail closed (deny, no spend). NOT an abuse signal
+ *                     at all: it is infra, and every app is denied at once.
+ *
+ * 🔴 EXACTLY THESE THREE, and `reason` is the ONLY label. See the counter below
+ * for why no app/user/block id may join them.
+ */
+export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailable'] as const;
+
+export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
 
 /** Known render slots. Anything else is bucketed to 'other' to bound the label. */
 const KNOWN_SLOT_IDS = new Set([
@@ -200,6 +233,7 @@ type Bundle = {
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
+  spendCapRejectionsTotal: Counter<string>;
 };
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
@@ -316,6 +350,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['reason']
   );
 
+  // ── per-app spend-cap REJECTIONS ─────────────────────────────────────────────
+  // The signal that can size USER IMPACT. `capLimitsDegradedTotal` above counts
+  // cap-limit RESOLUTIONS that fell back — and it is rate-capped by the 5s
+  // fallback cache + single-flight, so a degrade affecting 10 submits and one
+  // affecting 10,000 produce the SAME counter value. It structurally cannot
+  // answer "how many generations were turned away", which is the question the
+  // whole cap-observability arc exists for ("users hitting abuse rejections they
+  // did not earn"). This counter answers it: one increment per DENIED submit, no
+  // cache in front of it.
+  //
+  // 🔴 EXACTLY ONE LABEL, `reason`, over a 3-value code-owned union → 3 series,
+  // TOTAL, forever. Deliberately NO `app_block_id` / `user_id` / block id: this
+  // fires once per denied submit (unlike the degrade counter, nothing caches or
+  // rate-limits it), so a per-app label would multiply an unbounded-ish
+  // population by a per-request emit rate, and prom-client retains every distinct
+  // label set in the Node heap forever (the --max-old-space-size exit-139 OOM
+  // class) across ~130 scraped pods. Attribution belongs in the caller's log line
+  // / trace, which already carries appBlockId, userId, and the resolved ceilings
+  // (`ReserveAppSpendResult.limits`). Alert on the metric, attribute from the log
+  // — the same split as the degrade counter above.
+  const spendCapRejectionsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_spend_cap_rejections_total',
+    'App Block generation submits DENIED by the per-app aggregate spend/velocity cap, by reason (daily = the per-app daily Buzz ceiling would be exceeded; velocity = the per-app short-window gen ceiling was exceeded; unavailable = a Redis/limit-resolution error, fail-closed deny)',
+    ['reason']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
@@ -323,6 +384,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
+    spendCapRejectionsTotal,
   };
 }
 
@@ -346,6 +408,29 @@ export function recordAppCapLimitsDegrade(reason: AppCapLimitsDegradeReason): vo
     capLimitsDegradedTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error touch the cap guardrail */
+  }
+}
+
+/**
+ * Fail-soft emit of one per-app spend-cap REJECTION (`reserveAppSpend` denied a
+ * submit). Called from `app-spend-cap.service`.
+ *
+ * 🔴 TOTAL, like every emitter in this module. The thing it instruments is the
+ * money/abuse guardrail on the generation submit path: a metrics error (registry
+ * collision, label mismatch) must never propagate, or an intended 402/429
+ * rejection becomes a 500 — i.e. the observability would convert a working
+ * guardrail into an outage. The caller guards independently too; the duplication
+ * is deliberate, because the guarantee must not rest on either layer alone.
+ *
+ * COST: one in-heap counter increment on an already-rejecting path. An ALLOWED
+ * submit never reaches here, so the steady state on a healthy app is zero emits.
+ */
+export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): void {
+  try {
+    const { spendCapRejectionsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    spendCapRejectionsTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the spend guardrail */
   }
 }
 
