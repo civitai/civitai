@@ -405,6 +405,65 @@ describe('AppListingDetailBody', () => {
     expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
   });
 
+  /**
+   * Glyph of the CTA whose visible text is exactly `label`.
+   *
+   * The `connect` and `info` affordances render no anchor — connect is a
+   * DISABLED button and info is a plain `Group` of icon + text — so
+   * `renderAndSettle`'s href key can't reach them. Matching on exact
+   * `textContent` plus "has an svg child" is unambiguous here: the enclosing
+   * `Stack` also carries the note text, so its textContent is longer, and the
+   * inner `<Text>` has the right text but no icon.
+   */
+  async function waitForCtaGlyph(label: string): Promise<string> {
+    const host = await vi.waitUntil(
+      () =>
+        Array.from(document.body.querySelectorAll('button, div')).find(
+          (n) => n.textContent?.trim() === label && n.querySelector('svg')
+        ) ?? null,
+      { timeout: 10000, interval: 25 }
+    );
+    return glyphOf(host as Element);
+  }
+
+  test('the connect and info branches keep their own glyphs', async () => {
+    // Regression guard for the per-branch glyph refactor: the four call sites
+    // now pass hard-coded mode literals rather than `action.mode`, so a copied
+    // literal in the wrong branch would otherwise be caught by nothing. The
+    // open/visit pair is value-pinned above; these are the other two.
+
+    // off-site OAuth → the `connect` stub (disabled button + note).
+    await renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            subKind: 'connect',
+            externalUrl: null,
+            connectClientId: 'oauth-client-1',
+          },
+        })}
+      />
+    );
+    expect(await waitForCtaGlyph('Connect')).toBe('plug-connected');
+
+    // on-site app with NO launch page → the informational model-slot affordance.
+    await renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'blk-1',
+            hasPage: false,
+            liveUrl: 'https://my-app.civit.ai',
+          },
+        })}
+      />
+    );
+    expect(await waitForCtaGlyph('Runs on model pages')).toBe('info-circle');
+  });
+
   // ── Discovery rail ─────────────────────────────────────────────────────────
 
   test('the related rail renders siblings and EXCLUDES the listing being viewed', async () => {

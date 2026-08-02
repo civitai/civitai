@@ -31,17 +31,14 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
-import {
-  ACTION_GLYPH_ICONS,
-  detailActionGlyph,
-} from '~/components/Apps/appListingActionGlyph';
+import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
+  type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
-import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
 import {
   getListingPreview,
   LISTING_PREVIEW_HEIGHT,
