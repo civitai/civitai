@@ -127,6 +127,7 @@ import {
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
+  formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
   resolveBlockVersionContext,
@@ -137,6 +138,24 @@ import {
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
 import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
+// The step registry is the code-reviewed trust root, exactly as the recipe
+// registry is. `estimateStepBuzz` / `planStepSpend` dispatch on the entry's
+// declared `billingMode` — this router contains NO per-step and NO per-mode
+// branch, which is what makes adding a capability additive.
+// `containsAirReference` is the SAME deep scan the registry's load-time clause 7
+// runs; imported (not re-implemented) so the request-time re-assertion below can
+// never drift from the load-time one — one rule, one place.
+import {
+  containsAirReference,
+  estimateStepBuzz,
+  getStep,
+  planStepSpend,
+} from '~/server/services/blocks/steps';
+// Instrument-only: records EVERY prepaidFixed step price check at submit —
+// `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
+// from a detector that never ran. Never throws.
+import { recordStepPriceCheck } from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
 // terminal poll/cancel hook. Static import (both are light) — the heavy
@@ -3604,6 +3623,12 @@ export const blocksRouter = router({
       if (input.body.kind === 'customComfy') {
         return await estimateCustomComfyWorkflow({ claims, body: input.body });
       }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
+      // step's cost comes from its declared billing mode, not a whatIf. The
+      // textToImage path below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await estimateStepWorkflow({ claims, body: input.body });
+      }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
       // lets the viewer pick a model, so the modelId match is SKIPPED and
@@ -3796,6 +3821,19 @@ export const blocksRouter = router({
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
         return await submitCustomComfyWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
+      }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
+      // path. Branch to the registry-backed handler, which runs the same
+      // developer/page gates and the SAME cap belt (per-user daily +
+      // `reserveAppSpend` per-app aggregate + dev-session) the other kinds use.
+      // The textToImage path below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await submitStepWorkflow({
           ctx,
           claims,
           body: input.body,
@@ -6283,6 +6321,718 @@ async function submitCustomComfyWorkflow(opts: {
         // customComfy is recipe-based (no single user-picked model to attribute).
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — estimate + submit handlers.
+// RFC #3515 migration step 1.
+//
+// A `step` body carries `{ kind, step, params }` — NO model binding. Everything
+// the capability needs lives in its REGISTRY ENTRY
+// (`~/server/services/blocks/steps`): a bounded `.strict()` param schema, a pure
+// builder, a declared BILLING MODE, and a declared MODERATION POSTURE.
+//
+// 🔴 THE DISPATCH RULE. These two handlers contain NO per-step branch and NO
+// per-billing-mode branch. Estimate reads `estimateStepBuzz(entry, params)` and
+// submit reads `planStepSpend(entry, params)`; both dispatch on the entry's
+// declared `billingMode` inside the registry module. Registering a capability
+// touches one new file plus one registry line — never this router. If you find
+// yourself adding `if (step.id === …)` or `if (billingMode === …)` here, the
+// abstraction has been defeated and the RFC's whole premise with it.
+//
+// 🔴 THE MONEY RULE. A step submit runs the SAME cap belt every other spending
+// kind runs — the per-user daily cap, the per-app aggregate `reserveAppSpend`
+// (daily Buzz + velocity), and the dev-session backstop — reserved BEFORE the
+// orchestrator submit and refunded on every non-committed exit. `kind: 'step'`
+// must not be a money surface the guardrail cannot see; if it were, the
+// `civitai_app_block_spend_cap_rejections_total` counter would not fire for it
+// either, so the gap would also be invisible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type StepBody = Extract<BlockWorkflowBody, { kind: 'step' }>;
+
+/** Orchestrator step name stamped on a block step submission. */
+const BLOCK_STEP_NAME = 'block-step';
+
+/**
+ * Resolve the registry entry from the (schema-gated) `step` id. The wire
+ * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
+ * the union, so this never returns undefined for a schema-valid body — the
+ * guard is defense-in-depth against a registry/schema desync. Fail closed.
+ */
+function resolveBlockStep(body: StepBody) {
+  const step = getStep(body.step);
+  if (!step) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown step type' });
+  }
+  return step;
+}
+
+/**
+ * Parse a step's params against its own `.strict()` schema, as a CALLER error.
+ *
+ * 🔴 `paramSchema.parse()` throws a raw `ZodError` from inside the resolver, and
+ * tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR — verified by execution, not assumed. So an app author
+ * sending an out-of-range `targetWidth` got a 500. This surface is entirely
+ * app-author-driven: routine iteration against the param contract would have
+ * registered as a server-error rate, burying real 5xx in developer typos.
+ *
+ * `safeParse` + an explicit BAD_REQUEST makes the caller error a caller error.
+ * The zod message is included because the app author is the one who has to fix
+ * it, and the params are the app's OWN input — nothing server-side is disclosed.
+ */
+function parseStepParams(step: ReturnType<typeof resolveBlockStep>, raw: unknown) {
+  const parsed = step.paramSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `invalid params for step '${step.id}': ${parsed.error.message}`,
+    });
+  }
+  return parsed.data;
+}
+
+/**
+ * The gates every step request passes before anything else happens, in the same
+ * order and with the same fail-closed posture as the customComfy handlers.
+ * Shared by estimate and submit so the two can never drift — a gate that holds
+ * on submit but not on estimate lets a caller probe what it may not run.
+ *
+ * PAGE-ONLY in v1, mirroring `customComfy`. A registry step carries no model
+ * binding, so a MODEL token has nothing to bind it to; rejecting it is the
+ * conservative direction and widening later is not a wire change.
+ */
+async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'registry steps are page-only' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+  return userId;
+}
+
+/**
+ * STEP ESTIMATE. Returns the registry's DECLARED, deterministic estimate — no
+ * orchestrator round-trip. For `prepaidFixed`, registry load enforces that this
+ * number equals the entry's declared price (`estimateBuzz === priceForVariant`),
+ * so the estimate and the declared price can never disagree with each other.
+ *
+ * 🔴 THE ESTIMATE AND THE SUBMIT CAN DIVERGE, and that is deliberate. Submit no
+ * longer trusts the declared price as the ceiling: it runs a real `whatif:true`
+ * quote against the orchestrator and gates + reserves `max(declared, quoted)`
+ * (see the ORCHESTRATOR QUOTE section in `submitStepWorkflow`). So when the
+ * orchestrator's live price is ABOVE the declared one — a rate-card move — the
+ * block is shown the declared number here and the submit enforces the higher
+ * one. Concretely, at a live price of 40 against a declared 1: this returns
+ * `cost.total: 1`, and the submit either returns
+ * `insufficient buzz budget: step price 40 exceeds budget <n>` or reserves 40
+ * against every cap.
+ *
+ * That is fail-closed and correct — the caller is never billed more than the
+ * caps it reserved against, and the divergence is counted as
+ * `civitai_app_block_step_price_check_total{outcome="over"}`. But do NOT read
+ * this estimate as a binding quote: it is the declared floor, not the enforced
+ * ceiling. (This comment previously asserted the inverse — that an estimate can
+ * never quote a different number than the submit bills. That was true before the
+ * quote-backed gate existed and is now false.)
+ *
+ * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
+ * exactly as submit does — the same `.strict()` schema runs on both paths.
+ */
+async function estimateStepWorkflow(opts: { claims: BlockClaims; body: StepBody }) {
+  const { claims, body } = opts;
+  await assertStepRequestAllowed(claims);
+  const step = resolveBlockStep(body);
+  const params = parseStepParams(step, body.params);
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: estimateStepBuzz(step, params) },
+    },
+  };
+}
+
+/**
+ * STEP SUBMIT. Order: gates → per-step `.strict()` param parse → moderation
+ * posture → spend plan (dispatched on billing mode) → static budget gate →
+ * idempotency claim → reserve on the per-user cap → reserve on the PER-APP cap
+ * → reserve on the dev-session cap → build + submit → settle bookkeeping →
+ * durable audit + attribution.
+ *
+ * Over-cap / rejections return a failed-shape snapshot (recoverable by the
+ * block); a throw AFTER reserving refunds every reservation.
+ */
+async function submitStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: StepBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  // Namespaced idempotency externalId — ALWAYS SET, same as the other kinds: a
+  // server-minted `bls<uuid>` when the block sends no key, so `submitWorkflow`'s
+  // own 3× retry of the real submit can never create (and charge for) a second
+  // workflow after a 502/504. Minted ONCE here — the body built below is the
+  // object the retry wrapper reuses across attempts.
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+  // The outer proc already gated this, but re-narrow here (defense-in-depth) so
+  // `buzzBudget` is a positive number the static gate can compare against.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+
+  const step = resolveBlockStep(body);
+  // The registry entry's OWN `.strict()` schema is the real param contract (the
+  // wire schema only gated the `step` id). An unknown param is REJECTED here,
+  // never silently dropped — enforced for every registered entry at registry
+  // load. An invalid param is a BAD_REQUEST → fail-closed.
+  const params = parseStepParams(step, body.params);
+
+  // ── Moderation posture. Tranche 1 declares 'none' (no free-text input, no
+  // free-text output → no new moderation surface), and the registry's load-time
+  // invariant REJECTS any entry declaring a posture whose handler is not
+  // implemented. So there is nothing to run here today, and a future
+  // text-producing step cannot reach this line without someone having
+  // implemented — and reviewed — its posture. Re-asserted rather than assumed:
+  // this is the seam a policy mistake would arrive through.
+  if (step.moderationPosture !== 'none') {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: `step '${step.id}' declares an unimplemented moderation posture`,
+    });
+  }
+
+  // NOTE: no `getBlockSessionUser` call here. A registry step carries no model
+  // binding, no checkpoint resolution and no entitlement belt, so nothing on
+  // this path reads the session user — fetching one cost a `getUserById` per
+  // submit for a value that was never used (and an unused-var eslint warning).
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // A registry step has no `accountType` field on its wire body (params are the
+  // step's own bounded contract), so currency selection is Auto — the
+  // domain-allowed set, drained blue-first.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  const token = await getOrchestratorToken(userId, ctx);
+
+  // ── SPEND PLAN — dispatched on the entry's declared BILLING MODE. This is the
+  // single place the money shape is decided; the rest of this function is
+  // mode-agnostic and never re-inspects `billingMode`.
+  const plan = planStepSpend(step, params);
+  const declaredBuzz = Math.ceil(plan.reserveBuzz);
+
+  // Built ONCE, then used for the quote and the real submit, so the two can
+  // never price different things. `timeout` is stamped ONLY for a billing mode
+  // whose cap IS a timeout (`timeBounded`); `prepaidFixed` returns null, because
+  // a timeout on a fixed-price step would be a liveness knob and stamping one
+  // here would imply a Buzz-cap relationship that does not exist.
+  const built = step.buildStep(params);
+
+  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
+  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
+  // this PR's own triage named as the real risk (`imageUpscaler` was
+  // disqualified precisely because its `model` field takes an arbitrary AIR
+  // URN).
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
+  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+  // params therefore registers cleanly, and at request time `buildStep` forwards
+  // whatever the untrusted iframe sent straight into the submitted input. Load
+  // time proved a property of one fixed input; this proves it of THIS input.
+  // Without it, `resourcePolicy` was enforced at registry load only — a
+  // review-process guard, not a runtime one — while `moderationPosture` was
+  // enforced at both.
+  //
+  // Placed before the quote and before every reservation, so a rejection here
+  // costs no orchestrator call and has nothing to refund.
+  //
+  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
+  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
+  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
+  // too. That is a false positive, and it is the direction we want — refusing a
+  // pathological url costs a caller one bounced request; forwarding an
+  // unentitled AIR costs the entitlement belt.
+  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step carries an ` +
+        'AIR reference — a step that reaches an AIR resource bypasses the generation-graph ' +
+        'entitlement belt',
+    });
+  }
+
+  const orchestratorStep = {
+    $type: built.$type,
+    name: BLOCK_STEP_NAME,
+    ...(plan.stepTimeoutSeconds !== null
+      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
+      : {}),
+    input: built.input,
+  };
+  // Parameterized tags: emit the step id as both the workflow-type tag and the
+  // `baseModel` slot (a registry step has no base model), preserving the
+  // `app-block:*` provenance tags the per-app subqueue read depends on.
+  const tags = buildWorkflowTags(claims, step.id, 'step');
+
+  // ── (0) ORCHESTRATOR QUOTE — a real `whatif:true` submit, BEFORE the per-call
+  // budget gate.
+  //
+  // 🔴 WHY THE DECLARED PRICE CANNOT BE THE CEILING. Before this, the per-call
+  // `buzzBudget` gate compared the token's budget against a number Civitai had
+  // simply asserted in the registry. That made this the FIRST block spend path
+  // whose per-call ceiling rested on nothing the platform enforces:
+  // `textToImage` submit gates on a real `whatif` quote from the orchestrator,
+  // and `customComfy` stamps a step `timeout` the orchestrator physically
+  // enforces as the Buzz ceiling. A `prepaidFixed` step does neither —
+  // `stepTimeoutSeconds` is deliberately `null` — so if the declared price were
+  // ever below the real one, EVERY submit would exceed `buzzBudget` by the
+  // overage, forever, until a human read a counter and shipped code. The
+  // downstream divergence correction adjusts the CAP COUNTERS; it never touched
+  // the declared price or this gate, so it was never a backstop for it.
+  //
+  // 🔴 `prepaidFixed` means "cost knowable before execution" — which is exactly
+  // what `whatif:true` returns. Asking the orchestrator is therefore not a
+  // workaround for the mode, it is the mode's own premise made enforceable.
+  //
+  // No `externalId` on the quote (mirrors the txt2img whatIf preflight): the
+  // idempotency key belongs to the REAL submit only.
+  //
+  // Cost of this: one extra orchestrator round-trip per step submit — the same
+  // one the txt2img path already pays. A throw here propagates BEFORE any
+  // reservation exists, so there is nothing to refund.
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      steps: [orchestratorStep as any],
+      tags,
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  const quotedTotal = whatIfResult.cost?.total;
+  const quotedBuzz =
+    typeof quotedTotal === 'number' && Number.isFinite(quotedTotal) ? Math.ceil(quotedTotal) : null;
+
+  // Fail CLOSED on an unquotable step. A missing quote means the mode's premise
+  // ("cost knowable before execution") did not hold for this submit, which puts
+  // the ceiling back on the unenforced declared constant — the exact state this
+  // gate exists to remove. Reported as a recoverable failed-shape snapshot (the
+  // same shape every other cap rejection returns) rather than a throw, and
+  // counted as `outcome: 'absent'` so it is visible rather than silent.
+  if (quotedBuzz === null) {
+    recordStepPriceCheck(step.id, 'absent');
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: declaredBuzz },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      },
+    };
+  }
+
+  // 🔴 The reservation is the LARGER of the two. The quote is what makes the
+  // ceiling real (a quote above the declared price must be gated and reserved at
+  // the real number, not the asserted one); the declared price is the floor
+  // because it is what `estimateBuzz` SHOWED the block, and the registry's
+  // load-time invariant forces those to agree. Over-reserving only makes a cap
+  // stricter.
+  const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
+
+  // (1) Pre-submit gate against the token's per-call budget — now enforced
+  // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
+  if (reserveBuzz > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — taken BEFORE the cap reservations + orchestrator
+  //    submit so two CONCURRENT same-key submits can't BOTH reserve + BOTH
+  //    charge, and a replay can't double-INCR the cap counters. Absent key → no
+  //    claim. Fail-CLOSED on a redis error; a resolved submit FINALIZEs, every
+  //    non-committed exit RELEASEs. The orchestrator externalId dedupe stays as
+  //    a 2nd layer.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // (2) Reserve against the per-user cumulative cap. THROWS fail-closed on a
+  // redis error; release the claim first.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, reserveBuzz);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
+              `spent this review session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - reserveBuzz} already spent today ` +
+              `across your installed apps, this step costs ${reserveBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
+  // This is the guardrail the per-user cap structurally cannot provide — it is
+  // keyed on `appBlockId` with the spender deliberately absent from the key, so
+  // a Sybil ring funnelling many accounts' spend through ONE app is bounded.
+  // Skipped ONLY for DEV tokens (synthetic non-FK appBlockId), matching every
+  // other kind.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz);
+    if (!appSpend.allowed) {
+      // Roll back the per-user reservation so a rejected submit doesn't burn the
+      // viewer's own daily ceiling for a spend that never happened.
+      await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+      // No money moved → release the idempotency claim so a genuine retry runs.
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: reserveBuzz },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: reserveBuzz };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop — mirror every other kind.
+  // Bounds cumulative spend within ONE dev session so a runaway LOCAL submit
+  // loop can't drain Buzz.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        reserveBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: reserveBuzz },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: reserveBuzz };
+    }
+  }
+
+  // ── Build + submit. On ANY throw AFTER reserving, refund on ALL reservation
+  // keys and re-throw (refund-on-throw).
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  // Hoisted out of the try so the post-submit spend-attribution closure can read
+  // the REALIZED per-account debit.
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  const submittedAt = Date.now();
+  try {
+    // `orchestratorStep` + `tags` were built above the quote — the SAME objects
+    // the whatif priced, so the quote and the charge can never describe
+    // different work.
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags,
+        currencies,
+        // Authoritative maturity clamp on the real submit — token-claim derived.
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+  } catch (e) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key so a lost-response retry replays it. Best-effort.
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  // ── PRICE CHECK + RESERVATION-OVERAGE CORRECTION.
+  //
+  // We reserved an EXACT amount on every cap. If the orchestrator billed MORE,
+  // those counters are short by the difference and the per-app abuse cap would
+  // be that much looser for every subsequent submit — the one direction a spend
+  // cap must never drift. Correct ALL THREE reservations for the overage (an
+  // accounting correction for money already spent, NOT a gate: every `charge*`
+  // helper deliberately has no deny path) and record the outcome.
+  //
+  // 🔴 GATED ON THE PLAN, NOT RUN UNCONDITIONALLY. This correction is
+  // `prepaidFixed`-shaped: it is only right when the reservation was an exact
+  // price. A future `timeBounded` entry reserves a CEILING, and a submit-time
+  // cost above it would be topped up here AND then settled ceiling→actual by the
+  // post-paid machinery off the un-topped-up ceiling. `plan.correctReservationOverage`
+  // is how the MODE decides, keeping this function mode-agnostic — the property
+  // the registry exists to guarantee.
+  //
+  // Under-billing needs no correction: over-reserving only makes the cap
+  // stricter, and an exact reservation is final by definition (there is no
+  // post-paid settle to refund it down).
+  if (plan.correctReservationOverage) {
+    const realizedCost = snapshot.cost?.total;
+    if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
+      const overage = Math.ceil(realizedCost) - reserveBuzz;
+      if (overage > 0) {
+        // 🔴 The declared price is wrong (or the rate card moved). Alert on this.
+        recordStepPriceCheck(step.id, 'over');
+        // Best-effort on ALL THREE keys; each guarded independently so one
+        // failing cannot skip the others, and none can break an already-billed
+        // submit.
+        //
+        // 🔴 THE DEV-SESSION KEY IS ONE OF THE THREE. The earlier version
+        // corrected the per-user and per-app counters only, while its own
+        // comment claimed "both cap counters" — there are three reservations, and
+        // a divergent submit inside a dev tunnel left that counter under-reading
+        // by the overage: precisely the drift direction the same comment forbids.
+        try {
+          await reserveBlockBuzzSpendForClaims(claims, userId, overage);
+        } catch {
+          /* best-effort correction — a lost one under-counts by the overage only */
+        }
+        if (appSpendReserve) {
+          try {
+            const { chargeAppSpendOverage } = await import(
+              '~/server/services/blocks/app-spend-cap.service'
+            );
+            await chargeAppSpendOverage(appSpendReserve.key, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+        if (devSessionReserve) {
+          try {
+            const { chargeDevSessionOverage } = await import(
+              '~/server/services/blocks/dev-tunnel.service'
+            );
+            await chargeDevSessionOverage(devSessionReserve.sessionId, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+      } else {
+        // Healthy — AND the proof that this check runs at all. Without this
+        // emit, a flat divergence line could not be told apart from a detector
+        // that never executed.
+        recordStepPriceCheck(step.id, 'exact');
+      }
+    } else {
+      // No numeric cost on the snapshot → nothing to compare. Distinguished from
+      // `exact` on purpose: this is the state in which the correction is inert.
+      recordStepPriceCheck(step.id, 'absent');
+    }
+  }
+
+  // ── Post-paid settle bookkeeping, driven by the PLAN — not by the kind and not
+  // by the step id. `prepaidFixed` sets `postPaidSettle: false`: the price is
+  // exact, the reservation is final, and the post-paid ceiling→actual settle
+  // machinery is never touched (no settle record is persisted, so the terminal
+  // poll/cancel hook has nothing to read and no refund is owed). A future
+  // `timeBounded` entry sets it true and reuses the same machinery customComfy
+  // does, with no change to this function's shape.
+  if (
+    plan.postPaidSettle &&
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif'
+  ) {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling: reserveBuzz,
+      engine: step.resolveVariant(params),
+      recipe: step.id,
+      submittedAt,
+    });
+  }
+
+  // G6 — persistent output queue (best-effort, non-dev), so a step gen rebuilds
+  // in listMyWorkflows on reload. Same posture as every other kind.
+  if (
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif' &&
+    claims.dev !== true
+  ) {
+    const realWorkflowId = snapshot.workflowId;
+    void (async () => {
+      const { upsertBlockWorkflowOnSubmit } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      await upsertBlockWorkflowOnSubmit({
+        workflowId: realWorkflowId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        status: snapshot.status,
+      });
+    })().catch(() => {
+      /* best-effort: a failed queue write never breaks (or slows) submit */
+    });
+  }
+
+  // ── Durable audit + attribution (parity with the txt2img + customComfy paths).
+  // A step generation bills real Buzz, so it must leave the same durable trail:
+  // a per-user activity row and an author-bounty spend basis. Both are
+  // server-derived from the VERIFIED token claims (never client input), and both
+  // are fire-and-forget with their OWN try/catch so an audit failure can never
+  // add latency to — or break — the already-billed submit response.
+  {
+    const invocationCost = snapshot.cost?.total ?? reserveBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+        },
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? reserveBuzz
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // A registry step is not model-based (no user-picked model to attribute).
+        modelId: null,
+        // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
         sharedContentKey: null,
       });
     })().catch(() => {

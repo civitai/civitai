@@ -135,17 +135,33 @@ const {
 // F4: submitWorkflow dynamically imports the dev-tunnel spend backstop. Mock the
 // module so the default (no active tunnel → getActiveDevTunnel null) leaves every
 // existing test unchanged, and the F4 tests can drive an active dev session.
-const { mockGetActiveDevTunnel, mockReserveDevSessionBuzz, mockRefundDevSessionBuzz } = vi.hoisted(
-  () => ({
-    mockGetActiveDevTunnel: vi.fn(async () => null as unknown),
-    mockReserveDevSessionBuzz: vi.fn(async () => ({ allowed: true, total: 0 })),
-    mockRefundDevSessionBuzz: vi.fn(async () => undefined),
-  })
-);
+const {
+  mockGetActiveDevTunnel,
+  mockReserveDevSessionBuzz,
+  mockRefundDevSessionBuzz,
+  mockChargeDevSessionOverage,
+} = vi.hoisted(() => ({
+  mockGetActiveDevTunnel: vi.fn(async () => null as unknown),
+  mockReserveDevSessionBuzz: vi.fn(async () => ({ allowed: true, total: 0 })),
+  mockRefundDevSessionBuzz: vi.fn(async () => undefined),
+  mockChargeDevSessionOverage: vi.fn(async () => undefined),
+}));
+// 🔴 FIX 7 — the price-CHECK counter fires on EVERY step submit, not only on a
+// divergence, so a flat "no divergence" line can be told apart from a detector
+// that never ran. Mocked so the outcome label is assertable; the real emitter is
+// fail-soft and would swallow everything silently.
+const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
+  mockRecordStepPriceCheck: vi.fn(() => undefined),
+}));
+vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
+  recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+}));
+
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
   reserveDevSessionBuzz: (...a: unknown[]) => mockReserveDevSessionBuzz(...(a as [])),
   refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
+  chargeDevSessionOverage: (...a: unknown[]) => mockChargeDevSessionOverage(...(a as [])),
 }));
 
 // G8 (per-app spend/velocity cap) + G6 (persistent output queue) — submitWorkflow
@@ -155,12 +171,16 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
 const {
   mockReserveAppSpend,
   mockRefundAppSpend,
+  mockChargeAppSpendOverage,
   mockUpsertBlockWorkflow,
   mockListMyBlockWorkflows,
   mockUpdateBlockWorkflowStatus,
 } = vi.hoisted(() => ({
   mockReserveAppSpend: vi.fn(),
   mockRefundAppSpend: vi.fn(async () => undefined),
+  // `kind:'step'` prepaidFixed price-divergence correction — a plain INCRBY on
+  // the pinned daily key with no allow/deny semantics (see the service).
+  mockChargeAppSpendOverage: vi.fn(async () => undefined),
   mockUpsertBlockWorkflow: vi.fn(async () => undefined),
   mockListMyBlockWorkflows: vi.fn(),
   // G6 — the read-model terminal flip pollWorkflow fires best-effort when it
@@ -171,6 +191,7 @@ const {
 vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   reserveAppSpend: (...a: unknown[]) => mockReserveAppSpend(...(a as [])),
   refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+  chargeAppSpendOverage: (...a: unknown[]) => mockChargeAppSpendOverage(...(a as [])),
 }));
 vi.mock('~/server/services/blocks/block-workflows.service', () => ({
   upsertBlockWorkflowOnSubmit: (...a: unknown[]) => mockUpsertBlockWorkflow(...(a as [])),
@@ -490,8 +511,11 @@ beforeEach(() => {
     mockGetActiveDevTunnel,
     mockReserveDevSessionBuzz,
     mockRefundDevSessionBuzz,
+    mockChargeDevSessionOverage,
+    mockRecordStepPriceCheck,
     mockReserveAppSpend,
     mockRefundAppSpend,
+    mockChargeAppSpendOverage,
     mockUpsertBlockWorkflow,
     mockListMyBlockWorkflows,
     mockUpdateBlockWorkflowStatus,
@@ -508,6 +532,7 @@ beforeEach(() => {
     dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
   });
   mockRefundAppSpend.mockResolvedValue(undefined);
+  mockChargeAppSpendOverage.mockResolvedValue(undefined);
   mockUpsertBlockWorkflow.mockResolvedValue(undefined);
   mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
   // G6 read-model flip: default to a resolved 1-row UPDATE. Tests exercising the
@@ -549,6 +574,7 @@ beforeEach(() => {
   mockGetActiveDevTunnel.mockResolvedValue(null);
   mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
   mockRefundDevSessionBuzz.mockResolvedValue(undefined);
+  mockChargeDevSessionOverage.mockResolvedValue(undefined);
   // W3 flow A default: the spend-attribution write resolves successfully.
   // Tests that exercise best-effort override it to reject.
   mockRecordSpendAttribution.mockResolvedValue({
@@ -5800,6 +5826,815 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         workflowId: 'wf_cc_1',
         actualCost: 12,
       });
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
+//
+// 🔴 THE POINT OF THIS SUITE IS THE MONEY PATH. A step submit opens a NEW spend
+// surface, and the requirement is that it is covered by the SAME guardrails as
+// every other kind — above all the per-app aggregate `reserveAppSpend` cap
+// (daily Buzz + velocity). If it were not, the cap would silently not apply to
+// this whole class of generation and the
+// `civitai_app_block_spend_cap_rejections_total` counter would never fire for
+// it either, so the gap would also be invisible in monitoring.
+//
+// The `reserveAppSpend` assertions below are mutation-proven: deleting the
+// reserve call from the router makes them fail on their OWN assertion (see the
+// mutation table in the PR body).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("step-type registry bridge (kind: 'step')", () => {
+  const STEP_ID = 'convert-image';
+  const STEP_PRICE = 1; // CONVERT_IMAGE_PRICE_BUZZ — the declared prepaidFixed price.
+
+  // A PAGE token (ctx.entityType==='none') — registry steps are page-only in v1.
+  function stepClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      ctx: { entityType: 'none', slotId: 'page' },
+      appBlockId: 'apb_test',
+      buzzBudget: 50,
+      ...over,
+    });
+  }
+
+  function stepBody(over: Record<string, unknown> = {}) {
+    return {
+      kind: 'step' as const,
+      step: STEP_ID,
+      params: {
+        image: 'https://image.civitai.com/source.png',
+        output: { format: 'webp', quality: 90 },
+      },
+      ...over,
+    };
+  }
+
+  function happyStepSubmit(cost = 1) {
+    mockSubmitWorkflow.mockResolvedValue({
+      id: 'wf_step_1',
+      status: 'processing',
+      steps: [{ $type: 'convertImage', output: {} }],
+      cost: { total: cost },
+    });
+  }
+
+  // 🔴 A step submit makes TWO orchestrator calls: the `whatif:true` PRICE QUOTE
+  // that backs the per-call `buzzBudget` gate, then the real submit. The quote is
+  // free and side-effect-free; the REAL submit is the one that spends. Assertions
+  // about "did we spend" must therefore look at the real calls only —
+  // `mockSubmitWorkflow` alone can no longer tell the two apart, and a test that
+  // ignored the difference would silently stop proving anything about spend.
+  // (This mirrors the txt2img path, which has run whatIf → budget gate → cap
+  // reservations → real submit since before this PR.)
+  const isWhatIfCall = (c: unknown[]) =>
+    (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
+  const realSubmitCalls = () => mockSubmitWorkflow.mock.calls.filter((c) => !isWhatIfCall(c));
+  const whatIfSubmitCalls = () => mockSubmitWorkflow.mock.calls.filter((c) => isWhatIfCall(c));
+
+  /**
+   * Drive the two orchestrator calls INDEPENDENTLY: what the quote says, and
+   * what the real submit ends up costing.
+   *
+   * 🔴 Needed because they are no longer the same number. A price DIVERGENCE now
+   * means "the quote under-read what was billed" — with `mockResolvedValue`
+   * returning one cost for both, a divergence test would reserve the high number
+   * from the quote and then find no overage at all, i.e. pass while proving
+   * nothing.
+   */
+  function stepSubmitQuoting(quotedCost: number | null, realizedCost: number) {
+    mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+      if (opts?.query?.whatif === true) {
+        return {
+          id: 'wf_quote',
+          status: 'unassigned',
+          steps: [],
+          ...(quotedCost === null ? {} : { cost: { total: quotedCost } }),
+        };
+      }
+      return {
+        id: 'wf_step_1',
+        status: 'processing',
+        steps: [{ $type: 'convertImage', output: {} }],
+        cost: { total: realizedCost },
+      };
+    });
+  }
+
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe('estimateWorkflow', () => {
+    it('returns the registry DISPLAY estimate with NO orchestrator round-trip', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'wf_estimate',
+        status: 'pending',
+        cost: { total: STEP_PRICE },
+      });
+      // 🔴 "Deterministic cost knowable BEFORE execution" — no whatIf, no submit.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the estimate EQUALS what submit reserves and charges', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const estimate = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', estimate.snapshot.cost.total);
+    });
+
+    // 🔴 FIX 6 — the CODE is the assertion. `paramSchema.parse()` threw a raw
+    // ZodError from inside the resolver, which tRPC's getTRPCErrorFromUnknown
+    // maps to INTERNAL_SERVER_ERROR — so this app-author-driven surface reported
+    // routine param typos as 5xx. `.rejects.toThrow()` passed either way and
+    // pinned nothing.
+    it('REJECTS an out-of-bounds param as BAD_REQUEST (not a 500)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: { image: 'https://evil.example/x.png', output: { format: 'webp' } },
+          }),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('REJECTS an out-of-RANGE bounded param as BAD_REQUEST', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/source.png',
+              output: { format: 'webp' },
+              transforms: [{ type: 'resize', targetWidth: 99999 }],
+            },
+          }),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('REJECTS a model token (registry steps are page-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token (ctx.modelId)
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
+
+  describe('🔴 submitWorkflow — the money path', () => {
+    it('reserves the EXACT declared price on the per-user daily cap AND the PER-APP cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('wf_step_1');
+      // per-user cumulative cap
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+      // 🔴 THE REQUIREMENT: the per-app aggregate spend/velocity cap.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', STEP_PRICE);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+    });
+
+    it('reserves the per-app cap BEFORE the orchestrator submit (never after the spend)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const order: string[] = [];
+      mockReserveAppSpend.mockImplementation(async () => {
+        order.push('reserveAppSpend');
+        return {
+          allowed: true,
+          dailyTotal: 0,
+          velocityCount: 1,
+          dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+        };
+      });
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        order.push(opts?.query?.whatif === true ? 'whatIfQuote' : 'submitWorkflow');
+        return { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 1 } };
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      // 🔴 The free QUOTE precedes the cap belt (so the per-call budget gate runs
+      // against the orchestrator's own number), and the SPENDING submit follows
+      // the per-app reservation. Both halves matter: a reserve after the real
+      // submit would be a spend the cap never saw.
+      expect(order).toEqual(['whatIfQuote', 'reserveAppSpend', 'submitWorkflow']);
+    });
+
+    it('a per-app DAILY cap rejection returns the daily reason and NEVER submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 0,
+        velocityCount: 0,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'failed',
+        status: 'failed',
+        cost: { total: STEP_PRICE },
+      });
+      expect(result.snapshot.error).toMatch(/app daily spend cap reached/);
+      expect(
+        realSubmitCalls(),
+        'the free QUOTE may have run; NOTHING may have been SPENT'
+      ).toHaveLength(0);
+      // The viewer's OWN daily ceiling is given back — a rejected submit must not
+      // burn it for a spend that never happened.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('a per-app VELOCITY cap rejection returns the velocity reason and NEVER submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'velocity',
+        dailyTotal: 0,
+        velocityCount: 999,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.error).toMatch(/app generation rate limit reached/);
+      expect(
+        realSubmitCalls(),
+        'the free QUOTE may have run; NOTHING may have been SPENT'
+      ).toHaveLength(0);
+    });
+
+    it('a fail-closed cap (redis unavailable) rejects without exposing the ceiling', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'unavailable',
+        dailyTotal: 0,
+        velocityCount: 0,
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.error).toMatch(/temporarily unavailable/);
+      // A hostile app must not be able to probe its exact ceiling from the message.
+      expect(result.snapshot.error).not.toMatch(/\d{3,}/);
+      expect(
+        realSubmitCalls(),
+        'the free QUOTE may have run; NOTHING may have been SPENT'
+      ).toHaveLength(0);
+    });
+
+    it('refunds the PER-APP reservation when the orchestrator submit throws', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      // The QUOTE succeeds, the REAL submit throws — otherwise the failure lands
+      // before any reservation exists and this test would prove nothing about
+      // refunds (it would pass with the whole refund block deleted).
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 1 } };
+        }
+        throw new Error('orchestrator down');
+      });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        STEP_PRICE
+      );
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('SKIPS the per-app cap for a DEV token (synthetic non-FK appBlockId), like every other kind', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ dev: true }));
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      // The per-user cap still applies.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        STEP_PRICE
+      );
+    });
+
+    it('IDEMPOTENCY: a replayed submit does NOT double-charge (one reserve, one submit)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      const first = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody(),
+        idempotencyKey: 'step-key',
+      });
+      const second = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody(),
+        idempotencyKey: 'step-key',
+      });
+      expect(first.snapshot.workflowId).toBe('wf_step_1');
+      expect(second.snapshot.workflowId).toBe('wf_step_1');
+      // ONE spending submit across both calls — the replay never re-submits.
+      expect(realSubmitCalls()).toHaveLength(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      // The single real submit carried the namespaced externalId (2nd defense layer).
+      expect(realSubmitCalls()[0][0].body.externalId).toBe('blk08apb_teststep-key');
+      // 🔴 And the free QUOTE must never carry it: an externalId on the whatif
+      // would burn the caller's idempotency key on a preflight that spends
+      // nothing, so the real submit's own dedupe layer would be defeated.
+      for (const call of whatIfSubmitCalls()) {
+        expect(call[0].body.externalId).toBeUndefined();
+      }
+    });
+
+    it('a concurrent same-key submit is a 409 with NO reserve and NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockClaimGen.mockResolvedValue({ state: 'in_progress' });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody(), idempotencyKey: 'k' })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(
+        realSubmitCalls(),
+        'the free QUOTE may have run; NOTHING may have been SPENT'
+      ).toHaveLength(0);
+    });
+
+    it('an over-budget price fails the STATIC gate before any reservation or submit', async () => {
+      // buzzBudget below the declared price → deterministic rejection, no redis,
+      // no orchestrator. (The gate is reachable: nothing earlier rejects a
+      // well-formed body with a small budget.)
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 0.5 }));
+      happyUser();
+      happyStepSubmit();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('failed');
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(
+        /insufficient buzz budget: step price 1 exceeds budget 0.5/
+      );
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(
+        realSubmitCalls(),
+        'the free QUOTE may have run; NOTHING may have been SPENT'
+      ).toHaveLength(0);
+    });
+  });
+
+  describe('submitWorkflow — prepaidFixed settle behaviour', () => {
+    it('does NOT touch the post-paid settle machinery (no settle record persisted)', async () => {
+      // 🔴 The defining property of `prepaidFixed`: the price is exact, so the
+      // reservation is FINAL. A settle record would make the terminal poll refund
+      // `ceiling - actual`, which for a fixed price is refunding money that was
+      // correctly charged.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    it('still writes the durable audit + attribution trail (a step bills real Buzz)', async () => {
+      // Not in the shared beforeEach reset list — clear so this test's detached
+      // call is the one asserted.
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+      expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          appBlockId: 'apb_test',
+          scope: 'ai:write:budgeted',
+          endpoint: 'workflow:submit:wf_step_1',
+        })
+      );
+      expect(mockRecordSpendAttribution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          workflowId: 'wf_step_1',
+          appBlockId: 'apb_test',
+          modelId: null,
+          sharedContentKey: null,
+        })
+      );
+    });
+
+    it('emits the step id (never txt2img) as the workflow-type tag, preserving app-block provenance', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      const tags: string[] = realSubmitCalls()[0][0].body.tags;
+      expect(tags).toContain('step');
+      expect(tags).toContain(STEP_ID);
+      expect(tags).not.toContain('txt2img');
+      expect(tags).toContain('app-block');
+      expect(tags).toContain('app-block:instance:bki_test');
+    });
+
+    it('stamps NO step timeout for a prepaidFixed step (a timeout is not its cap)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      const step = realSubmitCalls()[0][0].body.steps[0];
+      expect(step.$type).toBe('convertImage');
+      expect(step.timeout).toBeUndefined();
+      expect(step.input).toMatchObject({
+        image: 'https://image.civitai.com/source.png',
+        output: { format: 'webp', quality: 90, hideMetadata: true },
+      });
+    });
+  });
+
+  describe('submitWorkflow — prepaidFixed PRICE DIVERGENCE correction', () => {
+    it('CORRECTS both cap counters when the orchestrator bills ABOVE the declared price', async () => {
+      // The one input to this money path that could not be verified locally: the
+      // orchestrator's real price. If it comes in high, the caps are short by the
+      // difference — correct them, or the per-app abuse cap runs that much looser
+      // for every subsequent submit.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      // Quote 1 (matching the declared price), realized 9 → overage 8. The quote
+      // must UNDER-read for a divergence to exist at all: with the quote gate in
+      // place, a quote of 9 would simply have been reserved at 9.
+      stepSubmitQuoting(1, 9);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        8
+      );
+      // The per-user counter is topped up by the same overage.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        8
+      );
+    });
+
+    // 🔴 THE THIRD RESERVATION. The correction used to touch the per-user and
+    // per-app counters only, while its own comment claimed it corrected "both cap
+    // counters" — there are THREE reservations on a step submit, and the
+    // dev-session one was skipped. A divergent submit inside a dev tunnel left
+    // that counter under-reading by the overage: the exact drift direction the
+    // same comment forbids.
+    it('CORRECTS the DEV-SESSION counter too (three reservations, not two)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockGetActiveDevTunnel.mockResolvedValue({
+        sessionId: 'devsess_1',
+        spendCapBuzz: 500,
+      });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 1 });
+      stepSubmitQuoting(1, 9);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeDevSessionOverage).toHaveBeenCalledWith('devsess_1', 8);
+    });
+
+    it('does NOT correct when the realized cost is at or below the reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+      expect(mockChargeDevSessionOverage).not.toHaveBeenCalled();
+
+      mockChargeAppSpendOverage.mockClear();
+      stepSubmitQuoting(1, 0);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+    });
+
+    it('a failing correction NEVER breaks an already-billed submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 9);
+      mockChargeAppSpendOverage.mockRejectedValue(new Error('redis down'));
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.workflowId).toBe('wf_step_1');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 FIX 2 — the per-call `buzzBudget` ceiling is enforced against the
+  // ORCHESTRATOR'S OWN QUOTE, not against a number Civitai asserted.
+  //
+  // Before this, the gate compared the token budget to the registry's DECLARED
+  // price. `prepaidFixed` stamps no step timeout (deliberately — a timeout is
+  // not its cap), so unlike `customComfy` there was no physical ceiling either.
+  // If the declared price were ever below the real one, EVERY submit would
+  // exceed `buzzBudget` by the overage — not just the first — until a human read
+  // a counter and shipped code. The divergence correction adjusts CAP COUNTERS;
+  // it never touched the price or this gate.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('🔴 submitWorkflow — the per-call budget gate uses the orchestrator quote', () => {
+    it('runs a real whatif:true quote BEFORE the budget gate, with no externalId', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody(),
+        idempotencyKey: 'k1',
+      });
+      expect(whatIfSubmitCalls()).toHaveLength(1);
+      expect(whatIfSubmitCalls()[0][0].query).toMatchObject({ whatif: true });
+      expect(whatIfSubmitCalls()[0][0].body.externalId).toBeUndefined();
+    });
+
+    // 🔴 THE FIX, mutation-target. With the gate reading the declared price
+    // (always 1) this submit passes and SPENDS; with the quote it is rejected.
+    it('REJECTS when the ORCHESTRATOR quote exceeds the budget even though the DECLARED price does not', async () => {
+      // budget 5: declared price 1 passes the old static gate; quoted 40 must not.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 5 }));
+      happyUser();
+      stepSubmitQuoting(40, 40);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(
+        /insufficient buzz budget: step price 40 exceeds budget 5/
+      );
+      expect(realSubmitCalls(), 'nothing may be SPENT past the budget ceiling').toHaveLength(0);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('RESERVES the quoted price when it exceeds the declared one (caps see the real number)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 50 }));
+      happyUser();
+      stepSubmitQuoting(12, 12);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 12);
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        12
+      );
+    });
+
+    it('keeps the DECLARED price as the floor when the quote comes in lower (it is what the block was SHOWN)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(0, 0);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', STEP_PRICE);
+    });
+
+    it('FAILS CLOSED when the orchestrator returns NO price quote (no submit, no reserve)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [] }; // no `cost`
+        }
+        return { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 1 } };
+      });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/no price quote/);
+      expect(realSubmitCalls()).toHaveLength(0);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 FIX 7 — "the price is right" and "the detector never ran" must not look
+    // the same. The correction reads `snapshot.cost?.total`, which
+    // `snapshotFromWorkflow` OMITS when there is no numeric cost, and the step
+    // submit passes no `wait` — so the precondition was assumed, never checked.
+    // (Measured live 2026-08-02: a queued convertImage submit DOES carry
+    // `cost.total`. It holds today; it is not guaranteed for a future entry.)
+    // ─────────────────────────────────────────────────────────────────────────
+    it("records outcome 'exact' on a healthy submit — the PROOF the check is live", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'exact');
+    });
+
+    it("records outcome 'over' when the orchestrator bills above the reservation", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 9);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'over');
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalledWith(STEP_ID, 'exact');
+    });
+
+    it("records outcome 'absent' when the submit snapshot carries NO numeric cost", async () => {
+      // The state in which the correction is INERT. Before the outcome label,
+      // this was indistinguishable from a healthy zero.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 1 } };
+        }
+        return { id: 'wf_step_1', status: 'processing', steps: [] }; // no `cost`
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'absent');
+    });
+
+    it('the outcome label is drawn from a CLOSED 3-value set (bounded cardinality)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      stepSubmitQuoting(1, 9);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      // 🔴 THE DENOMINATOR. Without this, the loop below iterates whatever
+      // `mock.calls` happens to hold — so deleting EVERY `recordStepPriceCheck`
+      // call site leaves it iterating zero calls and passing. That is a vacuous
+      // guard, and it is the same position as the disclosed M36 survivor except
+      // that this one is trivially fixable rather than structurally unreachable.
+      // Two submits, one emit each.
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(2);
+      for (const call of mockRecordStepPriceCheck.mock.calls) {
+        expect(['exact', 'over', 'absent']).toContain(call[1]);
+        expect(call[0]).toBe(STEP_ID);
+      }
+    });
+
+    it('a THROWING quote fails before any reservation exists (nothing to refund)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submitWorkflow — fail-closed seams', () => {
+    it('an unregistered step id is rejected at the WIRE SCHEMA (never reaches the handler)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: { kind: 'step', step: 'no-such-step', params: {} } as never,
+        })
+      ).rejects.toThrow();
+      // The schema rejected it — the token was never even verified.
+      expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('an UNKNOWN param is REJECTED, not silently dropped', async () => {
+      // 🔴 The `.strict()` requirement, at the request boundary. A dropped param
+      // on a money path is a wrong-generation bug: this is the class that let an
+      // older host strip `sourceImages` and bill the wrong generation.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/source.png',
+              output: { format: 'webp' },
+              upscaleFactor: 4, // not in the schema
+            },
+          }),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a NON-Civitai image host is rejected before any spend (SSRF bound)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://evil.example/?x=image.civitai.com',
+              output: { format: 'webp' },
+            },
+          }),
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 ENTITLEMENT, at REQUEST time. The registry's clause-7 AIR probe runs at
+    // LOAD, against `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+    // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+    // params registers cleanly and then forwards whatever the untrusted iframe
+    // sent. Before this guard, `moderationPosture` was re-asserted at submit and
+    // `resourcePolicy` was not, so entitlement was a review-process guarantee
+    // with no runtime backstop.
+    //
+    // This test reaches the guard through the REAL registered entry rather than
+    // a fixture: `convert-image`'s `image` param is forwarded verbatim into the
+    // submitted input, so an AIR URN embedded in an otherwise-valid
+    // Civitai-hosted url arrives in `built.input` and the deep scan sees it. The
+    // condition therefore genuinely varies today — this is regression coverage,
+    // not an invariant guard. (It is also, deliberately, a false positive: the
+    // scan is a substring test, and rejecting a pathological url is the
+    // fail-closed direction.)
+    // ─────────────────────────────────────────────────────────────────────────
+    it("a built step that smuggles an AIR is rejected at SUBMIT under resourcePolicy 'none'", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/urn:air:sdxl:checkpoint:civitai:4384@128713.png',
+              output: { format: 'webp' },
+            },
+          }),
+        })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        // 🔴 The MESSAGE, not just the code. Several other seams on this path
+        // also reject with FORBIDDEN (page-only, missing scope, missing budget),
+        // so a code-only assertion would be satisfied by the wrong guard and
+        // would survive deleting this one.
+        message: expect.stringContaining(
+          "declares resourcePolicy 'none' but the submitted step carries an AIR reference"
+        ),
+      });
+      // Rejected BEFORE the free quote, so not even the whatIf round-trip fired.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('the SAME params without the AIR are accepted (the guard is not rejecting the url shape)', async () => {
+      // 🔴 The NEGATIVE CONTROL for the test above. Without it, a guard that
+      // rejected every `convert-image` submit would pass it just as well, and
+      // the pair would prove nothing about the AIR being what was detected.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody({
+          params: {
+            image: 'https://image.civitai.com/sdxl:checkpoint:civitai:4384@128713.png',
+            output: { format: 'webp' },
+          },
+        }),
+      });
+      expect(result.snapshot.status).toBe('processing');
+      expect(realSubmitCalls()).toHaveLength(1);
+    });
+
+    it('a MODEL token is rejected fail-closed BEFORE any spend (page-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a token without ai:write:budgeted is rejected', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ scopes: [] }));
+      happyUser();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
   });
 });
