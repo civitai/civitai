@@ -1,4 +1,5 @@
 import type { MantineSize } from '@mantine/core';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 
 /**
  * App Store Listings (W13) — the `/apps` store's GEOMETRY constants, split out of
@@ -36,8 +37,18 @@ export const LISTING_GRID_SPAN = {
 /**
  * `/apps` store container width (px), passed to `AppsPageLayout size=`.
  *
- * UNCHANGED at 1600 by the cover/CTA pass — the extra card width comes from the
- * column-count drop above, not from widening the page. Pinned here so a future
- * edit to the grid can't quietly move the container too.
+ * 🔴 NO LONGER A LITERAL HERE. The number now lives in
+ * `~/components/Apps/appsPageWidths` alongside every other `/apps/*` route's
+ * width, because the store is one page in a set whose widths were decided
+ * together; this file re-exports it so the container/span pair stays visible
+ * from the grid side. Two copies of the number is exactly the drift the pairing
+ * comment above is trying to prevent — don't inline it back.
+ *
+ * The full-width pass moved it 1600 → 1920. The `xl` span was DELIBERATELY left
+ * at 3 (four columns): at 1920 that yields ~460 px cards (vs ~383 at 1600), so
+ * the 2026-07 "make app cover images larger" pass gets larger still rather than
+ * being undone. Re-tuning to five columns at `xl` would land ~365 px — narrower
+ * than what that pass shipped — so it is not a neutral "keep the density"
+ * choice. The arithmetic is pinned in `__tests__/appsPageWidths.test.ts`.
  */
-export const LISTING_STORE_CONTAINER_SIZE: MantineSize | number = 1600;
+export const LISTING_STORE_CONTAINER_SIZE: MantineSize | number = APPS_PAGE_WIDTHS['/apps'];

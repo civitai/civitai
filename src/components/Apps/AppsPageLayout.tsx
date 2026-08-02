@@ -50,7 +50,16 @@ export function AppsPageLayout({
   const hasHeader = Boolean(title || subtitle || actions);
   return (
     <Container size={size} py="md">
-      <Stack gap="lg">
+      {/* `xl` (32px), not `lg` (20px). With the band's own rule removed, the ONLY
+          thing telling a viewer where the header ends and the page begins is the
+          size of this gap relative to the `md` (16px) gap INSIDE the band. At
+          `lg` that contrast was 20 vs 16 — measured off a render, four pixels,
+          which is not a grouping anyone perceives. `xl` makes it 32 vs 16, a
+          clean 2:1, and the header reads as a band again without a second line.
+          (Checked against a 1440 render of the `hasHeader` layout, not inferred
+          from the tokens: the Title's own line box eats part of the nominal gap,
+          so the token difference alone overstated the visual one.) */}
+      <Stack gap="xl">
         {/*
           Page header region. The sub-nav tabs are the FIRST child here and
           carry no leading content, so they land in the same spot on every page
@@ -58,14 +67,31 @@ export function AppsPageLayout({
           render BELOW the tabs (never above), which is what keeps the tabs from
           shifting vertically between surfaces.
         */}
-        <Stack
-          gap="md"
-          py="sm"
-          style={(theme) => ({
-            // Hairline divider so the header reads as a band.
-            borderBottom: `1px solid ${theme.colors.dark[4]}`,
-          })}
-        >
+        {/*
+          🔴 NO `borderBottom` here — that was a DOUBLE RULE. Mantine's
+          `Tabs.List` (inside `AppsSubNav`) already draws its own bottom border,
+          so this band's hairline landed ~8px below it and every `/apps` page
+          rendered two parallel lines under the tabs. The tabs' own border is the
+          separator; this band contributes SPACING only.
+
+          SPACING after removing it — the second-order effect is on the
+          `hasHeader` pages (`installed`, `my-submissions`, `revenue`, `review`,
+          `review/[id]`, `submit`), where the title/subtitle/actions render BELOW
+          the tabs INSIDE this band. There the removed rule was also the only
+          thing separating the title from the page content, so dropping it alone
+          would leave the title floating between the tab border and the body.
+          The band is therefore held together by PROXIMITY instead of a rule:
+            - `pt="sm"` (was `py="sm"`): the bottom pad is gone, so the header
+              group hugs the tabs it belongs to rather than sitting equidistant.
+            - `gap="md"` (16px) INSIDE the band, vs the parent `Stack gap="xl"`
+              (32px) from the band to the content — the title is measurably
+              closer to the tabs than to the body, which is what makes them read
+              as one unit without a second line. (See the note on that parent
+              Stack for why `lg` was not enough.)
+          A no-header page (the store) is unaffected apart from losing the
+          duplicate rule.
+        */}
+        <Stack gap="md" pt="sm">
           <AppsSubNav />
           {hasHeader && (
             <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">

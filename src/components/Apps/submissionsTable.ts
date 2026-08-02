@@ -12,6 +12,8 @@
  * concrete `Submission` / `OffsiteSubmission` types.
  */
 
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+
 // ── layout ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -85,8 +87,17 @@ export const SUBMISSIONS_CONTAINER_CHROME = 34;
  * `Container` accepts a raw number — the store index already widens this way. The
  * value is not viewport-clamped by us: `Container` is max-width, so a narrower
  * viewport just yields a narrower container and the table scrolls, as intended.
+ *
+ * 🔴 NO LONGER A LOCAL LITERAL. The full-width pass moved every `/apps/*` width
+ * into one module (`appsPageWidths.ts`), so this now READS THROUGH to the shared
+ * `/apps/my-submissions` entry (1920) instead of carrying its own 1500. Keeping
+ * the alias means the page and the guards below keep referring to the constant
+ * whose name states WHY the width matters for THIS page; the invariant
+ * `MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME >=
+ * SUBMISSIONS_TABLE_MIN_WIDTH` is asserted in `__tests__/submissionsTable.test.ts`
+ * and would fail if someone ever narrowed the shared width below the table floor.
  */
-export const MY_SUBMISSIONS_CONTAINER_SIZE = 1500;
+export const MY_SUBMISSIONS_CONTAINER_SIZE: number = APPS_PAGE_WIDTHS['/apps/my-submissions'];
 
 /** Sortable columns shared by both tables. */
 export type SortColumn = 'app' | 'status' | 'submitted' | 'reviewed';
