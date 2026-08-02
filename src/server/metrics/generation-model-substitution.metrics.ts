@@ -15,12 +15,25 @@
 // parse never reaches here: only the server attaches a substitution collector.
 //
 // 🔴 WHAT ONE INCREMENT MEANS: one GRAPH VALIDATION that substituted — NOT one
-// user-visible generation. The App Blocks generate path validates TWICE for a
-// single submit (a whatIf cost preflight, then the real submit), each with its
-// own per-request collector, so one block generation with an out-of-list version
-// contributes 2. Read this as a RATE and a TREND, not as a headcount of affected
-// generations; a "how many generations were served the wrong model" figure has
-// to come from the snapshot/log side, not from here.
+// user-visible generation, and NOT a fixed multiple of one either. The ratio of
+// increments to user-visible generations is VARIABLE, and the variance is not
+// small. On the `block` surface, for ONE user-visible generation:
+//
+//   • 2   — the normal successful submit (whatIf cost preflight, then the real
+//           submit; each builds its own per-request collector).
+//   • 1   — when the whatIf estimate exceeds the block's per-call buzz budget:
+//           `blocks.router.ts` returns the insufficient-budget snapshot BEFORE
+//           the idempotency claim and the real submit, so only the preflight ran.
+//   • +1  — per `blocks.estimateWorkflow` call the block chooses to make. That
+//           is a separate procedure a block may call any number of times (a live
+//           cost readout as the user types), so this term is UNBOUNDED.
+//   • +1  — per idempotency REPLAY that re-enters the procedure (a retried
+//           submit re-runs the preflight before the claim short-circuits).
+//
+// So: read this as a RATE and a TREND per surface. It is NOT a headcount of
+// affected generations, and dividing by 2 does NOT produce one. A real
+// "generations served the wrong model" figure has to come from the snapshot/log
+// side (where each record is tied to one workflow id), not from here.
 //
 // 🔴 ALERTING: use `max_over_time(...[window])`, NOT `rate()`. This is a RARE
 // per-pod counter across ~130 pods: a pod that substitutes once creates its
@@ -34,17 +47,35 @@
 // throws if a metric name is registered twice, so the getter below is a
 // get-or-create guard against the DEFAULT global registry.
 //
-// 🔴 CARDINALITY: `reason` is the ONLY label, over a 3-value code-owned union →
-// 3 series, TOTAL, forever. Deliberately NO version id, model id, app id, or
+// 🔴 SURFACE, and why it is not optional. `validateInput` is shared by the
+// on-site generator, the App Blocks bridge, and comics/preset generation. #3520
+// defends the on-site substitution as CORRECT (a stale localStorage id after an
+// ecosystem switch, visibly corrected in the picker) and indicts the bridge one
+// as unobservable — opposite verdicts, and without a `surface` label they land
+// in the same series. Phase 2's job is to produce a real incidence number that
+// gates phase 3's policy decision; summed across surfaces that number measures a
+// contaminated quantity. The label is supplied BY THE CALLER at context-build
+// time (`buildGenerationContext(..., surface)`), never inferred here.
+//
+// 🔴 CARDINALITY: exactly two labels, each over a code-owned union declared once
+// in `model-substitution.ts` → 3 reasons × 3 surfaces = 9 series, TOTAL,
+// forever. Deliberately NO version id, model id, ecosystem, workflow, app id, or
 // user id: this fires once per substituted parse with nothing caching it, the
 // requested version id is caller-controlled and effectively unbounded, and
 // prom-client retains every distinct label set in the Node heap forever (the
 // --max-old-space-size exit-139 OOM class) across ~130 scraped pods. Attribution
 // belongs in the snapshot the caller already receives (which carries the exact
 // requested/applied ids) — alert on the metric, attribute from the snapshot.
+// Both label values are NARROWED AT RUNTIME before `inc()` so the bound rests on
+// code rather than on erased types.
 import client, { type Counter, type Registry } from 'prom-client';
 
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import {
+  isGenerationSurface,
+  isModelSubstitutionReason,
+  type GenerationSurface,
+  type ModelSubstitutionReason,
+} from '~/shared/data-graph/generation/model-substitution';
 
 function getOrCreateCounter(
   reg: Registry,
@@ -68,9 +99,11 @@ export function ensureRegisterGenerationModelSubstitutionMetrics(reg: Registry =
   const modelSubstitutionsTotal = getOrCreateCounter(
     reg,
     'civitai_generation_model_substitutions_total',
-    'Server-side generation graph validations in which a modelLocked ecosystem SILENTLY replaced the requested checkpoint version with the workflow default, by reason ' +
-      '(wrong-workflow = the version is scoped to a different workflow of the same ecosystem; unrecognized = the version is in no scoped list at all; gated = the version IS offered for this workflow but a gate rule hid it from this user)',
-    ['reason']
+    'Server-side generation GRAPH VALIDATIONS in which a modelLocked ecosystem SILENTLY replaced the requested checkpoint version with the workflow default. ' +
+      'NOT a count of user-visible generations: the ratio is VARIABLE — a block submit normally validates twice (whatIf preflight + real submit), once if the preflight exceeds the buzz budget, plus one per estimateWorkflow call (unbounded) and one per idempotency replay. Use as a rate/trend per surface; attribute individual cases from the snapshot. ' +
+      'reason (wrong-workflow = the version is scoped to a different workflow of the same ecosystem; unrecognized = the version is in no scoped list at all; gated = the version IS offered for this workflow but a gate rule hid it from this user). ' +
+      'surface (block = the App Blocks bridge, where the id was deliberate and the correction was unobservable; onsite = the on-site generator, where this substitution is the intended graceful degradation and is visible to the user; preset = comics/preset server-composed generation)',
+    ['reason', 'surface']
   );
   return { modelSubstitutionsTotal };
 }
@@ -90,10 +123,18 @@ export function ensureRegisterGenerationModelSubstitutionMetrics(reg: Registry =
  * substituted. A submit that names an in-list version never reaches here, so the
  * steady state on healthy traffic is zero emits.
  */
-export function recordGenerationModelSubstitution(reason: ModelSubstitutionReason): void {
+export function recordGenerationModelSubstitution(
+  reason: ModelSubstitutionReason,
+  surface: GenerationSurface
+): void {
   try {
+    // 🔴 The cardinality bound rests HERE, on code, not on the erased types
+    // above. An unknown reason or surface is DROPPED, not passed through and not
+    // relabelled to a plausible default — either would make the "9 series
+    // forever" claim a wish. Reachable today only by defeating the types.
+    if (!isModelSubstitutionReason(reason) || !isGenerationSurface(surface)) return;
     const { modelSubstitutionsTotal } = ensureRegisterGenerationModelSubstitutionMetrics();
-    modelSubstitutionsTotal.inc({ reason });
+    modelSubstitutionsTotal.inc({ reason, surface });
   } catch {
     /* instrument-only — never let a metrics error touch the generation path */
   }

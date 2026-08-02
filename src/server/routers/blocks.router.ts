@@ -133,6 +133,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
@@ -989,10 +990,16 @@ async function createBlockTextToImageStep(opts: {
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
-  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
-    id: opts.user.id,
-    isModerator: opts.user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    opts.user.tier ?? 'free',
+    undefined,
+    { id: opts.user.id, isModerator: opts.user.isModerator },
+    // #3520: the App Blocks bridge — the surface the issue is actually about.
+    // Here the checkpoint version id was written by an app author (deliberate),
+    // and until this PR the correction was undetectable by the caller. This is
+    // the population phase 3's reject/degrade decision has to be measured on.
+    'block'
+  );
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
@@ -1025,16 +1032,32 @@ async function createBlockTextToImageStep(opts: {
   // object — so it describes THIS submit and no one else's. Behaviour is
   // unchanged; the caller folds this into the snapshot so the block can detect
   // that it was billed for a model it did not ask for.
+  const modelSubstitutions = externalCtx.modelSubstitutions
+    ?.list()
+    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+
+  // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
+  // A block renders from the TERMINAL POLL (the only snapshot carrying
+  // `imageUrls`), and `pollWorkflow` rebuilds its snapshot from a freshly
+  // fetched Workflow with none of this request's context — so a reply-only field
+  // is gone before there is anything to show beside it, and `block_workflows`
+  // does not retain the submitted body to recover it from. Riding on the
+  // orchestrator metadata the submit body already carries makes it readable on
+  // EVERY later read, with no schema/DB change. See
+  // `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY`.
+  //
+  // Byte-identical when nothing was substituted (the overwhelmingly common
+  // case): the key is only added when there is something to add, and
+  // `workflowMetadata` is `undefined` on whatIf — where there is no persisted
+  // workflow to read back from anyway, so the estimate reply carries the record
+  // directly instead.
   return {
     step,
-    workflowMetadata,
-    modelSubstitutions: externalCtx.modelSubstitutions
-      ?.list()
-      .map(({ requested, applied, reason }) => ({
-        requested,
-        applied,
-        reason,
-      })),
+    workflowMetadata:
+      workflowMetadata && modelSubstitutions?.length
+        ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
+        : workflowMetadata,
+    modelSubstitutions,
   };
 }
 
@@ -4042,11 +4065,23 @@ export const blocksRouter = router({
       // resources/params the real submit uses.
       // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
       // it on whatIf), and the whatif body never carries `metadata` anyway.
-      const { step: stepForCostCheck } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
+      //
+      // #3520 — the preflight's OWN substitutions. This validation is what
+      // produces the cost the budget check below is made against, so if the graph
+      // swapped the checkpoint here, the quote the block is judged on is priced
+      // for a model it did not ask for. On the SUCCESS path the real submit
+      // re-validates the same input and its record is what the snapshot carries
+      // (identical by construction, and tied to a real workflow id) — so these
+      // are only surfaced on the one exit that returns a quote WITHOUT a submit:
+      // the insufficient-budget reply below, which would otherwise be the single
+      // reply in the whole flow that reports a cost with no way to learn which
+      // model it was for.
+      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
+        await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          whatIf: true,
+        });
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
@@ -4070,6 +4105,12 @@ export const blocksRouter = router({
             status: 'failed' as const,
             cost: { total: cost },
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+            // Additive + omitted when empty, exactly like every other snapshot
+            // site, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }

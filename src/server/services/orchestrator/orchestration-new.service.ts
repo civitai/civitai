@@ -46,7 +46,10 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
-import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
+import {
+  createModelSubstitutionCollector,
+  type GenerationSurface,
+} from '~/shared/data-graph/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
@@ -269,12 +272,22 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
  * @param userTier - The user's subscription tier
  * @param flags - Feature access flags
  * @param user - User info used to resolve mod-only / testing gating
+ * @param surface - 🔴 REQUIRED, and deliberately not defaulted (issue #3520).
+ *   Which caller is validating: `onsite` (the on-site generator), `block` (the
+ *   App Blocks bridge) or `preset` (comics / preset generation). It becomes the
+ *   `surface` label on `civitai_generation_model_substitutions_total`, and the
+ *   split is load-bearing: #3520 calls the substitution CORRECT on-site and
+ *   unobservable through the bridge, so one un-split series measures a
+ *   contaminated quantity. Required (not optional-with-a-default) so a NEW
+ *   generation entry point is a compile error here rather than silent
+ *   misattribution to whichever surface the default happened to name.
  * @returns GenerationCtx with limits, user info, and gated IDs, plus status for availability checks
  */
 export async function buildGenerationContext(
   userTier: GenerationCtx['user']['tier'] = 'free',
-  flags?: Partial<FeatureAccess>,
-  user?: { id?: number; isModerator?: boolean }
+  flags: Partial<FeatureAccess> | undefined,
+  user: { id?: number; isModerator?: boolean } | undefined,
+  surface: GenerationSurface
 ): Promise<GenerationContextResult> {
   const [status, ecosystemConfig, gateRules] = await Promise.all([
     getGenerationStatus(),
@@ -319,8 +332,13 @@ export async function buildGenerationContext(
       // substitutions across users and leak one caller's requested model id into
       // another caller's snapshot. This function returns a brand-new object on
       // every call with no memoization, so the collector's lifetime is exactly
-      // one request.
-      modelSubstitutions: createModelSubstitutionCollector(classifyModelSubstitutionReason),
+      // one request. The `surface` rides on the collector because `validateInput`
+      // (where the metric is emitted) is shared by every surface and cannot tell
+      // them apart.
+      modelSubstitutions: createModelSubstitutionCollector(
+        classifyModelSubstitutionReason,
+        surface
+      ),
     },
     status: {
       mode: status.mode,

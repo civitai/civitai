@@ -6,6 +6,10 @@ import type { GenerationCtx } from './context';
 import type { GateRule } from './gates';
 import {
   createModelSubstitutionCollector,
+  GENERATION_SURFACES,
+  isGenerationSurface,
+  isModelSubstitutionReason,
+  MODEL_SUBSTITUTION_REASONS,
   type ModelSubstitution,
   type ModelSubstitutionCollector,
 } from './model-substitution';
@@ -51,7 +55,7 @@ function ctxWithCollector(overrides?: Partial<GenerationCtx>): {
   ctx: GenerationCtx;
   collector: ModelSubstitutionCollector;
 } {
-  const collector = createModelSubstitutionCollector(classifyModelSubstitutionReason);
+  const collector = createModelSubstitutionCollector(classifyModelSubstitutionReason, 'block');
   return { ctx: { ...baseCtx(overrides), modelSubstitutions: collector }, collector };
 }
 
@@ -342,7 +346,7 @@ describe('createModelSubstitutionCollector', () => {
 
   it('classifies via the injected classifier', () => {
     const classify = vi.fn().mockReturnValue('unrecognized' as const);
-    const collector = createModelSubstitutionCollector(classify);
+    const collector = createModelSubstitutionCollector(classify, 'block');
     collector.record(event);
     expect(classify).toHaveBeenCalledWith(event);
     expect(collector.list()).toEqual([{ ...event, reason: 'unrecognized' }]);
@@ -351,23 +355,130 @@ describe('createModelSubstitutionCollector', () => {
   it('SWALLOWS a throwing classifier — observability must not break a parse', () => {
     const collector = createModelSubstitutionCollector(() => {
       throw new Error('boom');
-    });
+    }, 'block');
     expect(() => collector.record(event)).not.toThrow();
     expect(collector.list()).toEqual([]);
   });
 
   it('list() returns a copy — a caller cannot mutate the collector', () => {
-    const collector = createModelSubstitutionCollector(() => 'unrecognized');
+    const collector = createModelSubstitutionCollector(() => 'unrecognized', 'block');
     collector.record(event);
     collector.list().push({ ...event, reason: 'gated' });
     expect(collector.list()).toHaveLength(1);
   });
 
   it('two collectors do not share state (per-request isolation)', () => {
-    const a = createModelSubstitutionCollector(() => 'unrecognized');
-    const b = createModelSubstitutionCollector(() => 'unrecognized');
+    const a = createModelSubstitutionCollector(() => 'unrecognized', 'block');
+    const b = createModelSubstitutionCollector(() => 'unrecognized', 'onsite');
     a.record(event);
     expect(b.list()).toEqual([]);
+  });
+
+  it('carries the SURFACE it was constructed with', () => {
+    // The surface is fixed by whoever built the request context; `validateInput`
+    // (where the metric is emitted) is shared by every surface and cannot infer
+    // it. Pinning it here is what makes the emitter's label attributable.
+    expect(createModelSubstitutionCollector(() => 'unrecognized', 'block').surface).toBe('block');
+    expect(createModelSubstitutionCollector(() => 'unrecognized', 'onsite').surface).toBe('onsite');
+    expect(createModelSubstitutionCollector(() => 'unrecognized', 'preset').surface).toBe('preset');
+  });
+
+  // ── 🔴 a classifier that THROWS must not permanently drop the key ──────────
+  //
+  // `seen` is the write-once dedupe. Marking the key BEFORE calling `classify`
+  // meant a classifier that threw on its first call lost that substitution for
+  // the entire request: the throw was swallowed, nothing was pushed, and every
+  // later attempt short-circuited on `seen.has(key)`. Harmless with today's pure
+  // classifier — and exactly the kind of "only under a fault" data loss that is
+  // invisible until the fault happens.
+  it('a classifier that throws ONCE does not permanently drop the key', () => {
+    let calls = 0;
+    const collector = createModelSubstitutionCollector(() => {
+      calls += 1;
+      if (calls === 1) throw new Error('boom');
+      return 'unrecognized';
+    }, 'block');
+
+    collector.record(event);
+    expect(collector.list()).toEqual([]); // the throw was swallowed
+
+    // Same key again — must be RE-ATTEMPTED, not short-circuited by `seen`.
+    collector.record(event);
+    expect(calls).toBe(2);
+    expect(collector.list()).toEqual([{ ...event, reason: 'unrecognized' }]);
+  });
+
+  it('an always-throwing classifier still leaves the key retryable', () => {
+    let calls = 0;
+    const collector = createModelSubstitutionCollector(() => {
+      calls += 1;
+      throw new Error('boom');
+    }, 'block');
+    collector.record(event);
+    collector.record(event);
+    expect(calls).toBe(2);
+    expect(collector.list()).toEqual([]);
+  });
+
+  // ── 🔴 a bogus classifier return cannot reach the wire or the metric ───────
+  //
+  // `ModelSubstitutionReason` is erased at runtime, so the "3 values forever"
+  // guarantee has to be enforced in code. A classifier returning `undefined` (a
+  // refactor that forgets a branch, a stub, a `.js` caller) would otherwise put
+  // `reason: undefined` on the public snapshot AND into `inc({ reason })`, which
+  // is how a bounded label set stops being bounded.
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['an unknown string', 'not-a-reason'],
+    ['a number', 7],
+    ['an object', { reason: 'unrecognized' }],
+  ])('DROPS a classifier return that is %s', (_label, bogus) => {
+    const collector = createModelSubstitutionCollector(
+      () => bogus as never as (typeof MODEL_SUBSTITUTION_REASONS)[number],
+      'block'
+    );
+    collector.record(event);
+    expect(collector.list()).toEqual([]);
+    expect(collector.takeUnemitted()).toEqual([]);
+  });
+
+  it('records every reason the code-owned union declares (guard the guard)', () => {
+    // Without this, the drop-test above would also pass if `record` dropped
+    // EVERYTHING — a guard that rejects the whole population is not a guard.
+    for (const reason of MODEL_SUBSTITUTION_REASONS) {
+      const collector = createModelSubstitutionCollector(() => reason, 'block');
+      collector.record(event);
+      expect(collector.list()).toEqual([{ ...event, reason }]);
+    }
+  });
+});
+
+describe('runtime narrowing helpers', () => {
+  it('isModelSubstitutionReason accepts exactly the declared union', () => {
+    for (const reason of MODEL_SUBSTITUTION_REASONS) {
+      expect(isModelSubstitutionReason(reason)).toBe(true);
+    }
+    for (const bogus of [undefined, null, '', 'gated ', 'GATED', 7, {}, []]) {
+      expect(isModelSubstitutionReason(bogus)).toBe(false);
+    }
+  });
+
+  it('isGenerationSurface accepts exactly the declared union', () => {
+    for (const surface of GENERATION_SURFACES) {
+      expect(isGenerationSurface(surface)).toBe(true);
+    }
+    for (const bogus of [undefined, null, '', 'blocks', 'Onsite', 7, {}, []]) {
+      expect(isGenerationSurface(bogus)).toBe(false);
+    }
+  });
+
+  it('the surface union is exactly the three wired call sites', () => {
+    // 3 reasons x 3 surfaces = 9 series. Adding a value here is a deliberate,
+    // reviewable widening of the counter's cardinality, so it has to fail a test
+    // rather than land silently.
+    expect([...GENERATION_SURFACES]).toEqual(['block', 'onsite', 'preset']);
+    expect([...MODEL_SUBSTITUTION_REASONS]).toEqual(['wrong-workflow', 'unrecognized', 'gated']);
   });
 });
 

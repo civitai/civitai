@@ -344,6 +344,16 @@ export type BlockWorkflowSnapshot = {
    * substituted, so every existing snapshot stays byte-identical and a consumer
    * that does not read it is unaffected.
    *
+   * WHERE IT APPEARS. On the submit reply, on the `estimateWorkflow` reply, on
+   * the insufficient-budget reply from `generate`, and — because the submit
+   * persists it on the orchestrator workflow's `metadata` — on every subsequent
+   * `pollWorkflow` / `cancelWorkflow` read of that workflow. The poll is the one
+   * that matters in practice: it is the snapshot carrying `imageUrls`, i.e. the
+   * one a block actually renders from, so the record is present next to the
+   * images it describes rather than only on a reply the block may have discarded.
+   * The estimate reply is the exception — a whatIf creates no persisted workflow,
+   * so there the record exists only on that reply.
+   *
    * 🔴 WIRE CONTRACT: this is an ADDITIVE field on the type
    * `@civitai/app-sdk`'s `blocks/types.ts` mirrors. The SDK's inbound validator
    * does not know it yet, so a block reads it only after the SDK type is widened

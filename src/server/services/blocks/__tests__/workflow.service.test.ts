@@ -167,10 +167,13 @@ describe('snapshotFromWorkflow', () => {
 
   // ---- #3520: silent model substitutions surfaced on the snapshot ----------
   //
-  // The orchestrator Workflow cannot carry these — the substitution happened
-  // during graph validation, before anything was submitted — so they arrive as
-  // an explicit second argument. The invariant being protected is "a caller
-  // billed for model A and given model B must be able to find that out".
+  // The substitution happens during graph validation, before anything is
+  // submitted, so it arrives EITHER as an explicit second argument (submit /
+  // estimate replies, where the request's collector is still in scope) OR — and
+  // this is the one that matters — off the workflow's persisted `metadata`, which
+  // is what makes it survive to the TERMINAL POLL, the snapshot a block actually
+  // renders from. The invariant being protected is "a caller billed for model A
+  // and given model B must be able to find that out".
   it('surfaces modelSubstitutions passed alongside the workflow', () => {
     const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
       modelSubstitutions: [{ requested: 2558804, applied: 2552908, reason: 'wrong-workflow' }],
@@ -188,6 +191,113 @@ describe('snapshotFromWorkflow', () => {
       const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra);
       expect('modelSubstitutions' in snap).toBe(false);
     }
+  });
+
+  // ---- 🔴 #3520 FIX 1: the record must SURVIVE TO THE POLL -----------------
+  //
+  // `pollWorkflow` / `cancelWorkflow` call `snapshotFromWorkflow(workflow)` with
+  // NO second argument — they only have a freshly fetched Workflow. The poll is
+  // also the only snapshot that carries `imageUrls`, i.e. the one a block renders
+  // from. A submit-reply-only field is therefore gone before there is anything to
+  // display beside it, and `block_workflows` does not retain the submitted body
+  // to recover it from. These pin the metadata round-trip that closes that.
+  describe('recovered from the workflow metadata (the poll path)', () => {
+    const persisted = [
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+      { requested: 987654321, applied: 2552908, reason: 'unrecognized' },
+    ];
+
+    it('reads modelSubstitutions off workflow.metadata with NO extra argument', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: { params: { prompt: 'a cat' }, modelSubstitutions: persisted },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('is present on the TERMINAL poll shape — alongside the imageUrls it describes', () => {
+      // The shape `pollWorkflow` actually hands to the block: succeeded, with
+      // outputs. This is the exact call the fix exists for.
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          status: 'succeeded',
+          metadata: { modelSubstitutions: persisted },
+          steps: [
+            {
+              $type: 'textToImage',
+              name: 's1',
+              status: 'succeeded',
+              metadata: {},
+              output: {
+                images: [{ id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' }],
+              },
+            },
+          ],
+        }) as never
+      );
+      expect(snap.imageUrls).toEqual(['https://cdn/img1.png']);
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('an EXPLICIT extra wins over the metadata (the submit reply is authoritative)', () => {
+      const fromRequest = [{ requested: 1, applied: 2, reason: 'gated' as const }];
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ metadata: { modelSubstitutions: persisted } }) as never,
+        { modelSubstitutions: fromRequest }
+      );
+      expect(snap.modelSubstitutions).toEqual(fromRequest);
+    });
+
+    it('still OMITS the field when the metadata has none (unchanged wire payload)', () => {
+      for (const metadata of [
+        {},
+        { params: { prompt: 'x' } },
+        { modelSubstitutions: [] },
+        { modelSubstitutions: null },
+        { modelSubstitutions: 'nope' },
+      ]) {
+        const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+        expect('modelSubstitutions' in snap).toBe(false);
+      }
+    });
+
+    // 🔴 The metadata crosses a service boundary and feeds a PUBLIC wire field
+    // whose `reason` is also a bounded prom label, so it is validated, not cast.
+    it.each([
+      ['a non-array', { modelSubstitutions: { requested: 1, applied: 2, reason: 'gated' } }],
+      ['a null entry', { modelSubstitutions: [null] }],
+      [
+        'a non-numeric requested',
+        { modelSubstitutions: [{ requested: '1', applied: 2, reason: 'gated' }] },
+      ],
+      [
+        'a NaN applied',
+        { modelSubstitutions: [{ requested: 1, applied: Number.NaN, reason: 'gated' }] },
+      ],
+      ['a missing reason', { modelSubstitutions: [{ requested: 1, applied: 2 }] }],
+      [
+        'an unknown reason',
+        { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'because' }] },
+      ],
+    ])('DROPS %s from the metadata rather than putting it on the wire', (_label, metadata) => {
+      const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+      expect('modelSubstitutions' in snap).toBe(false);
+    });
+
+    it('keeps the VALID entries when a malformed one rides alongside', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: {
+            modelSubstitutions: [
+              { requested: 1, applied: 2, reason: 'because' },
+              { requested: 3, applied: 4, reason: 'gated' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual([{ requested: 3, applied: 4, reason: 'gated' }]);
+    });
   });
 
   // ---- image extraction across ALL image-producing step types --------------

@@ -26,12 +26,20 @@ export async function emitModelSubstitutions(
   collector: ModelSubstitutionCollector | undefined
 ): Promise<void> {
   try {
-    const pending = collector?.takeUnemitted();
-    if (!pending?.length) return;
+    if (!collector) return;
+    const pending = collector.takeUnemitted();
+    if (!pending.length) return;
+    // The SURFACE comes off the collector, which got it from whoever built this
+    // request's context (`buildGenerationContext(..., surface)`) — never guessed
+    // here. `validateInput` is shared by the on-site generator, the App Blocks
+    // bridge and preset generation, so this function structurally cannot tell
+    // them apart and must not try.
+    const { surface } = collector;
     const { recordGenerationModelSubstitution } = await import(
       '~/server/metrics/generation-model-substitution.metrics'
     );
-    for (const substitution of pending) recordGenerationModelSubstitution(substitution.reason);
+    for (const substitution of pending)
+      recordGenerationModelSubstitution(substitution.reason, surface);
   } catch {
     /* observability must never break the generation it observes */
   }
