@@ -143,7 +143,15 @@ import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/rec
 // registry is. `estimateStepBuzz` / `planStepSpend` dispatch on the entry's
 // declared `billingMode` — this router contains NO per-step and NO per-mode
 // branch, which is what makes adding a capability additive.
-import { estimateStepBuzz, getStep, planStepSpend } from '~/server/services/blocks/steps';
+// `containsAirReference` is the SAME deep scan the registry's load-time clause 7
+// runs; imported (not re-implemented) so the request-time re-assertion below can
+// never drift from the load-time one — one rule, one place.
+import {
+  containsAirReference,
+  estimateStepBuzz,
+  getStep,
+  planStepSpend,
+} from '~/server/services/blocks/steps';
 // Instrument-only: records EVERY prepaidFixed step price check at submit —
 // `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
 // from a detector that never ran. Never throws.
@@ -6418,11 +6426,29 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
 }
 
 /**
- * STEP ESTIMATE. Returns the registry's declared, deterministic estimate — no
- * orchestrator round-trip. For `prepaidFixed` that estimate is enforced at
- * registry LOAD to equal the exact price the submit path reserves and the
- * viewer is charged, so an estimate can never quote a different number than the
- * submit bills.
+ * STEP ESTIMATE. Returns the registry's DECLARED, deterministic estimate — no
+ * orchestrator round-trip. For `prepaidFixed`, registry load enforces that this
+ * number equals the entry's declared price (`estimateBuzz === priceForVariant`),
+ * so the estimate and the declared price can never disagree with each other.
+ *
+ * 🔴 THE ESTIMATE AND THE SUBMIT CAN DIVERGE, and that is deliberate. Submit no
+ * longer trusts the declared price as the ceiling: it runs a real `whatif:true`
+ * quote against the orchestrator and gates + reserves `max(declared, quoted)`
+ * (see the ORCHESTRATOR QUOTE section in `submitStepWorkflow`). So when the
+ * orchestrator's live price is ABOVE the declared one — a rate-card move — the
+ * block is shown the declared number here and the submit enforces the higher
+ * one. Concretely, at a live price of 40 against a declared 1: this returns
+ * `cost.total: 1`, and the submit either returns
+ * `insufficient buzz budget: step price 40 exceeds budget <n>` or reserves 40
+ * against every cap.
+ *
+ * That is fail-closed and correct — the caller is never billed more than the
+ * caps it reserved against, and the divergence is counted as
+ * `civitai_app_block_step_price_check_total{outcome="over"}`. But do NOT read
+ * this estimate as a binding quote: it is the declared floor, not the enforced
+ * ceiling. (This comment previously asserted the inverse — that an estimate can
+ * never quote a different number than the submit bills. That was true before the
+ * quote-backed gate existed and is now false.)
  *
  * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
  * exactly as submit does — the same `.strict()` schema runs on both paths.
@@ -6523,6 +6549,42 @@ async function submitStepWorkflow(opts: {
   // a timeout on a fixed-price step would be a liveness knob and stamping one
   // here would imply a Buzz-cap relationship that does not exist.
   const built = step.buildStep(params);
+
+  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
+  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
+  // this PR's own triage named as the real risk (`imageUpscaler` was
+  // disqualified precisely because its `model` field takes an arbitrary AIR
+  // URN).
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
+  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+  // params therefore registers cleanly, and at request time `buildStep` forwards
+  // whatever the untrusted iframe sent straight into the submitted input. Load
+  // time proved a property of one fixed input; this proves it of THIS input.
+  // Without it, `resourcePolicy` was enforced at registry load only — a
+  // review-process guard, not a runtime one — while `moderationPosture` was
+  // enforced at both.
+  //
+  // Placed before the quote and before every reservation, so a rejection here
+  // costs no orchestrator call and has nothing to refund.
+  //
+  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
+  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
+  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
+  // too. That is a false positive, and it is the direction we want — refusing a
+  // pathological url costs a caller one bounced request; forwarding an
+  // unentitled AIR costs the entitlement belt.
+  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step carries an ` +
+        'AIR reference — a step that reaches an AIR resource bypasses the generation-graph ' +
+        'entitlement belt',
+    });
+  }
+
   const orchestratorStep = {
     $type: built.$type,
     name: BLOCK_STEP_NAME,

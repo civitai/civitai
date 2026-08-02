@@ -147,8 +147,16 @@ export type ConvertImageStepParams = z.infer<typeof convertImageParamsSchema>;
  * `convertImage` workflow polled to `succeeded`): `step.output` had exactly the
  * key `blob`, with `available` transitioning false→true, plus `url`, `width`
  * (797) and `height` (1024). No `images` key and no `blobs` key were present.
+ *
+ * 🔴 EXPORTED SO IT CAN BE ANCHORED TO THE GENERATED CONTRACT. `extractOutput`
+ * takes `unknown` and reaches this shape through a cast, so nothing at the call
+ * site links it to the orchestrator's own types. `type-contract.ts` asserts that
+ * a real `ConvertImageStep` from `@civitai/client` satisfies it and that every
+ * key it reads exists on the generated `ConvertImageOutput` / `ImageBlob` — which
+ * moves the anchor for THIS entry off the author and onto a type Civitai does not
+ * hand-write.
  */
-type ConvertImageOutputStepLike = {
+export type ConvertImageOutputStepLike = {
   output?: {
     blob?: {
       url?: string | null;

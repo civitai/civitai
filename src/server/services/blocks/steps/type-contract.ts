@@ -4,9 +4,11 @@
  * checking the file, and a violated contract fails the build. "Using" them
  * somewhere would add runtime weight and prove nothing extra.
  */
+import type { ConvertImageOutput, ConvertImageStep, ImageBlob } from '@civitai/client';
 import type * as z from 'zod';
+import type { ConvertImageOutputStepLike } from './convert-image.step';
 import type { BlockStep } from './index';
-import type { StepOutputMedia } from './output';
+import type { OrchestratorBlobLike, StepOutputMedia } from './output';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPILE-TIME contract for the step registry: `billingMode` and
@@ -143,4 +145,79 @@ type _RequiresExtractOutput = Expect<
 // shipping the same inert capability.
 type _RequiresCanonicalOutput = Expect<
   NotAssignable<Omit<CompleteStep, 'canonicalOutputFor'>, BlockStep<Params>>
+>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTPUT-SHAPE ANCHORING — tie the hand-written read shapes to the GENERATED
+// orchestrator contract.
+//
+// 🔴 WHY, AND WHAT IT DOES *NOT* FIX. The registry's load-time clause 8 probes
+// `extractOutput(canonicalOutputFor(v))` — but BOTH sides of that probe are
+// authored by the same person in the same file, so it is a SELF-CONSISTENT PAIR,
+// not a contract check. It only catches an extractor that surfaces nothing for
+// its own sample; it cannot catch an extractor and a sample that agree with each
+// other while both being wrong about the orchestrator. Two escapes were
+// reproduced: an extractor that ignores its argument paired with
+// `canonicalOutputFor: () => ({})`, and an extractor reading `output.images`
+// paired with a sample that also encodes `output.images`. Both register cleanly.
+//
+// The assertions below close that for `convert-image` specifically, by making
+// `@civitai/client`'s generated types — which Civitai does not hand-write — the
+// authority for the shape the extractor reads.
+//
+// 🔴 HONEST LIMIT: this does NOT make clause 8 a general guard. A FUTURE entry
+// still supplies its own read shape and its own sample, and nothing here forces
+// it to add an assertion of its own — the escape stays open for entry #2. What
+// is anchored is the one registered entry. Making the anchoring REQUIRED for
+// every entry needs a `$type` → generated-step-type mapping the registry can
+// consult at the type level; `@civitai/client` exports no discriminated union of
+// all step types (only the individual `<Name>Step` aliases), so that map would
+// itself be hand-written — which is why it is proposed rather than built here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A REAL `ConvertImageStep` must satisfy the hand-written shape `extractOutput`
+ * casts to. This is the assertion that fails if the generated output type ever
+ * changes in a way the extractor's read would not survive (a retyped `url`, a
+ * `blob` that stops being optional-nullable, and so on).
+ */
+type _RealConvertImageStepSatisfiesReadShape = Expect<
+  ConvertImageStep extends ConvertImageOutputStepLike ? true : false
+>;
+
+/**
+ * Every key the read shape declares under `output` must EXIST on the generated
+ * `ConvertImageOutput`.
+ *
+ * 🔴 This is the assertion that catches the exact shipped-bug shape (reading
+ * `blobs` where the orchestrator returns `blob`). Assignability alone does not:
+ * a read shape whose properties are all optional is satisfied by anything, so
+ * renaming `blob` → `blobs` would still compile against the assertion above.
+ * `keyof` is what makes the key name itself load-bearing.
+ */
+type _ConvertImageReadKeysExist = Expect<
+  keyof NonNullable<ConvertImageOutputStepLike['output']> extends keyof ConvertImageOutput
+    ? true
+    : false
+>;
+
+/** Same, one level down: every blob field the extractor reads is a real `ImageBlob` field. */
+type _ConvertImageBlobReadKeysExist = Expect<
+  keyof NonNullable<
+    NonNullable<ConvertImageOutputStepLike['output']>['blob']
+  > extends keyof ImageBlob
+    ? true
+    : false
+>;
+
+/**
+ * The SHARED filter's input contract, anchored once for every entry that uses it.
+ * `mediaFromBlobs` is the one copy of the availability + non-empty-url rule, and
+ * `OrchestratorBlobLike` is the shape it promises to handle — so a real
+ * `ImageBlob` must be assignable to it. Unlike the three above, this assertion
+ * is not entry-specific: it covers any future entry that feeds a generated blob
+ * through `mediaFromBlobs`.
+ */
+type _MediaFromBlobsAcceptsGeneratedImageBlob = Expect<
+  ImageBlob extends OrchestratorBlobLike ? true : false
 >;

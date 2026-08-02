@@ -6465,6 +6465,13 @@ describe("step-type registry bridge (kind: 'step')", () => {
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       stepSubmitQuoting(1, 9);
       await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      // 🔴 THE DENOMINATOR. Without this, the loop below iterates whatever
+      // `mock.calls` happens to hold — so deleting EVERY `recordStepPriceCheck`
+      // call site leaves it iterating zero calls and passing. That is a vacuous
+      // guard, and it is the same position as the disclosed M36 survivor except
+      // that this one is trivially fixable rather than structurally unreachable.
+      // Two submits, one emit each.
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(2);
       for (const call of mockRecordStepPriceCheck.mock.calls) {
         expect(['exact', 'over', 'absent']).toContain(call[1]);
         expect(call[0]).toBe(STEP_ID);
@@ -6540,6 +6547,74 @@ describe("step-type registry bridge (kind: 'step')", () => {
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 ENTITLEMENT, at REQUEST time. The registry's clause-7 AIR probe runs at
+    // LOAD, against `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+    // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+    // params registers cleanly and then forwards whatever the untrusted iframe
+    // sent. Before this guard, `moderationPosture` was re-asserted at submit and
+    // `resourcePolicy` was not, so entitlement was a review-process guarantee
+    // with no runtime backstop.
+    //
+    // This test reaches the guard through the REAL registered entry rather than
+    // a fixture: `convert-image`'s `image` param is forwarded verbatim into the
+    // submitted input, so an AIR URN embedded in an otherwise-valid
+    // Civitai-hosted url arrives in `built.input` and the deep scan sees it. The
+    // condition therefore genuinely varies today — this is regression coverage,
+    // not an invariant guard. (It is also, deliberately, a false positive: the
+    // scan is a substring test, and rejecting a pathological url is the
+    // fail-closed direction.)
+    // ─────────────────────────────────────────────────────────────────────────
+    it("a built step that smuggles an AIR is rejected at SUBMIT under resourcePolicy 'none'", async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            params: {
+              image: 'https://image.civitai.com/urn:air:sdxl:checkpoint:civitai:4384@128713.png',
+              output: { format: 'webp' },
+            },
+          }),
+        })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        // 🔴 The MESSAGE, not just the code. Several other seams on this path
+        // also reject with FORBIDDEN (page-only, missing scope, missing budget),
+        // so a code-only assertion would be satisfied by the wrong guard and
+        // would survive deleting this one.
+        message: expect.stringContaining(
+          "declares resourcePolicy 'none' but the submitted step carries an AIR reference"
+        ),
+      });
+      // Rejected BEFORE the free quote, so not even the whatIf round-trip fired.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('the SAME params without the AIR are accepted (the guard is not rejecting the url shape)', async () => {
+      // 🔴 The NEGATIVE CONTROL for the test above. Without it, a guard that
+      // rejected every `convert-image` submit would pass it just as well, and
+      // the pair would prove nothing about the AIR being what was detected.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody({
+          params: {
+            image: 'https://image.civitai.com/sdxl:checkpoint:civitai:4384@128713.png',
+            output: { format: 'webp' },
+          },
+        }),
+      });
+      expect(result.snapshot.status).toBe('processing');
+      expect(realSubmitCalls()).toHaveLength(1);
     });
 
     it('a MODEL token is rejected fail-closed BEFORE any spend (page-only)', async () => {
