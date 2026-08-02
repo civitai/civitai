@@ -485,12 +485,23 @@ export const upsertModelVersion = async ({
     ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
     : 0;
 
-  // Versions with a license fee earn through that channel, so they opt out of
-  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
-  // doesn't strip it, since a creator may have set the bit independently.
+  // Clearing a fee must persist NULL, not 0: a stored 0 still reads as "has a
+  // fee" and pays out 0 instead of restoring base compensation + tips.
+  const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
+  if (!hasLicensingFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
+
+  // A fee opts the version out of tip + creator-comp payouts via DisablePayout.
+  // This is the flag's only set site, so clearing the fee must strip it —
+  // otherwise the version keeps earning nothing after the fee is removed.
   let flagsOverride: number | undefined;
-  if (data.licensingFee != null && data.licensingFee > 0) {
+  if (hasLicensingFee) {
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  } else if (Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
+    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
@@ -803,6 +814,16 @@ export const upsertModelVersion = async ({
     ingestModelById({ id: version.modelId }).catch((error) =>
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
+
+    // A licensing-fee or payout-flag change has to invalidate the orchestrator's
+    // cached pricing/payout for this version; otherwise it keeps repricing (and
+    // paying) against the stale value and the fee removal reads as "still earning
+    // nothing". The version-save path didn't bust on its own.
+    const feeBefore =
+      existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
+    if (feeBefore !== (data.licensingFee ?? null) || flagsOverride !== undefined) {
+      await bustMvCache(version.id, version.modelId, actorUserId);
+    }
 
     return version;
   }
