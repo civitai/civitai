@@ -225,7 +225,21 @@ describe('extractListingMeta', () => {
      * (mutation-verified — see the PR that introduced these). The last test keeps
      * the real 1.5MB hostile inputs as a CORRECTNESS + no-hang check, with the
      * hang expressed as a per-test timeout rather than an elapsed-ms assertion.
+     *
+     * 🔴 The two BOUND tests below build their inputs FROM these constants, so
+     * they pin that truncation happens — never WHERE it happens. Widening a cap
+     * therefore keeps them green while silently restoring the cost this bound
+     * exists to remove: raising META_HTML_PARSE_CAP to 2_000_000 (above the
+     * ~1.5MB fetch byte cap, so truncation is dead for every real input) passed
+     * 26/26 while making the parse 6.6x more expensive. The VALUES are part of
+     * the cost contract, so they are pinned literally here — deriving them from
+     * the import would reproduce the same tautology.
      */
+
+    it('the cap VALUES are part of the cost contract, not free parameters', () => {
+      expect(META_HTML_PARSE_CAP).toBe(256_000);
+      expect(HEADER_NAV_BLOCK_MAX).toBe(8_000);
+    });
 
     it('BOUND 1 — truncates at META_HTML_PARSE_CAP: a tag past the cap is not parsed, the same tag ending exactly at it is', () => {
       const tag = '<meta property="og:title" content="Beyond The Cap">';
