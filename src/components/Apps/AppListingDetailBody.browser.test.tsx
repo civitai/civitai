@@ -321,7 +321,8 @@ describe('AppListingDetailBody', () => {
     const modifier = Array.from(svg.classList).find(
       (c) => c.startsWith('tabler-icon-') && c !== 'tabler-icon'
     );
-    if (!modifier) throw new Error(`glyph carried no tabler-icon-* class: ${svg.getAttribute('class')}`);
+    if (!modifier)
+      throw new Error(`glyph carried no tabler-icon-* class: ${svg.getAttribute('class')}`);
     return modifier.replace('tabler-icon-', '');
   }
 
@@ -426,12 +427,20 @@ describe('AppListingDetailBody', () => {
     return glyphOf(host as Element);
   }
 
-  test('the connect and info branches keep their own glyphs', async () => {
-    // Regression guard for the per-branch glyph refactor: the four call sites
-    // now pass hard-coded mode literals rather than `action.mode`, so a copied
-    // literal in the wrong branch would otherwise be caught by nothing. The
-    // open/visit pair is value-pinned above; these are the other two.
+  // Regression guards for the per-branch glyph refactor: the four call sites pass
+  // hard-coded mode literals rather than `action.mode`, so a literal copied into
+  // the wrong branch would otherwise be caught by nothing. The open/visit pair is
+  // value-pinned above; these are the other two.
+  //
+  // 🔴 ONE render per test, deliberately. `waitForCtaGlyph` scans the whole
+  // document and takes the first hit, and `afterEach(cleanup)` does NOT run
+  // between two renders inside a single test — so a shared test body would bias
+  // the match toward the OLDER mount if a label ever collided. Separate tests
+  // make each scan unambiguous by construction, and let a connect-branch
+  // mutation and an info-branch mutation each be observed on the same run
+  // instead of the first one short-circuiting the second.
 
+  test('the connect branch keeps its own glyph', async () => {
     // off-site OAuth → the `connect` stub (disabled button + note).
     await renderWithProviders(
       <AppListingDetailBody
@@ -447,8 +456,13 @@ describe('AppListingDetailBody', () => {
       />
     );
     expect(await waitForCtaGlyph('Connect')).toBe('plug-connected');
+  });
 
+  test('the info (model-slot) branch keeps its own glyph', async () => {
     // on-site app with NO launch page → the informational model-slot affordance.
+    // `liveUrl` is read only inside the `hasPage` guards, so `hasPage: false`
+    // reaches the model-slot return regardless of it — this fixture cannot
+    // silently land on the "Open live" visit branch.
     await renderWithProviders(
       <AppListingDetailBody
         detail={base({
