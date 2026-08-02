@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Anchor,
   Avatar,
   Badge,
@@ -249,8 +250,12 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
 
+  // `@container` makes THIS card the query basis for the owner-Edit breakpoint in
+  // the action row below (see the long note there). It is
+  // `container-type: inline-size`, i.e. inline-axis containment only, so the
+  // card's height still follows its content and `h-full` is unaffected.
   return (
-    <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
+    <Card shadow="sm" padding="md" radius="md" withBorder className="@container h-full">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
@@ -361,19 +366,76 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
           <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
-                kind (manifest editor for on-site, submit editor for off-site). */}
+                kind (manifest editor for on-site, submit editor for off-site).
+
+                🔴 TWO FORMS, ONE CHOSEN BY A CONTAINER QUERY. Measured at a 280px
+                card content box — what a 1200px viewport produces at the store's
+                4-column `xl` grid:
+
+                  | case @280                  | actions | rollup | rollup text |
+                  |----------------------------|---------|--------|-------------|
+                  | non-owner + "Open"         |      94 |    139 |         122 |
+                  | non-owner + "View details" |     138 |    132 |         115 |
+                  | owner + "Open"             |     188 |     82 |          65 |
+                  | owner + "View details"     |     232 |     38 |          21 |
+
+                The rollup's natural width is 139. In the last row the CTA icons'
+                ~44px pushed it to 38 and "91% recommend (100)" — glyph included —
+                simply vanished. Collapsing the OWNER-ONLY Edit to an icon returns
+                ~50px, which is the difference between truncated and absent.
+
+                🔴 A CONTAINER query, not a media query: the card's width is NOT
+                monotonic in viewport width. At `base` the grid is ONE column, so a
+                390px phone gives a WIDER card (~356) than a 1200px laptop at four
+                columns (280). A `max-width` media query would collapse the button
+                on exactly the viewports where there is the most room. `@container`
+                asks the only question that matters — how wide is THIS card.
+
+                Breakpoint 360px, read off the table: the owner "View details" cell
+                is the binding one, and its rollup clears ~120px (legible, merely
+                truncated) at container widths from ~360 up. Below that the text
+                button is what breaks it, so below that it becomes an icon.
+
+                🔴 The row stays `nowrap` with `flexShrink: 0`. Row height is a
+                constant 46px in every cell above and nothing overflows — letting
+                the row wrap would left-align the actions and grow the height of a
+                whole `h-full` grid row (see the block comment above). The fix is
+                to make the optional control smaller, not to change the layout. */}
             {showEdit && editHref && (
-              <Button
-                component={Link}
-                href={editHref}
-                size="sm"
-                variant="default"
-                leftSection={<IconPencil size={16} />}
-                data-testid="apps-listing-owner-edit"
-                onClick={(e: MouseEvent) => e.stopPropagation()}
-              >
-                Edit
-              </Button>
+              <>
+                <Button
+                  component={Link}
+                  href={editHref}
+                  size="sm"
+                  variant="default"
+                  leftSection={<IconPencil size={16} />}
+                  data-testid="apps-listing-owner-edit"
+                  className="hidden @[360px]:flex"
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  Edit
+                </Button>
+                {/* The narrow form. Icon-only, so it needs a REAL accessible name
+                    — `aria-label` + `Tooltip`, the `CategoryFilterButtons`
+                    precedent ("the icon alone is not an accessible name"). Only
+                    ONE of the two is ever displayed, and `display: none` removes
+                    the other from the accessibility tree, so a screen reader is
+                    offered exactly one "Edit" control, not two. */}
+                <Tooltip label="Edit" withArrow>
+                  <ActionIcon
+                    component={Link}
+                    href={editHref}
+                    size={36}
+                    variant="default"
+                    aria-label="Edit"
+                    data-testid="apps-listing-owner-edit-icon"
+                    className="@[360px]:hidden"
+                    onClick={(e: MouseEvent) => e.stopPropagation()}
+                  >
+                    <IconPencil size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              </>
             )}
 
             {/* Kind-aware CTA — always has a working target (a direct Open / Visit,

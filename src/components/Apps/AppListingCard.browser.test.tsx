@@ -1,8 +1,21 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 /**
- * 🔴 REAL MANTINE CSS, imported ON PURPOSE — without it every geometry assertion
- * in this file is a lie.
+ * 🔴 THE APP'S REAL STYLESHEET CASCADE, imported ON PURPOSE — without it every
+ * geometry assertion in this file is a lie.
+ *
+ * These are exactly the two `_app.tsx` loads, in the same order: the Tailwind
+ * globals and the LAYERED Mantine sheet. Both halves are load-bearing and I got
+ * each of them wrong once:
+ *   - `@mantine/core/styles.css` (the non-layered variant) styles Mantine but
+ *     leaves Tailwind out entirely, so `hidden` / `@container` / every utility
+ *     class is inert. Measured: `container-type: normal`, the responsive Edit
+ *     swap silently did nothing, and BOTH Edit forms rendered at once.
+ *   - Tailwind alone would leave Mantine unstyled and put us back in the
+ *     initial-value trap below.
+ * `styles.layer.css` is what the app ships so Tailwind utilities can win over
+ * Mantine's defaults; using the plain sheet here would test a cascade the app
+ * does not have.
  *
  * The shared component harness deliberately does NOT load
  * `@mantine/core/styles.css`. `Group` styles itself entirely from that
@@ -22,7 +35,8 @@ import { page } from 'vitest/browser';
  * suspect for exactly this reason. {@link assertLayoutIsReal} is the guard that
  * makes the import's failure loud instead of silent.
  */
-import '@mantine/core/styles.css';
+import '~/styles/globals.css';
+import '@mantine/core/styles.layer.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -511,6 +525,142 @@ describe('AppListingCard', () => {
       expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
       // The actions are at their natural width — not squeezed to fake a fit.
       expect(actions.getBoundingClientRect().width).toBeCloseTo(actions.scrollWidth, 0);
+    });
+
+    /**
+     * 🔴 THE 280px OWNER REGRESSION.
+     *
+     * A 280px card content box is what a **1200px viewport** produces at the
+     * store's 4-column `xl` grid — a very common laptop width, and one my
+     * original 390/768/1440/2560 sweep skipped entirely.
+     *
+     * Measured there (content box px, `Group gap="xs"` between the two sides):
+     *
+     *   | case @280                  | actions | rollup | rollup text |
+     *   |----------------------------|---------|--------|-------------|
+     *   | non-owner + "Open"         |      94 |    139 |         122 |
+     *   | non-owner + "View details" |     138 |    132 |         115 |
+     *   | owner + "Open"             |     188 |     82 |          65 |
+     *   | owner + "View details"     |     232 |     38 |          21 |
+     *
+     * The rollup's natural width is 139 / 122. In the last row it is 38 — the
+     * "91% recommend (100)" text and even the 13px thumb glyph are gone. The
+     * `leftSection` icons cost ~44px and that is exactly the deficit, so my PR
+     * body's "the rollup absorbs the extra width by truncating, as designed" was
+     * wrong for the owner case: below ~360 it does not truncate, it disappears.
+     *
+     * 🔴 THE FIX IS NOT TO LET THE ROW WRAP. Row height is a constant 46px in
+     * every cell above, and nothing overflows — the nowrap + `flexShrink: 0`
+     * design is correct and the file documents why wrapping breaks alignment and
+     * grid-row heights. The fix is to shrink the OWNER-ONLY Edit control to an
+     * icon below a container-query breakpoint, which is the only part of the row
+     * that is optional.
+     */
+    describe('owner cards at a 280px content box (1200px viewport, xl grid)', () => {
+      /**
+       * 🔴 A REVIEWED card, deliberately. The shared `base()` fixture has no
+       * reviews, so its rollup reads "No reviews yet" — only ~96px natural, which
+       * FITS at 280 even for an owner and hides the whole regression. (It did:
+       * the first run of the non-owner test below asserted a threshold taken from
+       * the reviewed measurements and failed at 95.7 against the unreviewed
+       * fixture.) "91% recommend (100)" is 139px natural, which is the content
+       * that actually gets destroyed, and is what the measured table above used.
+       */
+      const REVIEWED = {
+        recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
+        reviewCount: 100,
+      };
+      const OFFSITE_CONNECT = {
+        ...REVIEWED,
+        kind: 'offsite' as const,
+        // The widest CTA ("View details") — the tight cell in the table above.
+        kindData: { kind: 'offsite', subKind: 'oauth-connect' } as ListingCard['kindData'],
+      };
+
+      test('🔴 owner + "View details" keeps a LEGIBLE recommend rollup', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+
+        const { row, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(280);
+
+        // 80px is grounded in the measurements above, not invented: the glyph is
+        // 13px + a 4px gap, so 80 leaves ~63px of text — enough for "91% recom…"
+        // to read as a recommendation figure. Pre-fix this is 38 (text 21), which
+        // shows nothing at all; post-fix the icon-only Edit returns ~50px.
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
+
+        // The thumb glyph specifically must survive — it is the affordance that
+        // says "this number is a rating" at a glance.
+        const glyph = rollup.querySelector('svg') as SVGElement;
+        expect(glyph).toBeTruthy();
+        expect(glyph.getBoundingClientRect().width).toBeGreaterThan(0);
+        expect(glyph.getBoundingClientRect().right).toBeLessThanOrEqual(
+          rollup.getBoundingClientRect().right + 1
+        );
+
+        // …and the row still holds its shape: one line, no overflow.
+        expect(sameLine(rollup, actionRow('View details').actions)).toBe(true);
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      test('owner + "Open" (the narrower CTA) also keeps the rollup legible', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(REVIEWED)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'Open', exact: true }))
+          .toBeInTheDocument();
+        const { row, rollup } = actionRow('Open');
+        assertLayoutIsReal(row);
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
+      });
+
+      test('🔴 NON-owner cards are byte-unchanged — no icon Edit, same actions width', async () => {
+        // The whole change is owner-only. A non-owner card has no Edit control at
+        // all, so its geometry must be exactly what it was before this fix.
+        mocks.currentUser = null;
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        const { row, actions, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+        expect(page.getByTestId('apps-listing-owner-edit-icon').elements()).toHaveLength(0);
+        // Measured pre-fix values, pinned so an owner-side change cannot leak.
+        expect(Math.round(actions.getBoundingClientRect().width)).toBe(138);
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(130);
+      });
+
+      test('the icon-only Edit keeps a real accessible name and its href', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+        const edit = page.getByTestId('apps-listing-owner-edit-icon');
+        await expect.element(edit).toBeInTheDocument();
+        // The glyph alone is not an accessible name (the CategoryFilterButtons
+        // precedent) — and the icon form must go to the SAME place as the text one.
+        await expect.element(edit).toHaveAttribute('aria-label', 'Edit');
+        await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
+      });
+
+      test('the icon form is the one SHOWN at 280 and the text form at 460', async () => {
+        // The container query is what decides, so assert on rendered visibility
+        // rather than on which nodes exist.
+        mocks.currentUser = { id: 5, username: 'alice' };
+        const { rerender } = await renderWithProviders(
+          <Sized width={314} card={base(OFFSITE_CONNECT)} />
+        );
+        await expect.element(page.getByTestId('apps-listing-owner-edit-icon')).toBeVisible();
+        await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeVisible();
+
+        await rerender(<Sized width={494} card={base(OFFSITE_CONNECT)} />);
+        await expect.element(page.getByTestId('apps-listing-owner-edit')).toBeVisible();
+        await expect.element(page.getByTestId('apps-listing-owner-edit-icon')).not.toBeVisible();
+      });
     });
 
     test('the recommend rollup is the side that absorbs the extra width (it truncates)', async () => {
