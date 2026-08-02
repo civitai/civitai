@@ -344,17 +344,44 @@ export type BlockWorkflowSnapshot = {
    * substituted, so every existing snapshot stays byte-identical and a consumer
    * that does not read it is unaffected.
    *
-   * WHERE IT APPEARS. On the submit reply, on the `estimateWorkflow` reply, on
-   * EVERY reply from `submitWorkflow` that quotes a cost without submitting
-   * (insufficient per-call budget, the per-user daily / review Buzz cap, the
-   * per-app aggregate spend+velocity cap, the dev-tunnel session cap), and —
-   * because the submit persists it on the orchestrator workflow's `metadata` —
-   * on every subsequent `pollWorkflow` / `cancelWorkflow` read. The poll is the one
-   * that matters in practice: it is the snapshot carrying `imageUrls`, i.e. the
-   * one a block actually renders from, so the record is present next to the
-   * images it describes rather than only on a reply the block may have discarded.
+   * WHERE IT APPEARS. 🔴 ON THE `kind: 'textToImage'` PATH ONLY. That is the
+   * only wire body whose handler resolves a checkpoint through the generation
+   * graph (`createBlockTextToImageStep` → `buildGenerationContext`), so it is
+   * the only one that can substitute anything. On that path: the submit reply,
+   * the `estimateWorkflow` reply, EVERY reply from `submitWorkflow` that quotes
+   * a cost without submitting (insufficient per-call budget, the per-user daily
+   * / review Buzz cap, the per-app aggregate spend+velocity cap, the dev-tunnel
+   * session cap), and — because the submit persists it on the orchestrator
+   * workflow's `metadata` — every subsequent `pollWorkflow` / `cancelWorkflow`
+   * read of that workflow. The poll is the one that matters in practice: it is
+   * the snapshot carrying `imageUrls`, i.e. the one a block actually renders
+   * from, so the record is present next to the images it describes rather than
+   * only on a reply the block may have discarded.
    * The estimate reply is the exception — a whatIf creates no persisted workflow,
    * so there the record exists only on that reply.
+   *
+   * 🔴 IT DOES **NOT** APPEAR ON `kind: 'customComfy'` OR `kind: 'step'`. Each of
+   * those has its own four cost-quoting exits, and none of the eight carries this
+   * field — correctly, because neither handler builds a generation context: a
+   * customComfy body binds a server-authored recipe and a registry step carries
+   * no model binding at all, so there is nothing to substitute and nothing to
+   * report.
+   *
+   * 🔴 IF YOU ARE EXTENDING A STEP TO RESOLVE A CHECKPOINT THROUGH THE GRAPH,
+   * READ THIS. The paragraph above is a statement about the txt2img handler's
+   * plumbing, NOT a property of the bridge — do not assume the field will flow
+   * on your path because it flows there. The READ half is kind-agnostic (the
+   * poll recovers the record from `workflow.metadata` for any workflow), but the
+   * WRITE half is per-handler: your handler must pass the request's collector to
+   * `snapshotFromWorkflow(..., { modelSubstitutions })` on the reply AND write
+   * `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY` into the submitted
+   * `body.metadata`, or the substitution stays exactly as unobservable as it was
+   * before #3520 — on the one surface #3520 exists to make observable.
+   * `submitStepWorkflow` does neither today. Pinned by
+   * `generation-surface-wiring.test.ts` (every `buildGenerationContext` call site
+   * enumerated from the tree and pinned to its ENCLOSING FUNCTION, so a new one
+   * inside a step handler fails there) and by the `kind:'step'` absence tests +
+   * their planted-metadata control in `blocks.router.workflow.test.ts`.
    *
    * 🔴 WIRE CONTRACT: this is an ADDITIVE field on the type
    * `@civitai/app-sdk`'s `blocks/types.ts` mirrors. The SDK's inbound validator
