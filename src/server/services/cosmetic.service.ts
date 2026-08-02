@@ -395,7 +395,7 @@ export function getCosmeticArtworkUrl(data: Prisma.JsonValue | undefined) {
 /**
  * Fire-and-forget: a cosmetic must land whether or not the orchestrator answers,
  * so this never blocks the write and never throws. Rows left NULL are picked up
- * by /api/internal/add-missing-cosmetic-phash.
+ * by scripts/oneoffs/backfill-cosmetic-phash.ts.
  */
 export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: string }) {
   getPerceptualHash(url)
