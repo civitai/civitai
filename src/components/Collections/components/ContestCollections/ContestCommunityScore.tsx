@@ -243,8 +243,26 @@ function CategoryTable({
                             by {entry.creatorUsername}
                           </Text>
                         )}
+                        <Tooltip
+                          label="Versions created during the contest window on a qualifying base model. Only these are counted."
+                          withArrow
+                          multiline
+                          w={260}
+                        >
+                          <Text size="xs" c="dimmed" w="fit-content">
+                            {entry.qualifyingVersionCount}{' '}
+                            {entry.qualifyingVersionCount === 1 ? 'version' : 'versions'}
+                          </Text>
+                        </Tooltip>
                         {entry.ineligibleReason && (
-                          <Badge color="red" variant="light" size="xs">
+                          <Badge
+                            color="red"
+                            variant="light"
+                            size="xs"
+                            h="auto"
+                            classNames={{ label: 'whitespace-normal' }}
+                            className="py-0.5"
+                          >
                             {entry.ineligibleReason}
                           </Badge>
                         )}

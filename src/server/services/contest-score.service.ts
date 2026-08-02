@@ -9,6 +9,11 @@
  * Categories are separate contests — normalization and ranking never cross a
  * category boundary, so raw volume is never compared across them.
  *
+ * Every version-scoped signal counts only QUALIFYING versions: created inside the
+ * contest window, on a configured base model. An already-existing model may enter with
+ * a new version, so crediting the whole model hands an entry its own back catalogue.
+ * Collects are the one exception and stay model-level — see `countCollectors`.
+ *
  * Every count is computed IN the database. No user-id array ever crosses into
  * Node: the age gate becomes a `userId <= threshold` pushdown, and the (small)
  * disqualified set is pushed into each query as a literal id list.
@@ -71,17 +76,17 @@ const nowUtc = Prisma.raw(`(NOW() AT TIME ZONE 'UTC')`);
  * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
  * a disputed result can be traced to the code that produced it.
  */
-export const CONTEST_SCORE_CODE_VERSION = 2;
+export const CONTEST_SCORE_CODE_VERSION = 3;
 
 /**
  * Comments and tips are deliberately unweighted: both are trivially launderable
  * (a tip can be sent back out of band).
  */
 export const CONTEST_SIGNAL_SOURCES: Record<Signal, string> = {
-  imageAuthors: 'Distinct authors of on-site images made with the model',
+  imageAuthors: "Distinct authors of on-site images made with the entry's versions",
   reactors: 'Distinct users reacting to those images',
-  downloaders: 'Distinct users downloading the model',
-  generators: 'Distinct users generating with the model',
+  downloaders: "Distinct users downloading the entry's versions",
+  generators: "Distinct users generating with the entry's versions",
   collectors: 'Distinct users adding the model to another collection',
 };
 
@@ -609,10 +614,12 @@ function intList(values: number[]) {
   return values.join(',');
 }
 
-function ineligibilityReason(entry: EntryRow) {
+function ineligibilityReason(entry: EntryRow, qualifyingVersions: number) {
   if (entry.modelDeleted) return 'Model deleted';
   if (entry.modelStatus !== 'Published') return `Model ${entry.modelStatus.toLowerCase()}`;
   if (entry.modelAvailability === Availability.Private) return 'Model is private';
+  if (!qualifyingVersions)
+    return 'No version was created during the contest window on a qualifying base model';
   return null;
 }
 
@@ -891,15 +898,21 @@ function pgQualified(userColumn: string, userAlias: string, gates: BaseGates) {
  * on image creation would credit or drop the wrong work. Scheduled posts carry a
  * future `publishedAt` and are visible to nobody, hence the `<= NOW()`.
  */
-async function loadImagePairs(entries: EntryRow[], window: ResolvedWindow) {
+async function loadImagePairs(
+  entries: EntryRow[],
+  versionPairs: EntryPair[],
+  window: ResolvedWindow
+) {
+  if (!versionPairs.length) return [];
+
   return withSpan(
     'contest-score.image-pairs',
     () =>
       dbRead.$queryRaw<{ entryId: number; imageId: number }[]>`
       SELECT DISTINCT e."entryId" AS "entryId", i.id AS "imageId"
       FROM ${pgEntryTable(entries)}
-      JOIN "ModelVersion" mv ON mv."modelId" = e."modelId"
-      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = mv.id
+      JOIN ${pgVersionTable(versionPairs)} ON v."entryId" = e."entryId"
+      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = v."versionId"
       JOIN "Image" i ON i.id = ir."imageId"
       JOIN "Post" p ON p.id = i."postId"
       WHERE p."publishedAt" IS NOT NULL
@@ -912,7 +925,14 @@ async function loadImagePairs(entries: EntryRow[], window: ResolvedWindow) {
   );
 }
 
-async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, gates: BaseGates) {
+async function countImageAuthors(
+  entries: EntryRow[],
+  versionPairs: EntryPair[],
+  window: ResolvedWindow,
+  gates: BaseGates
+) {
+  if (!versionPairs.length) return [];
+
   return withSpan(
     'contest-score.image-authors',
     () =>
@@ -923,8 +943,8 @@ async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, ga
         count(DISTINCT i."userId") FILTER (WHERE ${pgQualified('i."userId"', 'au', gates)})::int
                                         AS "qualifiedUsers"
       FROM ${pgEntryTable(entries)}
-      JOIN "ModelVersion" mv ON mv."modelId" = e."modelId"
-      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = mv.id
+      JOIN ${pgVersionTable(versionPairs)} ON v."entryId" = e."entryId"
+      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = v."versionId"
       JOIN "Image" i ON i.id = ir."imageId"
       JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "User" au ON au.id = i."userId"
@@ -938,6 +958,10 @@ async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, ga
   );
 }
 
+/**
+ * The only signal that stays MODEL-level. A collect targets the model, never a
+ * version, so there is nothing to scope it to; the window filter is all it gets.
+ */
 async function countCollectors(
   entries: EntryRow[],
   window: ResolvedWindow,
@@ -969,11 +993,38 @@ async function countCollectors(
   );
 }
 
-async function loadVersionPairs(entries: EntryRow[]) {
-  const versions = await dbRead.$queryRaw<{ id: number; modelId: number }[]>`
-    SELECT id, "modelId" FROM "ModelVersion"
-    WHERE "modelId" IN (${Prisma.join(entries.map((e) => e.modelId))})
-  `;
+/**
+ * The versions that actually represent an entry: created inside the contest window
+ * and, where the config names any, built on one of its base models.
+ *
+ * Contest rules let an already-existing model enter with a new version, so counting
+ * every version of the model credits an entry with traffic its contest work never
+ * earned — a fifteen-month-old sibling version can carry an entry to first place.
+ *
+ * Deliberately NOT "the latest version": a creator who iterates during the contest
+ * has every in-window version count toward the same entry.
+ */
+async function loadQualifyingVersions(
+  entries: EntryRow[],
+  window: ResolvedWindow,
+  baseModels: string[]
+) {
+  const versions = await withSpan(
+    'contest-score.qualifying-versions',
+    () =>
+      dbRead.$queryRaw<{ id: number; modelId: number }[]>`
+      SELECT mv.id AS "id", mv."modelId" AS "modelId"
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" IN (${Prisma.join(entries.map((e) => e.modelId))})
+        AND mv."createdAt" >= ${utc(window.start)}
+        AND mv."createdAt" < ${utc(window.effectiveEnd)}
+        ${
+          baseModels.length
+            ? Prisma.sql`AND mv."baseModel" IN (${Prisma.join(baseModels)})`
+            : Prisma.empty
+        }
+    `
+  );
 
   const byModel = new Map<number, EntryRow[]>();
   for (const entry of entries) {
@@ -983,25 +1034,28 @@ async function loadVersionPairs(entries: EntryRow[]) {
   }
 
   const pairs: EntryPair[] = [];
+  const countByEntry = new Map<number, number>(entries.map((e) => [e.collectionItemId, 0]));
   for (const version of versions)
-    for (const entry of byModel.get(version.modelId) ?? [])
+    for (const entry of byModel.get(version.modelId) ?? []) {
       pairs.push({
         entityId: version.id,
         entryId: entry.collectionItemId,
         creatorId: entry.creatorId,
         addedById: entry.addedById ?? 0,
       });
+      countByEntry.set(entry.collectionItemId, (countByEntry.get(entry.collectionItemId) ?? 0) + 1);
+    }
 
-  return pairs;
+  return { pairs, countByEntry };
 }
 
-function modelPairs(entries: EntryRow[]): EntryPair[] {
-  return entries.map((entry) => ({
-    entityId: entry.modelId,
-    entryId: entry.collectionItemId,
-    creatorId: entry.creatorId,
-    addedById: entry.addedById ?? 0,
-  }));
+/**
+ * The qualifying versions as a Postgres lookup table, so the image-derived signals
+ * resolve their images through exactly the version set the ClickHouse signals count.
+ */
+function pgVersionTable(pairs: EntryPair[]) {
+  const values = pairs.map((p) => `(${intList([p.entryId, p.entityId])})`).join(',');
+  return Prisma.raw(`(VALUES ${values}) AS v("entryId", "versionId")`);
 }
 
 function toImagePairs(rows: { entryId: number; imageId: number }[], entries: EntryRow[]) {
@@ -1035,6 +1089,11 @@ export type ContestScoreEntry = {
   status: string;
   eligible: boolean;
   ineligibleReason: string | null;
+  /**
+   * Versions of the model that represent this entry. Recorded so a disputed placement
+   * can be explained without re-deriving which versions the run counted.
+   */
+  qualifyingVersionCount: number;
   image: EntryImage | null;
   // No `normalized` here: alongside `score`, five normalized values and five scores
   // solve for the five weights. The UI never rendered it.
@@ -1101,7 +1160,12 @@ function emptySignals() {
 }
 
 /** Filled in during a run for the snapshot's audit trail; never sent to a client. */
-type RunAudit = { engagerCount: number; ageGateBandUsers: number };
+type RunAudit = {
+  engagerCount: number;
+  ageGateBandUsers: number;
+  /** Resolved rather than read back off the config, which may not carry the field. */
+  baseModels: string[];
+};
 
 /**
  * What a run actually used, returned rather than re-derived by the caller.
@@ -1125,7 +1189,8 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
   const { config, scope } = await resolveContestScoringConfig(input.collectionId);
   const window = await resolveWindow(input.collectionId, input, config);
   const statuses = input.statuses ?? DEFAULT_STATUSES;
-  const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0 };
+  const baseModels = config.baseModels ?? [];
+  const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0, baseModels };
 
   const base = {
     collectionId: input.collectionId,
@@ -1159,13 +1224,15 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
       audit,
     };
 
-  const baseGates = await loadBaseGates(window.ageCutoff);
+  const [baseGates, { pairs: versionPairs, countByEntry: qualifyingVersions }] = await Promise.all([
+    loadBaseGates(window.ageCutoff),
+    loadQualifyingVersions(entries, window, baseModels),
+  ]);
 
-  const [imageAuthors, collectors, imageRowsRaw, versionPairs, images] = await Promise.all([
-    countImageAuthors(entries, window, baseGates),
+  const [imageAuthors, collectors, imageRowsRaw, images] = await Promise.all([
+    countImageAuthors(entries, versionPairs, window, baseGates),
     countCollectors(entries, window, baseGates, input.collectionId),
-    loadImagePairs(entries, window),
-    loadVersionPairs(entries),
+    loadImagePairs(entries, versionPairs, window),
     loadEntryImages(entries.map((e) => e.modelId)),
   ]);
 
@@ -1183,10 +1250,10 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
         AND userId != 0
     `,
     downloaders: (ids: string) => `
-      SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId
+      SELECT toInt64(userId) AS userId, toInt64(modelVersionId) AS entityId
       FROM modelVersionEvents
       WHERE type = 'Download'
-        AND modelId IN (${ids})
+        AND modelVersionId IN (${ids})
         AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
         AND userId != 0
     `,
@@ -1206,7 +1273,6 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
   };
 
   const imageIds = intList([...new Set(imagePairs.map((p) => p.entityId))]) || '0';
-  const modelIds = intList([...new Set(entries.map((e) => e.modelId))]) || '0';
   const versionIds = intList([...new Set(versionPairs.map((p) => p.entityId))]) || '0';
 
   // Resolve banned/deleted against the ENGAGERS, not the other way round: the
@@ -1214,7 +1280,7 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
   const engagers = await collectChEngagers(
     [
       chSources.reactors(imageIds),
-      chSources.downloaders(modelIds),
+      chSources.downloaders(versionIds),
       chSources.generators(versionIds),
     ],
     baseGates
@@ -1245,7 +1311,7 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
 
   const [reactors, downloaders, generators] = await Promise.all([
     runChCounts('reactors', imagePairs, gates, chSources.reactors),
-    runChCounts('downloaders', modelPairs(entries), gates, chSources.downloaders),
+    runChCounts('downloaders', versionPairs, gates, chSources.downloaders),
     runChCounts('generators', versionPairs, gates, chSources.generators),
   ]);
 
@@ -1269,10 +1335,12 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
     const signals = counts.get(entry.collectionItemId) ?? emptySignals();
     const rawTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].raw, 0);
     const qualifiedTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].qualified, 0);
-    const reason = ineligibilityReason(entry);
+    const qualifyingVersionCount = qualifyingVersions.get(entry.collectionItemId) ?? 0;
+    const reason = ineligibilityReason(entry, qualifyingVersionCount);
 
     return {
       collectionItemId: entry.collectionItemId,
+      qualifyingVersionCount,
       modelId: entry.modelId,
       modelName: entry.modelName,
       creatorId: entry.creatorId,
@@ -1642,7 +1710,12 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
     if (!entries.length) return { collectionId: input.collectionId, count: 0, candidates: [] };
 
     const baseGates = await loadBaseGates(window.ageCutoff);
-    const imagePairs = toImagePairs(await loadImagePairs(entries, window), entries);
+    const { pairs: versionPairs } = await loadQualifyingVersions(
+      entries,
+      window,
+      config.baseModels ?? []
+    );
+    const imagePairs = toImagePairs(await loadImagePairs(entries, versionPairs, window), entries);
 
     // Reactions and downloads are the engagement events that carry an IP — the same
     // farm-IP signal `reaction-abuse` uses, scoped to this contest.
@@ -1650,12 +1723,12 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
       await Promise.all([
         runChPerCreator(
           'candidates.downloads',
-          modelPairs(entries),
+          versionPairs,
           (ids) => `
-          SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId, ip
+          SELECT toInt64(userId) AS userId, toInt64(modelVersionId) AS entityId, ip
           FROM modelVersionEvents
           WHERE type = 'Download'
-            AND modelId IN (${ids})
+            AND modelVersionId IN (${ids})
             AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
             AND userId != 0
         `
@@ -1844,6 +1917,8 @@ export type ContestSnapshot = {
    */
   ageGateBandUsers: number;
   engagerCount: number;
+  /** Empty means no base-model filter was applied, not that the field was forgotten. */
+  baseModels: string[];
   partial: boolean;
   score: ContestCommunityScore;
 };
@@ -1913,6 +1988,7 @@ export async function createContestSnapshot({
       ageCutoff: outcome.window.ageCutoff.toISOString(),
       ageGateBandUsers: outcome.audit.ageGateBandUsers,
       engagerCount: outcome.audit.engagerCount,
+      baseModels: outcome.audit.baseModels,
       partial: outcome.window.partial,
       score: outcome.score,
     };

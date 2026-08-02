@@ -85,6 +85,9 @@ export const contestScoringConfigValuesSchema = z.object({
   // Ceiling on the engager set resolved against Postgres. Past it the banned/deleted
   // refinement is skipped and the run is flagged degraded rather than run anyway.
   maxEngagers: z.number().positive(),
+  // Base models a version must be built on to represent its entry. Absent or empty
+  // applies no base-model filter — the contest-window filter still applies on its own.
+  baseModels: z.array(z.string().min(1).max(100)).max(50).optional(),
   farmIp: z.object({ minPeers: z.number().positive(), minEntries: z.number().positive() }),
 });
 
