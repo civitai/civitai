@@ -93,6 +93,46 @@ describe('a fully typed :slug:', () => {
   });
 });
 
+// The two insertion paths have to agree on WHERE a sticker may be inserted, not
+// just what. The menu refuses mid-word via allowedPrefixes; the input rule needs
+// the same boundary or `foo:slug:` converts while the menu declines.
+describe('both insertion paths agree on position', () => {
+  test('the input rule ignores a slug glued to the end of a word', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto('foo:gumdong_heart:');
+    await expect.element(page.getByTestId('sticker-node')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('textbox').first()).toHaveTextContent('foo:gumdong_heart:');
+  });
+
+  // Pins an escaping bug: `\s` inside a template literal collapses to `s`, so the
+  // boundary read "not preceded by a non-s character" and only words ending in s
+  // slipped through. Every other mid-word case still passed.
+  test('the input rule ignores a slug glued to a word ending in s', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto('bananas:gumdong_heart:');
+    await expect.element(page.getByTestId('sticker-node')).not.toBeInTheDocument();
+  });
+
+  test('the menu ignores the same position', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto('foo:gu');
+    expect(document.body.textContent).not.toContain('gumdong_heart');
+  });
+
+  test('a sticker at the very start of a comment still works', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto(':gumdong_heart:');
+    await expect.element(page.getByTestId('sticker-node').first()).toBeInTheDocument();
+  });
+
+  test('a clock time is not a slug even though it fits the shape', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto('at 12:30:');
+    await expect.element(page.getByTestId('sticker-node')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('textbox').first()).toHaveTextContent('12:30:');
+  });
+});
+
 // `:` is common punctuation. A menu opening on a clock time or a pasted URL would
 // be immediately annoying, and is the reason for the prefix and length rules.
 describe('the : trigger stays quiet', () => {

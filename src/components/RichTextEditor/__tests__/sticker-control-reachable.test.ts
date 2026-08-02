@@ -31,7 +31,10 @@ describe('the sticker control is reachable wherever it is requested', () => {
     // File-level rather than per-editor: a file with several editors is flagged
     // if any of them hides the toolbar. Coarse in the safe direction.
     const unreachable = editors
-      .filter(({ source }) => source.includes('hideToolbar') && !source.includes('StickerPicker'))
+      // The open tag, not the bare identifier: the realistic regression is
+      // deleting the JSX and leaving the import behind, which the identifier
+      // check would happily accept.
+      .filter(({ source }) => source.includes('hideToolbar') && !source.includes('<StickerPicker'))
       .map(({ file }) => path.relative(SRC, file).split(path.sep).join('/'));
 
     expect(unreachable).toEqual([]);

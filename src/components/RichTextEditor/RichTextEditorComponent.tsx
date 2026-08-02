@@ -308,10 +308,13 @@ export function RichTextEditor({
   // Written into per-editor storage rather than passed as an extension option:
   // ownership loads async, and changing the extension array rebuilds the editor.
   useEffect(() => {
-    if (!editor || !stickersEnabled) return;
+    if (!editor) return;
+    // No early return on the flag: availableStickers is already [] when it's off,
+    // and skipping the write would leave stale availability in storage if the flag
+    // flips mid-session, keeping both insertion paths alive.
     const storage = editor.extensionStorage.sticker;
     if (storage) storage.available = availableStickers;
-  }, [editor, stickersEnabled, availableStickers]);
+  }, [editor, availableStickers]);
 
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({

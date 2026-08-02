@@ -127,6 +127,11 @@ export async function equipCosmeticToEntity({
   });
 
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  // Same rule as equipCosmetic: stickers are owned, not equipped. This is the
+  // other door into that state — it would hand the decoration renderer a `data`
+  // shape with no cssFrame or offset, on an entity nobody chose it for.
+  if (userCosmetic.cosmetic.type === CosmeticType.Sticker)
+    throw new Error('Stickers cannot be equipped');
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&

@@ -6,6 +6,7 @@ import { getStickerSuggestions } from '~/components/RichTextEditor/sticker-sugge
 import { Sticker } from '~/components/Sticker/Sticker';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { StickerNode } from '~/shared/tiptap/sticker.node';
+import { isValidStickerSlug, STICKER_SLUG_PATTERN } from '~/shared/utils/sticker-token';
 
 export type StickerNodeStorage = {
   /**
@@ -23,8 +24,14 @@ declare module '@tiptap/core' {
   }
 }
 
-/** `:slug:` typed out in full, at the cursor. */
-const inputRegex = /:([a-z0-9_]{2,32}):$/;
+/**
+ * `:slug:` typed out in full, at the cursor. The lookbehind mirrors the
+ * autocomplete's `allowedPrefixes` so the two insertion paths agree on what is
+ * insertable — without it `foo:gumdong_heart:` converts while the menu correctly
+ * refuses the same position. Shape comes from the shared pattern; validity is
+ * checked explicitly below rather than left to the shape.
+ */
+const inputRegex = new RegExp(String.raw`(?<![^\s])` + `:(${STICKER_SLUG_PATTERN}):$`);
 
 /**
  * Editor-side sticker node: same schema as the shared `StickerNode`, plus a React
@@ -50,6 +57,10 @@ export const StickerEditNode = StickerNode.extend<unknown, StickerNodeStorage>({
       new InputRule({
         find: inputRegex,
         handler: ({ state, range, match }) => {
+          // Explicit, not incidental: `12:30:` fits the slug shape, and the only
+          // thing rejecting it is the all-digits rule inside isValidStickerSlug.
+          // Calling it here keeps that dependency visible and shared.
+          if (!isValidStickerSlug(match[1])) return;
           // Ownership is checked here as well as server-side: the server strips a
           // node you don't own, so without this the editor would show it working
           // and the sticker would vanish on save.
