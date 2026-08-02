@@ -91,15 +91,20 @@ function base(over: Partial<ListingCard>): ListingCard {
 /**
  * Render a card inside a fixed-width box.
  *
- * `width` is the OUTER box. `Card padding="md" withBorder` eats 2x16 + 2x1, so
- * the content box — the number the layout measurements below are about — is
- * `width - 34`.
+ * `width` is the OUTER box. `Card padding="md"` eats 2x16, so the content box —
+ * the number the layout measurements below are about — is `width - 32`.
+ *
+ * 🔴 It was `width - 34` until S4 dropped `withBorder`: the border was 0.877px a
+ * side (~1.75px total), so every content box below RECLAIMED ~2px and the exact
+ * pins moved 280 -> 282 and 246 -> 248. That is the border removal being real and
+ * measurable, not a tolerance drift — and the arithmetic is now exact rather than
+ * fractional. If these numbers ever move back, the border came back.
  *
  * The two widths used below, both measured through the real
  * `AppsPageLayout` + `Grid` rather than assumed:
- *   - `280` -> a 246px content box = the TRUE 1200px-viewport geometry
- *     (container 1200 -> column 296 -> card 280 -> row 246);
- *   - `314` -> a 280px content box, i.e. roughly a 1345 viewport. "280" in the
+ *   - `280` -> a 248px content box = the TRUE 1200px-viewport geometry
+ *     (container 1200 -> column 296 -> card 280 -> row 248);
+ *   - `314` -> a 282px content box, i.e. roughly a 1345 viewport. "280" in the
  *     original bug report is the CARD width at 1200, not its content box.
  */
 function Sized({ width, card }: { width: number; card: ListingCard }) {
@@ -231,6 +236,132 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
+  });
+
+  // ── Card chrome, typography + CTA glyph (S4 / S5 / S6b) ────────────────────
+  //
+  // Markers are Mantine's own DOM output, which is deterministic here:
+  // `withBorder` renders as a `data-with-border` ATTRIBUTE, and `shadow` / `size`
+  // / `fw` / `c` render as `--paper-shadow` / `--text-fz` / `--text-fw` /
+  // `--text-color` custom properties in the element's `style`.
+  //
+  // 🔴 Deliberately NOT asserting resolved `rgb()` values: the theme CSS is not
+  // loaded in this environment, so such an assertion either fails or passes for
+  // the wrong reason. The pixel values live in the PR's measurement table.
+
+  const cardRoot = () => document.querySelector('[class*="Card-root"]') as HTMLElement | null;
+
+  /** The `tabler-icon-*` modifier on a CTA's glyph, e.g. `player-play`. */
+  function ctaGlyph(link: Element): string {
+    const svg = link.querySelector('svg');
+    if (!svg) throw new Error('CTA rendered no glyph at all');
+    const mod = Array.from(svg.classList).find(
+      (c) => c.startsWith('tabler-icon-') && c !== 'tabler-icon'
+    );
+    if (!mod) throw new Error(`glyph carried no tabler-icon-* class: ${svg.getAttribute('class')}`);
+    return mod.replace('tabler-icon-', '');
+  }
+
+  /**
+   * Poll for the CTA BUTTON by href — the render is async, so a bare query races it.
+   *
+   * 🔴 Scoped to `[class*="Button-root"]`: more than one anchor on the card can
+   * carry the same href (the title and the cover link to the detail, and the card
+   * body can link to the run route), and a bare `a[href=...]` grabs whichever comes
+   * first in document order — a wrapper with no glyph in it. That reads as
+   * "the CTA rendered no glyph" when the CTA is fine.
+   */
+  async function waitForCta(href: string): Promise<Element> {
+    const el = await vi.waitUntil(
+      () => document.body.querySelector(`a[href="${href}"][class*="Button-root"]`),
+      { timeout: 10000, interval: 25 }
+    );
+    return el as Element;
+  }
+
+  test('🔴 S4: the card has NO border and NO shadow, and takes its radius from Tailwind', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    const root = cardRoot();
+    expect(root, 'the Mantine Card root').toBeTruthy();
+    // `withBorder` is gone → Mantine emits no `data-with-border`.
+    expect(root!.hasAttribute('data-with-border')).toBe(false);
+    // `shadow="sm"` is gone → no `--paper-shadow` is declared at all.
+    expect(root!.getAttribute('style') ?? '').not.toContain('--paper-shadow');
+    // Radius comes from the shared Tailwind scale (6px), NOT Mantine's `md` (8px).
+    expect(root!.className).toContain('rounded-md');
+  });
+
+  test('🔴 S5: the title is xl/700/white — and is no longer a heading', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    // 🔴 Render barrier. `renderWithProviders` is async and `.element()` does NOT
+    // retry, so reading it directly throws on the pre-commit DOM — and the throw
+    // poisons every test after this one. `expect.element` polls; `.element()` does
+    // not. (This is the same trap the S4 test above avoids by awaiting first.)
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    const title = page.getByText('My App').element() as HTMLElement;
+    const style = title.getAttribute('style') ?? '';
+    // 🔴 Marker shapes verified against Mantine's ACTUAL output, not assumed:
+    // `size` becomes a `--text-fz` custom property, but `fw`/`c` become PLAIN
+    // `font-weight` / `color` declarations. Asserting `--text-fw` / `--text-color`
+    // fails against a correctly-rendered component.
+    expect(style).toContain('--text-fz: var(--mantine-font-size-xl)');
+    expect(style).toContain('font-weight: 700');
+    expect(style).toContain('color: var(--mantine-color-white)');
+    // Declared side effect: the card title is a <Text>, not an <h4>. This is
+    // parity with `/models` (whose card title is a <p>), not an a11y regression —
+    // asserted so the change is visible rather than discovered later.
+    expect(title.tagName).not.toBe('H4');
+    expect(cardRoot()!.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull();
+  });
+
+  test('🔴 S5: the author line is sm/500 and STAYS dimmed (accepted contrast residual)', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('by alice')).toBeInTheDocument();
+    const author = page.getByText('by alice').element() as HTMLElement;
+    const style = author.getAttribute('style') ?? '';
+    expect(style).toContain('--text-fz: var(--mantine-font-size-sm)');
+    expect(style).toContain('font-weight: 500');
+    // 🔴 The accepted trade (decision 3): size + weight only. Taking the author to
+    // white too would flatten the title-over-author hierarchy on a dark-6 body.
+    // If this ever starts asserting white, decision 3 was changed without notice.
+    expect(style).not.toContain('color: var(--mantine-color-white)');
+  });
+
+  // 🔴 ONE render per test. An earlier version rendered all three variants in a
+  // single body and called `.unmount()` between them; that fights the scaffold's
+  // global `afterEach(cleanup)` over the shared container and left EVERY
+  // subsequent test in the file timing out at 15s. Separate tests also let each
+  // glyph mutation be observed independently instead of the first short-circuiting
+  // the rest.
+
+  test('🔴 S6b: the in-site Open CTA carries the launch glyph', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    expect(ctaGlyph(await waitForCta('/apps/run/my-app'))).toBe('player-play');
+  });
+
+  test('🔴 S6b: the off-site Visit CTA carries the external glyph', async () => {
+    renderWithProviders(
+      <AppListingCard
+        card={base({
+          kind: 'offsite',
+          name: 'External App',
+          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+        })}
+      />
+    );
+    expect(ctaGlyph(await waitForCta('https://ext.app'))).toBe('external-link');
+  });
+
+  test('🔴 S6b: the View-details CTA carries the view glyph, distinct from the other two', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
+    // `eye`, NOT `info-circle`. #3539 shipped IconEye here and the shared glyph
+    // module was reconciled to match; asserting the value (not just "different")
+    // is what stops a future wiring change from silently repainting it.
+    expect(ctaGlyph(await waitForCta('/apps/store-preview/my-app'))).toBe('eye');
+    // The in-site branch used to render NO icon at all — that silence was the half
+    // of #3391's premise the card was failing. All three glyphs are distinct:
+    // player-play / external-link / eye, pinned across the three tests above.
   });
 
   test('owner sees the Edit deep-link → on-site manifest editor', async () => {
@@ -609,7 +740,7 @@ describe('AppListingCard', () => {
 
         const { row, rollup } = actionRow('View details');
         assertLayoutIsReal(row);
-        expect(Math.round(row.clientWidth)).toBe(280);
+        expect(Math.round(row.clientWidth)).toBe(282); // 314 - 2x16 padding (no border since S4)
 
         // 80px is grounded in the measurements above, not invented: the glyph is
         // 13px + a 4px gap, so 80 leaves ~63px of text — enough for "91% recom…"
@@ -650,7 +781,7 @@ describe('AppListingCard', () => {
           .toBeInTheDocument();
         const { row, rollup } = actionRow('View details');
         assertLayoutIsReal(row);
-        expect(Math.round(row.clientWidth)).toBe(246);
+        expect(Math.round(row.clientWidth)).toBe(248); // 280 - 2x16 padding (no border since S4)
         /**
          * Measured: 3.6px before the fix, 52.1px after — the glyph (13) + gap (4)
          * + ~35px of text, i.e. "91%…". Floor set at 50 from that measurement.

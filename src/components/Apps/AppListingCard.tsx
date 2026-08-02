@@ -10,17 +10,9 @@ import {
   Image,
   Stack,
   Text,
-  Title,
   Tooltip,
 } from '@mantine/core';
-import {
-  IconApps,
-  IconExternalLink,
-  IconEye,
-  IconPencil,
-  IconPlayerPlay,
-  IconThumbUp,
-} from '@tabler/icons-react';
+import { IconApps, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
@@ -33,6 +25,7 @@ import {
   getOwnerEditHref,
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
+import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
@@ -198,8 +191,19 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
         </Avatar>
         {/* Tuned to fit in the common case; the Tooltip reveals a long username
             only when it would still clip. */}
+        {/* 🔴 S5 — AUTHOR is size + weight ONLY: 12px/400 -> 14px/500, matching the
+            `/models` author line. `c="dimmed"` is KEPT deliberately (Zach's call):
+            taking BOTH title and author to white flattens the title-over-author
+            hierarchy on a `dark-6` card body, and `/models` needs white there only
+            because its author line is overlaid on media.
+
+            🔴 ACCEPTED RESIDUAL, on the record rather than an oversight: this leaves
+            the author line at contrast 4.73 — AA pass by 0.23, AAA fail. Do not
+            "fix" it to white in a later PR without revisiting that decision; the
+            verification asserts the colour did NOT change. */}
         <TruncatedText
-          size="xs"
+          size="sm"
+          fw={500}
           c="dimmed"
           lineClamp={1}
           tooltipLabel={creator.username}
@@ -225,6 +229,13 @@ export interface AppListingCardProps {
 export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
   const currentUser = useCurrentUser();
   const cta = getListingCta(card, { canOpenPage });
+  // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
+  // second inline copy. #3539 already gave each CTA its own icon; what was still
+  // missing is a single SOURCE, so the card, the listing detail and the recents
+  // rail could not drift apart silently. This substitution renders exactly the
+  // same three icons it did before (open → IconPlayerPlay, visit →
+  // IconExternalLink, detail → IconEye) — it is a consolidation, not a restyle.
+  const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
 
@@ -251,8 +262,32 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   // the action row below (see the long note there). It is
   // `container-type: inline-size`, i.e. inline-axis containment only, so the
   // card's height still follows its content and `h-full` is unaffected.
+  // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
+  // load-bearing. Measured against a `/models` card in the same session (dark),
+  // and re-measured at 394px mobile where all four values are identical:
+  //   border-radius  8px           -> 6px   (`rounded-md`)
+  //   border         0.877px solid -> 0px   (drop `withBorder`)
+  //   box-shadow     3-layer       -> none  (drop `shadow="sm"`)
+  //   background     rgb(37,38,43) -> unchanged
+  // The site baseline is `TwCard`'s `rounded-md border-gray-3 bg-gray-0
+  // shadow-gray-4`, where the absent border/shadow is EMERGENT: those classes set
+  // only a COLOUR, with no width/shadow utility, so both resolve to 0/none.
+  //
+  // 🔴 `radius={0}` + `rounded-md`, NOT `radius="md"`. Mantine's `md` is 8px and
+  // Tailwind's `rounded-md` is 6px — the two `md`s are different values, which is
+  // exactly how this drifted. Taking it from the Tailwind scale pins it to the same
+  // token the rest of the site's cards use.
+  //
+  // 🔴 PADDING STAYS 16px. The review's "zero padding" is about the MEDIA, and the
+  // cover is already full-bleed via `<Card.Section>`. Unlike `/models`, this card's
+  // text sits BELOW the media rather than overlaid on it, so the body needs padding.
+  //
+  // Losing the border is safe at 1-per-row mobile, where the card is effectively
+  // full-bleed: the card's own fill (rgb(37,38,43)) separates it from the page
+  // (rgb(26,27,30)) with every ancestor transparent — the same separation `/models`
+  // already relies on at `border: 0`. Measured, not assumed.
   return (
-    <Card shadow="sm" padding="md" radius="md" withBorder className="h-full @container">
+    <Card padding="md" radius={0} className="h-full rounded-md @container">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
@@ -299,9 +334,27 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               c="inherit"
               style={{ minWidth: 0 }}
             >
-              <Title order={4} className="line-clamp-2">
+              {/* 🔴 S5 — TITLE matches the `/models` card: 18px/700/rgb(193,194,197)
+                  (contrast 8.48) -> 20px/700/#fefefe (contrast 14.97). `c="white"`
+                  is `--mantine-color-white`, which ThemeProvider sets to #fefefe
+                  deliberately to match the Tailwind value — it is the token the
+                  site's own card components use, so prefer it over the review's
+                  suggested `--mantine-primary-color-contrast` (same rendered value,
+                  wrong token).
+
+                  🔴 Do NOT add `cardClasses.dropShadow`. The `/models` title carries
+                  a text-shadow because it sits OVER media; this one sits on the card
+                  body. Confirmed still true at 394px mobile.
+
+                  ⚠️ SEMANTIC SIDE EFFECT, declared not hidden: dropping `<Title
+                  order={4}>` removes the `h4` from each card. `/apps` has no page
+                  heading today and its first heading IS this card title, so
+                  afterwards it has none — which is exactly what `/models` does (its
+                  card title is a `<p>`). Baseline parity, not an a11y regression;
+                  the broader heading-hierarchy finding (S13) stays out of scope. */}
+              <Text size="xl" fw={700} lh={1.2} c="white" className="line-clamp-2">
                 {card.name}
-              </Title>
+              </Text>
             </Anchor>
             <CreatorChip creator={card.creator} />
             {showOwnerIncomplete && (
@@ -441,14 +494,14 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
 
                 ICONS (product-feedback pass). Each action carries its own glyph so
                 the three CTAs are distinguishable at a glance in a dense grid
-                rather than three same-shaped buttons differing only in wording:
-                  open   → IconPlayerPlay   (run the app here)
-                  visit  → IconExternalLink (leaves Civitai — already the case)
-                  detail → IconEye          (read about it)
-                The rail tile's icon button uses the SAME vocabulary
-                (`RECENT_ACTION_ICONS` in `RecentlyOpenedApps.tsx`, driven by
-                `getRecentRailAction`) so one action reads identically on both
-                surfaces.
+                rather than three same-shaped buttons differing only in wording.
+                🔴 The mapping itself is NOT restated here — it lives in
+                `appListingActionGlyph.ts` and is read above via `CtaGlyph`. A copy
+                of it in this comment is exactly how the card and the detail page
+                drifted apart in the first place. The rail tile's icon button still
+                carries its own copy (`RECENT_ACTION_ICONS` in
+                `RecentlyOpenedApps.tsx`, driven by `getRecentRailAction`); folding
+                that third one in is the remaining consolidation.
 
                 🔴 The icon is DECORATIVE — the label text stays the accessible
                 name. Tabler icons render `<svg>` with no `<title>`, so they
@@ -471,7 +524,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 rel="noopener noreferrer"
                 size="sm"
                 variant="light"
-                rightSection={<IconExternalLink size={16} />}
+                rightSection={<CtaGlyph size={16} />}
                 // "Opened" = actually opened. An OFF-SITE app is opened the
                 // moment this Visit CTA is followed — there is no on-platform
                 // route afterwards that could record it (the on-site path is
@@ -487,9 +540,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
-                leftSection={
-                  cta.action === 'open' ? <IconPlayerPlay size={16} /> : <IconEye size={16} />
-                }
+                leftSection={<CtaGlyph size={16} />}
               >
                 {cta.label}
               </Button>
