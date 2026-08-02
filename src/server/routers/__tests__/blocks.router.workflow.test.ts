@@ -7029,4 +7029,157 @@ describe('blocks — #3520 model substitution observability', () => {
       expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
     });
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE `kind:'step'` PATH — the record is ABSENT on the WRITE half, and the
+  // absence is MEANINGFUL because the READ half is proven not blind.
+  //
+  // The step-type registry bridge (`kind:'step'`, #3538) landed alongside this
+  // feature and neither PR's suite covers the interaction. `submitStepWorkflow`
+  // resolves no checkpoint through the generation graph, so it never builds a
+  // generation context, calls `snapshotFromWorkflow(submitted)` with NO `extra`,
+  // and writes no `modelSubstitutions` key into the submitted `body.metadata`.
+  // That is correct today — a registry step carries no model binding, so nothing
+  // can be substituted — and it is what the wire contract in
+  // `workflow.schema.ts` now says, scoped to `kind:'textToImage'`.
+  //
+  // 🔴 WHY THE NEGATIVE CONTROL IS THE POINT. "The field is absent" passes just
+  // as happily if the READ path were structurally blind to a registered step's
+  // workflow — the exact opposite of what needs pinning, and the state a future
+  // step that DID substitute would be shipped into. The planted-metadata test
+  // below proves `snapshotFromWorkflow` recovers the record from a workflow
+  // whose only step is a registered `$type`, so the absence on a real submit is
+  // a statement about the WRITE half alone. If someone teaches a step to resolve
+  // a checkpoint, the read half is already there; the write half is what they
+  // have to add, and these two tests together say exactly that.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe("🔴 kind:'step' — absent on the WRITE half, readable on the READ half", () => {
+    // Registry steps are PAGE-only in v1 (`assertStepRequestAllowed`).
+    const stepClaims = () =>
+      validClaims({ ctx: { entityType: 'none', slotId: 'page' }, appBlockId: 'apb_test' });
+    const stepBody = () => ({
+      kind: 'step' as const,
+      step: 'convert-image',
+      params: {
+        image: 'https://image.civitai.com/source.png',
+        output: { format: 'webp', quality: 90 },
+      },
+    });
+    /** A completed `convertImage` step — SINGULAR `blob`, per the registry entry. */
+    const convertImageStep = (url: string) => ({
+      $type: 'convertImage',
+      name: 'block-step',
+      status: 'succeeded',
+      output: { blob: { id: 'b1', url, available: true, width: 797, height: 1024 } },
+    });
+    const textToImageStep = (url: string) => ({
+      $type: 'textToImage',
+      name: 's1',
+      status: 'succeeded',
+      metadata: {},
+      output: { images: [{ id: 'i1', url, available: true }] },
+    });
+    const isWhatIf = (c: unknown[]) =>
+      (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
+
+    it('🔴 a step SUBMIT builds no generation context and plumbs no record', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      // PLANTED: even with a context that would report a substitution, nothing
+      // may appear — so a green result here is about the step path not asking,
+      // not about "nothing happened to be substituted".
+      mockBuildGenerationContext.mockResolvedValue(ctxWithSubstitutions(SUBSTITUTION));
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_step_1',
+        status: 'processing',
+        steps: [convertImageStep('https://cdn/out.webp')],
+        cost: { total: 1 },
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      // The structural reason the field is absent — no context is built at all.
+      expect(mockBuildGenerationContext).not.toHaveBeenCalled();
+      expect(result.snapshot.workflowId).toBe('wf_step_1');
+      expect('modelSubstitutions' in result.snapshot).toBe(false);
+      // …and nothing was persisted for a later poll to recover either. (`metadata`
+      // is asserted on the REAL submit, not the free whatIf quote.)
+      const realSubmit = mockSubmitWorkflow.mock.calls.filter((c) => !isWhatIf(c));
+      expect(realSubmit).toHaveLength(1);
+      expect(
+        (realSubmit[0][0] as { body: { metadata?: Record<string, unknown> } }).body.metadata
+      ).toBeUndefined();
+    });
+
+    it('the subsequent POLL of that step workflow carries no record either', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_step_1',
+        status: 'succeeded',
+        cost: { total: 1 },
+        metadata: {},
+        steps: [convertImageStep('https://cdn/out.webp')],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_step_1' });
+
+      // The step's own output IS surfaced — so this poll is a live one, not a
+      // snapshot the reader failed to parse.
+      expect(result.snapshot.imageUrls).toEqual(['https://cdn/out.webp']);
+      expect('modelSubstitutions' in result.snapshot).toBe(false);
+    });
+
+    it('🔴 NEGATIVE CONTROL — a step workflow WITH the key planted DOES surface it', async () => {
+      // Without this, the two assertions above are equally consistent with a
+      // reader that is blind on a registered `$type`.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_step_1',
+        status: 'succeeded',
+        cost: { total: 1 },
+        metadata: { modelSubstitutions: [SUBSTITUTION] },
+        steps: [convertImageStep('https://cdn/out.webp')],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_step_1' });
+
+      expect(result.snapshot.imageUrls).toEqual(['https://cdn/out.webp']);
+      expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
+    });
+
+    // A MIXED workflow — one txt2img step (which CAN substitute) and one
+    // registered step (which cannot) — is the shape a future multi-step block
+    // produces, and is covered by neither #3535's nor #3538's suite. Both orders,
+    // because the registered-step branch and the native `$type` branch are
+    // different arms of the same loop in `snapshotFromWorkflow` and an early
+    // `continue` in either would drop the other's output.
+    it.each([
+      ['textToImage first', ['t2i', 'step']],
+      ['registered step first', ['step', 't2i']],
+    ] as const)(
+      'a MIXED workflow (%s) surfaces both outputs in steps order AND the record',
+      async (_label, order) => {
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        mockGetWorkflow.mockResolvedValue({
+          id: 'wf_mixed',
+          status: 'succeeded',
+          cost: { total: 26 },
+          metadata: { params: { prompt: 'a cat' }, modelSubstitutions: [SUBSTITUTION] },
+          steps: order.map((k) =>
+            k === 't2i'
+              ? textToImageStep('https://cdn/t2i.png')
+              : convertImageStep('https://cdn/conv.webp')
+          ),
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_mixed' });
+
+        expect(result.snapshot.imageUrls).toEqual(
+          order.map((k) => (k === 't2i' ? 'https://cdn/t2i.png' : 'https://cdn/conv.webp'))
+        );
+        expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
+      }
+    );
+  });
 });

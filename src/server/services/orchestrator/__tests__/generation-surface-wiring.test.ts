@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import ts from 'typescript';
 
 import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
 
@@ -28,7 +29,43 @@ import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substi
  *
  * TypeScript already forces the argument to EXIST (it is required, not
  * defaulted). What it cannot check is that the value is the RIGHT one for that
- * file, which is what the expected-by-path table below pins.
+ * call site, which is what the expectation table below pins.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 🔴 WHY THE PIN IS PER-FUNCTION AND NOT PER-FILE.
+ *
+ * The first cut of this guard keyed the expectation on the FILE. But the
+ * property it is standing in for is a property of the CALL SITE, and the two
+ * came apart the moment `blocks.router.ts` grew a second generation-submitting
+ * handler (`submitStepWorkflow`, the `kind:'step'` bridge from #3538).
+ *
+ * Concretely, under a file-keyed table: a `buildGenerationContext(..., 'block')`
+ * added inside `submitStepWorkflow` PASSES — the file already claims `'block'` —
+ * and the counter's `surface="block"` incidence starts rising. But
+ * `submitStepWorkflow` calls `snapshotFromWorkflow(submitted)` with no `extra`
+ * and writes no `modelSubstitutions` key into the submitted `body.metadata`, so
+ * NO block can see which generation was substituted. The metric moves, the wire
+ * does not, and the gap #3520 exists to close is silently reopened — with a
+ * green guard.
+ *
+ * The honest property is therefore: A PATH THAT BUILDS A GENERATION CONTEXT (and
+ * can therefore record a substitution) MUST ALSO PLUMB THAT RECORD TO THE WIRE.
+ * That coupling cannot be checked by a grep, but its trigger can: pin the
+ * ENCLOSING FUNCTION of every call site, so that adding one inside a handler
+ * that does not plumb fails loudly and names the handler, and the author has to
+ * either wire it up or amend the table on purpose. A new row here is the
+ * reviewable act — the same design as before, moved to the granularity the
+ * property actually has.
+ *
+ * MECHANISM: the TypeScript AST, not a regex. Call sites are matched by
+ * IDENTIFIER (so `mockBuildGenerationContext(...)` is not a call to
+ * `buildGenerationContext`, which a substring needle cannot distinguish),
+ * arguments are counted by `node.arguments.length` (so a prettier reflow cannot
+ * change the answer), and comments and string literals are excluded by
+ * construction rather than by a hand-rolled stripper. Walking up `node.parent`
+ * for the nearest named function/method/`const fn = () =>`/object-property is
+ * what yields the enclosing name — including through a tRPC procedure builder,
+ * where the arrow passed to `.mutation(...)` resolves to its procedure key.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -36,52 +73,76 @@ const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 /** The declaration itself — not a call site. */
 const DEFINITION_FILE = 'src/server/services/orchestrator/orchestration-new.service.ts';
 /**
- * This guard's own source. It mentions `buildGenerationContext(` inside STRING
- * literals (the grep needle), which `stripComments` deliberately does not touch,
- * so it has to be excluded by path or it enumerates itself as a call site.
+ * This guard's own source. It mentions `buildGenerationContext` only in comments
+ * and string literals, which the AST walk already ignores, but it is excluded by
+ * path as well so the enumeration can never depend on that.
  */
 const GUARD_FILE = 'src/server/services/orchestrator/__tests__/generation-surface-wiring.test.ts';
 
-/**
- * Every file allowed to build a generation context, and the surface it must
- * declare. Adding a generation entry point means adding a row here — a
- * deliberate, reviewable act, rather than a silent widening.
- */
-const EXPECTED_SURFACE_BY_FILE: Record<string, string> = {
-  // The on-site generator. #3520 calls this substitution CORRECT: the only way
-  // the form holds an out-of-list id is a stale localStorage value after an
-  // ecosystem switch, and the user visibly sees the picker snap back.
-  'src/server/routers/orchestrator.router.ts': 'onsite',
-  // The App Blocks bridge — the surface the issue is about. The id was written
-  // by an app author and the correction was unobservable.
-  'src/server/routers/blocks.router.ts': 'block',
-  // Comics / preset image generation: server-composed graph input.
-  'src/server/services/orchestrator/preset-image-gen.service.ts': 'preset',
-};
+/** `file::enclosingFunction` — the key the expectation table is written in. */
+type CallSiteKey = string;
 
-/**
- * Blank out comments so a doc-comment that MENTIONS `buildGenerationContext(...)`
- * is not mistaken for a call site. Whitespace-preserving, so offsets are stable.
- * Deliberately simple: it only has to be right about this repo's own source, and
- * it can only ever produce a FALSE ALARM (a real call hidden), never a false pass.
- */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, (m, lead) => lead + ' '.repeat(m.length - lead.length));
+interface CallSite {
+  /** Repo-relative path. */
+  file: string;
+  /** Nearest named enclosing function / method / procedure key. */
+  fn: string;
+  /** 1-based line of the call, for a failure message a human can act on. */
+  line: number;
+  /** Number of top-level arguments actually passed. */
+  arity: number;
+  /** Every `GENERATION_SURFACES` member passed as a bare string literal. */
+  surfaceLiterals: string[];
 }
 
 /**
- * Enumerate call sites from the TREE, not from a hand-kept list.
+ * Every PRODUCTION call site allowed to build a generation context, keyed by
+ * `file::enclosingFunction`, with the surface it must declare.
+ *
+ * 🔴 Adding a row means asserting that the enclosing function plumbs a recorded
+ * substitution onward in whatever way its surface requires — for `'block'`, onto
+ * the `BlockWorkflowSnapshot` wire (see
+ * `src/server/schema/blocks/workflow.schema.ts`'s `modelSubstitutions` contract).
+ * A row added without that is the failure described above, just made official.
+ */
+const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, string> = {
+  // The on-site generator. #3520 calls this substitution CORRECT: the only way
+  // the form holds an out-of-list id is a stale localStorage value after an
+  // ecosystem switch, and the user visibly sees the picker snap back.
+  'src/server/routers/orchestrator.router.ts::generateFromGraph': 'onsite',
+  'src/server/routers/orchestrator.router.ts::whatIfFromGraph': 'onsite',
+  // The App Blocks bridge — the surface the issue is about. The id was written
+  // by an app author and the correction was unobservable. This ONE function is
+  // also the only place the block wire contract's `modelSubstitutions` field
+  // originates: it returns the collected records to the router, which persists
+  // them on `body.metadata` and passes them to `snapshotFromWorkflow`.
+  //
+  // 🔴 `submitStepWorkflow` / the `customComfy` handlers are DELIBERATELY ABSENT.
+  // They live in this same file and quote costs on four exits each, and neither
+  // builds a context nor plumbs the record. Adding a call site there without the
+  // plumbing must fail — that is the whole reason this table is keyed on the
+  // function and not on the file.
+  'src/server/routers/blocks.router.ts::createBlockTextToImageStep': 'block',
+  // Comics / preset image generation: server-composed graph input.
+  'src/server/services/orchestrator/preset-image-gen.service.ts::submitPresetImageGen': 'preset',
+  'src/server/services/orchestrator/preset-image-gen.service.ts::whatIfPresetImageGen': 'preset',
+};
+
+/**
+ * Candidate files, enumerated from the TREE rather than from a hand-kept list.
+ *
+ * The grep needle is the BARE identifier (no trailing paren): it only has to
+ * over-approximate, because the AST walk below decides what is really a call.
+ * That removes every formatting dependency from the enumeration.
  *
  * `includeTests: false` is the PRODUCTION population (what the surface table
- * below pins). `includeTests: true` adds the test tree, which `tsconfig.json`
- * EXCLUDES (`src/**\/__tests__/**`) — see the arity guard for why that matters.
+ * pins). `includeTests: true` adds the test tree, which `tsconfig.json` EXCLUDES
+ * (`src/**\/__tests__/**`) — see the arity guard for why that matters.
  */
-function findCallSiteFiles({ includeTests }: { includeTests: boolean }): string[] {
+function candidateFiles({ includeTests }: { includeTests: boolean }): string[] {
   const out = execFileSync(
     'grep',
-    ['-rl', '--include=*.ts', '--include=*.tsx', 'buildGenerationContext(', 'src'],
+    ['-rl', '--include=*.ts', '--include=*.tsx', 'buildGenerationContext', 'src'],
     { cwd: REPO_ROOT, encoding: 'utf8' }
   );
   return out
@@ -89,111 +150,140 @@ function findCallSiteFiles({ includeTests }: { includeTests: boolean }): string[
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((f) => f !== DEFINITION_FILE && f !== GUARD_FILE)
-    .filter((f) => includeTests || !(f.includes('__tests__') || f.endsWith('.test.ts')))
-    .filter(
-      (f) =>
-        argumentListsOf(
-          stripComments(readFileSync(path.join(REPO_ROOT, f), 'utf8')),
-          'buildGenerationContext('
-        ).length > 0
-    );
+    .filter((f) => includeTests || !(f.includes('__tests__') || f.endsWith('.test.ts')));
 }
 
 /**
- * Split a call's argument text into its TOP-LEVEL arguments, ignoring commas
- * nested inside parens / brackets / braces / string literals — so `f('a', {},
- * {}, 'onsite')` counts 4, not 6.
+ * The nearest NAMED enclosing scope of `node`, walking up the parent chain.
+ *
+ * Handles the four shapes this repo actually uses:
+ *   - `async function createBlockTextToImageStep(...)`   → FunctionDeclaration
+ *   - `const submitPresetImageGen = async () => {}`      → VariableDeclaration
+ *   - `{ method() {} }`                                  → MethodDeclaration
+ *   - `generateFromGraph: proc.mutation(async () => {})` → PropertyAssignment
+ *
+ * The last one is why an anonymous function-like node does not terminate the
+ * walk: the arrow handed to `.mutation(...)` has a CallExpression for a parent,
+ * and the procedure key sits several nodes further up. A name is only accepted
+ * from a variable/property once a function boundary has been crossed, so a call
+ * sitting directly in an object literal is not mislabelled as "inside" it.
  */
-function topLevelArgs(argText: string): string[] {
-  if (argText.trim() === '') return [];
-  const args: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let current = '';
-  for (let i = 0; i < argText.length; i++) {
-    const c = argText[i];
-    if (quote) {
-      if (c === '\\') {
-        current += c + (argText[i + 1] ?? '');
-        i += 1;
-        continue;
+function enclosingFunctionName(node: ts.Node): string {
+  let sawFunctionBoundary = false;
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (ts.isFunctionDeclaration(cur)) {
+      if (cur.name) return cur.name.text;
+      sawFunctionBoundary = true;
+    } else if (ts.isMethodDeclaration(cur) && ts.isIdentifier(cur.name)) {
+      return cur.name.text;
+    } else if (ts.isFunctionExpression(cur)) {
+      if (cur.name) return cur.name.text;
+      sawFunctionBoundary = true;
+    } else if (ts.isArrowFunction(cur)) {
+      sawFunctionBoundary = true;
+    } else if (sawFunctionBoundary && ts.isVariableDeclaration(cur) && ts.isIdentifier(cur.name)) {
+      return cur.name.text;
+    } else if (sawFunctionBoundary && ts.isPropertyAssignment(cur) && ts.isIdentifier(cur.name)) {
+      return cur.name.text;
+    }
+    cur = cur.parent;
+  }
+  return '<module scope>';
+}
+
+/** Every real `buildGenerationContext(...)` call in `file`, with its context. */
+function callSitesIn(file: string): CallSite[] {
+  const text = readFileSync(path.join(REPO_ROOT, file), 'utf8');
+  const source = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const found: CallSite[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      // Identifier equality — NOT a substring match, so `mockBuildGenerationContext(...)`
+      // (a real pattern in this repo's test tree) is correctly not a call site.
+      const calleeName = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)
+        ? callee.name.text
+        : null;
+      if (calleeName === 'buildGenerationContext') {
+        found.push({
+          file,
+          fn: enclosingFunctionName(node),
+          line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+          arity: node.arguments.length,
+          surfaceLiterals: node.arguments
+            .filter((a): a is ts.StringLiteral => ts.isStringLiteral(a))
+            .map((a) => a.text)
+            .filter((v) => (GENERATION_SURFACES as readonly string[]).includes(v)),
+        });
       }
-      if (c === quote) quote = null;
-      current += c;
-      continue;
     }
-    if (c === "'" || c === '"' || c === '`') {
-      quote = c;
-      current += c;
-      continue;
-    }
-    if (c === '(' || c === '[' || c === '{') depth += 1;
-    else if (c === ')' || c === ']' || c === '}') depth -= 1;
-    if (c === ',' && depth === 0) {
-      args.push(current);
-      current = '';
-      continue;
-    }
-    current += c;
-  }
-  args.push(current);
-  return args.map((a) => a.trim()).filter(Boolean);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
-/**
- * The argument list of every `<needle>` call in `source`, extracted by BALANCED
- * PARENTHESES rather than by a line pattern — a formatter reflow (prettier
- * collapsing a multi-line call, or the reverse) must not be able to make this
- * guard silently inspect the wrong text and pass.
- */
-function argumentListsOf(source: string, needle: string): string[] {
-  const out: string[] = [];
-  let from = 0;
-  for (;;) {
-    const at = source.indexOf(needle, from);
-    if (at === -1) break;
-    let depth = 1;
-    let i = at + needle.length;
-    for (; i < source.length && depth > 0; i++) {
-      if (source[i] === '(') depth += 1;
-      else if (source[i] === ')') depth -= 1;
-    }
-    out.push(source.slice(at + needle.length, i - 1));
-    from = i;
-  }
-  return out;
+function collectCallSites({ includeTests }: { includeTests: boolean }): CallSite[] {
+  return candidateFiles({ includeTests }).flatMap(callSitesIn);
 }
+
+const keyOf = (c: CallSite): CallSiteKey => `${c.file}::${c.fn}`;
 
 describe('generation-context surface wiring', () => {
-  const files = findCallSiteFiles({ includeTests: false });
+  const sites = collectCallSites({ includeTests: false });
 
   it('finds the call sites at all (guard the guard)', () => {
     // Without this, a broken enumeration would make every assertion below pass
     // vacuously over an empty list.
-    expect(files.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_FILE).length);
+    expect(sites.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_CALL_SITE).length);
+    // And no call site may resolve to an unnamed scope — that would collapse
+    // distinct handlers onto one key and re-create the file-scoped hole.
+    expect(sites.filter((c) => c.fn === '<module scope>')).toEqual([]);
   });
 
-  it('every file that builds a generation context is a KNOWN surface', () => {
-    const unexpected = files.filter((f) => !(f in EXPECTED_SURFACE_BY_FILE));
-    // A new generation entry point must declare which population it belongs to;
-    // inheriting a neighbour's surface silently contaminates the number that
-    // gates the phase-3 policy decision.
+  it('🔴 every FUNCTION that builds a generation context is a pinned call site', () => {
+    // The mutation this exists for: a `buildGenerationContext(..., "block")`
+    // added inside `submitStepWorkflow` (or any other handler in an
+    // already-listed file) that does NOT plumb the record onto the wire. A
+    // file-keyed table passes that; this one names the offending function.
+    const unexpected = sites
+      .filter((c) => !(keyOf(c) in EXPECTED_SURFACE_BY_CALL_SITE))
+      .map((c) => `${c.file}:${c.line} inside ${c.fn}()`);
     expect(unexpected).toEqual([]);
   });
 
-  it.each(Object.entries(EXPECTED_SURFACE_BY_FILE))(
-    '%s passes the surface %s at EVERY buildGenerationContext call',
-    (file, expectedSurface) => {
-      const source = stripComments(readFileSync(path.join(REPO_ROOT, file), 'utf8'));
-      const calls = argumentListsOf(source, 'buildGenerationContext(');
-      expect(calls.length).toBeGreaterThan(0);
-      for (const args of calls) {
-        const found = GENERATION_SURFACES.filter((s) => args.includes(`'${s}'`));
-        // Exactly one surface literal, and it is this file's.
-        expect(found).toEqual([expectedSurface]);
-      }
-    }
-  );
+  it('no pinned call site has disappeared (the table describes the live tree)', () => {
+    // The other direction: a stale row would silently stop guarding anything,
+    // and would also keep the surface-coverage assertion below green off a
+    // function that no longer exists.
+    const live = new Set(sites.map(keyOf));
+    const missing = Object.keys(EXPECTED_SURFACE_BY_CALL_SITE).filter((k) => !live.has(k));
+    expect(missing).toEqual([]);
+  });
+
+  it('🔴 every call site passes the surface its pinned function must declare', () => {
+    const wrong = sites
+      .filter((c) => keyOf(c) in EXPECTED_SURFACE_BY_CALL_SITE)
+      .filter((c) => {
+        const expected = EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)];
+        return c.surfaceLiterals.length !== 1 || c.surfaceLiterals[0] !== expected;
+      })
+      .map(
+        (c) =>
+          `${c.file}:${c.line} inside ${c.fn}() passes [${c.surfaceLiterals.join(', ')}], ` +
+          `expected exactly ['${EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)]}']`
+      );
+    expect(wrong).toEqual([]);
+  });
 
   /**
    * 🔴 THE TEST-CODE HOLE. "Required, not defaulted, so a new entry point is a
@@ -204,31 +294,23 @@ describe('generation-context surface wiring', () => {
    * test, but a test HELPER that wraps `buildGenerationContext` would propagate
    * unlabelled collectors with nothing catching it.
    *
-   * Deliberately an ARITY check, NOT a surface-value check. Pinning WHICH
-   * surface a test must pass would false-alarm on legitimate fixtures — a
-   * table-driven test sweeping `GENERATION_SURFACES`, or one passing the value
-   * through a variable, are both perfectly valid and neither carries a literal
-   * this file could predict. Arity is exactly the guarantee `tsc` gives the
-   * production tree, extended to the part of the tree `tsc` never reads, and it
-   * constrains nothing else.
+   * Deliberately an ARITY check, NOT a surface-value or enclosing-function
+   * check. Pinning either of those for a test would false-alarm on legitimate
+   * fixtures — a table-driven test sweeping `GENERATION_SURFACES`, one passing
+   * the value through a variable, and a call sitting directly in an `it(...)`
+   * body (no named enclosing function at all) are all perfectly valid. Arity is
+   * exactly the guarantee `tsc` gives the production tree, extended to the part
+   * of the tree `tsc` never reads, and it constrains nothing else.
    */
   it('🔴 EVERY call site — test code included — passes the 4th `surface` argument', () => {
-    const allFiles = findCallSiteFiles({ includeTests: true });
-    const offenders: string[] = [];
-    let totalCalls = 0;
-
-    for (const file of allFiles) {
-      const source = stripComments(readFileSync(path.join(REPO_ROOT, file), 'utf8'));
-      for (const args of argumentListsOf(source, 'buildGenerationContext(')) {
-        totalCalls += 1;
-        const arity = topLevelArgs(args).length;
-        if (arity !== 4) offenders.push(`${file}: ${arity} args`);
-      }
-    }
+    const allSites = collectCallSites({ includeTests: true });
+    const offenders = allSites
+      .filter((c) => c.arity !== 4)
+      .map((c) => `${c.file}:${c.line}: ${c.arity} args`);
 
     // Guard the guard: a broken enumeration must not pass vacuously.
-    expect(allFiles.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_FILE).length);
-    expect(totalCalls).toBeGreaterThanOrEqual(allFiles.length);
+    expect(allSites.length).toBeGreaterThanOrEqual(sites.length);
+    expect(sites.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
   });
 
@@ -236,7 +318,7 @@ describe('generation-context surface wiring', () => {
     // A surface value with no call site would be a series that can never be
     // emitted — an alert keyed on it would then be structurally silent, which is
     // the exact failure class this counter exists to avoid.
-    expect([...new Set(Object.values(EXPECTED_SURFACE_BY_FILE))].sort()).toEqual(
+    expect([...new Set(Object.values(EXPECTED_SURFACE_BY_CALL_SITE))].sort()).toEqual(
       [...GENERATION_SURFACES].sort()
     );
   });
