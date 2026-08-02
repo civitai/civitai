@@ -478,12 +478,17 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
+      // nextUses matters here: replacing artwork REBUILDS `data` rather than
+      // patching it (patchCosmeticData returns artworkData wholesale), so
+      // omitting uses silently turned a finite sticker into an unlimited one for
+      // every future buyer.
       data: buildCosmeticData(
         existing.cosmetic.type,
         imageUrl,
         animated,
         nextOffsets,
-        nextSlug
+        nextSlug,
+        nextUses
       ) as Prisma.InputJsonValue,
       checks,
       imageMeta,

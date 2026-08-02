@@ -126,6 +126,10 @@ export function recordStickerUsage({
   entityType: string;
   entityId: number;
 }) {
+  // DM placements are DELIBERATELY unlogged, not merely absent: chat is free, so
+  // `charged` is empty there and this returns early. That is a privacy decision
+  // (D25) — usage history is not collected for private conversations — and it
+  // must not be "fixed" by logging uncharged placements.
   if (!track || !charged.size) return;
 
   // Preview deploys share CLICKHOUSE_TRACKER_URL with production but run against

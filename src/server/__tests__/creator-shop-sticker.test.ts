@@ -4,6 +4,7 @@ import {
   creatorGrantRemaining,
   patchCosmeticData,
 } from '~/server/services/creator-shop.data';
+import { submitCreatorShopItemSchema } from '~/server/schema/creator-shop.schema';
 import {
   COSMETIC_PRICE_FLOOR_MIN,
   cosmeticDimensionsLabel,
@@ -228,5 +229,67 @@ describe('creator grant on approval', () => {
       }
       expect(Number.isNaN(result)).toBe(false);
     }
+  });
+});
+
+// `uses` was optional, and both the buyer balance and the creator grant read it —
+// so a sticker without it sold an UNLIMITED balance at a finite price.
+describe('uses is required for stickers', () => {
+  const base = {
+    cosmeticType: CosmeticType.Sticker,
+    name: 'Test',
+    imageUrl: 'img',
+    slug: 'party_cat',
+    price: 500,
+  };
+
+  it('rejects a sticker submitted without uses', () => {
+    const result = submitCreatorShopItemSchema.safeParse(base);
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues.some((i) => i.path.includes('uses'))).toBe(true);
+  });
+
+  it('accepts a sticker with uses', () => {
+    expect(submitCreatorShopItemSchema.safeParse({ ...base, uses: 100 }).success).toBe(true);
+  });
+
+  // The regression that would go unnoticed: uses is sticker-specific, and every
+  // other type must still submit without it.
+  it('still accepts a badge without uses', () => {
+    const result = submitCreatorShopItemSchema.safeParse({
+      ...base,
+      cosmeticType: CosmeticType.Badge,
+      slug: undefined,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// Replacing artwork REBUILDS `data` rather than patching it, so anything not
+// passed to buildCosmeticData is dropped — which silently turned a finite
+// sticker unlimited for every future buyer.
+describe('replacing sticker artwork keeps uses', () => {
+  it('carries uses into the rebuilt blob', () => {
+    expect(
+      buildCosmeticData(CosmeticType.Sticker, 'new-img', false, null, 'party_cat', 100)
+    ).toEqual({ url: 'new-img', slug: 'party_cat', animated: false, uses: 100 });
+  });
+
+  it('is what patchCosmeticData returns wholesale on an artwork change', () => {
+    const artworkData = buildCosmeticData(
+      CosmeticType.Sticker,
+      'new-img',
+      false,
+      null,
+      'party_cat',
+      100
+    );
+    expect(
+      patchCosmeticData({
+        existingData: { url: 'old', slug: 'party_cat', uses: 100 },
+        artworkData,
+      })
+    ).toEqual(artworkData);
   });
 });

@@ -218,31 +218,43 @@ export const cosmeticOffsetsSchema = z.object({
 });
 
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
-export const submitCreatorShopItemSchema = z.object({
-  cosmeticType: z.enum(creatorCosmeticTypes),
-  name: z.string().min(1).max(255),
-  description: z.string().max(1000).nullish(),
-  // CF image id from the upload. The server builds the cosmetic `data` from this
-  // and validates the artwork itself (format/dimensions/transparency).
-  imageUrl: z.string().min(1),
-  animated: z.boolean().optional(),
-  // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
-  slug: z.string().optional(),
-  // Sticker only — uses granted per purchase.
-  uses: z.number().int().positive().optional(),
-  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
-  availableQuantity: z.number().int().positive().nullish(),
-  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
-  // Allow other creators to list this cosmetic, giving the seller this % of the
-  // price (0-70, out of the creator's 70% pool).
-  sellableByOthers: z.boolean().default(false),
-  sellerShare: z.number().int().min(0).max(70).default(0),
-  // Accept Blue Buzz from buyers (fully or partially); the creator is paid
-  // blue for the blue-paid portion.
-  acceptsBlueBuzz: z.boolean().default(false),
-  // ProfileDecoration only — per-side fit adjustment (ignored for other types).
-  offsets: cosmeticOffsetsSchema.nullish(),
-});
+export const submitCreatorShopItemSchema = z
+  .object({
+    cosmeticType: z.enum(creatorCosmeticTypes),
+    name: z.string().min(1).max(255),
+    description: z.string().max(1000).nullish(),
+    // CF image id from the upload. The server builds the cosmetic `data` from this
+    // and validates the artwork itself (format/dimensions/transparency).
+    imageUrl: z.string().min(1),
+    animated: z.boolean().optional(),
+    // Sticker only — the `:slug:` users type. Required for Sticker, ignored otherwise.
+    slug: z.string().optional(),
+    // Sticker only — uses granted per purchase.
+    uses: z.number().int().positive().optional(),
+    price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
+    availableQuantity: z.number().int().positive().nullish(),
+    buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
+    // Allow other creators to list this cosmetic, giving the seller this % of the
+    // price (0-70, out of the creator's 70% pool).
+    sellableByOthers: z.boolean().default(false),
+    sellerShare: z.number().int().min(0).max(70).default(0),
+    // Accept Blue Buzz from buyers (fully or partially); the creator is paid
+    // blue for the blue-paid portion.
+    acceptsBlueBuzz: z.boolean().default(false),
+    // ProfileDecoration only — per-side fit adjustment (ignored for other types).
+    offsets: cosmeticOffsetsSchema.nullish(),
+  })
+  .superRefine((input, ctx) => {
+    // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
+    // read as unlimited — so a sticker without it sells an unlimited balance at a
+    // finite price. Required here, at submission, rather than guessed downstream.
+    if (input.cosmeticType === CosmeticType.Sticker && !input.uses)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['uses'],
+        message: 'Stickers must specify how many uses a purchase grants',
+      });
+  });
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
 export const updateCreatorShopItemSchema = z.object({

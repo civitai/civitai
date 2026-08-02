@@ -239,12 +239,17 @@ export function RichTextEditor({
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
-    // Ungated so a sticker survives an edit round-trip rather than being dropped
-    // from the doc. Whether it is ever drawn is decided at render, not here.
-    arr.push(StickerEditNode);
+    // Comment editors only. Verified rather than assumed: the four surfaces
+    // passing `includeControls: ['sticker']` are exactly the four comment
+    // editors, and nothing else loads comment content — so no editor that could
+    // legitimately hold a sticker span loses the node. Off these surfaces the
+    // remaining exposure was paste, and dropping the span on parse beats
+    // rendering it and having it vanish on save.
+    if (addStickers) arr.push(StickerEditNode);
 
     return arr;
   }, [
+    addStickers,
     addList,
     addFormatting,
     addColors,
