@@ -4,8 +4,13 @@ Automated moderation of collection items sitting in `CollectionItem.status = 'RE
 classifies pending items with a vision model and applies accept/reject through the existing
 `updateCollectionItemsStatus` service.
 
-Config lives on `Collection.metadata.aiReview` and is written only through
+Config lives in `KeyValue` under `collection-ai-review:<collectionId>`, written only through
 `collection.setAiReview` (`moderatorProcedure` + the `collectionAiReview` Flipt flag).
+
+It is deliberately **not** on `Collection.metadata`: the `Collection_contests` index is a covering
+index that `INCLUDE`s `metadata`, so a Contest collection's entire metadata must fit the btree row
+limit (~2704 bytes). The prompt alone is larger, and writing it there fails with SQLSTATE 54000.
+Contest metadata in prod currently runs ~204 bytes average, 708 max — there is no room to grow into.
 
 ## Design
 

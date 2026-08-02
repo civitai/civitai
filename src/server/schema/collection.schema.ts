@@ -112,6 +112,11 @@ export const getAllUserCollectionsInputSchema = z
 export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
 
 export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
+/**
+ * Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
+ * metadata, which caps a Contest collection's entire metadata at the btree row limit (~2704 bytes).
+ * The prompt alone is bigger than that.
+ */
 export const collectionAiReviewSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
@@ -177,7 +182,6 @@ export const collectionMetadataSchema = z
     includeContestCallouts: z.boolean().optional(),
     // Invite URL will make it so that users with the URL can join the collection as managers / admins.
     inviteUrlEnabled: z.boolean().optional(),
-    aiReview: collectionAiReviewSchema.optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

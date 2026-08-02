@@ -41,6 +41,7 @@ import type {
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -1826,23 +1827,38 @@ export const getAvailableCollectionItemsFilterForUser = ({
   return { AND, rawAND };
 };
 
+export const collectionAiReviewKey = (collectionId: number) =>
+  `collection-ai-review:${collectionId}`;
+
+export const getCollectionAiReview = async (collectionId: number) => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: collectionAiReviewKey(collectionId) },
+    select: { value: true },
+  });
+  if (!row) return null;
+
+  const parsed = collectionAiReviewSchema.safeParse(row.value);
+  return parsed.success ? parsed.data : null;
+};
+
 export const setCollectionAiReview = async ({
   collectionId,
   aiReview,
 }: SetCollectionAiReviewInput) => {
-  // jsonb_set rather than read-modify-write: a concurrent save from the collection edit modal would
-  // otherwise silently drop whichever write landed first.
-  const [updated] = await dbWrite.$queryRaw<{ id: number }[]>`
-    UPDATE "Collection"
-    SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{aiReview}', ${JSON.stringify(
-      aiReview
-    )}::jsonb, true)
-    WHERE id = ${collectionId}
-    RETURNING id
-  `;
-  if (!updated) throw throwNotFoundError('No collection with id ' + collectionId);
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  return updated;
+  const key = collectionAiReviewKey(collectionId);
+  await dbWrite.keyValue.upsert({
+    where: { key },
+    create: { key, value: aiReview },
+    update: { value: aiReview },
+  });
+
+  return aiReview;
 };
 
 export const updateCollectionItemsStatus = async ({

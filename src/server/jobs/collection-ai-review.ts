@@ -5,6 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import { updateCollectionItemsStatus } from '~/server/services/collection.service';
 import {
   decideFromObservations,
@@ -42,21 +43,22 @@ export const collectionAiReview = createJob(
   async () => {
     if (!isAiReviewAvailable()) return;
 
-    const collections = await dbWrite.$queryRaw<{ id: number; metadata: unknown }[]>`
-      SELECT id, metadata
-      FROM "Collection"
-      WHERE metadata->'aiReview'->>'enabled' = 'true'
+    const rows = await dbWrite.$queryRaw<{ key: string; value: unknown }[]>`
+      SELECT key, value FROM "KeyValue" WHERE key LIKE 'collection-ai-review:%'
     `;
 
-    for (const collection of collections) {
-      const config = (collection.metadata as { aiReview?: CollectionAiReviewSchema })?.aiReview;
-      if (!config?.enabled) continue;
+    for (const row of rows) {
+      const collectionId = Number(row.key.split(':')[1]);
+      if (!collectionId) continue;
+
+      const parsed = collectionAiReviewSchema.safeParse(row.value);
+      if (!parsed.success || !parsed.data.enabled) continue;
 
       await withDistributedLock(
         // A run that overlaps itself would double-bill and double-notify. maxRetries 0 means a
         // still-running batch is skipped rather than queued behind the lock.
-        { key: `collection-ai-review:${collection.id}`, ttl: 900, maxRetries: 0 },
-        () => reviewCollection(collection.id, config)
+        { key: `collection-ai-review-run:${collectionId}`, ttl: 900, maxRetries: 0 },
+        () => reviewCollection(collectionId, parsed.data)
       );
     }
   },

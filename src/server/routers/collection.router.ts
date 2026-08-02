@@ -43,6 +43,7 @@ import {
   setCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
 import {
+  getCollectionAiReview,
   getCollectionEntryCount,
   setCollectionAiReview,
 } from '~/server/services/collection.service';
@@ -144,6 +145,10 @@ export const collectionRouter = router({
     .input(setCollectionAiReviewInput)
     .use(isFlagProtected('collectionAiReview'))
     .mutation(({ input }) => setCollectionAiReview(input)),
+  getAiReview: moderatorProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('collectionAiReview'))
+    .query(({ input }: { input: GetByIdInput }) => getCollectionAiReview(input.id)),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)

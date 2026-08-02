@@ -24,9 +24,7 @@ import { Flags } from '~/shared/utils/flags';
 
 export default function CollectionAiReviewModal({ collectionId }: { collectionId: number }) {
   const dialog = useDialogContext();
-  const { data: collection, isLoading } = trpc.collection.getById.useQuery({ id: collectionId });
-  const existing = (collection?.collection?.metadata as { aiReview?: CollectionAiReviewSchema })
-    ?.aiReview;
+  const { data: existing, isLoading } = trpc.collection.getAiReview.useQuery({ id: collectionId });
 
   return (
     <Modal {...dialog} title="AI moderation" size="lg">
@@ -47,7 +45,7 @@ function AiReviewForm({
   onClose,
 }: {
   collectionId: number;
-  existing?: CollectionAiReviewSchema;
+  existing?: CollectionAiReviewSchema | null;
   onClose: () => void;
 }) {
   const utils = trpc.useUtils();
@@ -66,7 +64,7 @@ function AiReviewForm({
   const saveMutation = trpc.collection.setAiReview.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: 'AI moderation settings saved' });
-      await utils.collection.getById.invalidate({ id: collectionId });
+      await utils.collection.getAiReview.invalidate({ id: collectionId });
       onClose();
     },
     onError: (error) =>
