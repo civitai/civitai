@@ -14,8 +14,13 @@
  *
  * Requires the pHash/pHashUrl migration to be applied to the target database.
  *
- * Usage:
- *   npm run tsscript scripts/oneoffs/backfill-cosmetic-phash.ts --target=<prod|dev> [options]
+ * Usage (from a POSIX shell, at the repo root):
+ *   NODE_ENV=development pnpm exec tsx scripts/oneoffs/backfill-cosmetic-phash.ts \
+ *     --target=prod --dry-run
+ *
+ * Not `npm run tsscript` — npm swallows `--target` as its own config option, so
+ * the script sees no target and aborts. `tsscript` also lacks cross-env, so its
+ * NODE_ENV prefix fails in cmd/PowerShell.
  *
  * Options:
  *   --target=prod|dev   REQUIRED. prod reads DATABASE_URL, dev reads DEV_DATABASE_URL.
@@ -23,6 +28,19 @@
  *   --batch-size=N      Rows fetched per iteration (default 100).
  *   --concurrency=N     Hash workflows in flight (default 5).
  *   --after-id=N        Resume past this cosmetic id (exclusive).
+ *
+ * What --target does NOT control:
+ *   - The orchestrator that computes the hashes. That's ORCHESTRATOR_ENDPOINT /
+ *     ORCHESTRATOR_MODE, printed in the banner. Check it: hashes from different
+ *     lanes are not comparable to each other (see getPerceptualHash), so a dev
+ *     lane writing prod rows would seed the corpus with values that silently
+ *     mean nothing next to the rest.
+ *   - The `Using PROD database.` line printed before the banner. That comes from
+ *     ~/server/db/client, which builds prod clients when it is imported and says
+ *     so regardless of --target. Writes here go through the client built below.
+ *
+ * Both targets are localhost bastion tunnels, so the port is what tells them
+ * apart in the banner: 25060 prod, 15432 dev.
  *
  * The cursor advances past every row it fetches, including ones that fail, so
  * permanently-unhashable artwork (a url that 404s on the CDN) can't block the
@@ -92,11 +110,18 @@ async function main() {
   if (!databaseUrl) fail(`--target=${target} needs ${envVar} to be set`);
 
   // Say which database this is about to write to before touching it — the
-  // target is the one mistake here that isn't recoverable.
+  // target is the one mistake here that isn't recoverable. The orchestrator is
+  // named too because --target doesn't select it, and a lane mismatch corrupts
+  // the corpus just as thoroughly while looking like it worked.
   const { host, pathname } = new URL(databaseUrl);
   console.log(
     `[backfill-cosmetic-phash] target=${target} db=${host}${pathname} ` +
-      `dryRun=${dryRun} batchSize=${batchSize} concurrency=${concurrency} afterId=${afterId}`
+      `orchestrator=${process.env.ORCHESTRATOR_ENDPOINT ?? '(unset)'} ` +
+      `mode=${process.env.ORCHESTRATOR_MODE ?? '(unset)'}`
+  );
+  console.log(
+    `[backfill-cosmetic-phash] dryRun=${dryRun} batchSize=${batchSize} ` +
+      `concurrency=${concurrency} afterId=${afterId}`
   );
 
   const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
