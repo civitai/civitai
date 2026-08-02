@@ -34,6 +34,8 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 export const cosmeticShopRouter = router({
   // #region [Shop Items]
@@ -48,7 +50,11 @@ export const cosmeticShopRouter = router({
     .query(({ input }) => {
       return getShopItemById(input);
     }),
-  upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input }) => {
+  upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input, ctx }) => {
+    // Same gate as the creator path: creating stickers is flag-controlled, even
+    // for mods. Rendering and owning them are not.
+    if (input.type === CosmeticType.Sticker && !ctx.features.stickers)
+      throw throwAuthorizationError('Stickers are not available yet');
     return upsertCosmetic(input);
   }),
   upsertShopItem: moderatorProcedure
@@ -99,6 +105,7 @@ export const cosmeticShopRouter = router({
         ...input,
         isModerator: ctx?.user?.isModerator,
         creatorShopEnabled: ctx?.features?.creatorShop,
+        stickersEnabled: ctx?.features?.stickers,
         userId: ctx?.user?.id,
       });
     }),

@@ -39,35 +39,44 @@ export async function spendStickerUses({
 
   await dbWrite.$transaction(async (tx) => {
     for (const [cosmeticId, count] of delta) {
-      // Picks the holding with the most headroom (unlimited first). A user can
-      // hold several rows for one cosmetic — the PK is
-      // [userId, cosmeticId, claimKey] — so this can't assume a single row.
-      const updated = await tx.$queryRaw<{ remaining: number | null }[]>`
-        WITH target AS (
-          SELECT "userId", "cosmeticId", "claimKey"
-          FROM "UserCosmetic"
-          WHERE "userId" = ${userId}
-            AND "cosmeticId" = ${cosmeticId}
-            AND ("remaining" IS NULL OR "remaining" >= ${count})
-          ORDER BY ("remaining" IS NULL) DESC, "remaining" DESC
-          LIMIT 1
-        )
-        UPDATE "UserCosmetic" uc
-        SET "remaining" = CASE
-          WHEN uc."remaining" IS NULL THEN NULL
-          ELSE uc."remaining" - ${count}
-        END
-        FROM target t
-        WHERE uc."userId" = t."userId"
-          AND uc."cosmeticId" = t."cosmeticId"
-          AND uc."claimKey" = t."claimKey"
-        RETURNING uc."remaining"
+      // A user can hold several rows for one cosmetic — the PK is
+      // [userId, cosmeticId, claimKey], so a purchase and a grant coexist.
+      // FOR UPDATE serializes concurrent submissions against these rows, which
+      // is what keeps the read-then-drain below safe.
+      const holdings = await tx.$queryRaw<{ claimKey: string; remaining: number | null }[]>`
+        SELECT "claimKey", "remaining"
+        FROM "UserCosmetic"
+        WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}
+        ORDER BY ("remaining" IS NULL) DESC, "remaining" DESC
+        FOR UPDATE
       `;
 
-      if (!updated.length)
+      // An unlimited holding is inexhaustible, so nothing is spent.
+      if (holdings.some((h) => h.remaining === null)) continue;
+
+      const available = holdings.reduce((sum, h) => sum + (h.remaining ?? 0), 0);
+      if (available < count)
         throw throwBadRequestError(
           "You don't have enough uses left on one of these stickers. Remove it or buy more."
         );
+
+      // Drain across holdings rather than requiring one row to cover the whole
+      // amount: "I own 4 uses and can't spend 3" is an incomprehensible failure,
+      // and it gets likelier exactly as balances run low.
+      let owed = count;
+      for (const holding of holdings) {
+        if (owed <= 0) break;
+        const take = Math.min(holding.remaining ?? 0, owed);
+        if (take <= 0) continue;
+        await tx.$executeRaw`
+          UPDATE "UserCosmetic"
+          SET "remaining" = "remaining" - ${take}
+          WHERE "userId" = ${userId}
+            AND "cosmeticId" = ${cosmeticId}
+            AND "claimKey" = ${holding.claimKey}
+        `;
+        owed -= take;
+      }
     }
   });
 }

@@ -36,6 +36,7 @@ import {
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
@@ -123,6 +124,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     });
   };
 
+  const features = useFeatureFlags();
+  // Mirrors the server gate: no point offering a type the submit will reject.
+  const typeOptions = features.stickers
+    ? cosmeticTypeOptions
+    : cosmeticTypeOptions.filter((o) => o.value !== CosmeticType.Sticker);
+
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
       <Stack>
@@ -160,7 +167,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             </Alert>
             <Select
               label="Cosmetic type"
-              data={cosmeticTypeOptions}
+              data={typeOptions}
               value={type}
               onChange={(v) => {
                 const next = v as CosmeticType | null;

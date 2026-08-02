@@ -465,12 +465,14 @@ export const reorderCosmeticShopSections = async ({
 export const getShopSectionsWithItems = async ({
   isModerator,
   creatorShopEnabled,
+  stickersEnabled,
   userId,
   cosmeticTypes,
   sectionId,
 }: {
   isModerator?: boolean;
   creatorShopEnabled?: boolean;
+  stickersEnabled?: boolean;
   userId?: number;
 } & GetShopInput = {}) => {
   // Creator items are only visible to flagged viewers, so blocks only matter
@@ -509,6 +511,9 @@ export const getShopSectionsWithItems = async ({
               // disappears entirely for unflagged viewers via the
               // empty-section filter below.
               ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+              // Stickers stay out of the official shop until the flag is on.
+              // Rendering is unaffected — this hides the storefront entry only.
+              ...(stickersEnabled ? {} : { type: { not: CosmeticType.Sticker } }),
               // A block between viewer and creator (either direction) hides
               // that creator's items even when featured in official sections.
               ...(blockedPairIds.length

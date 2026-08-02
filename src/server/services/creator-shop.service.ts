@@ -74,6 +74,11 @@ import type {
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
 
+// Shop surfaces hide stickers until the flag is on. Rendering is never gated —
+// an owned sticker in a comment or DM shows for everyone regardless.
+const hideStickers = (stickersEnabled?: boolean) =>
+  stickersEnabled ? {} : { cosmetic: { type: { not: CosmeticType.Sticker } } };
+
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   id: true,
@@ -703,11 +708,13 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
 export const getCreatorShop = async ({
   userId,
   viewerId,
+  stickersEnabled,
   isModerator,
   preview,
 }: {
   userId: number;
   viewerId?: number;
+  stickersEnabled?: boolean;
   isModerator?: boolean;
   // Moderator-only design aid: ignore this creator's own inventory/config and
   // fill every section with real site-wide sample data (see the router — only
@@ -742,6 +749,7 @@ export const getCreatorShop = async ({
       where: {
         status: CosmeticShopItemStatus.Published,
         listed: true,
+        ...hideStickers(stickersEnabled),
         // Preview draws cosmetics from every creator so the section is populated
         // regardless of whose (possibly empty) shop is being viewed.
         ...(preview ? {} : { addedById: userId }),
@@ -766,6 +774,7 @@ export const getCreatorShop = async ({
         // Delisted items stay Published (still bundlable) but are off sale, so
         // no individual-sale surface may show them — resale included.
         listed: true,
+        ...hideStickers(stickersEnabled),
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
@@ -844,7 +853,8 @@ export const getCommunityCosmetics = async ({
   limit,
   cursor,
   cosmeticTypes,
-}: GetCommunityCosmeticsInput & { viewerId?: number }) => {
+  stickersEnabled,
+}: GetCommunityCosmeticsInput & { viewerId?: number; stickersEnabled?: boolean }) => {
   const now = new Date();
   // A block between viewer and a cosmetic's creator (either direction) hides
   // that creator's items from the feed.
@@ -863,7 +873,16 @@ export const getCommunityCosmetics = async ({
           not: null,
           ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
         },
-        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
+        // Merged into one `type` filter: a second `type` key would silently
+        // overwrite the caller's requested types.
+        ...(cosmeticTypes?.length || !stickersEnabled
+          ? {
+              type: {
+                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+              },
+            }
+          : {}),
       },
       // Only items whose owner's shop is public.
       addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
@@ -932,7 +951,8 @@ export const getPublicShopItemsForResale = async ({
   cursor,
   cosmeticTypes,
   query,
-}: GetPublicShopItemsInput & { userId: number }) => {
+  stickersEnabled,
+}: GetPublicShopItemsInput & { userId: number; stickersEnabled?: boolean }) => {
   const settings = await getCreatorShopSettings({ userId });
   const alreadyResold = settings.resoldItemIds ?? [];
   // A block in either direction removes the pairing from the resale gallery.
@@ -955,7 +975,16 @@ export const getPublicShopItemsForResale = async ({
             ],
           }
         : {}),
-      ...(cosmeticTypes?.length ? { cosmetic: { type: { in: cosmeticTypes } } } : {}),
+      ...(cosmeticTypes?.length || !stickersEnabled
+        ? {
+            cosmetic: {
+              type: {
+                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+              },
+            },
+          }
+        : {}),
     },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor } } : {}),

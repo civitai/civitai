@@ -6,6 +6,7 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function StickerPicker({
   onSelect,
@@ -18,6 +19,7 @@ export function StickerPicker({
   disabled?: boolean;
   position?: 'top' | 'top-end' | 'top-start' | 'bottom' | 'bottom-end' | 'bottom-start';
 }) {
+  const features = useFeatureFlags();
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
   const { sticker, isLoading } = useOwnedSticker();
@@ -27,6 +29,10 @@ export function StickerPicker({
     if (!needle) return sticker;
     return sticker.filter((x) => x.slug.includes(needle) || x.name.toLowerCase().includes(needle));
   }, [sticker, query]);
+
+  // Gated at the single mount point every surface shares, so chat and the RTE
+  // toolbar can't drift. Rendering is unaffected — that lives in <Sticker>.
+  if (!features.stickers) return null;
 
   return (
     <Popover opened={opened} onChange={setOpened} position={position} withArrow shadow="md">

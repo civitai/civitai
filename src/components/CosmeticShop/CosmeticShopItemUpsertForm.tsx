@@ -59,6 +59,7 @@ import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const formSchema = upsertCosmeticShopItemInput;
 
@@ -126,6 +127,12 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
   const [slug, setSlug] = useState('');
   const [imageId, setImageId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const features = useFeatureFlags();
+  // Mirrors the server gate on upsertCosmetic.
+  const typeOptions = features.stickers
+    ? cosmeticTypeOptions
+    : cosmeticTypeOptions.filter((o) => o.value !== CosmeticType.Sticker);
 
   const requiresImage = isImageBasedCosmeticType(type);
 
@@ -243,7 +250,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
         <Group grow>
           <Select
             label="Type"
-            data={cosmeticTypeOptions}
+            data={typeOptions}
             value={type}
             onChange={(value) => value && setType(value as CosmeticType)}
             allowDeselect={false}
