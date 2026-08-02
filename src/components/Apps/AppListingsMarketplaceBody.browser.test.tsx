@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -87,36 +88,157 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
 }));
 
+// The filters now live in the shared `AdaptiveFiltersDropdown`, which pulls in two
+// providers the component harness does not mount and which THROW rather than
+// returning a default:
+//  - `useIsClient()` throws "missing IsClientContext" (it gates the count Indicator);
+//  - `useIsMobile()` -> `useContainerQuery` -> `useContainerContext()` throws without a
+//    ContainerProvider (it picks the desktop popover vs the mobile drawer).
+// Unmocked, either takes the whole body down with an empty <body> and every assertion
+// below fails by burning its timeout. `isClient: true` = post-hydration (so the count
+// badge renders); `mobile: false` = the desktop popover path. The mobile drawer path
+// and the pre-hydration path get their own files.
+vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
   './recentlyOpenedAppsStore'
 );
 
+/**
+ * The scaffold's SHARED router singleton. A per-file `vi.mock('next/router')`
+ * SILENTLY LOSES to the setup-file mock in `test/component-setup.tsx` (documented
+ * the hard way in `AppEditPage.browser.test.tsx`, where `?tab=` could never be
+ * seeded) — so seed `router.query` on the shared object instead.
+ *
+ * The store's filters now live in the URL, which splits every filter assertion in
+ * two: seeding `router.query` covers the READ, and inspecting `router.replace`
+ * covers the WRITE. The harness's `replace` is an inert `vi.fn()` — it does not
+ * feed the new query back into `router.query` and could not re-render if it did —
+ * so a single test that clicks a toggle and then reads the tRPC args would assert
+ * the OLD value and pass for the wrong reason. Keep the two halves separate.
+ */
+// eslint-disable-next-line react-hooks/rules-of-hooks -- not a real hook: the
+// scaffold mocks `next/router` with `useRouter: () => router`, a plain function
+// returning a singleton. Calling it at module scope is the established idiom here
+// (a per-file `vi.mock` silently loses to the setup-file mock — see AppEditPage).
+const router = useRouter();
+
 beforeEach(() => {
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
+  // A FRESH object each test: `useZodRouteParams` memoises on the `query`
+  // reference, so mutating the previous object in place would be invisible.
+  router.query = {};
+  vi.mocked(router.replace).mockClear();
   clearRecentlyOpenedApps();
 });
 
+/** Open the collapsed Filters dropdown — kind/category live inside it now. */
+async function openFilters() {
+  await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+  await expect.element(page.getByTestId('apps-store-filters-panel')).toBeInTheDocument();
+}
+
 describe('AppListingsMarketplaceBody', () => {
-  test('renders the returned listings as cards + the kind/sort controls', async () => {
+  test('renders the returned listings as cards + the inline search/sort controls', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     await expect.element(page.getByText('Bravo App')).toBeInTheDocument();
-    // Kind filter present, defaulting to All.
-    await expect.element(page.getByRole('button', { name: 'All apps' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    );
+    // Search + sort stay INLINE (not behind the Filters button), and both still
+    // have an accessible name after their VISIBLE labels were dropped for the
+    // single-row layout — the icon + placeholder are not an accessible name.
+    // (Mantine's `Select` mirrors `aria-label` onto BOTH the input and its
+    // listbox, hence `.first()`: the input is the control under test.)
+    await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
+    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Top rated');
+    // Kind filter is now inside the dropdown, defaulting to All.
+    await openFilters();
+    await expect
+      .element(page.getByRole('button', { name: 'All apps' }))
+      .toHaveAttribute('aria-pressed', 'true');
     // Query fired with kind=all default.
     expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 24 });
   });
 
-  test('clicking a kind toggle passes kind through to the query', async () => {
+  test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
+    await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
-    expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' });
+
+    expect(router.replace).toHaveBeenCalled();
+    const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;
+    expect(url).toMatchObject({ query: { kind: 'offsite' } });
+    // Shallow so the filter change doesn't re-run getServerSideProps, and
+    // scroll:false so it doesn't jump the viewport mid-browse.
+    expect(options).toMatchObject({ shallow: true, scroll: false });
+  });
+
+  test('a param-seeded mount drives the tRPC query from the URL (the shareable-link path)', async () => {
+    router.query = { kind: 'offsite', category: 'generation', sort: 'newest' };
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
+    expect(mocks.lastArgs).toMatchObject({
+      kind: 'offsite',
+      category: 'generation',
+      sort: 'newest',
+    });
+  });
+
+  /** Every `router.replace` call's resulting query object, oldest-first. */
+  function replacedQueries(): Record<string, unknown>[] {
+    return vi
+      .mocked(router.replace)
+      .mock.calls.map(([url]) => (url as { query?: Record<string, unknown> }).query ?? {});
+  }
+
+  test('🔴 the search box does NOT write the URL per keystroke — only the debounced value', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    const search = page.getByLabelText('Search');
+
+    // Five successive input events inside the 300ms debounce window. Writing per
+    // keystroke would push five history entries and make Back unusable (one
+    // press per letter typed).
+    for (const value of ['m', 'ma', 'mat', 'matr', 'matri', 'matrix']) {
+      await search.fill(value);
+    }
+    // Nothing written yet — the debounce has not elapsed.
+    expect(replacedQueries().filter((q) => 'query' in q)).toHaveLength(0);
+
+    // …and after it does, exactly ONE write, carrying the FINAL value.
+    await vi.waitFor(() => {
+      const writes = replacedQueries().filter((q) => 'query' in q);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatchObject({ query: 'matrix' });
+    });
+  });
+
+  test('a `?query=` param seeds the search box and filters the grid', async () => {
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByLabelText('Search')).toHaveValue('Alpha');
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+    // Bravo is filtered out client-side by the seeded query.
+    expect(page.getByText('Bravo App').elements()).toHaveLength(0);
+  });
+
+  test('sorting writes the sort param', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await userEvent.click(page.getByLabelText('Sort').first());
+    await userEvent.click(page.getByRole('option', { name: 'Newest' }));
+    expect(replacedQueries().at(-1)).toMatchObject({ sort: 'newest' });
+  });
+
+  test('a DEFAULT value is stripped from the URL rather than written as noise', async () => {
+    router.query = { kind: 'offsite' };
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await openFilters();
+    await userEvent.click(page.getByRole('button', { name: 'All apps' }));
+    // `?kind=all` is the default view — a nav that lands on
+    // `/apps?kind=all&sort=top-rated` looks like state you have to clear.
+    expect(replacedQueries().at(-1)).not.toHaveProperty('kind');
   });
 
   test('empty result → "No apps yet"', async () => {
