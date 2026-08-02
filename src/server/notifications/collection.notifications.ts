@@ -39,7 +39,9 @@ export const collectionNotifications = createNotificationProcessor({
     displayName: "Your submission wasn't accepted",
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `Your submission to ${details.collectionName} wasn't accepted.`,
+      message: details.reason
+        ? `Your submission to ${details.collectionName} wasn't accepted. ${details.reason}`
+        : `Your submission to ${details.collectionName} wasn't accepted.`,
       url: details.imageId
         ? `/images/${details.imageId}`
         : details.modelId

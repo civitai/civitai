@@ -748,6 +748,29 @@ export class Tracker {
     );
   }
 
+  // The beggars board deletes rejected items within the hour, so a decision that is not recorded
+  // here leaves no trace of what the model did or why.
+  public collectionAiReview(values: {
+    collectionId: number;
+    collectionItemId: number;
+    entityId: number;
+    userId: number;
+    model: string;
+    decision: string;
+    violations: string[];
+    escalations: string[];
+    reason: string;
+    applied: boolean;
+    promptTokens: number;
+    completionTokens: number;
+  }) {
+    return this.track(
+      'collectionAiReviewEvents',
+      { ...values, applied: values.applied ? 1 : 0, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
+  }
+
   public retoolAudit(values: {
     action: string;
     privileged: boolean;

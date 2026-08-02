@@ -106,6 +106,33 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+// Model choice is ours, not the collection owner's: a free-text field could name a non-vision or
+// far more expensive model. Declared here rather than in the service so the client can render the
+// picker without pulling in server-only AI deps.
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+
+export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
+export const collectionAiReviewSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  prompt: z.string().trim().min(1).max(20000),
+  // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
+  allowedNsfwLevels: z
+    .number()
+    .int()
+    .min(1)
+    .default(NsfwLevel.PG | NsfwLevel.PG13),
+  escalationAction: z.enum(['reject', 'leaveForHuman']).default('reject'),
+  reasonCopy: z.record(z.string(), z.string()).optional(),
+  dryRun: z.boolean().default(false),
+});
+
+export type SetCollectionAiReviewInput = z.infer<typeof setCollectionAiReviewInput>;
+export const setCollectionAiReviewInput = z.object({
+  collectionId: z.number(),
+  aiReview: collectionAiReviewSchema,
+});
+
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
 export const collectionMetadataSchema = z
   .object({
@@ -150,6 +177,7 @@ export const collectionMetadataSchema = z
     includeContestCallouts: z.boolean().optional(),
     // Invite URL will make it so that users with the URL can join the collection as managers / admins.
     inviteUrlEnabled: z.boolean().optional(),
+    aiReview: collectionAiReviewSchema.optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

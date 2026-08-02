@@ -17,6 +17,7 @@ import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
+import { collectionAiReview } from '~/server/jobs/collection-ai-review';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
@@ -176,6 +177,7 @@ export const jobs: Job[] = [
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
+  collectionAiReview,
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,

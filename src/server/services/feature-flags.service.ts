@@ -248,6 +248,7 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
+  collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,
     default: true,

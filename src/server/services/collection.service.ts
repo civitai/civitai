@@ -39,6 +39,7 @@ import type {
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
@@ -1825,14 +1826,41 @@ export const getAvailableCollectionItemsFilterForUser = ({
   return { AND, rawAND };
 };
 
+export const setCollectionAiReview = async ({
+  collectionId,
+  aiReview,
+}: SetCollectionAiReviewInput) => {
+  const collection = await dbWrite.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, metadata: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+
+  return dbWrite.collection.update({
+    where: { id: collectionId },
+    data: { metadata: { ...metadata, aiReview } as Prisma.JsonObject },
+    select: { id: true, metadata: true },
+  });
+};
+
 export const updateCollectionItemsStatus = async ({
   input,
   userId,
   isModerator,
+  isSystem,
+  reason,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  /**
+   * In-process callers (the AI review job) act as the system user, which holds no contributor row.
+   * Never accept this from a tRPC input.
+   */
+  isSystem?: boolean;
+  reason?: string;
 }) => {
   const { collectionId, collectionItemIds, status } = input;
 
@@ -1844,14 +1872,18 @@ export const updateCollectionItemsStatus = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  const { manage, isOwner } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
+  if (!isSystem) {
+    const { manage, isOwner } = await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    });
 
-  if (!manage && !isOwner)
-    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
+    if (!manage && !isOwner)
+      throw throwAuthorizationError(
+        'You do not have permissions to manage contributor item status.'
+      );
+  }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
 
@@ -1942,6 +1974,7 @@ export const updateCollectionItemsStatus = async ({
           key: `${notificationType}:${item.id}:${uuid()}`,
           details: {
             status,
+            reason,
             collectionId: collection.id,
             collectionName: collection.name,
             imageId: item.imageId,

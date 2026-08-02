@@ -24,6 +24,7 @@ export const AI_MODELS = {
   GROK: 'x-ai/grok-4.1-fast',
   GPT_5_NANO: 'openai/gpt-5-nano',
   STEP_FUN: 'stepfun/step-3.5-flash',
+  MIMO: 'xiaomi/mimo-v2.5',
   QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
 
   // Fallback chains
