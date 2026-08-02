@@ -20,19 +20,19 @@ const MODEL_VIOLATIONS: string[] = [
   'hate or extremism',
 ];
 
+// Rendered after the notification's own "Your submission to X wasn't accepted." so these are
+// clauses, not sentences. Fixed here rather than passed through from the model.
 export const DEFAULT_AI_REVIEW_REASON_COPY: Record<string, string> = {
-  'sexual/adult content': "Your entry wasn't accepted because this collection needs to stay PG-13.",
+  'sexual/adult content': 'This collection needs to stay PG-13.',
   'no buzz reference':
-    "Your entry wasn't accepted because it doesn't mention Buzz. Add 'buzz pls' text or a Buzz lightning bolt and try again!",
-  'graphic violence': "Your entry wasn't accepted because it shows graphic violence or injury.",
-  'illegal drugs': "Your entry wasn't accepted because it depicts illegal substances.",
-  'self-harm': "Your entry wasn't accepted because it touches on self-harm themes.",
-  'hate or extremism':
-    "Your entry wasn't accepted because it contains hateful or extremist content.",
+    "It doesn't mention Buzz — add 'buzz pls' text or a Buzz lightning bolt and try again!",
+  'graphic violence': 'It shows graphic violence or injury.',
+  'illegal drugs': 'It depicts illegal substances.',
+  'self-harm': 'It touches on self-harm themes.',
+  'hate or extremism': 'It contains hateful or extremist content.',
 };
 
-const GENERIC_REJECTION =
-  "Your entry wasn't accepted because it doesn't meet this collection's guidelines.";
+const GENERIC_REJECTION = "It doesn't meet this collection's guidelines.";
 
 // Anything at or above R means the image does not belong on an all-ages surface. 'R+' is what the
 // prompt asks for; the rest are the labels a model reaches for on its own.

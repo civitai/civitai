@@ -181,6 +181,8 @@ describe('decideFromObservations', () => {
                     expect(message).not.toContain('made up thing');
                     expect(message).not.toContain('unrecognized category');
                     expect(message.length).toBeGreaterThan(20);
+                    // Rendered after the notification's own "wasn't accepted" sentence.
+                    expect(message).not.toContain("wasn't accepted");
                   }
 
     expect(rejections).toBeGreaterThan(0);
@@ -196,7 +198,7 @@ describe('resolveRejectionMessage', () => {
   });
 
   it('falls back to a generic message when there is no violation', () => {
-    expect(resolveRejectionMessage([])).toContain("wasn't accepted");
+    expect(resolveRejectionMessage([])).toContain("doesn't meet");
   });
 });
 
