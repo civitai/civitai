@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import type { AvailableSticker } from '~/components/Sticker/sticker.util';
 import { STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 // The node view renders <Sticker>, which resolves artwork over tRPC. Not what
@@ -28,11 +28,17 @@ vi.mock('~/components/EdgeMedia/EdgeImage', () => ({
 
 const { StickerEditNode } = await import('~/components/TipTap/StickerNode');
 
-const OWNED: ResolvedSticker[] = [
-  { id: 1387, name: 'Gumdong Heart Hug', slug: 'gumdong_heart', url: 'fake-image-id' },
+const OWNED: AvailableSticker[] = [
+  {
+    id: 1387,
+    name: 'Gumdong Heart Hug',
+    slug: 'gumdong_heart',
+    url: 'fake-image-id',
+    remaining: 7,
+  },
 ];
 
-function Harness({ available = OWNED }: { available?: ResolvedSticker[] }) {
+function Harness({ available = OWNED }: { available?: AvailableSticker[] }) {
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: false }), StickerEditNode],
     content: '<p></p>',
@@ -187,5 +193,29 @@ describe('editor sizing tracks the block', () => {
     await expect
       .element(page.getByTestId('sticker-node').first())
       .toHaveAttribute('data-size', String(STICKER_SIZE.inline));
+  });
+});
+
+// Justin could not tell how many uses he had left without opening the picker,
+// and the picker showed nothing at all for an unlimited sticker.
+describe('the suggestion list shows the balance', () => {
+  test('renders a finite count beside the slug', async () => {
+    renderWithProviders(<Harness />);
+    await typeInto(' :gu');
+    await expect.element(page.getByText('7').first()).toBeInTheDocument();
+  });
+
+  test('renders unlimited as a glyph, not as blank or null', async () => {
+    renderWithProviders(<Harness available={[{ ...OWNED[0], remaining: null }]} />);
+    await typeInto(' :gu');
+    await expect.element(page.getByText('∞').first()).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('null');
+  });
+
+  test('shows nothing while the balance is still loading', async () => {
+    renderWithProviders(<Harness available={[{ ...OWNED[0], remaining: undefined }]} />);
+    await typeInto(' :gu');
+    await expect.element(page.getByText(/gumdong_heart/).first()).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('∞');
   });
 });

@@ -157,10 +157,11 @@ export function RichTextEditor({
   // one from a menu that never mentions the balance just fails at submit.
   const availableStickers = useMemo(() => {
     if (!stickersEnabled) return [];
-    const spent = new Set(
-      (stickerBalances ?? []).filter((b) => b.remaining === 0).map((b) => b.cosmeticId)
-    );
-    return ownedStickers.filter((x) => !spent.has(x.id));
+    const loaded = !!stickerBalances;
+    const balances = new Map((stickerBalances ?? []).map((b) => [b.cosmeticId, b.remaining]));
+    return ownedStickers
+      .filter((x) => balances.get(x.id) !== 0)
+      .map((x) => ({ ...x, remaining: loaded ? balances.get(x.id) ?? null : undefined }));
   }, [stickersEnabled, ownedStickers, stickerBalances]);
 
   const accepts = useMemo(() => {

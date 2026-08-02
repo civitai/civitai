@@ -8,7 +8,7 @@ import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
-import { STICKER_SURFACES } from '~/shared/utils/sticker-token';
+import { STICKER_SURFACES, stickerBalanceLabel } from '~/shared/utils/sticker-token';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -44,6 +44,9 @@ export function StickerPicker({
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: features.stickers && showBalances,
   });
+  // Distinguishes "unlimited" (row present, remaining null) from "not loaded
+  // yet" (no row) — they render differently and used to look identical.
+  const balancesLoaded = showBalances && !!balanceRows;
   const balances = useMemo(
     () => new Map((showBalances ? balanceRows ?? [] : []).map((b) => [b.cosmeticId, b.remaining])),
     [balanceRows, showBalances]
@@ -110,8 +113,9 @@ export function StickerPicker({
             <ScrollArea.Autosize mah={220} type="auto">
               <div className="grid grid-cols-6 gap-1">
                 {filtered.map((item) => {
-                  const remaining = balances.get(item.id);
+                  const remaining = balancesLoaded ? balances.get(item.id) ?? null : undefined;
                   const exhausted = remaining === 0;
+                  const balanceLabel = stickerBalanceLabel(remaining);
                   return (
                     <UnstyledButton
                       key={item.id}
@@ -119,7 +123,11 @@ export function StickerPicker({
                       // here is what keeps "not enough uses" from arriving as a
                       // failed submit.
                       title={
-                        remaining == null ? `:${item.slug}:` : `:${item.slug}: · ${remaining} left`
+                        remaining === undefined
+                          ? `:${item.slug}:`
+                          : remaining === null
+                          ? `:${item.slug}: · unlimited`
+                          : `:${item.slug}: · ${remaining} left`
                       }
                       disabled={exhausted}
                       className="relative flex items-center justify-center rounded p-1 hover:bg-gray-2 disabled:opacity-40 dark:hover:bg-dark-5"
@@ -134,9 +142,9 @@ export function StickerPicker({
                         options={{ width: 64, anim: item.animated }}
                         style={{ width: 28, height: 28, objectFit: 'contain' }}
                       />
-                      {remaining != null && (
+                      {balanceLabel && (
                         <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
-                          {remaining}
+                          {balanceLabel}
                         </span>
                       )}
                     </UnstyledButton>

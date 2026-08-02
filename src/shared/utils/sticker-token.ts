@@ -220,3 +220,14 @@ export const stickerUsesFromCosmeticData = (data: unknown) => {
 
 /** How many uses of their own sticker a creator gets when it is approved. */
 export const CREATOR_GRANT_USES_MULTIPLIER = 10;
+
+/**
+ * Balance as shown on a sticker in a picker or suggestion list.
+ *
+ * `null` is unlimited, and it is the COMMON case — every cosmetic predating
+ * consumables has no `remaining` — so it needs a real glyph rather than the
+ * blank it used to render as. `undefined` means the balance hasn't loaded, which
+ * must stay blank: guessing unlimited there flashes the wrong answer.
+ */
+export const stickerBalanceLabel = (remaining: number | null | undefined) =>
+  remaining === undefined ? null : remaining === null ? '∞' : String(remaining);

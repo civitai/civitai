@@ -2,14 +2,14 @@ import { Center, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
 import type { SuggestionProps } from '@tiptap/suggestion';
 import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
-import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+import type { AvailableSticker } from '~/components/Sticker/sticker.util';
+import { STICKER_SIZE, stickerBalanceLabel } from '~/shared/utils/sticker-token';
 
 export type StickerSuggestionListRef = {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 };
 
-type Props = SuggestionProps<ResolvedSticker>;
+type Props = SuggestionProps<AvailableSticker>;
 
 export const StickerSuggestionList = forwardRef<StickerSuggestionListRef, Props>((props, ref) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -70,6 +70,11 @@ export const StickerSuggestionList = forwardRef<StickerSuggestionListRef, Props>
               style={{ height: STICKER_SIZE.inline, width: 'auto', objectFit: 'contain' }}
             />
             <Text size="sm">:{item.slug}:</Text>
+            {/* Same balance the picker shows, so the two insertion paths tell
+                the author the same thing. */}
+            <Text size="xs" c="dimmed" ml="auto" pl="sm">
+              {stickerBalanceLabel(item.remaining)}
+            </Text>
           </UnstyledButton>
         ))}
       </Stack>

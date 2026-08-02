@@ -5,7 +5,7 @@ import { exitSuggestion } from '@tiptap/suggestion';
 import type { StickerSuggestionListRef } from '~/components/RichTextEditor/StickerSuggestionList';
 import { StickerSuggestionList } from '~/components/RichTextEditor/StickerSuggestionList';
 import { updateSuggestionPosition } from '~/components/RichTextEditor/suggestion';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import type { AvailableSticker } from '~/components/Sticker/sticker.util';
 
 /**
  * Its own key, and it has to be. Two suggestion plugins sharing one `PluginKey`
@@ -22,8 +22,8 @@ export const StickerSuggestionPluginKey = new PluginKey('stickerSuggestion');
 const MIN_QUERY_LENGTH = 2;
 const MAX_RESULTS = 8;
 
-export function getStickerSuggestions(getAvailable: () => ResolvedSticker[]) {
-  const suggestion: Omit<SuggestionOptions<ResolvedSticker>, 'editor'> = {
+export function getStickerSuggestions(getAvailable: () => AvailableSticker[]) {
+  const suggestion: Omit<SuggestionOptions<AvailableSticker>, 'editor'> = {
     pluginKey: StickerSuggestionPluginKey,
     char: ':',
     // No popup at all when there is nothing to offer. Insertion was already

@@ -6,7 +6,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import Suggestion from '@tiptap/suggestion';
 import { getStickerSuggestions } from '~/components/RichTextEditor/sticker-suggestion';
 import { Sticker } from '~/components/Sticker/Sticker';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import type { AvailableSticker } from '~/components/Sticker/sticker.util';
 import { StickerNode } from '~/shared/tiptap/sticker.node';
 import {
   isValidStickerSlug,
@@ -22,7 +22,7 @@ export type StickerNodeStorage = {
    * arriving asynchronously doesn't change the extension array and rebuild the
    * editor under someone who is mid-sentence.
    */
-  available: ResolvedSticker[];
+  available: AvailableSticker[];
 };
 
 declare module '@tiptap/core' {

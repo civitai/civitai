@@ -2,6 +2,13 @@ import { useMemo } from 'react';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { trpc } from '~/utils/trpc';
 
+/**
+ * A sticker the author may insert, with the balance to show beside it.
+ * `null` = unlimited, `undefined` = balances haven't loaded yet. The two must
+ * stay distinct: defaulting an unloaded balance to null flashes "unlimited".
+ */
+export type AvailableSticker = ResolvedSticker & { remaining: number | null | undefined };
+
 export type ResolvedSticker = {
   id: number;
   name: string;
