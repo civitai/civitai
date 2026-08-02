@@ -196,9 +196,12 @@ export const CommentForm = ({
                 the way it does on surfaces that show one. */}
             <StickerPicker
               position="top-start"
-              onSelect={(sticker) =>
-                editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug })
-              }
+              onSelect={(sticker) => {
+                editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug });
+                // Clears a "Cannot be empty" left over from an earlier blur:
+                // pre-submit, mode 'onBlur' won't re-validate on change alone.
+                void form.trigger('content');
+              }}
             />
             <Group gap="xs">
               <Button variant="default" size="xs" onClick={handleCancel}>

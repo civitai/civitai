@@ -1,6 +1,6 @@
 import { Loader, Popover, ScrollArea, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { IconMoodSmile } from '@tabler/icons-react';
-import type { ReactElement } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
 import { cloneElement, isValidElement, useMemo, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -10,6 +10,16 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
 import { STICKER_SURFACES } from '~/shared/utils/sticker-token';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * Opening the picker must not move focus out of the composer. Two things break
+ * when it does: the caret is lost, so the sticker lands wherever `focus()` puts
+ * it rather than where the author was typing; and a composer validating on blur
+ * (`CommentForm` uses `mode: 'onBlur'`) fires "Cannot be empty" the moment the
+ * picker is clicked, then keeps showing it — pre-submit, React Hook Form doesn't
+ * re-validate on change.
+ */
+const keepComposerFocus = (e: ReactMouseEvent) => e.preventDefault();
 
 export function StickerPicker({
   onSelect,
@@ -56,9 +66,13 @@ export function StickerPicker({
             control), so clone the toggle onto it rather than wrapping — nesting
             buttons is invalid markup and breaks keyboard activation. */}
         {isValidElement(target) ? (
-          cloneElement(target as ReactElement<{ onClick?: () => void }>, {
-            onClick: () => setOpened((o) => !o),
-          })
+          cloneElement(
+            target as ReactElement<{
+              onClick?: () => void;
+              onMouseDown?: (e: ReactMouseEvent) => void;
+            }>,
+            { onClick: () => setOpened((o) => !o), onMouseDown: keepComposerFocus }
+          )
         ) : (
           <LegacyActionIcon
             variant="subtle"
@@ -66,6 +80,7 @@ export function StickerPicker({
             disabled={disabled}
             aria-label="Insert sticker"
             onClick={() => setOpened((o) => !o)}
+            onMouseDown={keepComposerFocus}
           >
             <IconMoodSmile />
           </LegacyActionIcon>

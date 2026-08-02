@@ -146,9 +146,10 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                 <Group gap="xs" justify="space-between">
                   <StickerPicker
                     position="top-start"
-                    onSelect={(sticker) =>
-                      editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug })
-                    }
+                    onSelect={(sticker) => {
+                      editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug });
+                      void form.trigger('content');
+                    }}
                   />
                   <Group gap="xs">
                     <Button
