@@ -14,6 +14,7 @@ import {
   mediaFromBlobs,
   NATIVELY_EXTRACTED_STEP_TYPES,
   planStepSpend,
+  postureRequiresAuditableText,
   REGISTERED_STEP_IDS,
   STEP_BILLING_MODES,
   STEP_MODERATION_POSTURES,
@@ -77,6 +78,25 @@ function makeFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
     canonicalOutputFor: (): unknown => FIXTURE_OUTPUT_STEP,
   } satisfies BlockStep<FixtureParams>;
   return { ...base, ...overrides } as AnyBlockStep;
+}
+
+/**
+ * A minimal VALID `'promptAudit'` fixture — the same base, plus the two fields
+ * that posture requires.
+ *
+ * 🔴 It is asserted to pass unmutated (first test in the mutation block), which
+ * is what makes every mutation below provably die to the clause its assertion
+ * names rather than to some earlier clause rejecting the whole shape.
+ */
+function makeAuditedFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+  return makeFixtureStep({
+    moderationPosture: 'promptAudit',
+    auditableText: (p: FixtureParams) => ({
+      prompt: `fixture prompt ${p.value}`,
+      negativePrompt: 'fixture negative',
+    }),
+    ...overrides,
+  } as Partial<AnyBlockStep>);
 }
 
 describe('block step registry — the shipped population', () => {
@@ -196,13 +216,49 @@ describe('block step registry — the shipped population', () => {
     expect(isBillingModeImplemented('tokenMetered')).toBe(false);
   });
 
-  it('a step with a free-text surface has NO implemented moderation posture', () => {
-    // 🔴 The mechanism that makes `chatCompletion` / captioning impossible to
-    // register without an explicit, reviewed policy answer in code. If this ever
-    // flips to true, someone made that policy decision — make sure they meant to.
+  it('free-text INPUT is implemented; free-text OUTPUT still is not', () => {
+    // 🔴 The mechanism that makes a text-producing step impossible to register
+    // without an explicit, reviewed policy answer in code.
+    //
+    // `'promptAudit'` (free-text INPUT) is now implemented: #3527 answered that
+    // half — mature content is permitted for App Blocks, bounded by the token's
+    // server-minted maturity ceiling, so a free-text input needs the SAME
+    // `auditPromptServer` pass `textToImage`/`customComfy` run, not a new policy.
+    //
+    // `'textOutput'` is unchanged and deliberately so: generated text is scanned
+    // by nothing on any current path. If THAT ever flips to true, someone made a
+    // content-policy decision — make sure they meant to.
     expect(isModerationPostureImplemented('none')).toBe(true);
-    expect(isModerationPostureImplemented('promptAudit')).toBe(false);
+    expect(isModerationPostureImplemented('promptAudit')).toBe(true);
     expect(isModerationPostureImplemented('textOutput')).toBe(false);
+  });
+
+  // 🔴 LABELLED HONESTLY: an INVARIANT GUARD, not regression coverage. Every
+  // registered entry today declares `'none'`, so the `'promptAudit'` branch of
+  // this loop cannot currently execute — no mutation of the posture↔auditableText
+  // rule can fail it over the shipped population. It becomes real coverage the
+  // day a `'promptAudit'` entry is registered. The guard itself is
+  // mutation-proven below against fixtures, which is where its evidence lives.
+  it('every registered entry agrees with the posture ↔ auditableText rule', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      if (postureRequiresAuditableText(step.moderationPosture)) {
+        expect(typeof step.auditableText, `step '${id}' must name its auditable text`).toBe(
+          'function'
+        );
+        for (const variant of step.variants) {
+          const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+          expect(
+            step.auditableText!(params).prompt.trim().length,
+            `step '${id}' variant '${variant}' would audit NOTHING`
+          ).toBeGreaterThan(0);
+        }
+      } else {
+        expect(
+          step.auditableText,
+          `step '${id}' declares auditable text its posture never audits`
+        ).toBeUndefined();
+      }
+    }
   });
 });
 
@@ -241,6 +297,89 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     expect(() =>
       assertStepInvariants('fixture-step', makeFixtureStep({ moderationPosture: 'textOutput' }))
     ).toThrow(/moderationPosture 'textOutput' has no implemented handler/);
+  });
+
+  // ── 🔴 THE `'promptAudit'` POSTURE — "audits nothing" must be impossible ────
+  //
+  // The defect class this guards is the one #3538 had to fix for `extractOutput`:
+  // a REQUIRED field that a new entry can satisfy vacuously. `auditPromptServer`
+  // RETURNS EARLY on an empty prompt, so `() => ({ prompt: '' })` would be a
+  // declared posture that runs, audits nothing, and reports success. Both
+  // directions of the declaration rule and the non-vacuity probe are below.
+
+  it('the promptAudit fixture PASSES unmutated — every failure below is the mutation', () => {
+    // 🔴 REACHABILITY. Without this, each mutation below could be dying to a
+    // clause that rejects the whole `'promptAudit'` shape rather than to the one
+    // named in its assertion.
+    expect(() => assertStepInvariants('fixture-step', makeAuditedFixtureStep())).not.toThrow();
+  });
+
+  it("rejects a 'promptAudit' entry that declares NO auditableText (a posture with no input)", () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ moderationPosture: 'promptAudit' } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(
+      /moderationPosture 'promptAudit' requires an auditableText\(\) declaration naming the params that carry user text/
+    );
+  });
+
+  it('rejects an entry that declares auditableText under a posture that never audits it', () => {
+    // The reverse direction. Text that LOOKS covered and is not: the field is
+    // never called, so it reaches the orchestrator unaudited.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          moderationPosture: 'none',
+          auditableText: () => ({ prompt: 'a cat' }),
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/declares auditableText\(\) but moderationPosture 'none' never audits it/);
+  });
+
+  it('rejects auditableText that returns an EMPTY prompt (the vacuous-posture case)', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({ auditableText: () => ({ prompt: '' }) } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/auditableText\(\) returned no prompt text for canonicalParamsFor\(\)/);
+  });
+
+  it('rejects auditableText that returns WHITESPACE (auditPromptServer trims and returns early)', () => {
+    // 🔴 Not a nit: the early return in `auditPromptServer` is
+    // `if (!prompt || !prompt.trim()) return;` — whitespace is exactly as vacuous
+    // as an empty string, and a `.length > 0` check would have accepted it.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({
+          auditableText: () => ({ prompt: '   \n\t ' }),
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/auditableText\(\) returned no prompt text for canonicalParamsFor\(\)/);
+  });
+
+  it('rejects auditableText that omits prompt entirely', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({ auditableText: () => ({}) } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/auditableText\(\) returned no prompt text for canonicalParamsFor\(\)/);
+  });
+
+  it('rejects a non-string negativePrompt (auditPromptServer could not read it)', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({
+          auditableText: () => ({ prompt: 'a cat', negativePrompt: 42 }),
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/auditableText\(\) returned a non-string negativePrompt/);
   });
 
   // ── 🔴 FIX 3 — the ENTITLEMENT axis ────────────────────────────────────────

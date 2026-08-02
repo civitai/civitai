@@ -83,23 +83,35 @@ export const STEP_BILLING_MODES: readonly StepBillingMode[] = [
 // text-producing step later is impossible without someone explicitly answering
 // the policy question in code — it cannot be quietly skipped, because a posture
 // with no implemented handler fails at registry LOAD (a build-time error), not
-// at request time on a Friday. That policy decision is deliberately NOT made
-// here.
+// at request time on a Friday.
+//
+// 🔴 THE FREE-TEXT-INPUT HALF OF THAT QUESTION IS NOW ANSWERED (#3527): mature
+// content is permitted for App Blocks, bounded by the token's server-minted
+// maturity ceiling — so a free-text INPUT needs the same prompt audit
+// `textToImage` / `customComfy` already run, not a new policy. `'promptAudit'`
+// is therefore IMPLEMENTED; its handler lives in `./moderation` and runs
+// `auditPromptServer` host-side, before the orchestrator submit. The free-text
+// OUTPUT half (`'textOutput'`) is still unanswered and still fails at load.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepModerationPosture =
   /**
    * No free-text input and no free-text output — the step introduces no new
-   * moderation surface. The ONLY posture with an implemented handler today.
+   * moderation surface, so there is nothing to run.
    */
   | 'none'
   /**
-   * Free-text INPUT that must go through the existing server prompt audit
+   * Free-text INPUT that goes through the existing server prompt audit
    * (`auditPromptServer`), as `textToImage` / `customComfy` do.
-   * NOT IMPLEMENTED — registering an entry with this posture fails at load.
+   *
+   * IMPLEMENTED. An entry declaring it MUST also declare `auditableText` (see
+   * that field) — a posture that can be satisfied by auditing nothing is not a
+   * posture, so both the declaration and its non-emptiness are enforced at
+   * registry LOAD, and again per-request in the handler.
    */
   | 'promptAudit'
   /**
    * Free-text OUTPUT — a moderation surface the prompt audit does not cover.
+   * Generated text is scanned by NOTHING on any current path.
    * NOT IMPLEMENTED — registering an entry with this posture fails at load.
    */
   | 'textOutput';
@@ -109,6 +121,33 @@ export const STEP_MODERATION_POSTURES: readonly StepModerationPosture[] = [
   'promptAudit',
   'textOutput',
 ] as const;
+
+/**
+ * The free text a `'promptAudit'` entry hands to `auditPromptServer`.
+ *
+ * Deliberately the EXACT two fields `textToImage` and `customComfy` already
+ * pass, so the posture runs the same audit with the same inputs rather than a
+ * parallel one. An entry with several user-text params joins them into `prompt`
+ * itself — explicitly, in its own file, where a reviewer can see which params
+ * are covered — rather than the registry guessing from field names.
+ */
+export type StepAuditableText = {
+  /** The user-authored text. MUST be non-empty (enforced at load AND per request). */
+  prompt: string;
+  /** Optional second field, matching `auditPromptServer`'s own signature. */
+  negativePrompt?: string;
+};
+
+/**
+ * True iff the posture's handler needs the entry to declare `auditableText`.
+ *
+ * 🔴 The one place that relationship is written down. The load-time invariant,
+ * the request-time handler and the tests all read THIS — a second copy is how
+ * the guard and the thing it guards drift apart.
+ */
+export function postureRequiresAuditableText(posture: StepModerationPosture): boolean {
+  return posture === 'promptAudit';
+}
 
 /**
  * The orchestrator step template a step builder emits: the `$type` discriminator
@@ -241,6 +280,32 @@ interface BlockStepBase<P> {
   billingMode: StepBillingMode;
   /** 🔴 REQUIRED. See `StepModerationPosture`. */
   moderationPosture: StepModerationPosture;
+  /**
+   * 🔴 REQUIRED IFF `moderationPosture` requires it (`'promptAudit'`), and
+   * FORBIDDEN otherwise. PURE: bounded params → the free text to audit.
+   *
+   * WHY THIS IS A DECLARED FIELD AND NOT AN INFERENCE. A step's params are
+   * arbitrary per entry — there is no universal `prompt` key, and sniffing for
+   * string-valued fields would audit a Civitai image URL while missing
+   * `messages[].content`. So the entry NAMES its user text, exactly as
+   * `canonicalOutputFor` makes the output shape explicit rather than inferred.
+   *
+   * 🔴 AND IT CANNOT BE SATISFIED BY RETURNING NOTHING. `auditPromptServer`
+   * RETURNS EARLY on an empty prompt, so `() => ({ prompt: '' })` would be a
+   * declared posture that audits nothing and reports success — the same defect
+   * class as an `extractOutput` satisfiable by `() => []`, which is why that
+   * field got a probe. This one gets the same treatment: the load-time invariant
+   * evaluates it against `canonicalParamsFor(variant)` and REJECTS an empty
+   * result, and the request-time handler rejects an empty result again on the
+   * params actually submitted.
+   *
+   * HONEST LIMIT, stated so nobody over-trusts it: this proves the entry audits
+   * SOMETHING, not that it audits EVERYTHING. Nothing structural can know which
+   * of an arbitrary param object's strings are user-authored. The load-bearing
+   * guard for coverage is the same one `resourcePolicy` relies on — a required,
+   * reviewed declaration in a code-reviewed trust root.
+   */
+  auditableText?(params: P): StepAuditableText;
   /**
    * 🔴 REQUIRED. See `StepResourcePolicy`. The entitlement axis — the one this
    * PR's own triage identified as the real bypass risk, and the one a
@@ -502,12 +567,21 @@ export function planStepSpend(step: AnyBlockStep, params: unknown): StepSpendPla
 // union, and every posture without an implemented handler is rejected at load.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** True iff the posture has an implemented handler. */
+/**
+ * True iff the posture has an implemented handler.
+ *
+ * 🔴 THE SINGLE DECLARATION. `./moderation` asserts at ITS module load that its
+ * handler table agrees with this function for every posture, so "declared
+ * implemented" and "has a handler" cannot drift into a posture that registers
+ * cleanly and then has nothing to run.
+ */
 export function isModerationPostureImplemented(posture: StepModerationPosture): boolean {
   // 'none' is implemented by construction: a step with no free-text input and
-  // no free-text output introduces no surface, so there is nothing to run. Both
-  // other postures need a real, policy-reviewed implementation.
-  return posture === 'none';
+  // no free-text output introduces no surface, so there is nothing to run.
+  // 'promptAudit' runs `auditPromptServer` — the SAME audit `textToImage` and
+  // `customComfy` run, host-side and before submission (see `./moderation`).
+  // 'textOutput' still has no answer and still fails at load.
+  return posture === 'none' || posture === 'promptAudit';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -620,6 +694,32 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     );
   }
 
+  // (1a) POSTURE ↔ `auditableText` AGREEMENT, both directions.
+  //
+  // Forward: a posture that audits free text must SAY WHERE THE TEXT IS. Without
+  // this, an entry could declare `'promptAudit'`, omit the field entirely, and
+  // register cleanly — a step that announces a moderation surface and has no
+  // handler input, i.e. a posture satisfied by auditing nothing.
+  //
+  // Reverse: an entry that declares audit text while declaring a posture that
+  // does not audit is a CONTRADICTION its author is best placed to resolve. It
+  // reads as covered and is not: the field is never called, so the text reaches
+  // the orchestrator unaudited. Rejecting it is the fail-closed direction.
+  if (postureRequiresAuditableText(step.moderationPosture)) {
+    if (typeof step.auditableText !== 'function') {
+      throw new Error(
+        `${where}: moderationPosture '${step.moderationPosture}' requires an auditableText() ` +
+          'declaration naming the params that carry user text — a posture that can be ' +
+          'satisfied by auditing nothing is not a posture'
+      );
+    }
+  } else if (step.auditableText !== undefined) {
+    throw new Error(
+      `${where}: declares auditableText() but moderationPosture '${step.moderationPosture}' ` +
+        'never audits it — the text would reach the orchestrator unaudited'
+    );
+  }
+
   // (2) At least one variant, or nothing below can be enumerated.
   if (step.variants.length === 0) {
     throw new Error(`${where}: must declare at least one variant`);
@@ -659,6 +759,31 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       throw new Error(
         `${vWhere}: canonicalParamsFor() resolves to variant '${resolved}', not '${variant}'`
       );
+    }
+
+    // (5a) THE NON-VACUITY PROBE for `auditableText`, the moderation analogue of
+    // clause 8's extraction probe. `auditPromptServer` RETURNS EARLY on an empty
+    // prompt, so an entry that declares `'promptAudit'` and returns `''` would
+    // pass clause 1a, run the audit, and audit nothing — reporting success. The
+    // declaration alone is therefore not enough; it has to produce real text for
+    // params the entry itself calls canonical.
+    if (postureRequiresAuditableText(step.moderationPosture)) {
+      // 1a proved this is a function; the non-null assertion is that guard's
+      // result, not an assumption.
+      const text = step.auditableText!(parsed.data);
+      if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
+        throw new Error(
+          `${vWhere}: auditableText() returned no prompt text for canonicalParamsFor() — ` +
+            'auditPromptServer returns early on an empty prompt, so this posture would ' +
+            'audit NOTHING while reporting success'
+        );
+      }
+      if (text.negativePrompt !== undefined && typeof text.negativePrompt !== 'string') {
+        throw new Error(
+          `${vWhere}: auditableText() returned a non-string negativePrompt — ` +
+            'auditPromptServer would audit a value it cannot read'
+        );
+      }
     }
 
     // (6) Per-mode budget invariant. Runs BEFORE the implemented-handler gate

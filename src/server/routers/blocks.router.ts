@@ -153,6 +153,12 @@ import {
   getStep,
   planStepSpend,
 } from '~/server/services/blocks/steps';
+// Moderation dispatch for the same registry. A SEPARATE module because it pulls
+// `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
+// itself is imported by `workflow.schema` for the wire enum, which must stay
+// import-light. Dispatches on the entry's declared `moderationPosture`, so this
+// router keeps no per-posture branch either.
+import { runStepModeration } from '~/server/services/blocks/steps/moderation';
 // Instrument-only: records EVERY prepaidFixed step price check at submit —
 // `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
 // from a detector that never ran. Never throws.
@@ -6609,29 +6615,43 @@ async function submitStepWorkflow(opts: {
   // load. An invalid param is a BAD_REQUEST → fail-closed.
   const params = parseStepParams(step, body.params);
 
-  // ── Moderation posture. Tranche 1 declares 'none' (no free-text input, no
-  // free-text output → no new moderation surface), and the registry's load-time
-  // invariant REJECTS any entry declaring a posture whose handler is not
-  // implemented. So there is nothing to run here today, and a future
-  // text-producing step cannot reach this line without someone having
-  // implemented — and reviewed — its posture. Re-asserted rather than assumed:
-  // this is the seam a policy mistake would arrive through.
-  if (step.moderationPosture !== 'none') {
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: `step '${step.id}' declares an unimplemented moderation posture`,
-    });
-  }
-
-  // NOTE: no `getBlockSessionUser` call here. A registry step carries no model
-  // binding, no checkpoint resolution and no entitlement belt, so nothing on
-  // this path reads the session user — fetching one cost a `getUserById` per
-  // submit for a value that was never used (and an unused-var eslint warning).
+  // NOTE: no UNCONDITIONAL `getBlockSessionUser` call here. A registry step
+  // carries no model binding, no checkpoint resolution and no entitlement belt,
+  // so a `'none'`-posture step reads nothing about the session user — fetching
+  // one cost a `getUserById` per submit for a value that was never used. A
+  // posture that DOES audit needs `isModerator`, so it is passed below as a
+  // THUNK: only a handler that reads it pays for the round-trip, and this
+  // function keeps no per-posture branch.
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // A registry step has no `accountType` field on its wire body (params are the
   // step's own bounded contract), so currency selection is Auto — the
   // domain-allowed set, drained blue-first.
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  // ── MODERATION POSTURE — dispatched on the entry's DECLARED posture, the same
+  // way spend dispatches on its declared billing mode. No per-step and no
+  // per-posture branch here; `runStepModeration` owns the table.
+  //
+  // 🔴 HOST-SIDE, AND BEFORE SUBMISSION. The audit cannot live on the block
+  // side: a block is untrusted sandboxed code that can decline to call it or
+  // ignore its verdict, and `extModeration` being fail-soft does not make the
+  // call optional. Placed here it runs before the orchestrator quote and before
+  // every spend reservation — so a rejection costs no orchestrator call and has
+  // nothing to refund, matching where `textToImage` and `customComfy` put theirs.
+  //
+  // 🔴 `isGreen` IS THE TOKEN'S MATURITY CLAIM, not a request field and not a
+  // constant. It comes from `resolveBlockMaturity(claims)` above — the same
+  // server-minted `maxBrowsingLevel` ceiling `allowMatureContent` is derived
+  // from — so a SFW-domain (green/blue) block gets the stricter SFW audit even
+  // if its own code is wrong or malicious. Byte-identical derivation to the two
+  // existing kinds.
+  await runStepModeration({
+    step,
+    params,
+    userId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  });
 
   const token = await getOrchestratorToken(userId, ctx);
 

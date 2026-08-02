@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+// Type-only: names the shape `importOriginal()` returns for the step registry
+// mock below. A `typeof import(...)` annotation there is an eslint error
+// (`consistent-type-imports`), so the type is imported up here instead.
+import type * as BlockStepsModule from '~/server/services/blocks/steps';
 
 /**
  * Coverage for the three workflow procedures on blocksRouter. Each procedure
@@ -265,6 +269,66 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: mockAuditPromptServer,
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 A `'promptAudit'` FIXTURE ENTRY, injected into the step registry.
+//
+// WHY THIS EXISTS. The moderation posture `'promptAudit'` is implemented but NO
+// shipped entry declares it (Tranche 1 is `convert-image`, posture `'none'`).
+// A test written against the real population could therefore only assert
+// "nothing audits", which is green whatever the router does — a test whose
+// condition cannot vary. Widening the registry POPULATION (and nothing else)
+// makes the real router branch reachable, so the assertions below have a way to
+// fail.
+//
+// PASS-THROUGH BY CONSTRUCTION: every other export is `actual`, and `getStep`
+// falls back to `actual.getStep` for every id but this one — so the
+// `convert-image` tests in this file exercise exactly the shipped entry. The
+// unchanged pass count for the rest of the suite is the evidence.
+// ─────────────────────────────────────────────────────────────────────────────
+const { AUDITED_STEP_ID } = vi.hoisted(() => ({ AUDITED_STEP_ID: 'fixture-audited-step' }));
+vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
+  const actual = await importOriginal<typeof BlockStepsModule>();
+  const z = await import('zod');
+  const auditedFixtureStep = {
+    id: AUDITED_STEP_ID,
+    orchestratorType: 'fixtureAuditedType',
+    billingMode: 'prepaidFixed' as const,
+    moderationPosture: 'promptAudit' as const,
+    resourcePolicy: { kind: 'none' as const },
+    // `.strict()`, like every registered entry: an unknown param is REJECTED.
+    paramSchema: z.object({ prompt: z.string().min(1) }).strict(),
+    variants: ['default'],
+    resolveVariant: () => 'default',
+    canonicalParamsFor: () => ({ prompt: 'canonical' }),
+    auditableText: (p: { prompt: string }) => ({
+      prompt: p.prompt,
+      negativePrompt: 'fixture-negative',
+    }),
+    priceForVariant: () => 1,
+    estimateBuzz: () => 1,
+    buildStep: (p: { prompt: string }) => ({
+      $type: 'fixtureAuditedType',
+      input: { prompt: p.prompt },
+    }),
+    extractOutput: () => [
+      { url: 'https://blobs.example/f.webp', width: null, height: null, nsfwLevel: null },
+    ],
+    canonicalOutputFor: () => ({}),
+  };
+  // The fixture must itself satisfy every load-time invariant — otherwise these
+  // tests would be exercising a shape the registry would never accept, and a
+  // green result would say nothing about a real entry.
+  actual.assertStepInvariants(AUDITED_STEP_ID, auditedFixtureStep as never);
+  return {
+    ...actual,
+    // The wire `step` enum is DERIVED from this, so widening it is what lets the
+    // fixture id past `blockStepBodySchema` and into the handler.
+    REGISTERED_STEP_IDS: [...actual.REGISTERED_STEP_IDS, AUDITED_STEP_ID],
+    getStep: (id: string) =>
+      id === AUDITED_STEP_ID ? (auditedFixtureStep as never) : actual.getStep(id),
+  };
+});
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
 }));
@@ -6640,6 +6704,126 @@ describe("step-type registry bridge (kind: 'step')", () => {
         caller().submitWorkflow({ blockToken: 'tok', body: stepBody() })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE `'promptAudit'` MODERATION POSTURE, THROUGH THE ROUTER.
+  //
+  // No SHIPPED entry declares this posture (Tranche 1 is `convert-image`, which
+  // is `'none'`), so the router branch is unreachable over the real population.
+  // These tests reach it with a fixture entry injected through the mocked
+  // registry (`AUDITED_STEP_ID`) — the REAL router code runs, only the registry
+  // population is widened. Without that, every assertion below would be green
+  // because its condition cannot vary, which proves nothing.
+  //
+  // WHAT ONLY THIS LEVEL CAN PROVE, and the handler unit tests cannot:
+  //   - the router calls the moderation dispatch AT ALL;
+  //   - it passes the `isGreen` DERIVED FROM THE TOKEN's maturity ceiling — not
+  //     a body field, not a constant;
+  //   - the audit runs BEFORE the orchestrator quote and before every spend
+  //     reservation, so a rejection costs nothing and has nothing to refund.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe("🔴 submitWorkflow — moderation posture 'promptAudit'", () => {
+    function auditedBody(prompt = 'a cat in a hat') {
+      return { kind: 'step' as const, step: AUDITED_STEP_ID, params: { prompt } };
+    }
+
+    it('runs auditPromptServer host-side with the SUBMITTED text', async () => {
+      // 🔴 MUTATION TARGET (a), router half: delete the `await runStepModeration(
+      // ... )` call in `submitStepWorkflow` and this fails on
+      // `toHaveBeenCalledTimes(1)`.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: auditedBody('a purple dog') });
+      expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+      expect(mockAuditPromptServer).toHaveBeenCalledWith({
+        prompt: 'a purple dog',
+        negativePrompt: 'fixture-negative',
+        userId: 42,
+        // No maxBrowsingLevel claim → FAILS CLOSED to the SFW ceiling → the
+        // stricter SFW prompt audit.
+        isGreen: true,
+        isModerator: true,
+      });
+    });
+
+    // 🔴 MUTATION TARGET (c): `isGreen` must be DERIVED from the token's
+    // server-minted `maxBrowsingLevel` claim — the same source `allowMatureContent`
+    // uses — never hardcoded. Hardcoding `true` fails the red case below;
+    // hardcoding `false` fails the green/blue/legacy cases. No constant passes
+    // all four, and this is the exact derivation `textToImage` and `customComfy`
+    // already use (`resolveBlockMaturity(claims).isGreen`).
+    it.each([
+      ['green domain, SFW ceiling', { domain: 'green', maxBrowsingLevel: SFW_CEILING }, true],
+      ['blue domain, SFW ceiling', { domain: 'blue', maxBrowsingLevel: SFW_CEILING }, true],
+      ['red domain, mature ceiling', { domain: 'red', maxBrowsingLevel: ALL_CEILING }, false],
+      ['legacy token, no claim (fails closed)', {}, true],
+    ])('derives isGreen from the TOKEN maturity claim — %s', async (_label, over, expected) => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims(over));
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: auditedBody() });
+      expect(mockAuditPromptServer.mock.calls[0][0].isGreen).toBe(expected);
+    });
+
+    it('a CLIENT-SUPPLIED maturity hint is REJECTED outright, never honoured', async () => {
+      // The complement of the derivation tests: an untrusted iframe cannot even
+      // GET a maturity field to the handler. `isGreen` is not in the entry's
+      // `.strict()` schema, so it is rejected one layer earlier — same
+      // fail-closed direction, and nothing is audited or submitted.
+      mockVerifyBlockToken.mockResolvedValue(
+        stepClaims({ domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: { ...auditedBody(), params: { prompt: 'x', isGreen: false } } as never,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a FLAGGED prompt aborts BEFORE the orchestrator quote and before any spend', async () => {
+      // 🔴 Placement, not merely presence. If the audit ran after the quote or
+      // after a reservation, a flagged prompt would still cost an orchestrator
+      // round-trip and leave a reservation to unwind.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      mockAuditPromptServer.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged: minor' })
+      );
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: auditedBody('blocked text') })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('an ESTIMATE does not audit — matching textToImage and customComfy exactly', async () => {
+      // Neither existing kind audits on the estimate path; the estimate makes no
+      // orchestrator call and spends nothing. Pinned so "audit everywhere" does
+      // not creep in as an unreviewed behaviour change to the shared procedure.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      await caller().estimateWorkflow({ blockToken: 'tok', body: auditedBody() });
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    });
+
+    it("a 'none'-posture step still runs NO audit (the shipped entry is unchanged)", async () => {
+      // The regression half: adding the posture must not start auditing
+      // `convert-image`, which has no free-text surface at all.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
     });
   });
 });
