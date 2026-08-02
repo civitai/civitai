@@ -203,13 +203,21 @@ describe('AppListingsMarketplaceBody', () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     const search = page.getByLabelText('Search');
 
-    // Five successive input events inside the 300ms debounce window. Writing per
-    // keystroke would push five history entries and make Back unusable (one
-    // press per letter typed).
-    for (const value of ['m', 'ma', 'mat', 'matr', 'matri', 'matrix']) {
-      await search.fill(value);
-    }
-    // Nothing written yet — the debounce has not elapsed.
+    /**
+     * ⚠️ TWO fills, not six. The original version did six sequential
+     * `fill()`s and asserted ZERO writes afterwards — but each awaited `fill()`
+     * measured ~66ms, so the six took ~396ms against a 300ms debounce. It passed
+     * only because the assertion ran before the timer's callback; one slow fill
+     * and the debounce elapses mid-loop, a write lands, and the test goes red on
+     * a machine hiccup rather than on a regression. Two fills is well inside the
+     * window on any machine, and still distinguishes per-keystroke writes (which
+     * would be 2) from debounced ones (0 so far).
+     */
+    await search.fill('mat');
+    await search.fill('matrix');
+
+    // Nothing written yet — the debounce has not elapsed. This is the assertion
+    // that fails if the input is wired straight through to the URL.
     expect(replacedQueries().filter((q) => 'query' in q)).toHaveLength(0);
 
     // …and after it does, exactly ONE write, carrying the FINAL value.

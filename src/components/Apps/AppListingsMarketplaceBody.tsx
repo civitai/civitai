@@ -71,7 +71,7 @@ const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
 
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
-  const { filters, setFilters } = useAppsStoreQueryParams();
+  const { filters, setFilters, isWritePending } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
 
   // 🔴 The search input is LOCAL, seeded ONCE from the URL. It is not a
@@ -94,6 +94,34 @@ export function AppListingsMarketplaceBody() {
     if (debouncedSearch.trim() === filters.query.trim()) return;
     setFilters({ query: debouncedSearch });
   }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * 🔴 ADOPT AN EXTERNAL `?query=` CHANGE. Seeding the box ONCE was not enough:
+   * `router.query` also changes while mounted — browser Back/forward being the
+   * obvious one. The box kept the old term, and because `filteredItems` below
+   * filters by the BOX (not the URL) the grid stayed filtered by a term the
+   * address bar no longer contained.
+   *
+   * 🔴 DELIBERATELY NO DEPENDENCY ARRAY. The obvious `[filters.query]` version
+   * does not work, and fails in a way that looks like it works: React can
+   * coalesce the render for our own URL write away, so on a Back the value goes
+   * '' -> (never committed 'Alpha') -> '' and the effect NEVER FIRES. The
+   * dep-array version passed only when a `console.log` happened to slow the
+   * renders apart. Running every render and letting the comparison below be the
+   * guard is what makes it timing-independent.
+   *
+   * The two early returns are what stop it fighting the viewer or our own echo:
+   *   - `isWritePending` — our write is still on its way to the URL, so the URL
+   *     disagreeing is expected and must not be adopted;
+   *   - `searchInput !== debouncedSearch` — the viewer is mid-keystroke, and
+   *     adopting now would yank characters out from under the caret.
+   * Only when both are settled does a disagreement mean the URL genuinely moved.
+   */
+  useEffect(() => {
+    if (isWritePending) return;
+    if (searchInput !== debouncedSearch) return;
+    if (filters.query !== searchInput) setSearchInput(filters.query);
+  });
 
   // "Recently opened" rail (client-only personalisation from localStorage).
   // SEEDED EMPTY so SSR and the first client render match — reading
