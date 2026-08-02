@@ -134,9 +134,7 @@ export type AppsStoreQueryPatch = {
  * NON-default filters appear, so a shared link carries exactly the filters the
  * sharer had applied and a cleared store returns to a bare `/apps`.
  */
-export function appsStoreFiltersToQuery(
-  filters: Partial<AppsStoreFilters>
-): AppsStoreQueryPatch {
+export function appsStoreFiltersToQuery(filters: Partial<AppsStoreFilters>): AppsStoreQueryPatch {
   const out: AppsStoreQueryPatch = {};
   if ('kind' in filters)
     out.kind = filters.kind && filters.kind !== APPS_STORE_DEFAULTS.kind ? filters.kind : undefined;

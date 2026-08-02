@@ -106,7 +106,6 @@ const TILE_LINK_CLASS =
  */
 const TILE_ACTION_CLASS = 'relative z-[2] shrink-0';
 
-
 /**
  * "Recently opened" marketplace sections. TWO views live here:
  *

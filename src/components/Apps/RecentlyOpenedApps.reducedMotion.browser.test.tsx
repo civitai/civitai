@@ -100,9 +100,7 @@ describe('RecentlyOpenedListingsView — prefers-reduced-motion', () => {
     await expect
       .element(page.getByTestId('apps-recent-rail-item'))
       .toHaveAttribute('href', '/apps/run/gen-matrix');
-    await expect
-      .element(page.getByRole('link', { name: 'Open Gen Matrix' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('link', { name: 'Open Gen Matrix' })).toBeInTheDocument();
   });
 
   test('the empty-rail INVARIANT survives reduced motion (renders null, no spacer)', async () => {

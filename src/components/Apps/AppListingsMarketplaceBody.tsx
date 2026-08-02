@@ -8,10 +8,7 @@ import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDrop
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
-import {
-  selectRecentRailEntries,
-  type ResolvedRecentApp,
-} from '~/components/Apps/recentAppsRail';
+import { selectRecentRailEntries, type ResolvedRecentApp } from '~/components/Apps/recentAppsRail';
 import {
   getRecentlyOpenedApps,
   recordRecentlyOpenedApp,
@@ -131,35 +128,25 @@ export function AppListingsMarketplaceBody() {
     );
   }
 
-  const {
-    data,
-    isLoading,
-    isError,
-    refetch,
-    isFetchingNextPage,
-    fetchNextPage,
-    hasNextPage,
-  } = trpc.appListings.listAvailable.useInfiniteQuery(
-    {
-      kind,
-      category: category ?? undefined,
-      sort,
-      limit: 24,
-    },
-    {
-      // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings`
-      // OR-falling-back to `appBlocks`. Mirrors the server read gate
-      // (`enforceAppListingsReadFlag` → `isAppListingsEnabled`). Zero behavior
-      // change today (the `app-listings` flag doesn't exist yet).
-      enabled: !!(features.appListings || features.appBlocks),
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    }
-  );
+  const { data, isLoading, isError, refetch, isFetchingNextPage, fetchNextPage, hasNextPage } =
+    trpc.appListings.listAvailable.useInfiniteQuery(
+      {
+        kind,
+        category: category ?? undefined,
+        sort,
+        limit: 24,
+      },
+      {
+        // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings`
+        // OR-falling-back to `appBlocks`. Mirrors the server read gate
+        // (`enforceAppListingsReadFlag` → `isAppListingsEnabled`). Zero behavior
+        // change today (the `app-listings` flag doesn't exist yet).
+        enabled: !!(features.appListings || features.appBlocks),
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
 
-  const items = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]),
-    [data]
-  );
+  const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
 
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.

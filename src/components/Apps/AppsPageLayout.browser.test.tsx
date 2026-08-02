@@ -20,7 +20,9 @@ import type * as TrpcMod from '~/utils/trpc';
  * tabs' rule is pinned as present in the same test.
  */
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({ appBlocks: true }) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: true }),
+}));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
@@ -72,7 +74,11 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
 
   test('the same holds on a page WITH a header (title/actions render inside the band)', async () => {
     renderWithProviders(
-      <AppsPageLayout title="Your installed apps" subtitle="Manage them" actions={<button>Act</button>}>
+      <AppsPageLayout
+        title="Your installed apps"
+        subtitle="Manage them"
+        actions={<button>Act</button>}
+      >
         <div data-testid="body">body</div>
       </AppsPageLayout>
     );

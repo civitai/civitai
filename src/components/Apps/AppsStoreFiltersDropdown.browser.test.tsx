@@ -66,7 +66,9 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     await expect.element(page.getByText('Category')).toBeInTheDocument();
     // Both groups keep their `role="group"` + `aria-label` from the extracted
     // components, so the panel is navigable by group, not as a flat button soup.
-    await expect.element(page.getByRole('group', { name: 'Filter by app kind' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('group', { name: 'Filter by app kind' }))
+      .toBeInTheDocument();
     await expect
       .element(page.getByRole('group', { name: 'Filter by category' }))
       .toBeInTheDocument();

@@ -57,10 +57,7 @@ export function AppsStoreFiltersDropdown({ filters, onChange }: AppsStoreFilters
               labelled rule rather than a heading, so the panel doesn't inject
               h3s into the page's heading outline. */}
           <Divider label="Type" className="text-sm font-bold" />
-          <KindFilterButtons
-            value={filters.kind}
-            onChange={(kind) => onChange({ kind })}
-          />
+          <KindFilterButtons value={filters.kind} onChange={(kind) => onChange({ kind })} />
         </Stack>
 
         <Stack gap={8}>
