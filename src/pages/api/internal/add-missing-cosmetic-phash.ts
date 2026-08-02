@@ -10,7 +10,16 @@ const schema = z.object({
   limit: z.coerce.number().min(1).max(5000).optional(),
   concurrency: z.coerce.number().min(1).max(20).optional(),
   cosmeticId: z.coerce.number().optional(),
-  dryRun: z.coerce.boolean().optional(),
+  // Not z.coerce.boolean() — that's Boolean(value), so "false" would be true.
+  // A bare `?dryRun` reads as intent to dry run; anything unrecognised is
+  // rejected rather than guessed at.
+  dryRun: z
+    .enum(['true', 'false', '1', '0', ''])
+    .transform((v) => v !== 'false' && v !== '0')
+    .optional(),
+  // Rows that can never be hashed (artwork 404s on the CDN) otherwise consume
+  // the same head-of-queue slots on every run, stranding everything behind them.
+  afterId: z.coerce.number().optional(),
 });
 
 type CosmeticRow = { id: number; url: string; animated: boolean };
@@ -21,7 +30,13 @@ type CosmeticRow = { id: number; url: string; animated: boolean };
 const DEFAULT_LIMIT = 100;
 
 export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const { limit = DEFAULT_LIMIT, concurrency = 5, cosmeticId, dryRun } = schema.parse(req.query);
+  const {
+    limit = DEFAULT_LIMIT,
+    concurrency = 5,
+    cosmeticId,
+    dryRun,
+    afterId,
+  } = schema.parse(req.query);
   const start = Date.now();
 
   // Type isn't a reliable filter — NamePlate and ContentDecoration are CSS-only,
@@ -40,6 +55,7 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
       AND (data->>'url') <> ''
       AND ("pHash" IS NULL OR "pHashUrl" IS DISTINCT FROM data->>'url')
       ${cosmeticId ? Prisma.sql`AND id = ${cosmeticId}` : Prisma.empty}
+      ${afterId ? Prisma.sql`AND id > ${afterId}` : Prisma.empty}
     ORDER BY id
     LIMIT ${limit}
   `;
@@ -61,7 +77,8 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
       // discard the tally for every row already done.
       try {
         const pHash = await getPerceptualHash(record.url);
-        if (!pHash) {
+        // `0n` is a real hash (solid-colour artwork), not a miss.
+        if (pHash === undefined) {
           failures.push({ id: record.id, animated: record.animated });
           return;
         }
@@ -81,10 +98,10 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
     considered: records.length,
     hashed,
     failed: failures.length,
-    // Split out because animated artwork is the open question — if mediaHash
-    // can't hash it, the failures cluster here rather than spreading evenly.
     failedAnimated: failures.filter((x) => x.animated).length,
     failedIds: failures.slice(0, 50).map((x) => x.id),
+    // Pass back as `afterId` to step past a block of unhashable rows.
+    lastId: records.at(-1)?.id,
     duration: Date.now() - start,
   });
 });

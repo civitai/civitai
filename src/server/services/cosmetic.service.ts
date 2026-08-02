@@ -400,7 +400,8 @@ export function getCosmeticArtworkUrl(data: Prisma.JsonValue | undefined) {
 export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: string }) {
   getPerceptualHash(url)
     .then(async (pHash) => {
-      if (!pHash) {
+      // `0n` is a real hash (solid-colour artwork), not a miss.
+      if (pHash === undefined) {
         await logToAxiom({
           type: 'warning',
           name: 'cosmetic-phash',

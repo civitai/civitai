@@ -232,14 +232,26 @@ const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
 // pending write-path hash and permanently occupying a backfill slot.
 const PERCEPTUAL_HASH_ABORT_MS = 45_000;
 
+export function computePerceptualHash(perceptual?: string) {
+  if (!perceptual) return undefined;
+  return BigInt.asIntN(64, BigInt('0x' + perceptual));
+}
+
 /**
  * Perceptual hash for an arbitrary image, without creating an `Image` row.
  *
  * Submits a one-step `mediaHash` workflow and blocks for the result rather than
  * routing through the scan-result webhook, which can only address images by id.
  *
+ * Results are comparable ONLY to other hashes produced by this same `mediaHash`
+ * step. Most `Image.pHash` rows predate it and came from a different algorithm —
+ * comparing across the two yields ~32-bit Hamming distances (i.e. noise) with no
+ * error to signal it. Verified against prod: same-lane rows matched exactly,
+ * legacy rows were uncorrelated.
+ *
  * Returns `undefined` on any failure — a hash is a signal, not a gate, so
- * callers persist what they get and leave the rest for a backfill sweep.
+ * callers persist what they get and leave the rest for a backfill sweep. Note
+ * `0n` is a legitimate hash (a solid-colour image); test against `undefined`.
  */
 export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
   const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
@@ -267,10 +279,7 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
     const step = data?.steps?.[0] as MediaHashStep | undefined;
     if (data?.status !== 'succeeded' || step?.status !== 'succeeded') return undefined;
 
-    const perceptual = step.output?.hashes?.perceptual;
-    if (!perceptual) return undefined;
-
-    return BigInt.asIntN(64, BigInt('0x' + perceptual));
+    return computePerceptualHash(step.output?.hashes?.perceptual);
   } catch (error) {
     logToAxiom({
       type: 'error',
