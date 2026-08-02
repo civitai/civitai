@@ -23,6 +23,7 @@ import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { StrikesCard } from '~/components/Account/StrikesCard';
+import { StickerInventoryCard } from '~/components/Account/StickerInventoryCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 import dynamic from 'next/dynamic';
 
@@ -52,6 +53,7 @@ export default function Account() {
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
           {features.creatorControls && <CreatorControlsCard />}
+          <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
