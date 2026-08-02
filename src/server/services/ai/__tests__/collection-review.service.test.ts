@@ -48,15 +48,25 @@ describe('decideFromObservations', () => {
     expect(decideFromObservations({ ...clean, minorUncertain: true }).decision).toBe('approve');
   });
 
-  it('escalates an age-ambiguous subject in a suggestive context', () => {
+  // rules/minors.md makes photorealism the bright line for minors in ANY context, so an ambiguous
+  // age matters there even when the image is otherwise wholesome.
+  it.each([
+    ['a suggestive context', { suggestiveStyling: true }],
+    ['a photorealistic image', { isPhotorealistic: true }],
+  ])('escalates an age-ambiguous subject in %s', (_label, overrides) => {
+    const result = decideFromObservations({ ...clean, minorUncertain: true, ...overrides });
+    expect(result.decision).toBe('escalate');
+    expect(result.escalations).toContain('possible minor');
+    expect(result.neverReject).toBe(true);
+  });
+
+  it('approves an age-ambiguous stylized subject in a wholesome context', () => {
     const result = decideFromObservations({
       ...clean,
       minorUncertain: true,
-      suggestiveStyling: true,
+      isPhotorealistic: false,
     });
-    expect(result.decision).toBe('escalate');
-    expect(result.escalations).toContain('possible minor in suggestive context');
-    expect(result.neverReject).toBe(true);
+    expect(result.decision).toBe('approve');
   });
 
   // The prompt asks for 'R+', but models reach for the labels they know.

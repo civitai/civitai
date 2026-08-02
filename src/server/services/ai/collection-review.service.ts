@@ -47,6 +47,7 @@ export const aiReviewObservationsSchema = z.object({
   sexualContent: z.boolean(),
   suggestiveStyling: z.boolean().optional(),
   nsfwEstimate: z.string().optional(),
+  isPhotorealistic: z.boolean().optional(),
   depictsMinor: z.boolean(),
   minorUncertain: z.boolean().optional(),
   minorIsPhotorealistic: z.boolean().optional(),
@@ -100,11 +101,13 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
   if (o.sexualContent || adultRating) violations.push('sexual/adult content');
   else if (o.suggestiveStyling) escalations.push('suggestive styling');
 
-  // Section B of the prompt invites this hedge on the stylized art these collections are mostly
-  // made of, so on its own it would escalate a large share of perfectly ordinary submissions. An
-  // ambiguous age only matters where the presentation is also sexualized.
-  const uncertainAgeInSexualContext = o.minorUncertain && (o.suggestiveStyling || o.sexualContent);
-  if (uncertainAgeInSexualContext) escalations.push('possible minor in suggestive context');
+  // Escalating on this hedge alone would sweep up much of the stylized art these collections are
+  // made of, which is exactly what the prompt invites the model to be unsure about. It matters
+  // where the presentation is sexualized, and — per rules/minors.md, where photorealism is the
+  // bright line for minors in ANY context — where the image could pass for a photograph.
+  const uncertainAge =
+    !!o.minorUncertain && (!!o.suggestiveStyling || o.sexualContent || !!o.isPhotorealistic);
+  if (uncertainAge) escalations.push('possible minor');
 
   for (const entry of o.otherViolations ?? []) {
     const value = entry.toLowerCase().trim();
@@ -120,7 +123,7 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
     decision,
     violations,
     escalations,
-    neverReject: uncertainAgeInSexualContext || undefined,
+    neverReject: uncertainAge || undefined,
   };
 }
 

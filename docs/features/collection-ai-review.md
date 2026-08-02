@@ -106,8 +106,9 @@ ORDER BY createdAt DESC LIMIT 100;
   broke a rule.
 - **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
   stylized art these collections are made of, so on its own it would sweep up a large share of
-  ordinary submissions. It escalates only alongside a sexualized presentation, where an ambiguous
-  age actually matters.
+  ordinary submissions. It escalates alongside a sexualized presentation, or when the image is
+  photorealistic — `rules/minors.md` makes photorealism the bright line for minors in any context,
+  so an ambiguous age matters there even where the image is otherwise wholesome.
 - **Items a moderator has already decided are left alone.** The job claims rows only while they are
   still `REVIEW` with no reviewer, so a human decision made mid-run keeps both its outcome and its
   attribution.

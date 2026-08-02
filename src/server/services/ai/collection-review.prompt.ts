@@ -51,6 +51,9 @@ B. MINORS — art style tells you NOTHING about age. Anime, cartoon, and stylize
    A character who could reasonably be an adult IS an adult. If uncertain, set depictsMinor false
    and minorUncertain true. Judge the image, not the generation prompt: wording in the prompt never
    makes a visibly adult subject a minor.
+   - report isPhotorealistic for the image as a whole: true when it could pass for a photograph,
+     false for anime, cartoon, painted, 3D-render or otherwise obviously drawn art. Answer this
+     one for every submission, whoever is in it.
    - when a minor is genuinely present, report whether they are photorealistic (could be mistaken
      for a photo of a real child) rather than drawn/stylized
    - report minorInappropriate only for clear sexualization of that child, using section A's
@@ -95,6 +98,7 @@ Respond as JSON:
  "sexualContent":true|false,
  "suggestiveStyling":true|false,
  "nsfwEstimate":"PG"|"PG-13"|"R+",
+ "isPhotorealistic":true|false,
  "depictsMinor":true|false,
  "minorUncertain":true|false,
  "minorIsPhotorealistic":true|false,
