@@ -48,8 +48,16 @@
  * the predicate.
  */
 import { PrismaClient } from '@prisma/client';
-import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
+import * as dotenv from 'dotenv';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+
+// Must run before anything pulls in ~/env/client, which snapshots
+// process.env.NEXT_PUBLIC_* at import time. Next inlines those at build; a plain
+// tsx process doesn't, and ~/env/server calls dotenv only in its module body —
+// after its own import of ~/env/client has already been evaluated. Losing
+// NEXT_PUBLIC_IMAGE_LOCATION that way makes getEdgeUrl emit a relative path.
+// Hence the dynamic import of the hashing service below.
+dotenv.config({ path: ['.env.development.local', '.env.local', '.env.development', '.env'] });
 
 const TARGETS = {
   prod: 'DATABASE_URL',
@@ -103,6 +111,7 @@ function parseArgs(argv: string[]) {
 }
 
 async function main() {
+  const { getPerceptualHash } = await import('~/server/services/orchestrator/orchestrator.service');
   const { target, dryRun, batchSize, concurrency, afterId } = parseArgs(process.argv.slice(2));
 
   const envVar = TARGETS[target];

@@ -256,6 +256,23 @@ export function computePerceptualHash(perceptual?: string) {
 export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
   const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
 
+  // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
+  // of failing, yielding a relative path the orchestrator can't fetch. Outside
+  // Next (a script importing this) that env can be unset, and every call would
+  // otherwise fail one orchestrator round-trip at a time with nothing to read.
+  if (!mediaUrl.startsWith('http')) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      message: `Refusing to hash a relative media url (${mediaUrl}) — NEXT_PUBLIC_IMAGE_LOCATION is unset`,
+      url,
+    }).catch(() => null);
+    console.error(
+      `[perceptual-hash] NEXT_PUBLIC_IMAGE_LOCATION is unset; resolved "${url}" to "${mediaUrl}"`
+    );
+    return undefined;
+  }
+
   try {
     const { data } = await submitWorkflow({
       client: internalOrchestratorClient,
