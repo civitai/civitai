@@ -2,6 +2,7 @@ import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetPaginatedCosmeticShopItemInput = z.infer<typeof getPaginatedCosmeticShopItemInput>;
 export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
@@ -66,7 +67,7 @@ export const upsertCosmeticInput = z
     videoUrl: z.string().nullish(),
     // Fields below are required when creating a new cosmetic (no id provided)
     name: z.string().min(1).optional(),
-    description: z.string().nullish(),
+    description: getSanitizedStringSchema().nullish(),
     type: z.enum(CosmeticType).optional(),
     source: z.enum(CosmeticSource).optional(),
     permanentUnlock: z.boolean().optional(),
@@ -84,7 +85,7 @@ export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemI
 export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
-  description: z.string().nullish(),
+  description: getSanitizedStringSchema().nullish(),
   videoUrl: z.string().nullish(),
   cosmeticId: z.number(),
   unitAmount: z.number(),
@@ -116,7 +117,7 @@ export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSe
 export const upsertCosmeticShopSectionInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
-  description: z.string().nullish(),
+  description: getSanitizedStringSchema().nullish(),
   placement: z.number().optional(),
   items: z.array(z.number()).optional(),
   image: comfylessImageSchema.nullish(),

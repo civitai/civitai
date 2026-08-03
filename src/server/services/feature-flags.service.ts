@@ -290,6 +290,10 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
+  // does NOT gate rendering — a sticker already in a comment or DM must render
+  // for everyone, or flipping this off orphans content that is already out there.
+  stickers: { availability: ['mod'], fliptKey: 'stickers' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

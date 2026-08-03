@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
+import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -179,8 +180,13 @@ export const getUserReactionByCommentId = ({
 
 export const createOrUpdateComment = async ({
   ownerId,
+  track,
   ...input
-}: CommentUpsertInput & { ownerId: number; locked: boolean }) => {
+}: CommentUpsertInput & {
+  ownerId: number;
+  locked: boolean;
+  track?: Parameters<typeof recordStickerUsage>[0]['track'];
+}) => {
   const { id, locked, ...commentInput } = input;
 
   // If we are editing, but the comment is locked
@@ -191,16 +197,40 @@ export const createOrUpdateComment = async ({
       message: 'This comment is locked and cannot be updated',
     });
 
-  const result = await dbWrite.comment.upsert({
-    where: { id: id ?? -1 },
-    create: { ...commentInput, userId: ownerId },
-    update: { ...commentInput },
-    select: {
-      id: true,
-      modelId: true,
-      content: true,
-      nsfw: true,
-    },
+  // Same rule as CommentV2: pay for stickers this edit added, so an empty
+  // comment edited to add stickers isn't free. Charge and write share one
+  // transaction so a failure can't debit uses and lose the comment.
+  const previous = id
+    ? await dbWrite.comment.findUnique({ where: { id }, select: { content: true } })
+    : null;
+
+  const { result, chargedStickers } = await dbWrite.$transaction(async (tx) => {
+    const charged = await spendStickerUses({
+      userId: ownerId,
+      surface: 'comment',
+      content: commentInput.content ?? '',
+      previousContent: previous?.content ?? '',
+      tx,
+    });
+    const row = await tx.comment.upsert({
+      where: { id: id ?? -1 },
+      create: { ...commentInput, userId: ownerId },
+      update: { ...commentInput },
+      select: {
+        id: true,
+        modelId: true,
+        content: true,
+        nsfw: true,
+      },
+    });
+    return { result: row, chargedStickers: charged };
+  });
+  recordStickerUsage({
+    track,
+    userId: ownerId,
+    charged: chargedStickers,
+    entityType: 'commentOld',
+    entityId: result.id,
   });
   await preventReplicationLag('commentModel', input.modelId);
   return result;

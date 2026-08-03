@@ -1,3 +1,4 @@
+import type * as PromClient from '~/server/prom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
@@ -75,7 +76,9 @@ describe('getShopSectionsWithItems viewer gating', () => {
     const sections = await getShopSectionsWithItems({});
 
     const where = capturedShopItemWhere();
-    expect(where.cosmetic).toEqual({ createdById: null });
+    // `type` excludes stickers until the flag is on; the createdById gate is
+    // what this test is about.
+    expect(where.cosmetic).toMatchObject({ createdById: null });
     expect(where.status).toBe('Published');
     expect(where.archivedAt).toBeNull();
     expect(where.OR).toEqual([{ availableTo: { gte: expect.any(Date) } }, { availableTo: null }]);
@@ -88,7 +91,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {
-    await getShopSectionsWithItems({ creatorShopEnabled: true });
+    await getShopSectionsWithItems({ creatorShopEnabled: true, stickersEnabled: true });
 
     const where = capturedShopItemWhere();
     expect(where.cosmetic).toEqual({});
@@ -96,7 +99,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
   });
 
   it('moderator: sees every status and creator items regardless of flag', async () => {
-    await getShopSectionsWithItems({ isModerator: true });
+    await getShopSectionsWithItems({ isModerator: true, stickersEnabled: true });
 
     const where = capturedShopItemWhere();
     expect(where.cosmetic).toEqual({});

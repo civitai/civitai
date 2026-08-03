@@ -3888,6 +3888,7 @@ enum CosmeticType {
   ContentDecoration
   ProfileDecoration
   ProfileBackground
+  Sticker
 }
 
 enum CosmeticSource {
@@ -3956,6 +3957,7 @@ model UserCosmetic {
   equippedToType CosmeticEntity?
   forId          Int? // Locks the cosmetic to a specific entity
   forType        CosmeticEntity?
+  remaining      Int? // Consumable balance; NULL = unlimited (every pre-existing row)
 
   @@id([userId, cosmeticId, claimKey])
 }
@@ -3993,6 +3995,7 @@ model CosmeticShopItem {
   reviewedById      Int?
   reviewedAt        DateTime?
   rejectionReason   String?
+  listed            Boolean   @default(true)
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]

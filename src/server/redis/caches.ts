@@ -55,8 +55,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  CosmeticType,
+  ModelStatus,
+  TagSource,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -166,6 +172,55 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+type UserOwnedStickerLookup = {
+  userId: number;
+  cosmeticIds: number[];
+};
+/**
+ * Sticker are owned, never equipped, so `userCosmeticCache` — which only holds
+ * equipped cosmetics — can't answer "may this user send this sticker".
+ */
+export const lookupOwnedSticker = async (ids: number[], fromWrite?: boolean) => {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const owned = await db.userCosmetic.findMany({
+    where: { userId: { in: goodIds }, cosmetic: { type: CosmeticType.Sticker } },
+    select: { userId: true, cosmeticId: true },
+  });
+  return owned.reduce((acc, { userId, cosmeticId }) => {
+    acc[userId] ??= { userId, cosmeticIds: [] };
+    if (!acc[userId].cosmeticIds.includes(cosmeticId)) acc[userId].cosmeticIds.push(cosmeticId);
+    return acc;
+  }, {} as Record<number, UserOwnedStickerLookup>);
+};
+
+export const userOwnedStickerCache = createCachedObject<UserOwnedStickerLookup>({
+  key: REDIS_KEYS.CACHES.USER_OWNED_STICKER,
+  idKey: 'userId',
+  staleWhileRevalidate: false,
+  lookupFn: lookupOwnedSticker,
+  // Deliberately minutes, not the day the caches around this one use: a stale
+  // entry means someone can't send an sticker they paid for, and the bulk-SQL
+  // cosmetic crons grant without surfacing whose entry to drop. Cheap to rebuild
+  // (one small row) and read once per message send.
+  ttl: 60 * 5,
+});
+
+/**
+ * Call wherever a UserCosmetic write already has the affected user ids in hand,
+ * including paths that can't grant an sticker today — a redundant delete costs
+ * nothing next to the Postgres write it follows. Paths that would need a query
+ * change to learn the ids are left to the TTL above instead.
+ */
+export async function refreshOwnedStickerCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  if (!ids.length) return;
+  // `refresh` is already best-effort internally; this catch is belt-and-braces
+  // because every caller runs it after a committed grant.
+  await userOwnedStickerCache.refresh(ids).catch(() => undefined);
+}
 
 type CosmeticLookup = {
   id: number;

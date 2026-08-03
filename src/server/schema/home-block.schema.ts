@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
@@ -19,7 +20,7 @@ const cosmeticShopSectionSchema = z.object({
 export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
-    description: z.string(),
+    description: getSanitizedStringSchema(),
     stackedHeader: z.boolean(),
     descriptionAlwaysVisible: z.boolean(),
     withIcon: z.boolean(),

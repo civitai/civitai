@@ -108,7 +108,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -2640,6 +2640,7 @@ export interface UserCosmetic {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
 }
 
 export interface CosmeticShopSection {
@@ -2675,6 +2676,7 @@ export interface CosmeticShopItem {
   reviewedById: number | null;
   reviewedAt: Date | null;
   rejectionReason: string | null;
+  listed: boolean;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
 }

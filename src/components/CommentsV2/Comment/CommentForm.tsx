@@ -8,6 +8,7 @@ import {
   useRootThreadContext,
 } from '~/components/CommentsV2/CommentsProvider';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
+import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import type { UpsertCommentV2Input } from '~/server/schema/commentv2.schema';
 import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
@@ -82,6 +83,8 @@ export const CommentForm = ({
   const { mutate, isPending: isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
       form.reset();
+      // Placements just spent uses, so the picker's counts are stale.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
       // if it has an id, just set the data with state
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.
@@ -171,7 +174,7 @@ export const CommentForm = ({
           innerRef={editorRef}
           name="content"
           disabled={isLoading}
-          includeControls={['formatting', 'link', 'mentions']}
+          includeControls={['formatting', 'link', 'mentions', 'sticker']}
           defaultSuggestions={suggestedMentions}
           placeholder={
             !data?.length ? 'Be the first to leave a comment...' : 'Type your comment...'
@@ -188,13 +191,31 @@ export const CommentForm = ({
           hideToolbar
         />
         {focused && (
-          <Group justify="flex-end">
-            <Button variant="default" size="xs" onClick={handleCancel}>
-              Cancel
-            </Button>
-            <Button type="submit" size="xs" loading={isLoading} disabled={!form.formState.isDirty}>
-              Comment
-            </Button>
+          <Group justify="space-between">
+            {/* This composer hides the toolbar, so the picker can't ride in it
+                the way it does on surfaces that show one. */}
+            <StickerPicker
+              position="top-start"
+              onSelect={(sticker) => {
+                editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug });
+                // Clears a "Cannot be empty" left over from an earlier blur:
+                // pre-submit, mode 'onBlur' won't re-validate on change alone.
+                void form.trigger('content');
+              }}
+            />
+            <Group gap="xs">
+              <Button variant="default" size="xs" onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="xs"
+                loading={isLoading}
+                disabled={!form.formState.isDirty}
+              >
+                Comment
+              </Button>
+            </Group>
           </Group>
         )}
       </Stack>

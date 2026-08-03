@@ -433,6 +433,7 @@ export const CosmeticType = {
   ContentDecoration: 'ContentDecoration',
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
+  Sticker: 'Sticker',
 } as const;
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 export const CosmeticSource = {

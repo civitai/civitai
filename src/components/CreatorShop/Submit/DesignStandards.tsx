@@ -63,29 +63,31 @@ export function DesignStandardsRow({ type }: { type: CosmeticType }) {
                   <List.Item key={r.key}>{r.label}</List.Item>
                 ))}
               </List>
-              <Paper withBorder radius="md" p={6} pl={8} bg="var(--mantine-color-default-hover)">
-                <Group align="center" wrap="nowrap" gap="sm">
-                  <Image
-                    src={template.url}
-                    alt="Template"
-                    w={40}
-                    h={40}
-                    fit="contain"
-                    radius="sm"
-                  />
-                  <Button
-                    component="a"
-                    href={template.url}
-                    download={template.downloadName}
-                    variant="light"
-                    size="xs"
-                    leftSection={<IconDownload size={14} />}
-                    style={{ flex: 1 }}
-                  >
-                    Start from template
-                  </Button>
-                </Group>
-              </Paper>
+              {template && (
+                <Paper withBorder radius="md" p={6} pl={8} bg="var(--mantine-color-default-hover)">
+                  <Group align="center" wrap="nowrap" gap="sm">
+                    <Image
+                      src={template.url}
+                      alt="Template"
+                      w={40}
+                      h={40}
+                      fit="contain"
+                      radius="sm"
+                    />
+                    <Button
+                      component="a"
+                      href={template.url}
+                      download={template.downloadName}
+                      variant="light"
+                      size="xs"
+                      leftSection={<IconDownload size={14} />}
+                      style={{ flex: 1 }}
+                    >
+                      Start from template
+                    </Button>
+                  </Group>
+                </Paper>
+              )}
             </Stack>
           </Popover.Dropdown>
         </Popover>

@@ -35,6 +35,7 @@ import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { validateCosmeticImage } from '~/components/CreatorShop/creator-shop.validation';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
@@ -52,11 +53,13 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import { CosmeticSource, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const formSchema = upsertCosmeticShopItemInput;
 
@@ -89,6 +92,7 @@ const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
   { value: CosmeticType.ContentDecoration, label: 'Content Decoration' },
   { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
   { value: CosmeticType.NamePlate, label: 'Name Plate' },
+  { value: CosmeticType.Sticker, label: 'Sticker' },
 ];
 
 const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
@@ -103,7 +107,8 @@ const isImageBasedCosmeticType = (type: CosmeticType) =>
   type === CosmeticType.Badge ||
   type === CosmeticType.ProfileDecoration ||
   type === CosmeticType.ContentDecoration ||
-  type === CosmeticType.ProfileBackground;
+  type === CosmeticType.ProfileBackground ||
+  type === CosmeticType.Sticker;
 
 /**
  * Inline cosmetic creator. Lets a moderator drop in an image and basic
@@ -119,8 +124,15 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [animated, setAnimated] = useState(false);
+  const [slug, setSlug] = useState('');
   const [imageId, setImageId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const features = useFeatureFlags();
+  // Mirrors the server gate on upsertCosmetic.
+  const typeOptions = features.stickers
+    ? cosmeticTypeOptions
+    : cosmeticTypeOptions.filter((o) => o.value !== CosmeticType.Sticker);
 
   const requiresImage = isImageBasedCosmeticType(type);
 
@@ -135,6 +147,24 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
         error: new Error(`File should not exceed ${formatBytes(maxSize)}`),
       });
       return;
+    }
+
+    // Client-side only, like every other cosmetic type — this catches the
+    // mistake, it doesn't guarantee the artwork.
+    if (type === CosmeticType.Sticker) {
+      const { checks, allRequiredPassed } = await validateCosmeticImage(file, type, maxSize);
+      if (!allRequiredPassed) {
+        showErrorNotification({
+          title: 'Artwork does not meet sticker requirements',
+          error: new Error(
+            checks
+              .filter((c) => !c.passed)
+              .map((c) => `${c.label}${c.detail ? ` (got ${c.detail})` : ''}`)
+              .join('; ')
+          ),
+        });
+        return;
+      }
     }
 
     const result = await uploadToCF(file);
@@ -165,6 +195,14 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       return;
     }
 
+    if (type === CosmeticType.Sticker && !isValidStickerSlug(slug)) {
+      showErrorNotification({
+        title: 'Invalid slug',
+        error: new Error(STICKER_SLUG_ERROR),
+      });
+      return;
+    }
+
     let data: Record<string, unknown> = {};
     if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) {
       data = { url: imageId, animated };
@@ -172,6 +210,8 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       data = { url: imageId };
     } else if (type === CosmeticType.ProfileBackground) {
       data = { url: imageId, type: MediaType.image };
+    } else if (type === CosmeticType.Sticker) {
+      data = { url: imageId, slug, animated };
     }
     // NamePlate gets `data: {}` — moderator can fill styling later via DB tools.
 
@@ -210,7 +250,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
         <Group grow>
           <Select
             label="Type"
-            data={cosmeticTypeOptions}
+            data={typeOptions}
             value={type}
             onChange={(value) => value && setType(value as CosmeticType)}
             allowDeselect={false}
@@ -242,6 +282,18 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           autosize
           minRows={2}
         />
+
+        {type === CosmeticType.Sticker && (
+          <TextInput
+            label="Slug"
+            description="Typed as :slug: to insert the sticker"
+            value={slug}
+            onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+            placeholder="e.g. party_cat"
+            error={slug.length > 0 && !isValidStickerSlug(slug) ? STICKER_SLUG_ERROR : undefined}
+            withAsterisk
+          />
+        )}
 
         {requiresImage ? (
           <div>
@@ -308,10 +360,16 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
           </Text>
         )}
 
-        {(type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) && (
+        {(type === CosmeticType.Badge ||
+          type === CosmeticType.ProfileDecoration ||
+          type === CosmeticType.Sticker) && (
           <Switch
             label="Animated"
-            description="Toggle on for animated GIF/APNG sources"
+            description={
+              type === CosmeticType.Sticker
+                ? 'Toggle on for animated WebP sources. Animated PNG is accepted but its frame count and rate are not checked.'
+                : 'Toggle on for animated GIF/APNG sources'
+            }
             checked={animated}
             onChange={(e) => setAnimated(e.currentTarget.checked)}
           />

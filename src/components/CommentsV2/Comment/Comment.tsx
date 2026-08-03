@@ -274,6 +274,7 @@ export function CommentContent({
                     allowCustomStyles={false}
                     withMentions
                     withProfanityFilter
+                    allowStickers
                   />
                 </LineClamp>
               </Box>

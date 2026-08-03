@@ -17,6 +17,8 @@ import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertI
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -31,6 +33,9 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { StickerEditNode } from '~/components/TipTap/StickerNode';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
@@ -138,6 +143,26 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
+  const addStickers = includeControls.includes('sticker');
+
+  // Autocomplete and the input rule are insertion paths just like the picker, so
+  // they answer to the same flag. StickerPicker gates itself at its own mount
+  // point; this is the equivalent for the two that don't go through it.
+  const stickersEnabled = useFeatureFlags().stickers && addStickers;
+  const { sticker: ownedStickers } = useOwnedSticker();
+  const { data: stickerBalances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: stickersEnabled,
+  });
+  // Exhausted stickers stay out of autocomplete and the input rule — offering
+  // one from a menu that never mentions the balance just fails at submit.
+  const availableStickers = useMemo(() => {
+    if (!stickersEnabled) return [];
+    const loaded = !!stickerBalances;
+    const balances = new Map((stickerBalances ?? []).map((b) => [b.cosmeticId, b.remaining]));
+    return ownedStickers
+      .filter((x) => balances.get(x.id) !== 0)
+      .map((x) => ({ ...x, remaining: loaded ? balances.get(x.id) ?? null : undefined }));
+  }, [stickersEnabled, ownedStickers, stickerBalances]);
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -214,9 +239,17 @@ export function RichTextEditor({
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
+    // Comment editors only. Verified rather than assumed: the four surfaces
+    // passing `includeControls: ['sticker']` are exactly the four comment
+    // editors, and nothing else loads comment content — so no editor that could
+    // legitimately hold a sticker span loses the node. Off these surfaces the
+    // remaining exposure was paste, and dropping the span on parse beats
+    // rendering it and having it vanish on save.
+    if (addStickers) arr.push(StickerEditNode);
 
     return arr;
   }, [
+    addStickers,
     addList,
     addFormatting,
     addColors,
@@ -278,6 +311,17 @@ export function RichTextEditor({
     if (editor && !editorRef.current) editorRef.current = editor;
   }, [editor]);
 
+  // Written into per-editor storage rather than passed as an extension option:
+  // ownership loads async, and changing the extension array rebuilds the editor.
+  useEffect(() => {
+    if (!editor) return;
+    // No early return on the flag: availableStickers is already [] when it's off,
+    // and skipping the write would leave stale availability in storage if the flag
+    // flips mid-session, keeping both insertion paths alive.
+    const storage = editor.extensionStorage.sticker;
+    if (storage) storage.available = availableStickers;
+  }, [editor, availableStickers]);
+
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({
     insertContentAtCursor: (value) => {
@@ -285,6 +329,11 @@ export function RichTextEditor({
         const currentPosition = editorRef.current.state.selection.$anchor.pos;
         editorRef.current.commands.insertContentAt(currentPosition, value);
       }
+    },
+    // Composers that hide the toolbar mount the picker themselves, so they need
+    // the command without the control. Same command the toolbar control calls.
+    insertSticker: (attributes) => {
+      editorRef.current?.chain().focus().setSticker(attributes).run();
     },
     focus: () => {
       if (editorRef.current && innerRef) {
@@ -393,6 +442,11 @@ export function RichTextEditor({
                 <InsertTimestampControl />
               </RTE.ControlsGroup>
             )}
+            {addStickers && (
+              <RTE.ControlsGroup>
+                <InsertStickerControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -431,6 +485,7 @@ export function RichTextEditor({
 
 export type EditorCommandsRef = {
   insertContentAtCursor: (value: string) => void;
+  insertSticker: (attributes: { id: number; slug?: string }) => void;
   focus: () => void;
 };
 
@@ -444,7 +499,8 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors'
-  | 'timestamp';
+  | 'timestamp'
+  | 'sticker';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -34,6 +35,8 @@ import {
   getAllImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
+import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
@@ -108,6 +111,16 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   const { id, videoUrl, name, description, type, source, permanentUnlock, data } = input;
 
   if (id) {
+    const existing = await dbWrite.cosmetic.findUnique({
+      where: { id },
+      select: { type: true, data: true },
+    });
+    await validateStickerCosmetic({
+      id,
+      type: type ?? existing?.type,
+      data: data ?? existing?.data,
+    });
+
     const previous =
       data !== undefined ? await dbRead.cosmetic.findUnique({ where: { id } }) : null;
     const cosmetic = await dbWrite.cosmetic.update({
@@ -135,6 +148,8 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   if (!name || !type || !source) {
     throw new Error('name, type, and source are required to create a cosmetic');
   }
+
+  await validateStickerCosmetic({ type, data });
 
   const cosmetic = await dbWrite.cosmetic.create({
     data: {
@@ -468,12 +483,14 @@ export const reorderCosmeticShopSections = async ({
 export const getShopSectionsWithItems = async ({
   isModerator,
   creatorShopEnabled,
+  stickersEnabled,
   userId,
   cosmeticTypes,
   sectionId,
 }: {
   isModerator?: boolean;
   creatorShopEnabled?: boolean;
+  stickersEnabled?: boolean;
   userId?: number;
 } & GetShopInput = {}) => {
   // Creator items are only visible to flagged viewers, so blocks only matter
@@ -505,7 +522,21 @@ export const getShopSectionsWithItems = async ({
         where: {
           shopItem: {
             cosmetic: {
-              ...((cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {}),
+              // Merged into ONE `type` filter. A second `type` key would silently
+              // overwrite the caller's requested types — with the flag off (the
+              // default for everyone), /shop?cosmeticTypes=Badge would return
+              // every non-sticker type instead of badges.
+              ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
+                ? {
+                    type: {
+                      ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
+                      // Stickers stay out of the official shop until the flag is
+                      // on. Rendering is unaffected — this hides the storefront
+                      // entry only.
+                      ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                    },
+                  }
+                : {}),
               // Creator-made cosmetics (createdById set — official items also
               // have an addedById, the mod who listed them) are gated behind
               // the creatorShop feature flag; a section of only creator items
@@ -520,8 +551,9 @@ export const getShopSectionsWithItems = async ({
             },
             archivedAt: null,
             // Creator items in official sections can lose their Published
-            // status after being featured (revert/reject) — hide those.
-            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published }),
+            // status after being featured (revert/reject), or be delisted by
+            // their creator while staying Published — hide both.
+            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published, listed: true }),
             OR: isModerator
               ? undefined
               : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
@@ -571,15 +603,18 @@ export const purchaseCosmeticShopItem = async ({
   viaShopUserId,
   payWith = 'default',
   buzzType = 'yellow',
+  stickersEnabled,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   buzzType?: BuzzSpendType;
+  stickersEnabled?: boolean;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
       id: true,
       status: true,
+      listed: true,
       cosmeticId: true,
       availableQuantity: true,
       availableFrom: true,
@@ -592,6 +627,7 @@ export const purchaseCosmeticShopItem = async ({
         select: {
           type: true,
           createdById: true,
+          data: true,
         },
       },
       _count: {
@@ -611,6 +647,19 @@ export const purchaseCosmeticShopItem = async ({
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
+    throw new Error('Cosmetic is not available');
+  }
+
+  // Delisted: still Published so it stays bundlable, but off individual sale.
+  if (!shopItem.listed) {
+    throw new Error('Cosmetic is not available');
+  }
+
+  // Every listing path filters stickers out when the flag is off, but filtered
+  // from a list is not the same as refused: with an item id in hand a buyer
+  // could otherwise pay for a sticker they can't place, since the picker is
+  // gated too. Refuse at the mutation, where the cosmetic is already loaded.
+  if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
     throw new Error('Cosmetic is not available');
   }
 
@@ -664,7 +713,8 @@ export const purchaseCosmeticShopItem = async ({
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
     shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
-    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
+    shopItem.cosmetic.type == CosmeticType.ProfileDecoration ||
+    shopItem.cosmetic.type == CosmeticType.Sticker;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
@@ -732,6 +782,9 @@ export const purchaseCosmeticShopItem = async ({
           userId,
           cosmeticId: shopItem.cosmeticId,
           claimKey: transactionId,
+          // Consumables grant a finite balance; everything else stays NULL,
+          // which reads as unlimited.
+          remaining: stickerUsesFromCosmeticData(shopItem.cosmetic.data),
         },
       });
 
@@ -748,6 +801,8 @@ export const purchaseCosmeticShopItem = async ({
 
       return userCosmetic;
     });
+
+    await refreshOwnedStickerCache([userId]);
 
     try {
       await withRetries(async () => {
