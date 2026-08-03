@@ -358,8 +358,17 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
       );
     }
     await purgeResizeCache({ url: url });
-  } catch (e) {
-    // do nothing
+  } catch (error) {
+    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
+    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    await logToAxiom({
+      type: 'error',
+      name: 'delete-image-from-s3-failed',
+      message: 'S3 delete failed; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 }
 

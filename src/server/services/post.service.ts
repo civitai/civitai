@@ -1283,6 +1283,10 @@ export const addPostImage = async ({
 
 export async function bustCachesForPosts(postIds: number | number[]) {
   const ids = Array.isArray(postIds) ? postIds : [postIds];
+  // `Prisma.join([])` throws. deleteImages drops the Image rows before this runs and deletes the
+  // S3 objects after, so throwing here on a batch of postless images strands them publicly
+  // reachable with no row left to find them by.
+  if (!ids.length) return;
   // Use dbWrite — bustCachesForPosts runs immediately after image/post writes
   // so the replica may not yet reflect the post.modelVersionId we need.
   // LEFT JOIN ModelVersion so Model3D-linked posts (modelVersionId = null,
