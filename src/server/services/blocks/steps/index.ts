@@ -401,11 +401,23 @@ export const STEP_TYPE_ACCEPTABLE_POSTURES: Readonly<
     //
     // So the `satisfies` above protects the LITERAL, and nothing at compile
     // time protects the transform between that literal and the exported
-    // allowlist. What actually catches a bad transform is the RUNTIME pair in
-    // the tests — "every listed posture is a DECLARED posture" and "every entry
-    // is single-valued" — which turn 4 red on exactly that mutation. If someone
-    // later normalizes values in here (case-fold, dedupe, append a default),
-    // those tests are the guard, not the type system.
+    // allowlist. The RUNTIME pair in the tests — "every listed posture is a
+    // DECLARED posture" and "every entry is single-valued" — is the guard.
+    //
+    // 🔴 BE EXACT ABOUT WHAT IT COVERS; an earlier revision of this very
+    // comment said those tests "turn 4 red on exactly that mutation", naming
+    // the type-widening one, and that was FALSE. Measured, three ways:
+    //
+    //   `[...postures] as string[]`      → 0 red  (a PURE TYPE widening; the
+    //                                      runtime values are unchanged, so
+    //                                      there is nothing for a runtime test
+    //                                      to see, and nothing to catch)
+    //   `[...postures, 'nope']`          → 2 red
+    //   `postures.map(x => x.toUpperCase())` → 4 red
+    //
+    // i.e. a transform that changes VALUES is caught; one that only widens the
+    // TYPE is caught by nothing and needs nothing. That is a narrower claim
+    // than the one it replaces, and it is the true one.
     Object.fromEntries(
       Object.entries(ACCEPTABLE_POSTURES_BY_TYPE).map(([type, postures]) => [
         type,
@@ -1113,11 +1125,13 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     // extracted `$type` while declaring something else.
     //
     // 🔴 HONEST LIMIT, same shape as clause 7's: this probes the CANONICAL
-    // params, so a `buildStep` that switches `$type` ON PARAMS can still
-    // diverge at request time. It is a floor, not a proof. Closing that
-    // completely means re-asserting at the router on the real submitted value,
-    // exactly as the resource-policy scan already does — recorded, not done
-    // here, because it belongs with the router's own submit-path guards.
+    // params, so a `buildStep` that switches `$type` ON PARAMS satisfies this
+    // clause and still diverges at request time. It is a floor, not a proof.
+    // That gap IS closed — by the request-time re-assert of the same equality
+    // in `blocks.router.ts`'s step submit path, beside the resource-policy
+    // re-assert that set the precedent, and covered by a router test using a
+    // params-dependent fixture that passes THIS clause. Do not read the limit
+    // above as an open hole; read it as the reason the router clause exists.
     if (built.$type !== step.orchestratorType) {
       throw new Error(
         `${vWhere}: declares orchestratorType '${step.orchestratorType}' but buildStep() emits ` +

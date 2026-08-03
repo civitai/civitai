@@ -1053,6 +1053,19 @@ describe('block step registry — declared $type vs built $type (clause 7a)', ()
     ).toThrow(/but buildStep\(\) emits 'textToImage'/);
   });
 
+  it('rejects a buildStep that returns a non-object — a NAMED error, not a TypeError', () => {
+    // 🔴 `buildStep` now runs for EVERY entry (7a needs it), so a bad return
+    // crashes module load for any entry. Both shapes fail closed; this pins the
+    // guard so the failure carries a clause name instead of a bare
+    // `TypeError: Cannot read properties of undefined`.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ buildStep: (() => undefined) as never })
+      )
+    ).toThrow(/buildStep\(\) must return an orchestrator step template/);
+  });
+
   it('NEGATIVE CONTROL: an agreeing entry passes', () => {
     expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
   });
