@@ -32,6 +32,7 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { InsertMarkdownControl } from '~/components/RichTextEditor/InsertMarkdownControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -138,6 +139,7 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
+  const addMarkdown = includeControls.includes('markdown');
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -393,6 +395,11 @@ export function RichTextEditor({
                 <InsertTimestampControl />
               </RTE.ControlsGroup>
             )}
+            {addMarkdown && (
+              <RTE.ControlsGroup>
+                <InsertMarkdownControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -434,7 +441,7 @@ export type EditorCommandsRef = {
   focus: () => void;
 };
 
-type ControlType =
+export type ControlType =
   | 'heading'
   | 'formatting'
   | 'list'
@@ -444,7 +451,8 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors'
-  | 'timestamp';
+  | 'timestamp'
+  | 'markdown';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
