@@ -61,7 +61,9 @@ describe('tailwind.config.js', () => {
   it('loads the container-queries plugin (the other formerly-TS require)', () => {
     const config = nodeRequire(configPath) as TailwindConfig;
 
-    expect(config.plugins.length).toBeGreaterThanOrEqual(2);
+    // Exactly 2, not >=2: the loose bound still passed if a plugin were dropped,
+    // which is the regression this test exists to catch.
+    expect(config.plugins.length).toBe(2);
     // tailwind plugins are `{ handler, config? }`; a failed require would have thrown
     // above, so this asserts the module actually produced a usable plugin.
     expect(config.plugins[0]).toHaveProperty('handler');
