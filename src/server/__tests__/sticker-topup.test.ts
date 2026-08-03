@@ -53,9 +53,17 @@ vi.mock('~/server/logging/client', () => ({
 
 const { purchaseStickerUses } = await import('~/server/services/sticker.service');
 
+// Every quantity in scope is a different number, so no assertion can confuse
+// two things the code could plausibly have read: the buyer, the creator and the
+// reseller are distinct ids, and the per-use price is deliberately NOT the floor
+// (a fixture at the floor cannot tell "read the creator's price" from "fell back
+// to the minimum"). Fixtures that collide are how a test comes to pass for the
+// wrong reason.
 const BUYER = 7;
 const CREATOR = 99;
+const RESELLER = 55;
 const COSMETIC_ID = 12;
+const PRICE_PER_USE = 25;
 
 const call = (overrides: Record<string, unknown> = {}) =>
   purchaseStickerUses({
@@ -88,15 +96,20 @@ describe('purchaseStickerUses', () => {
       name: 'party cat',
       type: 'Sticker',
       createdById: CREATOR,
-      data: { slug: 'party_cat', url: 'img', uses: 100, pricePerUse: 5 },
+      data: { slug: 'party_cat', url: 'img', uses: 100, pricePerUse: PRICE_PER_USE },
     });
-    findListing.mockResolvedValue({ id: 3, meta: {}, addedById: CREATOR });
+    // Listed by a reseller rather than by its creator: the interesting shape,
+    // not the degenerate one where both ids are the same person.
+    findListing.mockResolvedValue({ id: 3, meta: {}, addedById: RESELLER });
+    // Plain, not a `Once` chain: tests that care about the difference between
+    // the pre-charge read and the post-grant one queue their own, and a default
+    // chain here would be consumed before theirs ever ran.
     findHoldings.mockResolvedValue([{ remaining: 0 }]);
     getBlockedPairIds.mockResolvedValue([]);
     queryRaw.mockResolvedValue([{ remaining: 10 }]);
     createMultiAccountBuzzTransaction.mockResolvedValue({
       transactionCount: 1,
-      transactionIds: [{ accountType: 'yellow', amount: 50 }],
+      transactionIds: [{ accountType: 'yellow', amount: 250 }],
     });
     createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
     refreshOwnedStickerCache.mockResolvedValue(undefined);
@@ -166,8 +179,17 @@ describe('purchaseStickerUses', () => {
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
-  it('refuses a blocked pairing without revealing the block', async () => {
+  // Both sellers are checked, and they are different people in these fixtures —
+  // with one id standing for both, dropping either check stays green while a
+  // block against the reseller silently goes unenforced.
+  it('refuses a block against the sticker creator', async () => {
     getBlockedPairIds.mockResolvedValue([CREATOR]);
+    await expect(call()).rejects.toThrow(/no longer available/i);
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a block against the reseller who listed it', async () => {
+    getBlockedPairIds.mockResolvedValue([RESELLER]);
     await expect(call()).rejects.toThrow(/no longer available/i);
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
@@ -196,7 +218,7 @@ describe('purchaseStickerUses', () => {
 
   it('charges the per-use price times the quantity', async () => {
     await call({ quantity: 10 });
-    expect(createMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(50);
+    expect(createMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(250);
   });
 
   // Reads the statement rather than running it — no database here — but reads
@@ -236,35 +258,66 @@ describe('purchaseStickerUses', () => {
     const payouts = createBuzzTransaction.mock.calls.map((c) => c[0]);
     expect(payouts).toHaveLength(1);
     expect(payouts[0].toAccountId).toBe(CREATOR);
-    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(35);
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(175);
     // Never more than was collected, whatever the split.
-    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBeLessThanOrEqual(50);
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBeLessThanOrEqual(250);
   });
 
-  it('splits a blue-funded payout across colours without paying out more', async () => {
-    findListing.mockResolvedValue({ id: 3, meta: { acceptsBlueBuzz: true }, addedById: CREATOR });
+  // Asserts WHICH colour gets which share, not just that both appear. Blue is
+  // free, non-bankable Buzz and yellow is real money, so transposing the two
+  // pays a creator play money for what they earned — silently, per sale, in
+  // proportion to how much blue the buyer happened to spend.
+  it('pays each colour its own share of a blue-funded purchase', async () => {
+    findListing.mockResolvedValue({ id: 3, meta: { acceptsBlueBuzz: true }, addedById: RESELLER });
     createMultiAccountBuzzTransaction.mockResolvedValue({
       transactionCount: 2,
       transactionIds: [
-        { accountType: 'blue', amount: 20 },
-        { accountType: 'yellow', amount: 30 },
+        { accountType: 'blue', amount: 100 },
+        { accountType: 'yellow', amount: 150 },
       ],
     });
+
     await call({ quantity: 10, payWith: 'blue-first' });
+
     const payouts = createBuzzTransaction.mock.calls.map((c) => c[0]);
-    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(35);
-    expect(payouts.map((p) => p.toAccountType).sort()).toEqual(['blue', 'yellow']);
+    // 175 pool, 100/250 of the purchase funded in blue → floor(175 × 100/250).
+    expect(Object.fromEntries(payouts.map((p) => [p.toAccountType, p.amount]))).toEqual({
+      blue: 70,
+      yellow: 105,
+    });
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(175);
   });
 
-  // The floor case, executed rather than reasoned: 1 use at 5 Buzz is where
-  // integer rounding actually bites.
+  // The floor case, executed rather than reasoned: one use at the minimum is
+  // where integer rounding actually bites.
   it('never pays out more than it collected at the per-use floor', async () => {
+    findCosmetic.mockResolvedValue({
+      id: COSMETIC_ID,
+      name: 'party cat',
+      type: 'Sticker',
+      createdById: CREATOR,
+      data: { slug: 'party_cat', url: 'img', uses: 100, pricePerUse: 5 },
+    });
     await call({ quantity: 1 });
     const charged = createMultiAccountBuzzTransaction.mock.calls[0][0].amount;
     const paid = createBuzzTransaction.mock.calls.reduce((sum, c) => sum + c[0].amount, 0);
     expect(charged).toBe(5);
     expect(paid).toBe(3);
     expect(paid).toBeLessThan(charged);
+  });
+
+  // `transactionCount` is the sole check that money actually moved. Whether the
+  // external service counts a conflicted (already-charged) transaction toward it
+  // is not knowable in this repo — this pins which field the code trusts, so the
+  // assumption is written down rather than implied by fixtures that keep the two
+  // in agreement.
+  it('refuses when the count says nothing moved, whatever ids came back', async () => {
+    createMultiAccountBuzzTransaction.mockResolvedValue({
+      transactionCount: 0,
+      transactionIds: [{ accountType: 'yellow', amount: 250 }],
+    });
+    await expect(call()).rejects.toThrow(/error creating the transaction/i);
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   // Two tabs, a retry, a double-click. A shop purchase can't repeat; a top-up
@@ -284,7 +337,7 @@ describe('purchaseStickerUses', () => {
   });
 
   it('proceeds when the shown price still matches', async () => {
-    await expect(call({ expectedPricePerUse: 5 })).resolves.toBeTruthy();
+    await expect(call({ expectedPricePerUse: PRICE_PER_USE })).resolves.toBeTruthy();
   });
 
   // Everything between the grant committing and the payout is bookkeeping. Any
@@ -368,7 +421,7 @@ describe('purchaseStickerUses', () => {
       name: 'party cat',
       type: 'Sticker',
       createdById: BUYER,
-      data: { slug: 'party_cat', url: 'img', uses: 100, pricePerUse: 5 },
+      data: { slug: 'party_cat', url: 'img', uses: 100, pricePerUse: PRICE_PER_USE },
     });
     await call({ quantity: 10 });
     expect(createMultiAccountBuzzTransaction).toHaveBeenCalled();
