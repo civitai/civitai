@@ -173,11 +173,21 @@ export type UserMetricPrivacyDefaults = {
  * Derived from an audit of every writer of the `User.settings` JSONB column, since that
  * is the only thing this cache derives from. The three `hideModel*` booleans are
  * written by exactly ONE path — `setUserSetting`, reached from the account
- * Creator-Controls toggles — and that path busts this key in the same call. The two
- * writers that touch `settings` WITHOUT going through `setUserSetting` provably cannot
- * move these flags: `setDismissedAlerts` uses a `jsonb_set` scoped to the
- * `{dismissedAlerts}` path, and `updateCreatorShopSettings` read-merge-writes the blob
- * from a fresh in-transaction row read, overriding only `creatorShop`.
+ * Creator-Controls toggles — and that path busts this key in the same call. The THREE
+ * writers that touch `settings` WITHOUT going through `setUserSetting` do not move
+ * these flags: `setDismissedAlerts` uses a `jsonb_set` scoped to the
+ * `{dismissedAlerts}` path; `updateCreatorShopSettings` and
+ * `copyGallerySettingsToAllModelsByUser` (`model.service.ts`) each read-merge-write the
+ * blob from a fresh in-transaction row read, overriding only their own key
+ * (`creatorShop` / `gallerySettings` respectively).
+ *
+ * One caveat on those last two, so nobody reads this as a stronger guarantee than it
+ * is: both are whole-blob read-modify-writes at READ COMMITTED with no `FOR UPDATE`,
+ * so a `setUserSetting` landing between their read and their update is silently
+ * reverted. That is a lost update on the ROW, not a stale cache — no TTL at any value
+ * helps, because the cache would then be faithfully reporting a wrong row. It is a
+ * real pre-existing bug and deliberately out of scope here; it just means the correct
+ * claim is "cannot move these flags absent a lost-update race", not "provably cannot".
  *
  * So the TTL is NOT bounding a bypassing writer. What it bounds is two ways a CORRECT
  * write can still leave a wrong value cached, and in both the TTL is the only thing
@@ -196,11 +206,16 @@ export type UserMetricPrivacyDefaults = {
  * short enough to be a blip rather than a support ticket, which rules out a multi-hour
  * value however clean the writer audit is.
  *
- * An hour is the balance. Going 10min -> 1h removes 5/6 of the periodic re-fetches; the
- * next step up to a day would remove only a further ~4% of the original churn, so nearly
- * all of the available win is already banked at an hour, at 1/24th the worst-case
- * staleness. Memory does not enter into it — the cached working set is a rounding error
- * against the total keyspace, and each entry is three booleans.
+ * An hour is the balance. Periodic re-fetch rate is proportional to 1/TTL, so per entry
+ * per hour: 10min = 6, 1h = 1, 1day = 0.0417. Going 10min -> 1h removes (6-1)/6 = 83%
+ * of the periodic re-fetches; the next step up to a day would remove a further
+ * (1-0.0417)/6 = ~16% of the original churn, reaching ~99% cumulative. So an hour banks
+ * most — not almost all — of the available win, at 1/24th the worst-case staleness, and
+ * that trade is what the privacy-control argument above decides. (An earlier revision of
+ * this comment said "~4%" for that second step; that is 1/24, the fraction of churn
+ * REMAINING at a day, not the additional fraction removed. Do not re-derive it that way.)
+ * Memory does not enter into it — the cached working set is a rounding error against the
+ * total keyspace, and each entry is three booleans.
  *
  * If the bust is ever made durable (retry / outbox), this can go up. Until then, do not
  * raise it without re-running the `User.settings` writer audit above.
@@ -212,12 +227,24 @@ const METRIC_PRIVACY_DEFAULTS_TTL = CacheTTL.hour;
  * counters. Counted PER USER ID (not per call) so the ratio is a true per-entry hit
  * rate over a batched lookup, matching how `createCachedArray` reports.
  *
- * NOTE FOR WHOEVER BUILDS THE DASHBOARD/ALERT: these are LABELLED counters, so a label
- * child does not exist in the registry until its first `.inc()` — at which point it is
- * already 1. A `rate()`/`increase()` can therefore never observe the 0->1 step. That is
- * harmless here because both children materialize on the first request a process
- * serves, but it does mean a freshly-started process reports nothing for this cache
- * until it has served one, and a query must not treat that gap as a real zero.
+ * 🔴 NOTE FOR WHOEVER BUILDS THE DASHBOARD/ALERT: these are LABELLED counters, so a
+ * label child does not exist in the registry until its first `.inc()` — at which point
+ * it is already 1. A `rate()`/`increase()` can therefore never observe the 0->1 step.
+ *
+ * It is NOT true that both children materialize on the first request (an earlier
+ * revision of this comment claimed that). Both increments below are conditional, so a
+ * single request can only create ONE child: an all-hits batch never touches the miss
+ * child, and an all-misses batch never touches the hit child. Redis is shared rather
+ * than per-pod, so a freshly-rolled pod starts against a WARM cache and can serve many
+ * requests before its first miss.
+ *
+ * The exposed side is therefore the MISS child, and it gets more exposed exactly as
+ * this cache succeeds — a longer TTL makes misses rarer, which is the whole point of
+ * the TTL above. The loss is bounded (one scrape interval of accumulation, once per pod
+ * per child, per pod lifetime) so it is small, but it is a systematic DOWNWARD bias on
+ * the series you would use to prove the TTL change worked. Read the miss series by
+ * VALUE (e.g. `max_over_time`) rather than by `rate()` if you need it to be exact, and
+ * never read a fresh pod's silence as a real zero.
  */
 const METRIC_PRIVACY_CACHE_NAME = 'user-metric-privacy-defaults';
 const METRIC_PRIVACY_CACHE_TYPE = 'redisPacked';
