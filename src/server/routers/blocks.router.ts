@@ -1227,9 +1227,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { withdrawRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { withdrawRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
       try {
         await withdrawRequest({
@@ -1575,9 +1573,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1604,9 +1600,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1644,9 +1638,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1702,9 +1694,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1740,15 +1730,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
-      const { getAgentReport } = await import(
-        '~/server/services/blocks/app-review-report.service'
-      );
+      const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
       return getAgentReport(input.publishRequestId);
     }),
 
@@ -1773,9 +1759,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1809,9 +1793,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1828,27 +1810,23 @@ export const blocksRouter = router({
    * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
    * flag gate as previewRequest; no input.
    */
-  listActivePreviews: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Review previews are restricted to civitai team');
-      }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
-      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('The review sandbox is not enabled');
-      }
-      const { listActiveReviewPreviews } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
-      try {
-        return await listActiveReviewPreviews();
-      } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
-      }
-    }),
+  listActivePreviews: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Review previews are restricted to civitai team');
+    }
+    const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+      throw throwAuthorizationError('The review sandbox is not enabled');
+    }
+    const { listActiveReviewPreviews } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    try {
+      return await listActiveReviewPreviews();
+    } catch (err) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+    }
+  }),
 
   /**
    * Approve a pending publish request: pre-creates the OauthClient +
@@ -1860,9 +1838,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(approveRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { approveRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Approving publish requests is restricted to civitai team');
       }
@@ -2006,9 +1982,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(rejectRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { rejectRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { rejectRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Rejecting publish requests is restricted to civitai team');
       }
@@ -2066,8 +2040,8 @@ export const blocksRouter = router({
             : serviceCode === 'RATE_LIMITED'
             ? 'TOO_MANY_REQUESTS'
             : // A build-service outage is OUR fault, not a malformed request —
-              // reporting it as a 400 mislabels an incident as user error (and
-              // keeps it off the server-fault error board).
+            // reporting it as a 400 mislabels an incident as user error (and
+            // keeps it off the server-fault error board).
             serviceCode === 'TRIGGER_FAILED'
             ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
@@ -2081,195 +2055,193 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user) return [];
-      const rows = await dbRead.appBlockPublishRequest.findMany({
-        where: { submittedByUserId: ctx.user.id },
-        orderBy: { submittedAt: 'desc' },
-        take: 100,
+  listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const rows = await dbRead.appBlockPublishRequest.findMany({
+      where: { submittedByUserId: ctx.user.id },
+      orderBy: { submittedAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        appBlockId: true,
+        slug: true,
+        version: true,
+        status: true,
+        submittedAt: true,
+        reviewedAt: true,
+        rejectionReason: true,
+        approvalNotes: true,
+        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+        deployState: true,
+        deployDetail: true,
+        deployUpdatedAt: true,
+        fileSummary: true,
+        manifestDiffSummary: true,
+        appBlock: {
+          select: {
+            id: true,
+            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+            // declare a launchable page). PUBLIC subset only — never the raw manifest.
+            manifest: true,
+            _count: { select: { userSubscriptions: true } },
+          },
+        },
+      },
+    });
+    // Flatten _count onto each row so the UI doesn't have to dig through
+    // the relation. Pending-first-version + withdrawn-first-version rows
+    // have no appBlock (FK is set on approve) — surface null so the UI
+    // can render "—".
+    //
+    // Post kill_per_model_installs: model installs are subscription rows
+    // with target_model_ids populated. Compute the pinned-install count
+    // via a second targeted query rather than over-fetching subs.
+    type RawRow = (typeof rows)[number];
+    const appBlockIds = rows
+      .map((r: RawRow) => r.appBlock?.id)
+      .filter((id: string | undefined): id is string => !!id);
+    const pinnedCounts = appBlockIds.length
+      ? (
+          (await dbRead.blockUserSubscription.groupBy({
+            by: ['appBlockId'],
+            where: {
+              appBlockId: { in: appBlockIds },
+              scope: 'publisher_all_my_models',
+              slotId: { not: null },
+            },
+            _count: { _all: true },
+          })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
+        ).reduce<Record<string, number>>((acc, row) => {
+          acc[row.appBlockId] = row._count._all;
+          return acc;
+        }, {})
+      : {};
+
+    // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
+    // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
+    // live/removed listing state. A publish request stays `approved` after an owner
+    // unpublish, so the request status alone can't tell live from owner-hidden. One
+    // batched findMany (NOT per-row) keyed by appBlockId.
+    // Additive projection (advisory listing-completeness warning on
+    // /apps/my-submissions): the asset ids + key text fields + a screenshot
+    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
+    // helper below. Purely additive — the owner-controls fields are unchanged.
+    const listingByBlockId = new Map<
+      string,
+      {
+        id: string;
+        status: string;
+        iconId: number | null;
+        coverId: number | null;
+        description: string | null;
+        tagline: string | null;
+        category: string | null;
+        screenshotCount: number;
+      }
+    >();
+    if (appBlockIds.length) {
+      const listings = await dbRead.appListing.findMany({
+        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
         select: {
           id: true,
           appBlockId: true,
-          slug: true,
-          version: true,
           status: true,
-          submittedAt: true,
-          reviewedAt: true,
-          rejectionReason: true,
-          approvalNotes: true,
-          // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-          deployState: true,
-          deployDetail: true,
-          deployUpdatedAt: true,
-          fileSummary: true,
-          manifestDiffSummary: true,
-          appBlock: {
-            select: {
-              id: true,
-              // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-              // declare a launchable page). PUBLIC subset only — never the raw manifest.
-              manifest: true,
-              _count: { select: { userSubscriptions: true } },
-            },
-          },
+          iconId: true,
+          coverId: true,
+          description: true,
+          tagline: true,
+          category: true,
+          // Filtered COUNT — only screenshots whose Image is still live. A row
+          // whose Image was deleted (imageId → null via onDelete: SetNull) has
+          // no displayable asset, so it must not inflate the count, else the
+          // `no-screenshots` warning is a false-negative. Matches the
+          // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+          // in app-listing-assets.service.ts (buildAssetStatus).
+          _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
         },
       });
-      // Flatten _count onto each row so the UI doesn't have to dig through
-      // the relation. Pending-first-version + withdrawn-first-version rows
-      // have no appBlock (FK is set on approve) — surface null so the UI
-      // can render "—".
-      //
-      // Post kill_per_model_installs: model installs are subscription rows
-      // with target_model_ids populated. Compute the pinned-install count
-      // via a second targeted query rather than over-fetching subs.
-      type RawRow = (typeof rows)[number];
-      const appBlockIds = rows
-        .map((r: RawRow) => r.appBlock?.id)
-        .filter((id: string | undefined): id is string => !!id);
-      const pinnedCounts = appBlockIds.length
-        ? (
-            (await dbRead.blockUserSubscription.groupBy({
-              by: ['appBlockId'],
-              where: {
-                appBlockId: { in: appBlockIds },
-                scope: 'publisher_all_my_models',
-                slotId: { not: null },
-              },
-              _count: { _all: true },
-            })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
-          ).reduce<Record<string, number>>((acc, row) => {
-            acc[row.appBlockId] = row._count._all;
-            return acc;
-          }, {})
-        : {};
-
-      // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
-      // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
-      // live/removed listing state. A publish request stays `approved` after an owner
-      // unpublish, so the request status alone can't tell live from owner-hidden. One
-      // batched findMany (NOT per-row) keyed by appBlockId.
-      // Additive projection (advisory listing-completeness warning on
-      // /apps/my-submissions): the asset ids + key text fields + a screenshot
-      // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-      // helper below. Purely additive — the owner-controls fields are unchanged.
-      const listingByBlockId = new Map<
-        string,
-        {
-          id: string;
-          status: string;
-          iconId: number | null;
-          coverId: number | null;
-          description: string | null;
-          tagline: string | null;
-          category: string | null;
-          screenshotCount: number;
-        }
-      >();
-      if (appBlockIds.length) {
-        const listings = await dbRead.appListing.findMany({
-          where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-          select: {
-            id: true,
-            appBlockId: true,
-            status: true,
-            iconId: true,
-            coverId: true,
-            description: true,
-            tagline: true,
-            category: true,
-            // Filtered COUNT — only screenshots whose Image is still live. A row
-            // whose Image was deleted (imageId → null via onDelete: SetNull) has
-            // no displayable asset, so it must not inflate the count, else the
-            // `no-screenshots` warning is a false-negative. Matches the
-            // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
-            // in app-listing-assets.service.ts (buildAssetStatus).
-            _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
-          },
-        });
-        for (const l of listings) {
-          if (l.appBlockId)
-            listingByBlockId.set(l.appBlockId, {
-              id: l.id,
-              status: l.status,
-              iconId: l.iconId,
-              coverId: l.coverId,
-              description: l.description,
-              tagline: l.tagline,
-              category: l.category,
-              screenshotCount: l._count.screenshots,
-            });
-        }
+      for (const l of listings) {
+        if (l.appBlockId)
+          listingByBlockId.set(l.appBlockId, {
+            id: l.id,
+            status: l.status,
+            iconId: l.iconId,
+            coverId: l.coverId,
+            description: l.description,
+            tagline: l.tagline,
+            category: l.category,
+            screenshotCount: l._count.screenshots,
+          });
       }
+    }
 
-      // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
-      // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
-      // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
-      // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
-      // `orderBy desc` (ONE query, latest per listing), only over removed listings —
-      // mirrors the off-site `listMySubmissions` approach.
-      const removedListingIds = [...listingByBlockId.values()]
-        .filter((l) => l.status === 'removed')
-        .map((l) => l.id);
-      const lastEvents = removedListingIds.length
-        ? await dbRead.appListingModerationEvent.findMany({
-            where: { appListingId: { in: removedListingIds } },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            distinct: ['appListingId'],
-            select: { appListingId: true, action: true },
-          })
-        : [];
-      const lastActionByListingId = new Map(
-        lastEvents
-          .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
-          .map((e) => [e.appListingId, e.action])
-      );
+    // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
+    // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
+    // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
+    // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
+    // `orderBy desc` (ONE query, latest per listing), only over removed listings —
+    // mirrors the off-site `listMySubmissions` approach.
+    const removedListingIds = [...listingByBlockId.values()]
+      .filter((l) => l.status === 'removed')
+      .map((l) => l.id);
+    const lastEvents = removedListingIds.length
+      ? await dbRead.appListingModerationEvent.findMany({
+          where: { appListingId: { in: removedListingIds } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : [];
+    const lastActionByListingId = new Map(
+      lastEvents
+        .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+        .map((e) => [e.appListingId, e.action])
+    );
 
-      type RowWithCount = (typeof rows)[number];
-      return rows.map((r: RowWithCount) => {
-        const counts = r.appBlock?._count;
-        const appBlockId = r.appBlock?.id;
-        const manifest = r.appBlock?.manifest;
-        const { appBlock: _drop, ...rest } = r;
-        // userSubscriptionCount keeps the historical meaning ("blanket +
-        // pinned subscriptions for this app"); modelInstallCount is the
-        // pinned-subscription subset, mirroring what the pre-migration
-        // model_block_installs row count meant.
-        const totalSubs = counts?.userSubscriptions ?? null;
-        const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
-        const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
-        return {
-          ...rest,
-          modelInstallCount: pinnedCount,
-          userSubscriptionCount: totalSubs,
-          // The backing on-site listing id (owner unpublish/republish/history target)
-          // + its TRUE lifecycle status, and — for a removed listing — the last mod
-          // action (owner-hidden vs mod-removed). Null when no backing listing exists
-          // (e.g. a pending first-version request, or a pre-W13 backfill gap).
-          appListingId: listing?.id ?? null,
-          listingStatus: listing?.status ?? null,
-          lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
-          // Advisory listing-completeness problems (missing assets + empty key
-          // fields). Empty when there's no backing listing yet (a pending first
-          // version) — nothing to flag until a listing row exists.
-          problems: listing
-            ? computeListingProblems({
-                iconId: listing.iconId,
-                coverId: listing.coverId,
-                screenshotCount: listing.screenshotCount,
-                description: listing.description,
-                tagline: listing.tagline,
-                category: listing.category,
-              }).problems
-            : [],
-          // Whether the manifest declares a launchable page (drives the Open-live →
-          // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
-          // subset only.
-          hasPage: !!toPublicBlockManifest(manifest).hasPage,
-        };
-      });
-    }),
+    type RowWithCount = (typeof rows)[number];
+    return rows.map((r: RowWithCount) => {
+      const counts = r.appBlock?._count;
+      const appBlockId = r.appBlock?.id;
+      const manifest = r.appBlock?.manifest;
+      const { appBlock: _drop, ...rest } = r;
+      // userSubscriptionCount keeps the historical meaning ("blanket +
+      // pinned subscriptions for this app"); modelInstallCount is the
+      // pinned-subscription subset, mirroring what the pre-migration
+      // model_block_installs row count meant.
+      const totalSubs = counts?.userSubscriptions ?? null;
+      const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
+      const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
+      return {
+        ...rest,
+        modelInstallCount: pinnedCount,
+        userSubscriptionCount: totalSubs,
+        // The backing on-site listing id (owner unpublish/republish/history target)
+        // + its TRUE lifecycle status, and — for a removed listing — the last mod
+        // action (owner-hidden vs mod-removed). Null when no backing listing exists
+        // (e.g. a pending first-version request, or a pre-W13 backfill gap).
+        appListingId: listing?.id ?? null,
+        listingStatus: listing?.status ?? null,
+        lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+        // Advisory listing-completeness problems (missing assets + empty key
+        // fields). Empty when there's no backing listing yet (a pending first
+        // version) — nothing to flag until a listing row exists.
+        problems: listing
+          ? computeListingProblems({
+              iconId: listing.iconId,
+              coverId: listing.coverId,
+              screenshotCount: listing.screenshotCount,
+              description: listing.description,
+              tagline: listing.tagline,
+              category: listing.category,
+            }).problems
+          : [],
+        // Whether the manifest declares a launchable page (drives the Open-live →
+        // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
+        // subset only.
+        hasPage: !!toPublicBlockManifest(manifest).hasPage,
+      };
+    });
+  }),
 
   /**
    * W5 v0 — reflection surface for /apps/installed. One row per app the
@@ -2281,16 +2253,12 @@ export const blocksRouter = router({
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
   // /apps/installed page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
-  listMyScopeGrants: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      if (!ctx.user) return [];
-      const { listMyScopeGrants } = await import(
-        '~/server/services/blocks/user-app-surface.service'
-      );
-      return listMyScopeGrants(ctx.user.id);
-    }),
+  listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    if (!ctx.user) return [];
+    const { listMyScopeGrants } = await import('~/server/services/blocks/user-app-surface.service');
+    return listMyScopeGrants(ctx.user.id);
+  }),
 
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
@@ -2409,9 +2377,9 @@ export const blocksRouter = router({
       // Ceiling = manifest.scopes ∩ approvedScopes. The user may only consent
       // to scopes inside that ceiling; anything else is dropped.
       const manifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
-        ? ((block.manifest as { scopes: unknown[] }).scopes.filter(
+        ? (block.manifest as { scopes: unknown[] }).scopes.filter(
             (s): s is string => typeof s === 'string'
-          ))
+          )
         : [];
       const approved = new Set(block.approvedScopes ?? []);
       const ceiling = new Set(manifestScopes.filter((s) => approved.has(s)));
@@ -2472,12 +2440,10 @@ export const blocksRouter = router({
    */
   // GA-relax (gotcha #66): returns only the caller's own subscriptions
   // (listUserSubscriptions(ctx.user.id)). moderator→protected + flag below.
-  listMySubscriptions: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      return BlockRegistry.listUserSubscriptions(ctx.user!.id);
-    }),
+  listMySubscriptions: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    return BlockRegistry.listUserSubscriptions(ctx.user!.id);
+  }),
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
@@ -2495,41 +2461,39 @@ export const blocksRouter = router({
    * `ctx.user.id`; returns the all-false shape when the flag is dark so
    * the sub-nav degrades to just the always-on tabs.
    */
-  getNavSummary: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const allFalse = {
-        hasInstalls: false,
-        hasSubmissions: false,
-        hasApprovedApps: false,
-        isReviewer: false,
-      };
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
-      const user = ctx.user;
-      if (!user) return allFalse;
+  getNavSummary: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const allFalse = {
+      hasInstalls: false,
+      hasSubmissions: false,
+      hasApprovedApps: false,
+      isReviewer: false,
+    };
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+    const user = ctx.user;
+    if (!user) return allFalse;
 
-      const [install, submission, approvedApp] = await Promise.all([
-        dbRead.blockUserSubscription.findFirst({
-          where: { userId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlockPublishRequest.findFirst({
-          where: { submittedByUserId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlock.findFirst({
-          where: { app: { userId: user.id }, status: 'approved' },
-          select: { id: true },
-        }),
-      ]);
+    const [install, submission, approvedApp] = await Promise.all([
+      dbRead.blockUserSubscription.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlockPublishRequest.findFirst({
+        where: { submittedByUserId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlock.findFirst({
+        where: { app: { userId: user.id }, status: 'approved' },
+        select: { id: true },
+      }),
+    ]);
 
-      return {
-        hasInstalls: install !== null,
-        hasSubmissions: submission !== null,
-        hasApprovedApps: approvedApp !== null,
-        isReviewer: isAppReviewer(user),
-      };
-    }),
+    return {
+      hasInstalls: install !== null,
+      hasSubmissions: submission !== null,
+      hasApprovedApps: approvedApp !== null,
+      isReviewer: isAppReviewer(user),
+    };
+  }),
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
@@ -4214,13 +4178,14 @@ export const blocksRouter = router({
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error: claims.reviewRunForReal === true
-              ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
-                `spent this review session, this generation costs ${cost}, ` +
-                `session cap is ${buzzCap}`
-              : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
-                `across your installed apps, this generation costs ${cost}, ` +
-                `daily cap is ${buzzCap}`,
+            error:
+              claims.reviewRunForReal === true
+                ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
+                  `spent this review session, this generation costs ${cost}, ` +
+                  `session cap is ${buzzCap}`
+                : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+                  `across your installed apps, this generation costs ${cost}, ` +
+                  `daily cap is ${buzzCap}`,
             // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
             // when empty, so this reply is byte-identical whenever nothing was
             // substituted.
@@ -4277,7 +4242,7 @@ export const blocksRouter = router({
                   ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
                   : appSpend.reason === 'unavailable'
                   ? 'generation temporarily unavailable — please retry shortly'
-                  : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+                  : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
               // #3520 exit 3 — quotes `cost` with no workflow. Carries only the
               // caller's own requested/applied version ids, so it does NOT
               // weaken the deliberately number-free message above.
@@ -4432,9 +4397,7 @@ export const blocksRouter = router({
         // failed submit doesn't permanently burn the app's daily ceiling.
         // Best-effort; present only for non-dev tokens.
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
         // F4 — mirror the daily refund for the dev-session reservation so a failed
@@ -4640,9 +4603,7 @@ export const blocksRouter = router({
           const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
           // `isPayoutEligibleBuzz` already narrowed accountType to green|yellow,
           // both valid `BuzzSpendType`s; size===1 ⇒ every paid entry shares it.
-          const paidType = hasPaidDebit
-            ? (paidEntries[0].accountType as BuzzSpendType)
-            : undefined;
+          const paidType = hasPaidDebit ? (paidEntries[0].accountType as BuzzSpendType) : undefined;
 
           // paidType is set iff hasPaidDebit; otherwise fall to the conservative
           // free floor (getBlockAllowedAccountTypes[0] === 'blue' in both branches).
@@ -4773,16 +4734,14 @@ export const blocksRouter = router({
    * spendable types PLUS the creator payout pools the spendable-only
    * getMyBuzzBalance omits). MUTATION + `buzz:read:self` consent, self-bound.
    */
-  getMyBuzzAccounts: publicProcedure
-    .input(getMyBuzzAccountsInput)
-    .mutation(async ({ input }) => {
-      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
-      const accounts = await getUserBuzzAccount({
-        accountId: userId, // SELF-BOUND — never client input.
-        accountTypes: [...blockBuzzAccountTypes],
-      });
-      return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
-    }),
+  getMyBuzzAccounts: publicProcedure.input(getMyBuzzAccountsInput).mutation(async ({ input }) => {
+    const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+    const accounts = await getUserBuzzAccount({
+      accountId: userId, // SELF-BOUND — never client input.
+      accountTypes: [...blockBuzzAccountTypes],
+    });
+    return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
+  }),
 
   /**
    * HOST-MEDIATED per-modelVersion generation-compensation read for the
@@ -5208,68 +5167,66 @@ export const blocksRouter = router({
    * the per-app dropdown on /apps/revenue. OauthClient.userId is the
    * single source of truth for app ownership in v1.
    */
-  getMyApps: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const user = ctx.user as SessionUser;
-      const apps = await dbRead.appBlock.findMany({
-        where: { app: { userId: user.id } },
-        select: {
-          id: true,
-          blockId: true,
-          appId: true,
-          status: true,
-          manifest: true,
-          app: { select: { name: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+  getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const user = ctx.user as SessionUser;
+    const apps = await dbRead.appBlock.findMany({
+      where: { app: { userId: user.id } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        app: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-      // One groupBy across all of the user's apps so the request
-      // doesn't N+1 against the attribution table. Skip when there
-      // are no apps — pointless query.
-      const lifetimeByApp = apps.length
-        ? await dbRead.blockBuzzAttribution.groupBy({
-            by: ['appBlockId'],
-            where: {
-              appOwnerUserId: user.id,
-              status: { in: ['confirmed', 'paid_out'] },
-            },
-            _sum: { appOwnerShareCents: true },
-            _count: true,
-          })
-        : [];
-      type LifetimeRow = {
-        appBlockId: string;
-        _sum: { appOwnerShareCents: number | null };
-        _count: number;
-      };
-      const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
-        (lifetimeByApp as LifetimeRow[]).map((r) => [
-          r.appBlockId,
-          { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
-        ])
-      );
+    // One groupBy across all of the user's apps so the request
+    // doesn't N+1 against the attribution table. Skip when there
+    // are no apps — pointless query.
+    const lifetimeByApp = apps.length
+      ? await dbRead.blockBuzzAttribution.groupBy({
+          by: ['appBlockId'],
+          where: {
+            appOwnerUserId: user.id,
+            status: { in: ['confirmed', 'paid_out'] },
+          },
+          _sum: { appOwnerShareCents: true },
+          _count: true,
+        })
+      : [];
+    type LifetimeRow = {
+      appBlockId: string;
+      _sum: { appOwnerShareCents: number | null };
+      _count: number;
+    };
+    const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
+      (lifetimeByApp as LifetimeRow[]).map((r) => [
+        r.appBlockId,
+        { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
+      ])
+    );
 
-      type AppRow = {
-        id: string;
-        blockId: string;
-        appId: string;
-        status: string;
-        manifest: unknown;
-        app: { name: string } | null;
-      };
-      return (apps as AppRow[]).map((a) => ({
-        id: a.id,
-        blockId: a.blockId,
-        appId: a.appId,
-        status: a.status,
-        appName: a.app?.name ?? null,
-        manifest: a.manifest as Record<string, unknown>,
-        lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
-        lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
-      }));
-    }),
+    type AppRow = {
+      id: string;
+      blockId: string;
+      appId: string;
+      status: string;
+      manifest: unknown;
+      app: { name: string } | null;
+    };
+    return (apps as AppRow[]).map((a) => ({
+      id: a.id,
+      blockId: a.blockId,
+      appId: a.appId,
+      status: a.status,
+      appName: a.app?.name ?? null,
+      manifest: a.manifest as Record<string, unknown>,
+      lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
+      lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
+    }));
+  }),
 
   /**
    * Phase 3 (git-push self-service) — return the developer's clone URL +
@@ -5356,7 +5313,9 @@ export const blocksRouter = router({
       // the embedded basic-auth credential, which Forgejo accepts for git).
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       const instructions = [
         `# Clone your app repo (credential is embedded in the URL):`,
@@ -5494,7 +5453,9 @@ export const blocksRouter = router({
             // BlockManifestValidator re-checks it below (keys must be declared
             // scopes, values non-empty ≤500 chars) — this bound is just a coarse
             // request-size guard.
-            scopeJustifications: z.record(z.string().min(1).max(128), z.string().max(500)).optional(),
+            scopeJustifications: z
+              .record(z.string().min(1).max(128), z.string().max(500))
+              .optional(),
             publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
             targets: z
               .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())
@@ -5771,7 +5732,9 @@ export const blocksRouter = router({
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       return {
         notYetAvailable: false as const,
@@ -5930,7 +5893,10 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   }
   const userId = parseSubjectUserId(claims.sub);
   if (userId == null) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'estimate requires authenticated viewer' });
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
@@ -6133,13 +6099,14 @@ async function submitCustomComfyWorkflow(opts: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error: claims.reviewRunForReal === true
-          ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
-            `spent this review session, this generation may cost up to ${ceiling}, ` +
-            `session cap is ${buzzCap}`
-          : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
-            `across your installed apps, this generation may cost up to ${ceiling}, ` +
-            `daily cap is ${buzzCap}`,
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
+              `spent this review session, this generation may cost up to ${ceiling}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+              `across your installed apps, this generation may cost up to ${ceiling}, ` +
+              `daily cap is ${buzzCap}`,
       },
     };
   }
@@ -6207,9 +6174,7 @@ async function submitCustomComfyWorkflow(opts: {
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
         await refundBlockBuzzSpend(buzzCapKey, ceiling);
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
         // No money moved → release the idempotency claim so a genuine retry runs.
@@ -6278,9 +6243,7 @@ async function submitCustomComfyWorkflow(opts: {
     // submit doesn't permanently burn the session ceiling. Best-effort; present
     // only when an active dev tunnel was reserved above.
     if (devSessionReserve) {
-      const { refundDevSessionBuzz } = await import(
-        '~/server/services/blocks/dev-tunnel.service'
-      );
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
       await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
     }
     // No resolved submit → no money moved; release the idempotency claim so a
@@ -6302,11 +6265,7 @@ async function submitCustomComfyWorkflow(opts: {
   // orchestrator id (never the failed/whatif sentinels). The dev-session id is
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
-  if (
-    snapshot.workflowId &&
-    snapshot.workflowId !== 'failed' &&
-    snapshot.workflowId !== 'whatif'
-  ) {
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
     await persistCustomComfySettle({
       workflowId: snapshot.workflowId,
       buzzCapKey,
@@ -6370,8 +6329,7 @@ async function submitCustomComfyWorkflow(opts: {
         statusCode: snapshot.status === 'failed' ? 500 : 200,
         detail: {
           action: 'workflow.submit',
-          amount:
-            typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
         },
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
@@ -6667,6 +6625,37 @@ async function submitStepWorkflow(opts: {
   // a timeout on a fixed-price step would be a liveness knob and stamping one
   // here would imply a Buzz-cap relationship that does not exist.
   const built = step.buildStep(params);
+
+  // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
+  // submitted. Same shape and same reason as the entitlement re-assert below,
+  // on the axis every `$type`-keyed guard depends on.
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7a. The registry's load-time check
+  // asserts `buildStep(canonicalParamsFor(v)).$type === orchestratorType` for
+  // each variant — the CANONICAL params. A `buildStep` that switches its
+  // `$type` ON PARAMS therefore registers cleanly and diverges only at request
+  // time, when the untrusted iframe supplies the params that flip it. That is
+  // not hypothetical: it was demonstrated by execution in review against the
+  // load-time check alone.
+  //
+  // What that buys an attacker without this clause is the whole point:
+  // `runStepModeration` (above) dispatches on the DECLARED posture, so a step
+  // declaring `'none'` that builds a text-producing `$type` reaches the
+  // orchestrator with no audit — the exact shape the registry's posture gate
+  // exists to prevent. Load time proved a property of one fixed input; this
+  // proves it of THIS input.
+  //
+  // Placed before the quote and before every reservation, so a rejection costs
+  // no orchestrator call and has nothing to refund.
+  if (built.$type !== step.orchestratorType) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares orchestratorType '${step.orchestratorType}' but the ` +
+        `submitted step is '${built.$type}' — every $type-keyed guard, including the ` +
+        'moderation-posture constraint, was evaluated against a type this step does not submit',
+    });
+  }
 
   // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
   // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis

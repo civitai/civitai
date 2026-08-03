@@ -267,6 +267,187 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
 ] as const;
 
 /**
+ * ORCHESTRATOR `$type` → the moderation postures ACCEPTABLE for that type.
+ *
+ * 🔴 WHY THIS EXISTS. `moderationPosture` is SELF-DECLARED by the entry, and
+ * every other clause only checks the declaration against ITSELF: clause 1 asks
+ * "does the declared posture have a handler", clauses 1a/5a ask "does the
+ * declared posture's own field exist and return something". Nothing asked
+ * whether the declaration MATCHES WHAT THE STEP ACTUALLY DOES. So a
+ * `chatCompletion` entry declaring `'promptAudit'` — auditing its input,
+ * emitting unscanned free text — registered cleanly and passed every check.
+ * The gate whose entire purpose is "a text-producing step cannot register until
+ * someone answers the policy question" was satisfiable by answering a DIFFERENT
+ * question.
+ *
+ * This is the same defect class as `auditableText` returning `''` (clause 5a)
+ * and `extractOutput` returning `[]` (clause 8), one level up: there the field
+ * was satisfiable by a no-op, here the FIELD ITSELF was satisfiable by naming
+ * the wrong axis.
+ *
+ * 🔴 THIS MAP IS ONLY HALF THE CONTROL. It is keyed on `orchestratorType`,
+ * which the entry author also writes, so on its own it checks one declaration
+ * against another. CLAUSE 7a — `buildStep(...).$type === orchestratorType` —
+ * is what ties that key to the type actually submitted. Weaken 7a and this map
+ * becomes advisory.
+ *
+ * 🔴 A SET, NOT A LADDER, AND DELIBERATELY SO. Modelling postures as a
+ * strength ordering (`none` < `promptAudit` < `textOutput`) would bake in a
+ * claim nobody has made — that `'textOutput'`, once implemented, also audits
+ * input. It might; that is a design decision for whoever implements it, and
+ * encoding it here as an ordering would hide it. Membership states only what is
+ * acceptable, per type, with no transitive claim.
+ *
+ * 🔴 RESIDUAL GAP, STATED RATHER THAN PAPERED OVER. This constrains the types
+ * LISTED. A text-producing `$type` nobody listed is unconstrained, exactly as
+ * before. The alternative — inferring text-production from the output shape —
+ * is the sniffing this file already rejects for `auditableText` ("sniffing for
+ * string-valued fields would audit a Civitai image URL"), and it would be
+ * *more* fragile here because it would run against a sample the entry author
+ * also wrote. The mitigation is that adding an entry is a reviewed PR and this
+ * map is the place review looks.
+ *
+ * 🔴 THE FREE-TEXT-*INPUT* AXIS IS DELIBERATELY OUT OF SCOPE, and saying so is
+ * the point. An earlier revision listed `textToSpeech` (free text in, audio
+ * out) with `['promptAudit', 'textOutput']`. That was wrong twice: the second
+ * value was exactly the subsumption claim the SET-NOT-A-LADDER note above
+ * disclaims, and the criterion was half-applied — if text-IN qualifies, so do
+ * `aceStepAudio` (`lyrics`), `imageGen`, `videoGen`, `polyGen`, `wdTagging`
+ * and roughly a dozen more, none of which were listed. A partially-applied
+ * rule gives false comfort, so the rule here is the narrower one: free-text
+ * OUTPUT.
+ *
+ * 🔴 THAT RULE IS NARROWER, NOT COMPLETE — an earlier revision called it
+ * "complete" and review disproved it. Uncovered types whose OUTPUT carries free
+ * text include `imageResourceTraining` (`sampleImagesPrompts[]` — echoed user
+ * prompts, the SAME rationale used to list `echo` below, which is a live
+ * inconsistency), `mediaRating.blockedReason`, `modelParseMetadata.metadata`
+ * (a `__metadata__` header out of a user-uploaded safetensors), the
+ * `modelClamScan` / `modelPickleScan` `output` + `skipReason` fields, and
+ * `qwenImageBench.errors`. They are NOT listed because whether each is really
+ * a free-text surface a block could publish is a judgment a domain owner should
+ * make, not one to settle silently in this commit. Listing the candidates is
+ * the honest middle: the next person to add a text-producing entry starts from
+ * a named set rather than from "complete".
+ *
+ * An unlisted text-IN type registering as `'none'` skips an
+ * audit it should run — a real gap, RECORDED AND NOT CLOSED, and a different
+ * shape of problem because `'promptAudit'` is implemented and so that entry
+ * would at least be registrable once someone notices.
+ *
+ * Enumerated from the generated `@civitai/client` `$type` literals, not from
+ * `src/**` usage — the same correction the registry's Tranche 1 note records:
+ * grepping usage enumerates what is CALLED, not what EXISTS.
+ */
+/**
+ * 🔴 `satisfies`, NOT a cast, and that distinction is load-bearing. The literal
+ * has to be CONTEXTUALLY TYPED for a mistyped posture (`'textOputput'`) to be a
+ * compile error. Writing it as `Object.create(null) as Record<…>` — the obvious
+ * way to get the null prototype below — removes that context and a typo
+ * compiles clean, which was measured, not assumed. Declaring the literal here
+ * with `satisfies` keeps the check; `Object.assign` then carries it onto a
+ * null-prototype target without widening it back.
+ */
+const ACCEPTABLE_POSTURES_BY_TYPE = {
+  // 🔴 THE INCLUSION CRITERION, and it is exactly one thing: this type's OUTPUT
+  // carries free text. The prompt audit does not cover generated text at all,
+  // so `'promptAudit'` is never an acceptable answer here — declaring it would
+  // audit the input and ship the output unscanned. Every entry is therefore a
+  // single value, which is what keeps this map free of any claim that one
+  // posture subsumes another (see the SET-NOT-A-LADDER note above).
+  chatCompletion: ['textOutput'],
+  mediaCaptioning: ['textOutput'],
+  audioCaptioning: ['textOutput'],
+  transcription: ['textOutput'],
+  // An LLM prompt rewriter: free text in AND out (`enhancedPrompt`,
+  // `recommendations[]`, `issues[].description` on its output type).
+  promptEnhancement: ['textOutput'],
+  // Returns `modelReason` — a free-text rationale — alongside its verdict.
+  xGuardModeration: ['textOutput'],
+  // Echoes caller-supplied `message` back out. 🔴 NOTE THE RATIONALE DOES NOT
+  // FIT THIS ONE CLEANLY, and pretending otherwise is how `textToSpeech` got in:
+  // for `echo` the output IS the input, so `'promptAudit'` would in fact cover
+  // the whole surface. It is constrained to `'textOutput'` as the conservative
+  // choice — that is a real cost (an `echo` entry cannot register until
+  // `'textOutput'` is implemented) accepted deliberately, because relaxing it
+  // means asserting that auditing the input suffices for a text-emitting step,
+  // which is the subsumption judgment this map declines to make anywhere else.
+  echo: ['textOutput'],
+} satisfies Record<string, readonly StepModerationPosture[]>;
+
+/**
+ * 🔴 THE ARRAYS ARE FROZEN TOO, AND THAT IS NOT BELT-AND-BRACES.
+ * `Object.freeze` is SHALLOW: freezing only the outer object leaves every
+ * posture array mutable, and `readonly` is a compile-time fiction that a plain
+ * `arr.push('none')` walks straight through at runtime — after which a
+ * `chatCompletion` entry declaring `'none'` registers cleanly. That was
+ * demonstrated by execution in review, not hypothesised. This module loads
+ * before any request context, so the window is small, but "small window on a
+ * spend-path trust root" is not a reason to leave a mutable allowlist.
+ */
+export const STEP_TYPE_ACCEPTABLE_POSTURES: Readonly<
+  Record<string, readonly StepModerationPosture[]>
+> = Object.freeze(
+  Object.assign(
+    Object.create(null) as Record<string, readonly StepModerationPosture[]>,
+    // 🔴 NO `as` CAST HERE — it was unnecessary, and removing dead type
+    // assertions off a spend-path allowlist is worth doing. But BE PRECISE
+    // ABOUT WHAT THAT BOUGHT, because the obvious reading is wrong and was
+    // measured: removing the cast does NOT restore element-type checking on
+    // this transform. `Object.assign`'s intersection result swallows it either
+    // way — changing this `.map` to produce `readonly string[]` instead of
+    // `readonly StepModerationPosture[]` compiles clean WITH the cast and
+    // WITHOUT it, verified both ways.
+    //
+    // So the `satisfies` above protects the LITERAL, and nothing at compile
+    // time protects the transform between that literal and the exported
+    // allowlist. The RUNTIME pair in the tests — "every listed posture is a
+    // DECLARED posture" and "every entry is single-valued" — is the guard.
+    //
+    // 🔴 BE EXACT ABOUT WHAT IT COVERS; an earlier revision of this very
+    // comment said those tests "turn 4 red on exactly that mutation", naming
+    // the type-widening one, and that was FALSE. Measured, three ways:
+    //
+    //   `[...postures] as string[]`      → 0 red  (a PURE TYPE widening; the
+    //                                      runtime values are unchanged, so
+    //                                      there is nothing for a runtime test
+    //                                      to see, and nothing to catch)
+    //   `[...postures, 'nope']`          → 2 red
+    //   `postures.map(x => x.toUpperCase())` → 4 red
+    //
+    // i.e. a transform that changes VALUES is caught; one that only widens the
+    // TYPE is caught by nothing and needs nothing. That is a narrower claim
+    // than the one it replaces, and it is the true one.
+    Object.fromEntries(
+      Object.entries(ACCEPTABLE_POSTURES_BY_TYPE).map(([type, postures]) => [
+        type,
+        Object.freeze([...postures]),
+      ])
+    )
+  )
+);
+
+/**
+ * The postures acceptable for an orchestrator `$type`, or `undefined` when the
+ * type carries no declared constraint (every posture is acceptable, which is
+ * the pre-existing behaviour).
+ */
+export function acceptablePosturesFor(
+  orchestratorType: string
+): readonly StepModerationPosture[] | undefined {
+  // 🔴 THE NULL PROTOTYPE ON THE MAP IS WHAT MAKES THIS BARE INDEX SAFE, and it
+  // is a control rather than a style choice — the same one `./moderation`
+  // documents on its handler table. A plain object literal inherits from
+  // `Object.prototype`, so an entry declaring `orchestratorType: 'toString'`
+  // would index to `Object.prototype.toString` — TRUTHY — and the clause below
+  // would then call `.includes` on a FUNCTION and throw a raw TypeError out of
+  // registry load, or under any other comparison read as a satisfied
+  // constraint. With a null prototype every non-own key reads `undefined` and
+  // the type is treated as unconstrained, which is the pre-existing behaviour.
+  return STEP_TYPE_ACCEPTABLE_POSTURES[orchestratorType];
+}
+
+/**
  * Fields every registered step declares, regardless of billing mode.
  *
  * `P` is the step's bounded param type (inferred from `paramSchema`).
@@ -730,6 +911,58 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     );
   }
 
+  // (1b) POSTURE ↔ ORCHESTRATOR `$type` AGREEMENT. Without it, a
+  // `chatCompletion` entry declaring `'promptAudit'` registers cleanly, reads
+  // as covered, and emits unscanned free text.
+  //
+  // 🔴 WHAT THIS CLAUSE IS AND IS NOT — READ BEFORE TRUSTING IT. It reads the
+  // posture against `orchestratorType`, which the entry author ALSO WRITES. On
+  // its own that makes it a check against a second declaration, not against
+  // reality: an author could declare a benign `orchestratorType`, build
+  // `$type: 'chatCompletion'`, and walk straight past it. An earlier revision
+  // of this comment claimed the opposite — that this was "the only clause that
+  // reads the declaration against something the entry author did not also
+  // write" — and that claim was FALSE and was caught in review. It is recorded
+  // here rather than quietly deleted because in a code-reviewed trust root the
+  // comment IS the control: a reviewer who reads "already anchored" is a
+  // reviewer who stops checking.
+  //
+  // What makes it a real control is CLAUSE 7a, which asserts
+  // `buildStep(...).$type === orchestratorType` per variant, TOGETHER WITH the
+  // request-time re-assert of the same equality in the router's step submit
+  // path. Neither is sufficient alone; if either is weakened, this clause
+  // degrades to a speed bump.
+  //
+  // 🔴 BE PRECISE ABOUT WHICH ONE BUYS WHAT — an earlier revision of this
+  // comment said "1b + 7a together tie the posture to the type actually
+  // submitted" and that was ALSO an overclaim, in the same shape as the one
+  // above it: 7a probes CANONICAL params only, so a `buildStep` that switches
+  // its `$type` ON PARAMS satisfies 7a at load and diverges at request time.
+  // Review demonstrated exactly that by execution. The load-time pair binds
+  // the DECLARED shape; only the router's re-assert binds the SUBMITTED one.
+  //
+  // Placed AFTER clause 1 on purpose. For the honest declaration
+  // (`chatCompletion` + `'textOutput'`) clause 1 fires first with the accurate
+  // "no implemented handler" message; this clause is what catches the DISHONEST
+  // one. Reversing the order would report both shapes as a type mismatch and
+  // hide the real reason the honest entry cannot register yet.
+  //
+  // 🟢 Known rough edge, deliberately not reordered: a `$type`-constrained
+  // entry declaring `'promptAudit'` WITHOUT `auditableText` fires clause 1a
+  // first, telling the author to add a field that this clause then rejects
+  // anyway. Moving 1b above 1a would fix the two-step, but 1a's reverse
+  // direction is a genuine control for a different shape, and splitting the
+  // moderation clauses around it costs more clarity than the dead end does.
+  const acceptablePostures = acceptablePosturesFor(step.orchestratorType);
+  if (acceptablePostures !== undefined && !acceptablePostures.includes(step.moderationPosture)) {
+    throw new Error(
+      `${where}: orchestratorType '${step.orchestratorType}' requires moderationPosture ` +
+        `${acceptablePostures.map((p) => `'${p}'`).join(' or ')}, but the entry declares ` +
+        `'${step.moderationPosture}' — the declared posture does not cover the moderation ` +
+        'surface this step actually produces'
+    );
+  }
+
   // (2) At least one variant, or nothing below can be enumerated.
   if (step.variants.length === 0) {
     throw new Error(`${where}: must declare at least one variant`);
@@ -863,8 +1096,52 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     // the unimplemented `staticAllowlist` gate (clause 11): an entry whose
     // params can carry an AIR cannot honestly declare `'none'`, and declaring
     // `'staticAllowlist'` fails at load until someone implements and reviews it.
+    // 🔴 BUILT FOR EVERY ENTRY, not just `'none'`-policy ones as before, because
+    // clause 7a below needs it unconditionally. That widens the blast radius of
+    // a `buildStep` that throws or returns a non-object — it now crashes module
+    // load for ANY entry — so the shape is checked here, with a clause name
+    // attached, rather than surfacing as a bare `TypeError` on `built.$type`.
+    const built = step.buildStep(parsed.data);
+    if (built === null || typeof built !== 'object') {
+      throw new Error(
+        `${vWhere}: buildStep() must return an orchestrator step template, got ${typeof built}`
+      );
+    }
+
+    // (7a) THE DECLARED `$type` MUST BE THE ONE ACTUALLY BUILT.
+    //
+    // 🔴 THIS IS WHAT ANCHORS CLAUSE 1b, AND WITHOUT IT THAT CLAUSE IS A SPEED
+    // BUMP RATHER THAN A CONTROL. `orchestratorType` is a self-declared field
+    // and the router submits `buildStep(...).$type` (`blocks.router.ts`, the
+    // step submit branch) — NOT the declared one. So before this clause an
+    // entry could declare a benign, unconstrained `orchestratorType`, build
+    // `$type: 'chatCompletion'`, and register cleanly with
+    // `moderationPosture: 'none'`: clause 1b saw the benign declaration, and
+    // the orchestrator got the chat step. Verified by execution against this
+    // file, not reasoned about.
+    //
+    // It hardens clause 9 for free by the same argument — that clause also
+    // reads the DECLARED type, so a divergent entry could shadow a natively
+    // extracted `$type` while declaring something else.
+    //
+    // 🔴 HONEST LIMIT, same shape as clause 7's: this probes the CANONICAL
+    // params, so a `buildStep` that switches `$type` ON PARAMS satisfies this
+    // clause and still diverges at request time. It is a floor, not a proof.
+    // That gap IS closed — by the request-time re-assert of the same equality
+    // in `blocks.router.ts`'s step submit path, beside the resource-policy
+    // re-assert that set the precedent, and covered by a router test using a
+    // params-dependent fixture that passes THIS clause. Do not read the limit
+    // above as an open hole; read it as the reason the router clause exists.
+    if (built.$type !== step.orchestratorType) {
+      throw new Error(
+        `${vWhere}: declares orchestratorType '${step.orchestratorType}' but buildStep() emits ` +
+          `'${built.$type}' — the router submits the BUILT type, so every $type-keyed guard ` +
+          '(the moderation-posture constraint, the natively-extracted check) would be reading ' +
+          'a type this step does not actually submit, and output extraction would never resolve'
+      );
+    }
+
     if (step.resourcePolicy.kind === 'none') {
-      const built = step.buildStep(parsed.data);
       if (containsAirReference(built.input)) {
         throw new Error(
           `${vWhere}: resourcePolicy 'none' is contradicted — buildStep() emitted an AIR ` +
