@@ -9,8 +9,9 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
 ## Structure
 
 - `src/infra/helpers.ts` — shared query helpers (`jsonArrayFrom`/`jsonObjectFrom` reads, `toJson` writes).
-- `src/<domain>.db.ts` — one query module per domain (`reports.db.ts`, `images.db.ts`, …), exported at the
-  subpath `@civitai/db-queries/<domain>`.
+- `src/<domain>.db.ts` — one query module per domain, exported at the subpath `@civitai/db-queries/<domain>`.
+  Only the `tag.db.ts` **exemplar** exists today; domain modules are (re)ported on demand, per cutover, from
+  current `main` (see the migration plan) rather than kept ahead of their consumers where they'd drift.
 
 ## Client access — executor injection
 
@@ -20,7 +21,7 @@ no boot-time wiring (no `connect()`, no globalThis, no proxies). Each app builds
 **existing** pools and passes them in.
 
 ```ts
-// query module — src/reports.db.ts
+// a query module (illustrative)
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
@@ -64,7 +65,7 @@ return the result/`Promise`. Do **not** return an un-executed query builder for 
 - **Prefer a generic `update<Entity>` over narrow single-column setters.** Each entity has one
   `update<Entity>(db, input: Updateable<DB['<Entity>']> & { id: number })` (`{ id, ...data }`), which stamps
   `updatedAt` automatically when the table has an `@updatedAt` column, and a `update<Entity>Many(db, { ids } &
-  Updateable<…>)` bulk variant where needed (guarding the empty-id case). A trivial `SET <one column> WHERE id`
+Updateable<…>)` bulk variant where needed (guarding the empty-id case). A trivial `SET <one column> WHERE id`
   belongs at the call site as `updateX(db, { id, <col>: value })`, **not** a bespoke `set<Entity><Column>`
   function. Keep a named function only when it (a) sets **two or more** columns as a specific semantic
   transition (e.g. `setImageAppealRestored`), (b) needs a jsonb/`CASE`/expression or stored-proc write (the
@@ -115,12 +116,34 @@ inferred type says `Date`/`number`. Parse those fields where a real `Date`/`bigi
 - **jsonb columns**: wrap the value in `toJson()`. node-postgres serializes a plain object fine but turns a JS
   array into a Postgres array literal (`{1,2}`) — wrong for jsonb. `toJson()` is unambiguous for both:
   `.set({ meta: toJson(metaObject) })`.
-- **`@updatedAt` columns are NOT auto-set.** Prisma bumped them client-side; Kysely does not, and there is no
-  DB trigger. A ported `UPDATE` must set it explicitly (`.set({ ..., updatedAt: new Date() })`) OR the app must
-  install the shared updated-at plugin / DB trigger before porting write-heavy domains (see the plan doc).
+- **`@updatedAt` is handled by a plugin — don't set it by hand.** Prisma bumped `@updatedAt` client-side;
+  Kysely doesn't. The app installs `updatedAtPlugin` (exported here) on its write client, which auto-stamps
+  `updatedAt` on every `UPDATE` to an `@updatedAt` table (the table set is generated from the schema). A ported
+  write just sets its own columns. **Consumers must install the plugin** (main app: `src/server/db/kyselyDb.ts`)
+  — a client without it silently stops bumping `updatedAt`. To _deliberately not_ bump (the source used raw
+  `$executeRaw` to dodge it — e.g. a scan recompute that must not reorder a "recently updated" feed), opt out
+  with `keepUpdatedAt`: `.set({ ..., updatedAt: keepUpdatedAt })`. The plugin only rewrites plain `UPDATE`s —
+  INSERTs and `ON CONFLICT DO UPDATE` still set `updatedAt` explicitly.
+- **Postgres enum-ARRAY columns need a parser.** pg has no parser for an array of a user-defined enum (dynamic
+  oid), so a `SomeEnum[]` column reads back as the raw `{a,b}` literal string. Consumers call
+  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup (main app:
+  `src/instrumentation.node.ts`) so those columns parse to `string[]`. Scalar enums are fine without it.
 - **Nested writes** (Prisma `connect`/`connectOrCreate`/nested `create`): decompose into explicit statement
   functions, and have a compose function open `db.transaction().execute((trx) => …)` and pass `trx` as each
-  statement's `db`.
+  statement's `db`. See **Tag links** below for the canonical example.
+
+### Tag links (connectOrCreate / sync)
+
+Porting a Prisma `tagsOnModels`-style nested `connectOrCreate`/`deleteMany`: decompose into a
+`sync<Entity>Tags(db, { entityId, existingTagIds, newTagNames })` run inside the upsert transaction. It (1)
+unlinks tags not in the kept set (empty kept-set ⇒ unlink all), (2) creates brand-new tags by name via the
+shared `upsertTagsByName(db, names, target)` — **one batched `ON CONFLICT DO NOTHING` insert + one id lookup**,
+not a per-tag loop — (3) links kept + new ids in one idempotent batch. See `syncModelTags`.
+
+When a second simple tag join lands (Post/Article/Collection/Bounty — **not** the Image tag system, which has
+required `source`/`attributes` columns), promote to a generic `syncEntityTags(db, { joinTable, entityColumn,
+… })`. It needs `db.dynamic.ref` + a contained cast — Kysely can't statically type a dynamic table/column pair
+(same limitation as an abstract `getById`) — behind typed per-entity wrappers.
 
 ## Correctness rules
 
@@ -165,7 +188,7 @@ it('short-circuits an empty id list without touching the DB', async () => {
 });
 ```
 
-See [`src/reports.db.test.ts`](src/reports.db.test.ts) for the full example (Actioned vs non-Actioned set
+See [`src/tag.db.test.ts`](src/tag.db.test.ts) for a full example (insert/update/delete and the batched-upsert
 clauses, the single-row `setReportStatus`, and the empty-array guard).
 
 ### 2. Behavior + execution-plan checks (required for hot paths, needs a live DB)
@@ -176,14 +199,14 @@ writes) plus `explainLast()`/`explainAll()`, which `EXPLAIN` (no ANALYZE) the co
 Postgres: it parses + plans the statement without running it, so a query whose columns/joins/types/proc
 signatures don't resolve fails here even though the compile test passed. Env-gated (`TEST_DATABASE_URL`, or
 the root `.env` `DATABASE_URL` locally); the suite `describe.skipIf(!h.hasDb)`-skips when no DB is reachable.
-Wrap it and destroy the client in `afterAll`. See [`src/reports.db.explain.test.ts`](src/reports.db.explain.test.ts).
+Wrap it and destroy the client in `afterAll`. See [`src/tag.db.explain.test.ts`](src/tag.db.explain.test.ts).
 Stricter plan-regression assertions (no seq-scan on a hot path) need a prod-like dataset — dev-DB planner
 choices vary with table size — so keep those against real data, not this suite.
 
 ## Example
 
 ```ts
-// src/reports.db.ts
+// example query module (illustrative)
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
