@@ -89,7 +89,7 @@ function makeFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
   // testing nothing they claim to test. So the built type FOLLOWS the declared
   // one unless a test overrides `buildStep` explicitly, which is precisely what
   // the clause-7a tests do.
-  if (!('buildStep' in overrides)) {
+  if (overrides.buildStep === undefined) {
     merged.buildStep = (p: unknown) => ({
       $type: merged.orchestratorType,
       input: { value: (p as FixtureParams).value },
@@ -948,9 +948,14 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     const declared = new Set(
       [...generated.matchAll(/\$type\??: '([A-Za-z0-9_]+)'/g)].map((m) => m[1])
     );
-    expect(declared.size, 'parsed no $type literals — the regex or the file moved').toBeGreaterThan(
-      10
-    );
+    // 🔴 A LOOSE FLOOR HERE IS THE WHOLE RISK: a regex that half-matches would
+    // still clear a small threshold, and every key would still be found, so the
+    // test would pass while observing a fraction of the enumeration. The real
+    // count is ~43; 30 is tight enough that a half-broken regex fails loudly.
+    expect(
+      declared.size,
+      'parsed too few $type literals — the regex or the generated file moved'
+    ).toBeGreaterThan(30);
     for (const key of Object.keys(STEP_TYPE_ACCEPTABLE_POSTURES)) {
       expect(declared, `'${key}' is not a $type in the generated client`).toContain(key);
     }
@@ -1052,7 +1057,11 @@ describe('block step registry — declared $type vs built $type (clause 7a)', ()
     expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
   });
 
-  it('every SHIPPED entry agrees, on every variant', () => {
+  // 🔴 REDUNDANT WITH THE LOAD-TIME GATE, labelled rather than left to look
+  // like independent coverage: `assertStepInvariants` runs at module import, so
+  // an entry violating 7a crashes the import before this test can collect. It
+  // documents the invariant; it cannot independently fail.
+  it('every SHIPPED entry agrees, on every variant (redundant with load-time gate)', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
         const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
