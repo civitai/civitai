@@ -46,7 +46,9 @@ export const ACTION_GLYPH_ICONS: Record<PrimaryActionGlyph, Icon> = {
   launch: IconPlayerPlay,
   /** Leaves civitai.com in a new tab (`target="_blank"` + `rel="noopener noreferrer"`). */
   external: IconExternalLink,
-  /** OAuth connect affordance (stubbed until the cutover wires it). */
+  /** OAuth connect affordance — the inert stub for a connect listing with NO
+   *  destination. A connect listing WITH an https `externalUrl` takes the
+   *  `external` glyph via `visit`, like any other off-site app. */
   connect: IconPlugConnected,
   /** Informational — no launch, no navigation off-site, and no target to go to. */
   info: IconInfoCircle,
@@ -101,8 +103,11 @@ export function detailActionGlyph(mode: DetailActionMode): PrimaryActionGlyph {
  * already ships for this action, on both the card and the recents rail.
  *
  * `AppListingCard` is the live caller. `getListingCta` still does not emit
- * `'connect'` (the off-site OAuth case routes to `'detail'`), so that arm remains
- * unreachable from live data; it is mapped for totality over the type.
+ * `'connect'` at all: an off-site connect listing now takes the `'visit'` arm
+ * when it carries an https `externalUrl` and `'detail'` when it does not, so the
+ * `'connect'` arm remains unreachable from live data and is mapped for totality
+ * over the type. (The DETAIL view-model does still emit `connect`, for a connect
+ * listing with no destination — `detailActionGlyph`'s arm is live.)
  */
 export function cardActionGlyph(action: ListingCtaAction): PrimaryActionGlyph {
   switch (action) {
