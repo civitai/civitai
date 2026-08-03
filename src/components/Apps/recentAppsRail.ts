@@ -206,6 +206,105 @@ export function selectChromeRecentApps(
     .slice(0, opts.limit);
 }
 
+/**
+ * The card fields reconciliation reads. A `Pick` rather than the whole
+ * `ListingCard` so a caller can pass anything listing-shaped and so this stays
+ * honest about what it consumes.
+ */
+export type RecentReconcileCard = Pick<
+  ListingCard,
+  'id' | 'slug' | 'name' | 'iconUrl' | 'kindData'
+>;
+
+/**
+ * Repair persisted recents from the listings the page has ALREADY loaded.
+ *
+ * 🔴 THE DEFECT THIS FIXES. `resolveRecentApp` reads `hasPage: entry.hasPage ===
+ * true`, so an entry that never RECORDED the field is `false` — and a `false`
+ * routes to `/apps/store-preview/<slug>` under an EYE ("read about it") for an
+ * app the viewer has been RUNNING. The entries that hit it are the ones
+ * `MarketplaceBody.recordRecent` wrote — `{id, blockId, name, iconUrl}`, with no
+ * `kind`, no `hasPage` and no `slug`. A real viewer's localStorage was read while
+ * diagnosing this: 7 of 8 entries were exactly that shape, so the eye was the
+ * rail's DEFAULT rendering, not an edge case.
+ *
+ * Nothing heals it on its own. `handleOpenRecent` re-persists whatever
+ * `resolveRecentApp` produced, so the resolved `false` is written straight back —
+ * clicking the tile CANNOT fix it. Only a real visit to `/apps/run/<slug>` ever
+ * writes `hasPage: true`.
+ *
+ * So: the store page already holds the server's answer for every card on screen.
+ * Match the persisted entries against it and take the card's values.
+ *
+ * 🔴 MATCH KEYS — why THREE, and why none of them is `entry.slug` alone. A legacy
+ * entry HAS NO `slug`, so a slug-keyed join matches zero rows, upgrades nothing,
+ * and ships a change that passes every gate while altering nothing on screen.
+ * Each key below is looked up in its OWN namespace, in this order:
+ *   1. `entry.id` → `card.kindData.appBlockId`. The on-site de-dup contract: BOTH
+ *      on-site writers key `id` on the AppBlock id (see `toRecentAppFromListing`).
+ *   2. `entry.id` → `card.id`. The off-site contract — an off-site listing has no
+ *      AppBlock, so the AppListing id is its only key.
+ *   3. `entry.blockId` (else `entry.slug`) → `card.slug`. For an on-site app the
+ *      listing slug IS the AppBlock `block_id` (`app-listing-mapper.ts` →
+ *      `slug: ab.blockId`), which is what makes the legacy `{id, blockId}` shape
+ *      joinable at all.
+ *
+ * 🔴 UPGRADE, NEVER DROP. An entry that matches nothing is returned UNTOUCHED.
+ * A recents entry is not evidence a listing is missing — it is far more likely on
+ * page 2, behind a `kind`/`category` filter, or simply not in the loaded set.
+ * Filtering on a failed match would silently empty a returning viewer's rail,
+ * which is the exact failure the resolve-don't-drop design exists to avoid.
+ *
+ * 🔴 A CORRECTION, IN BOTH DIRECTIONS — not a promotion. The card is the server's
+ * current truth, so an app that has LOST its page loses the play glyph too. A
+ * fill-in-the-blanks variant (`entry.hasPage ?? card.hasPage`) would leave the
+ * rail offering `/apps/run/<slug>` — a guaranteed 404 — under an "Open" label.
+ * That is why the card's values WIN rather than merely filling gaps, and why a
+ * stale `blockId` cannot survive on an entry the card says is off-site (it would
+ * point the app-chrome menu at the WRONG app).
+ *
+ * Built by delegating to `toRecentAppFromListing`, so a reconciled entry is
+ * byte-identical to what a fresh open of that card would persist — one rule, one
+ * place. Two properties follow and are pinned by tests: `id` is preserved (it is
+ * the de-dup key and the rail's ordering handle, so reconciliation must not churn
+ * it), and the function is IDEMPOTENT — reconciling a reconciled list is a no-op.
+ */
+export function reconcileRecentApps(
+  entries: RecentApp[],
+  cards: RecentReconcileCard[]
+): RecentApp[] {
+  if (entries.length === 0 || cards.length === 0) return entries;
+
+  const byAppBlockId = new Map<string, RecentReconcileCard>();
+  const byListingId = new Map<string, RecentReconcileCard>();
+  const bySlug = new Map<string, RecentReconcileCard>();
+  for (const card of cards) {
+    // First card wins per key — `listAvailable` is already de-duplicated, and a
+    // stable rule beats a last-write-wins race across pages.
+    if (!byListingId.has(card.id)) byListingId.set(card.id, card);
+    if (card.slug && !bySlug.has(card.slug)) bySlug.set(card.slug, card);
+    if (card.kindData.kind === 'onsite') {
+      const appBlockId = card.kindData.appBlockId;
+      if (appBlockId && !byAppBlockId.has(appBlockId)) byAppBlockId.set(appBlockId, card);
+    }
+  }
+
+  return entries.map((entry) => {
+    const handle = entry.blockId ?? entry.slug;
+    const card =
+      byAppBlockId.get(entry.id) ??
+      byListingId.get(entry.id) ??
+      (handle ? bySlug.get(handle) : undefined);
+    if (!card) return entry;
+
+    const upgraded: RecentApp = { ...toRecentAppFromListing(card), id: entry.id };
+    // The card's `iconUrl` is nullable; a previously-recorded icon is better than
+    // none, so it is the one field the entry can still contribute.
+    if (!upgraded.iconUrl && entry.iconUrl) upgraded.iconUrl = entry.iconUrl;
+    return upgraded;
+  });
+}
+
 export type RecentRailTarget = {
   href: string;
   /** True → render as a new-tab anchor (rel="noopener noreferrer"). */

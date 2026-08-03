@@ -5,6 +5,7 @@ import {
   getRecentRailAction,
   getRecentRailTarget,
   RECENT_RAIL_LIMIT,
+  reconcileRecentApps,
   resolveRecentApp,
   selectChromeRecentApps,
   selectRecentRailEntries,
@@ -740,5 +741,222 @@ describe('getRecentRailAction', () => {
             expect(action === 'visit').toBe(target.external);
             expect(action === 'open').toBe(target.href.startsWith('/apps/run/'));
           }
+  });
+});
+
+/**
+ * RECONCILIATION — repairing persisted recents from the loaded listings.
+ *
+ * The defect: `resolveRecentApp` reads a MISSING `hasPage` as `false`, so the
+ * legacy `{id, blockId, name, iconUrl}` entries `MarketplaceBody.recordRecent`
+ * wrote render an EYE at `/apps/store-preview/<slug>` for apps the viewer runs.
+ * A real viewer's localStorage had 7 of 8 entries in that shape.
+ */
+describe('reconcileRecentApps', () => {
+  const onsiteCard = (over: Partial<ListingCard> = {}): ListingCard =>
+    ({
+      id: 'lst_gm',
+      slug: 'gen-matrix',
+      kind: 'onsite',
+      name: 'Gen Matrix',
+      tagline: null,
+      category: null,
+      contentRating: null,
+      iconUrl: null,
+      coverUrl: null,
+      creator: null,
+      recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+      reviewCount: 0,
+      kindData: {
+        kind: 'onsite',
+        appBlockId: 'ab_gm',
+        hasPage: true,
+        liveUrl: 'https://gen-matrix.civit.ai',
+      },
+      ...over,
+    } as ListingCard);
+
+  /** The EXACT legacy shape: no `kind`, no `hasPage`, no `slug`. */
+  const legacy = (over: Partial<RecentApp> = {}): RecentApp => ({
+    id: 'ab_gm',
+    blockId: 'gen-matrix',
+    name: 'Gen Matrix',
+    ...over,
+  });
+
+  it('🔴 upgrades a {id, blockId} legacy entry from the matching card', () => {
+    const [out] = reconcileRecentApps([legacy()], [onsiteCard()]);
+    expect(out).toEqual({
+      id: 'ab_gm',
+      slug: 'gen-matrix',
+      blockId: 'gen-matrix',
+      kind: 'onsite',
+      hasPage: true,
+      name: 'Gen Matrix',
+    });
+  });
+
+  it('🔴 THE WHOLE POINT: that entry now derives a PLAY action, not an eye', () => {
+    // The end-to-end read, through the real resolver + the real action
+    // derivation — the icon, the href and the accessible label all come from
+    // here, so this is the assertion that maps to what a viewer sees.
+    const before = resolveRecentApp(legacy())!;
+    expect(getRecentRailAction(before, { canOpenPage: true })).toEqual({
+      action: 'view',
+      label: 'View details for Gen Matrix',
+    });
+
+    const [reconciled] = reconcileRecentApps([legacy()], [onsiteCard()]);
+    const after = resolveRecentApp(reconciled)!;
+    expect(getRecentRailAction(after, { canOpenPage: true })).toEqual({
+      action: 'open',
+      label: 'Open Gen Matrix',
+    });
+    expect(getRecentRailTarget(after, { canOpenPage: true }).href).toBe('/apps/run/gen-matrix');
+  });
+
+  it('🔴 NEVER DROPS an unmatched entry — it is returned untouched', () => {
+    const stranger = legacy({ id: 'ab_pv', blockId: 'prompt-vault', name: 'Prompt Vault' });
+    const out = reconcileRecentApps([stranger], [onsiteCard()]);
+    expect(out).toHaveLength(1);
+    // Same VALUE and same reference: an unmatched entry is not rebuilt at all.
+    expect(out[0]).toBe(stranger);
+  });
+
+  it('🔴 CORRECTS DOWN too — a stale hasPage:true loses its page when the card says so', () => {
+    // The mutation-sensitive direction. A `entry.hasPage ?? card.hasPage`
+    // implementation passes every test above and fails this one, having left the
+    // rail offering a guaranteed-404 `/apps/run/…` under an "Open" label.
+    const stale = onsite({ id: 'ab_gm', blockId: 'gen-matrix', slug: 'gen-matrix', hasPage: true });
+    const [out] = reconcileRecentApps(
+      [stale],
+      [
+        onsiteCard({
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'ab_gm',
+            hasPage: false,
+            liveUrl: 'https://gen-matrix.civit.ai',
+          },
+        }),
+      ]
+    );
+    expect(out.hasPage).toBe(false);
+    expect(getRecentRailTarget(resolveRecentApp(out)!, { canOpenPage: true }).href).toBe(
+      '/apps/store-preview/gen-matrix'
+    );
+  });
+
+  it('🔴 matches on blockId→card.slug when the id matches NOTHING', () => {
+    // 🔴 THE KEY THIS FIX TURNS ON. Every other test here happens to have an
+    // `id` equal to the card's `appBlockId`, so they ALL pass with the
+    // `blockId`→`slug` lookup deleted — they would certify a reconcile that
+    // cannot join the one shape the defect is made of. This entry's `id` matches
+    // no card by either id namespace, so ONLY the blockId→slug path can upgrade
+    // it, and deleting that path fails exactly here.
+    //
+    // The join works because for an ON-SITE app the AppListing slug IS the
+    // AppBlock `block_id` (`app-listing-mapper.ts` → `slug: ab.blockId`). Note the
+    // card side of the join is `card.slug`; the ENTRY side is `blockId`, because a
+    // legacy entry HAS no `slug` — keying both sides on `slug` matches zero rows.
+    const [out] = reconcileRecentApps(
+      [{ id: 'legacy-key-that-matches-no-card', blockId: 'gen-matrix', name: 'Gen Matrix' }],
+      [onsiteCard()]
+    );
+    expect(out.hasPage).toBe(true);
+    expect(out.kind).toBe('onsite');
+    expect(out.slug).toBe('gen-matrix');
+    // …and the id is still NOT rewritten, even on a slug-path match.
+    expect(out.id).toBe('legacy-key-that-matches-no-card');
+  });
+
+  it('matches on the AppBlock id when the entry has no blockId', () => {
+    const out = reconcileRecentApps([{ id: 'ab_gm', slug: 'gen-matrix' }], [onsiteCard()]);
+    expect(out[0].hasPage).toBe(true);
+  });
+
+  it('🔴 the appBlockId join carries an entry whose recorded slug is STALE', () => {
+    // The case that makes the `entry.id → card.kindData.appBlockId` lookup
+    // load-bearing rather than redundant. Every other fixture's `blockId` already
+    // equals the card `slug`, so they all still reconcile with that join deleted.
+    // Here the app's `block_id` has MOVED since the entry was written, so the
+    // slug join misses and only the AppBlock id — the store's de-dup key, and the
+    // one identifier both on-site writers agree on — can still find the card.
+    const [out] = reconcileRecentApps(
+      [{ id: 'ab_gm', blockId: 'the-old-block-id', name: 'Gen Matrix' }],
+      [onsiteCard()]
+    );
+    expect(out.hasPage).toBe(true);
+    // …and the STALE handle is replaced by the card's current one, so the tile
+    // links to where the app lives now rather than to a 404.
+    expect(out.slug).toBe('gen-matrix');
+    expect(out.blockId).toBe('gen-matrix');
+  });
+
+  it('🔴 an unmatched entry is passed through byte-for-byte, not rebuilt', () => {
+    // Guards the pass-through against a mutation that RETURNS something for an
+    // unmatched entry instead of the entry itself. Asserted on a list where the
+    // unmatched entry is NOT the first element, so a `return entries[0]`-shaped
+    // bug cannot coincidentally return the right object.
+    const matched = legacy();
+    const unmatched: RecentApp = { id: 'ab_pv', blockId: 'prompt-vault', name: 'Prompt Vault' };
+    const out = reconcileRecentApps([matched, unmatched], [onsiteCard()]);
+    expect(out[1]).toBe(unmatched);
+    expect(out[1]).toEqual({ id: 'ab_pv', blockId: 'prompt-vault', name: 'Prompt Vault' });
+    // No `kind`/`hasPage` invented for an app we know nothing about.
+    expect(out[1].kind).toBeUndefined();
+    expect(out[1].hasPage).toBeUndefined();
+  });
+
+  it('matches an OFF-SITE entry on the listing id, and strips a stray blockId', () => {
+    // A stray `blockId` on an off-site entry would point the app-chrome
+    // "Recently run" menu at a DIFFERENT app (`selectChromeRecentApps` filters on
+    // `!!blockId`), so reconciliation must remove it, not merge around it.
+    const card = onsiteCard({
+      id: 'lst_ext',
+      slug: 'ext-app',
+      kind: 'offsite',
+      name: 'Ext App',
+      kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.example/a' },
+    });
+    const [out] = reconcileRecentApps([{ id: 'lst_ext', blockId: 'stale-block' }], [card]);
+    expect(out.blockId).toBeUndefined();
+    expect(out).toMatchObject({
+      kind: 'offsite',
+      slug: 'ext-app',
+      externalUrl: 'https://ext.example/a',
+    });
+    expect(selectChromeRecentApps([out], { canOpenPage: true, limit: 6 })).toEqual([]);
+  });
+
+  it('keeps the entry id — the de-dup key must not churn', () => {
+    // `id` is the store's de-dup key AND the rail's ordering handle. Rewriting it
+    // could split one app into two entries or collide with another.
+    const [out] = reconcileRecentApps([legacy({ id: 'ab_gm' })], [onsiteCard()]);
+    expect(out.id).toBe('ab_gm');
+  });
+
+  it('preserves a recorded iconUrl the card cannot supply', () => {
+    const [out] = reconcileRecentApps(
+      [legacy({ iconUrl: 'https://cdn.example/old.png' })],
+      [onsiteCard({ iconUrl: null })]
+    );
+    expect(out.iconUrl).toBe('https://cdn.example/old.png');
+  });
+
+  it('is IDEMPOTENT — reconciling a reconciled list changes nothing', () => {
+    const once = reconcileRecentApps([legacy()], [onsiteCard()]);
+    expect(reconcileRecentApps(once, [onsiteCard()])).toEqual(once);
+  });
+
+  it('is a no-op with no cards loaded (the query has not resolved yet)', () => {
+    const entries = [legacy()];
+    expect(reconcileRecentApps(entries, [])).toBe(entries);
+  });
+
+  it('preserves order and length across a mixed list', () => {
+    const entries = [legacy({ id: 'ab_pv', blockId: 'prompt-vault' }), legacy()];
+    const out = reconcileRecentApps(entries, [onsiteCard()]);
+    expect(out.map((e) => e.id)).toEqual(['ab_pv', 'ab_gm']);
   });
 });

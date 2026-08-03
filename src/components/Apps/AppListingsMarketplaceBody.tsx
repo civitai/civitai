@@ -8,7 +8,11 @@ import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDrop
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
-import { selectRecentRailEntries, type ResolvedRecentApp } from '~/components/Apps/recentAppsRail';
+import {
+  reconcileRecentApps,
+  selectRecentRailEntries,
+  type ResolvedRecentApp,
+} from '~/components/Apps/recentAppsRail';
 import {
   getRecentlyOpenedApps,
   recordRecentlyOpenedApp,
@@ -141,7 +145,9 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
   }, []);
-  const recentEntries = useMemo(() => selectRecentRailEntries(recents), [recents]);
+  // The rail's ENTRIES are derived further down — `recentEntries` needs the
+  // loaded listings (`items`) to reconcile stale persisted entries against, and
+  // those are not available until after the query below. See it there.
 
   // Re-opening from the rail moves that app back to the front of the store. For
   // an OFF-SITE entry this is the only chance to record it (following the link
@@ -181,6 +187,57 @@ export function AppListingsMarketplaceBody() {
     );
 
   const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
+
+  /**
+   * RECONCILE the persisted recents against the listings already on this page.
+   *
+   * 🔴 WHY THE RAIL NEEDS THIS. A recents entry written by the legacy
+   * `MarketplaceBody.recordRecent` carries `{id, blockId, name, iconUrl}` — no
+   * `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
+   * viewer's most-run apps rendered an EYE pointing at the detail page instead of
+   * a PLAY pointing at `/apps/run/…`, and no amount of clicking healed it:
+   * `handleOpenRecent` re-persists the resolved `false`. `reconcileRecentApps`
+   * takes the server's answer from the matching card. Entries with no match on
+   * the loaded pages pass through UNTOUCHED — never dropped.
+   *
+   * 🔴 NO EFFECT, NO WRITE, NO LOOP. This is a pure derivation, deliberately not
+   * an effect that re-persists the repaired list. An effect writing the store on
+   * every `/apps` load would need a whole-list writer (`recordRecentlyOpenedApp`
+   * prepends, so looping it would REVERSE the rail) and would risk a write/render
+   * loop against state this component also reads. It buys nothing: the derivation
+   * re-runs on every load, and the store's other consumer — the app-chrome
+   * "Recently run" menu — filters on `kind`/`blockId`, which legacy entries
+   * already carry.
+   *
+   * The repair still PERSISTS on the natural interaction: `handleOpenRecent`
+   * receives the RECONCILED entry, so the first click on a healed tile writes the
+   * corrected `kind`/`hasPage`/`slug` back to localStorage.
+   */
+  const reconciledRecents = useMemo(() => reconcileRecentApps(recents, items), [recents, items]);
+  /**
+   * ⚠️ ACCEPTED: a SECOND post-paint update. The rail already hydrates one frame
+   * late (localStorage is client-only, seeded empty for SSR parity); this adds an
+   * update when the query resolves, so a tile's glyph can flip eye→play after
+   * paint and its `aria-label` change may be re-announced by some assistive tech.
+   * Accepted rather than mitigated, on three grounds:
+   *   - NO LAYOUT SHIFT. The CTA is a fixed `ActionIcon size="md"` and both
+   *     glyphs render at 16px, so the flip is a repaint, not a reflow — nothing
+   *     moves, which is the CLS hazard the rail's placement already guards.
+   *   - NEVER MISLEADING AT ANY INSTANT. The icon, the label and the href are all
+   *     derived from one `getRecentRailAction` call, and that coupling is pinned
+   *     ("NEVER disagrees with getRecentRailTarget"). So the pre-flip state is a
+   *     correct "view details" control, and the post-flip state is a correct
+   *     "open" one — a viewer can never be shown a play glyph on a control that
+   *     navigates to the detail page.
+   *   - The alternative — withholding the rail until the query settles — delays
+   *     the "jump back in" shortcut behind a network round-trip and hides the rail
+   *     entirely when the query ERRORS, which is a worse regression than a glyph
+   *     correcting itself.
+   */
+  const recentEntries = useMemo(
+    () => selectRecentRailEntries(reconciledRecents),
+    [reconciledRecents]
+  );
 
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.
