@@ -1,7 +1,7 @@
 import { Button, Center, Grid, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
@@ -11,6 +11,7 @@ import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps
 import {
   reconcileRecentApps,
   selectRecentRailEntries,
+  type RecentHealMemo,
   type ResolvedRecentApp,
 } from '~/components/Apps/recentAppsRail';
 import {
@@ -200,25 +201,59 @@ export function AppListingsMarketplaceBody() {
    * takes the server's answer from the matching card. Entries with no match on
    * the loaded pages pass through UNTOUCHED — never dropped.
    *
-   * 🔴 NO EFFECT, NO WRITE, NO LOOP. This is a pure derivation, deliberately not
-   * an effect that re-persists the repaired list. An effect writing the store on
-   * every `/apps` load would need a whole-list writer (`recordRecentlyOpenedApp`
-   * prepends, so looping it would REVERSE the rail) and would risk a write/render
-   * loop against state this component also reads. It buys nothing: the derivation
-   * re-runs on every load, and the store's other consumer — the app-chrome
-   * "Recently run" menu — filters on `kind`/`blockId`, which legacy entries
-   * already carry.
+   * 🔴 MONOTONIC, because the card set is FILTER- AND PAGE-SCOPED. `items` is
+   * `data.pages.flatMap(…)` from a query keyed on `{kind, category, sort, limit}`
+   * with no `keepPreviousData`/`placeholderData`, so every sort/filter change
+   * empties it for a beat. Reconciling against that raw would flip every healed
+   * tile play→eye→play on a control the viewer touched for an unrelated reason.
+   * The third argument below is a per-mount memo (the ref) of the last
+   * card-backed result per entry id, which makes a match a one-way ratchet: only
+   * ANOTHER card can change a healed entry, and the mere absence of one cannot.
+   * The memo is bounded to the ids currently in `recents` (≤ `MAX_RECENTS_TOTAL`).
+   * 🔴 It is not optional in practice — dropping it silently restores the
+   * un-healing bug, so a test in `__tests__/recentAppsRail.test.ts` scans this
+   * file and fails if the call goes back to two arguments.
+   *
+   * 🔴 NO EFFECT, NO WRITE, NO LOOP. This is a pure derivation over a ref-held
+   * cache, deliberately not an effect that re-persists the repaired list. An
+   * effect writing the store on every `/apps` load would need a whole-list writer
+   * (`recordRecentlyOpenedApp` prepends, so looping it would REVERSE the rail) and
+   * would risk a write/render loop against state this component also reads. It
+   * buys little: the derivation re-runs on every load.
+   *
+   * 🔴 AND IT WOULD NOT BUY THE CHROME MENU ANYTHING EITHER. The store's other
+   * consumer — the app-chrome "Recently run" menu — filters on `kind`/`blockId`,
+   * and a legacy entry carries `blockId` but NOT `kind`: `MarketplaceBody`'s
+   * `recordRecent` writes only `{id, blockId, name, iconUrl}`. Such entries are
+   * admitted by ABSENCE (`undefined !== 'offsite'` is true), not by carrying the
+   * field — see the 🔴 note on `selectChromeRecentApps`, which is the authority
+   * on that gate. So persisting `kind` would not change what that menu shows;
+   * what it would change is `hasPage`, which that menu deliberately never reads.
    *
    * The repair still PERSISTS on the natural interaction: `handleOpenRecent`
    * receives the RECONCILED entry, so the first click on a healed tile writes the
    * corrected `kind`/`hasPage`/`slug` back to localStorage.
    */
-  const reconciledRecents = useMemo(() => reconcileRecentApps(recents, items), [recents, items]);
+  const healedRecentsRef = useRef<RecentHealMemo>(new Map());
+  const reconciledRecents = useMemo(
+    () => reconcileRecentApps(recents, items, healedRecentsRef.current),
+    [recents, items]
+  );
   /**
-   * ⚠️ ACCEPTED: a SECOND post-paint update. The rail already hydrates one frame
-   * late (localStorage is client-only, seeded empty for SSR parity); this adds an
-   * update when the query resolves, so a tile's glyph can flip eye→play after
+   * ⚠️ ACCEPTED: ONE post-paint update per tile, and only ever in the healing
+   * direction. The rail already hydrates one frame late (localStorage is
+   * client-only, seeded empty for SSR parity); this adds an update when the query
+   * first resolves a matching card, so a tile's glyph can flip eye→play after
    * paint and its `aria-label` change may be re-announced by some assistive tech.
+   *
+   * What it is NOT is a flip-flop. Monotonic reconciliation means the emptying of
+   * `items` on a sort/filter change cannot un-heal a tile, so the glyph does not
+   * round-trip play→eye→play under a control the viewer touched for an unrelated
+   * reason. A healed tile can still change ONCE MORE, in exactly one case: its
+   * card reappears saying something DIFFERENT (the app lost its page). That is
+   * the server correcting us, and it is the whole point of correcting in both
+   * directions — not churn.
+   *
    * Accepted rather than mitigated, on three grounds:
    *   - NO LAYOUT SHIFT. The CTA is a fixed `ActionIcon size="md"` and both
    *     glyphs render at 16px, so the flip is a repaint, not a reflow — nothing

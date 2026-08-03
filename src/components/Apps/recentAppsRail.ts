@@ -244,10 +244,23 @@ export type RecentReconcileCard = Pick<
  *      on-site writers key `id` on the AppBlock id (see `toRecentAppFromListing`).
  *   2. `entry.id` → `card.id`. The off-site contract — an off-site listing has no
  *      AppBlock, so the AppListing id is its only key.
- *   3. `entry.blockId` (else `entry.slug`) → `card.slug`. For an on-site app the
- *      listing slug IS the AppBlock `block_id` (`app-listing-mapper.ts` →
- *      `slug: ab.blockId`), which is what makes the legacy `{id, blockId}` shape
- *      joinable at all.
+ *   3. `entry.blockId` (else `entry.slug`) → `card.slug`, **ON-SITE ENTRIES
+ *      ONLY**. For an on-site app the listing slug IS the AppBlock `block_id`
+ *      (`app-listing-mapper.ts` → `slug: ab.blockId`), which is what makes the
+ *      legacy `{id, blockId}` shape joinable at all.
+ *
+ *      🔴 WHY IT IS GATED ON `kind !== 'offsite'`. An off-site listing has no
+ *      AppBlock, so an off-site entry's `blockId` is meaningless BY
+ *      CONSTRUCTION — there is no app it could name. Consulting it anyway means
+ *      an off-site entry carrying a stray `blockId` (hand-edited localStorage,
+ *      or a future writer — `coerce` accepts the shape even though none of
+ *      today's four writers produces it), whose own listing is not on the loaded
+ *      pages, falls through both id joins and `bySlug`-matches a DIFFERENT,
+ *      ON-SITE app. Reconciliation replaces an entry wholesale, so that is not a
+ *      cosmetic mismatch: the tile takes the other app's name, slug and
+ *      `/apps/run/…` href. `undefined` is the only honest handle here. (Note the
+ *      asymmetry with key 2, which is deliberately NOT gated: an off-site entry
+ *      SHOULD still join its own listing by id.)
  *
  * 🔴 UPGRADE, NEVER DROP. An entry that matches nothing is returned UNTOUCHED.
  * A recents entry is not evidence a listing is missing — it is far more likely on
@@ -268,13 +281,108 @@ export type RecentReconcileCard = Pick<
  * place. Two properties follow and are pinned by tests: `id` is preserved (it is
  * the de-dup key and the rail's ordering handle, so reconciliation must not churn
  * it), and the function is IDEMPOTENT — reconciling a reconciled list is a no-op.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * 🔴 `healed` — PASS IT. It is what makes the repair MONOTONIC across renders,
+ * and the one production caller (`AppListingsMarketplaceBody`) is pinned to pass
+ * it by a test in this module's suite.
+ *
+ * THE DEFECT IT FIXES — healed tiles UN-HEAL. Everything above is scoped to the
+ * cards the caller has loaded, and that set is FILTER- AND PAGE-SCOPED: `items`
+ * is `data.pages.flatMap(…)` off a `listAvailable` infinite query keyed on
+ * `{kind, category, sort, limit}`, with no `keepPreviousData`/`placeholderData`
+ * anywhere in that component or `~/utils/trpc`. So EVERY sort/filter change
+ * takes `data` to `undefined` for a beat → the caller passes `[]` → without a
+ * memo the `cards.length === 0` early return hands back the raw legacy entries →
+ * every healed tile reverts to an eye and an `/apps/store-preview/…` href, then
+ * flips back when the new page resolves. The rail's glyphs became a function of
+ * an unrelated control below them, round-tripping play→eye→play. The same
+ * scoping strands a recents app that is on page 2, or excluded by the active
+ * `kind`/`category`, on an eye until "Load more".
+ *
+ * THE REPAIR — remember the RESULT, not the cards. An entry that matches a card
+ * is reconciled exactly as above and its result recorded in `healed`; an entry
+ * that matches NOTHING falls back to its remembered result, and only then to
+ * itself. Healing is a one-way ratchet: only ANOTHER card can change a healed
+ * entry, and the mere absence of one — which is a fact about the QUERY, never
+ * about the app — cannot.
+ *
+ * 🔴 WHY MEMOISE THE RESULT RATHER THAN ACCUMULATE THE CARDS. Accumulating every
+ * card seen across the mount also works and is the obvious move, but its
+ * footprint is the CATALOG (every page loaded × every filter visited, unbounded
+ * and almost entirely irrelevant), and pruning it back down needs the match
+ * information anyway. The result memo is bounded BY CONSTRUCTION: one value per
+ * recents entry, and the loop below deletes every key not in `entries`, so
+ * `healed.size <= entries.length`. `entries` is `getRecentlyOpenedApps()`, which
+ * caps per kind on READ as well as on write, so the ceiling is
+ * `MAX_RECENTS_TOTAL` (16) small objects, living only as long as one mount.
+ *
+ * 🔴 STILL NO WRITE, NO EFFECT, NO LOOP. A pure derivation over a caller-held
+ * cache; nothing here touches `localStorage`. Persistence stays exactly where it
+ * was — `handleOpenRecent`, on a real click.
+ *
+ * 🔴 WHY A REMEMBERED VALUE CANNOT BE STALER THAN THE ENTRY. The memo is
+ * per-mount, and within one mount `recents` changes by exactly one path:
+ * `handleOpenRecent`, which re-persists the ALREADY-RECONCILED entry it was
+ * handed. So an entry can never carry fresher server truth than its own memo
+ * hit. The only other writer of `hasPage` is a real visit to `/apps/run/<slug>`,
+ * which is a navigation — it remounts the store and starts the memo empty.
+ *
+ * Correction-in-both-directions is UNAFFECTED: a match always beats the memo, so
+ * an app that has lost its page still loses the play glyph the instant its card
+ * is on screen.
  */
 export function reconcileRecentApps(
   entries: RecentApp[],
-  cards: RecentReconcileCard[]
+  cards: RecentReconcileCard[],
+  healed?: RecentHealMemo
 ): RecentApp[] {
-  if (entries.length === 0 || cards.length === 0) return entries;
+  if (entries.length === 0) return entries;
+  // Without a memo there is nothing to fall back to, so no cards means no work.
+  // (With one, an empty card set is exactly the case the memo exists to cover.)
+  if (!healed && cards.length === 0) return entries;
 
+  const index = buildRecentCardIndex(cards);
+  const live = new Set<string>();
+
+  const out = entries.map((entry) => {
+    live.add(entry.id);
+    const card = matchRecentCard(entry, index);
+    if (card) {
+      const upgraded = upgradeRecentFromCard(entry, card);
+      healed?.set(entry.id, upgraded);
+      return upgraded;
+    }
+    return healed?.get(entry.id) ?? entry;
+  });
+
+  // THE BOUND. An id the viewer's recents no longer contain can never be
+  // consulted again, so it is dropped rather than accumulated.
+  if (healed) {
+    for (const id of healed.keys()) {
+      if (!live.has(id)) healed.delete(id);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * The caller-owned, cross-render cache `reconcileRecentApps` reads and writes:
+ * entry `id` → the last card-backed reconciliation of that entry. Deliberately a
+ * plain `Map` the caller holds in a `useRef`, not module state — two mounted
+ * stores must not share a cache, and it must die with the mount.
+ */
+export type RecentHealMemo = Map<string, RecentApp>;
+
+/** The three join namespaces `matchRecentCard` looks in. */
+type RecentCardIndex = {
+  byAppBlockId: Map<string, RecentReconcileCard>;
+  byListingId: Map<string, RecentReconcileCard>;
+  bySlug: Map<string, RecentReconcileCard>;
+};
+
+function buildRecentCardIndex(cards: RecentReconcileCard[]): RecentCardIndex {
   const byAppBlockId = new Map<string, RecentReconcileCard>();
   const byListingId = new Map<string, RecentReconcileCard>();
   const bySlug = new Map<string, RecentReconcileCard>();
@@ -288,21 +396,35 @@ export function reconcileRecentApps(
       if (appBlockId && !byAppBlockId.has(appBlockId)) byAppBlockId.set(appBlockId, card);
     }
   }
+  return { byAppBlockId, byListingId, bySlug };
+}
 
-  return entries.map((entry) => {
-    const handle = entry.blockId ?? entry.slug;
-    const card =
-      byAppBlockId.get(entry.id) ??
-      byListingId.get(entry.id) ??
-      (handle ? bySlug.get(handle) : undefined);
-    if (!card) return entry;
+/**
+ * The join itself — the three keys documented on `reconcileRecentApps`, in
+ * order. Split out so WHICH card an entry matches is one decision in one place,
+ * separate from what is then done with it.
+ */
+function matchRecentCard(
+  entry: RecentApp,
+  index: RecentCardIndex
+): RecentReconcileCard | undefined {
+  // 🔴 ON-SITE ONLY — see match key 3. An off-site listing has no AppBlock, so an
+  // off-site entry's `blockId` names nothing; consulting it would `bySlug`-match
+  // a DIFFERENT, on-site app and replace the entry with it.
+  const handle = entry.kind === 'offsite' ? undefined : entry.blockId ?? entry.slug;
+  return (
+    index.byAppBlockId.get(entry.id) ??
+    index.byListingId.get(entry.id) ??
+    (handle ? index.bySlug.get(handle) : undefined)
+  );
+}
 
-    const upgraded: RecentApp = { ...toRecentAppFromListing(card), id: entry.id };
-    // The card's `iconUrl` is nullable; a previously-recorded icon is better than
-    // none, so it is the one field the entry can still contribute.
-    if (!upgraded.iconUrl && entry.iconUrl) upgraded.iconUrl = entry.iconUrl;
-    return upgraded;
-  });
+function upgradeRecentFromCard(entry: RecentApp, card: RecentReconcileCard): RecentApp {
+  const upgraded: RecentApp = { ...toRecentAppFromListing(card), id: entry.id };
+  // The card's `iconUrl` is nullable; a previously-recorded icon is better than
+  // none, so it is the one field the entry can still contribute.
+  if (!upgraded.iconUrl && entry.iconUrl) upgraded.iconUrl = entry.iconUrl;
+  return upgraded;
 }
 
 export type RecentRailTarget = {
