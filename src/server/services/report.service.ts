@@ -7,9 +7,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 
-import { setReportStatusMany } from '@civitai/db-queries/report';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyWrite } from '~/server/db/kyselyDb';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -396,20 +394,44 @@ export async function bulkSetReportStatus({
   userId: number;
   ip?: string;
 }) {
-  // One atomic bulk UPDATE via @civitai/db-queries (setReportStatusMany): the `status != next` guard +
-  // RETURNING reproduce the old findMany({ status: { not } })/update pair — only rows that actually
-  // transition are updated and returned. A single statement is atomic, so no explicit transaction is needed.
-  const actioned = await setReportStatusMany(kyselyWrite, { ids, status, userId });
+  const statusSetAt = new Date();
+
+  const reports = await dbRead.report.findMany({
+    where: { id: { in: ids }, status: { not: status } },
+    select: { id: true, userId: true, alsoReportedBy: true },
+  });
+
+  if (!reports) return;
+
+  await dbWrite.$transaction(
+    reports.map((report) =>
+      dbWrite.report.update({
+        where: { id: report.id },
+        data: {
+          status,
+          statusSetAt,
+          statusSetBy: userId,
+          previouslyReviewedCount:
+            status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
+        },
+      })
+    )
+  );
 
   // Track mod activity in the background
   trackModReports({ ids, userId: userId });
 
-  // If we're actioning reports, reward the users who reported them (owner + everyone who also reported it).
+  // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
+    const prepReports = reports.map((report) => ({
+      id: report.id,
+      userIds: [report.userId, ...report.alsoReportedBy],
+    }));
+
     await Promise.allSettled(
-      actioned.flatMap((report) =>
-        [report.userId, ...report.alsoReportedBy].map((reporterId) =>
-          reportAcceptedReward.apply({ userId: reporterId, reportId: report.id }, { ip })
+      prepReports.flatMap((report) =>
+        report.userIds.map((userId) =>
+          reportAcceptedReward.apply({ userId, reportId: report.id }, { ip })
         )
       )
     );
@@ -684,6 +706,7 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
+
   }
 
   // Email each affected user once, listing every item they appealed in this
