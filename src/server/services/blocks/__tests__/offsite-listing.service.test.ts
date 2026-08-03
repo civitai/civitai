@@ -570,9 +570,11 @@ function stageApproveScenario(listing: {
   iconId?: number | null;
   coverId?: number | null;
   screenshotCount?: number;
-  externalUrl?: string;
+  externalUrl?: string | null;
   status?: string;
   submittedByUserId?: number;
+  /** Off-site sub-kind discriminator — non-null routes the CTA to the connect arm. */
+  connectClientId?: string | null;
 }) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_1',
@@ -585,7 +587,7 @@ function stageApproveScenario(listing: {
   const listingRow = {
     id: 'apl_1',
     status: listing.status ?? 'draft',
-    externalUrl: listing.externalUrl ?? 'https://cool.example.com/app',
+    externalUrl: listing.externalUrl === undefined ? 'https://cool.example.com/app' : listing.externalUrl,
     iconId: listing.iconId === undefined ? 1 : listing.iconId,
     coverId: listing.coverId === undefined ? 2 : listing.coverId,
     // Owner fields the approve path reads for the post-commit owner notification.
@@ -593,6 +595,12 @@ function stageApproveScenario(listing: {
     name: 'Cool App',
     slug: 'cool-app',
     revisionOfId: null,
+    // 🔴 `kind` is REQUIRED in this fixture, not decoration. The go-live actionability
+    // gate is off-site-only, so a row without a `kind` makes that gate a silent no-op
+    // and every approve test would pass with the guard deleted. Off-site is what this
+    // suite exercises.
+    kind: 'offsite',
+    connectClientId: listing.connectClientId ?? null,
   };
   const count = listing.screenshotCount === undefined ? 1 : listing.screenshotCount;
   const screenshotRows = Array.from({ length: count }, (_, i) => ({ imageId: 1000 + i }));
@@ -610,6 +618,68 @@ function stageApproveScenario(listing: {
   mockRead.image.findMany.mockImplementation(scanned as never);
   mockWrite.image.findMany.mockImplementation(scanned as never);
 }
+
+describe('approveExternalRequest — go-live ACTIONABILITY gate', () => {
+  /**
+   * 🔴 The gate that was MISSING when three connect listings were approved onto a
+   * dead CTA (07-24 → 07-28). An off-site listing may not be flipped live while the
+   * store would render it a primary button with nothing to click.
+   */
+  it('REFUSES approve when the off-site listing has NO destination — no flip at all', async () => {
+    stageApproveScenario({ externalUrl: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    // Fails CLOSED: neither the request nor the listing is flipped.
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES approve when the destination is not https (http:// is not a destination)', async () => {
+    stageApproveScenario({ externalUrl: 'http://insecure.example.com/app' });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 REFUSES a CONNECT listing whose CTA would be the dead stub', async () => {
+    // A linked OAuth client with no reachable address — non-actionable under both
+    // the current view-model and #3585's, so this pin is stable across that merge.
+    stageApproveScenario({ externalUrl: null, connectClientId: 'client-123' });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('the gate is AUTHORITATIVE on the primary: replica has a URL, primary does not → BLOCKED', async () => {
+    // TOCTOU — `externalUrl` is owner-editable in place while the request sits
+    // pending, so the replica fail-fast can pass on a stale row. The in-tx re-read
+    // must catch it and roll the whole tx back before anything is approved.
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      id: 'apl_1',
+      status: 'draft',
+      externalUrl: null, // primary: the owner cleared it after the replica read
+      connectClientId: null,
+      iconId: 1,
+      coverId: 2,
+      kind: 'offsite',
+      slug: 'cool-app',
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+});
 
 describe('approveExternalRequest', () => {
   it('happy path: pending + assets-complete → listing draft→approved + request approved w/ reviewedBy*/approvalNotes', async () => {
@@ -713,6 +783,10 @@ describe('approveExternalRequest', () => {
         connectRequestedScopes: true,
         connectScopeJustifications: true,
         connectClient: { select: { allowedScopes: true } },
+        // `kind` + `slug` feed the AUTHORITATIVE go-live actionability gate, which is
+        // off-site-only and names the listing in its moderator-facing error.
+        kind: true,
+        slug: true,
       },
     });
     // The screenshot imageIds (for the floor count + the scan gate) are read from
