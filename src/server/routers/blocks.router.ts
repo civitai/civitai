@@ -5740,10 +5740,19 @@ export const blocksRouter = router({
    * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
    * read on the app's own civitai-apps/<slug> repo.
    *
-   * Distinct from getMyAppRepo only in intent (pull/sync vs push instructions);
-   * it returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles
-   * its git command from. The token is embedded in the returned cloneUrl exactly
-   * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
+   * Close to getMyAppRepo but no longer identical to it — three differences, and the
+   * first is easy to miss now that only one of them carries a scope annotation:
+   *   - TOKEN SCOPE: this proc is `.meta({ requiredScope: AppBlocksSubmit })` (below),
+   *     because the CLI drives it. getMyAppRepo is deliberately NOT annotated — it is
+   *     web-only (AuthorViaGit / git-access.ts), so it is session-authed and takes
+   *     enforceTokenScope's Full early-return regardless.
+   *   - INTENT: pull/sync here vs push instructions there.
+   *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
+   *     addCollaborator call below).
+   * Ownership gating IS identical (owner check + bannedAt + `approved`). It returns the
+   * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
+   * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
+   * documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
     // Same SCOPE gate and same bit as getMyAppAnalytics above — but note the base
