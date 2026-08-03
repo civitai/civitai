@@ -66,7 +66,10 @@ export type AiReviewDecision = {
 
 // Takes `unknown` because a refusal, a provider fallback, or schema drift all arrive as parseable
 // JSON with the wrong shape.
-export function decideFromObservations(raw: unknown): AiReviewDecision {
+export function decideFromObservations(
+  raw: unknown,
+  { isVideo = false }: { isVideo?: boolean } = {}
+): AiReviewDecision {
   const parsed = aiReviewObservationsSchema.safeParse(raw);
   if (!parsed.success)
     return {
@@ -108,14 +111,19 @@ export function decideFromObservations(raw: unknown): AiReviewDecision {
     else escalations.push(`unrecognized category: ${entry}`);
   }
 
-  if (!o.hasBuzzReference) violations.push('no buzz reference');
+  if (!o.hasBuzzReference) {
+    // Only the first frame is sent, so a reference that appears later in a video — or is spoken —
+    // is invisible to the model. Not enough to reject a submission on.
+    if (isVideo) escalations.push('no buzz reference in first frame');
+    else violations.push('no buzz reference');
+  }
 
   const decision = escalations.length ? 'escalate' : violations.length ? 'reject' : 'approve';
   return {
     decision,
     violations,
     escalations,
-    neverReject: uncertainAge || undefined,
+    neverReject: uncertainAge || (isVideo && !o.hasBuzzReference) || undefined,
   };
 }
 

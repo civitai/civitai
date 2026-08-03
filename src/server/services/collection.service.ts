@@ -1216,6 +1216,9 @@ export type CollectionItemsResult = {
   nextCursor?: string;
 };
 
+// The AI review job stamps this as the reviewer on items it hands to a human.
+export const AI_REVIEW_SYSTEM_USER_ID = -1;
+
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
@@ -1230,6 +1233,7 @@ export const getCollectionItemsByCollectionId = async ({
     collectionId,
     cursor,
     forReview,
+    awaitingHumanReview,
     reviewSort,
     collectionTagId,
   } = input;
@@ -1264,6 +1268,12 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
+
+  // AI review leaves items it will not decide in REVIEW, stamped by the system user, so this is
+  // exactly the set waiting on a person.
+  const awaitingHumanCondition = awaitingHumanReview
+    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID}`
+    : Prisma.sql``;
 
   // For contest mode, use hash-based random ordering with cursor support
   let collectionItems: {
@@ -1338,6 +1348,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
@@ -1415,6 +1426,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
