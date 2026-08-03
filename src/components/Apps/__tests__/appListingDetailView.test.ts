@@ -333,9 +333,20 @@ describe('getDetailPrimaryAction — off-site', () => {
  * `AppBlockChrome is actually WIRED to this gate` block in
  * `recentAppsRail.test.ts`).
  *
- * SCOPE, honestly: this catches a literal `<iframe` in JSX. It does NOT catch a
- * frame introduced via a wrapper component, `dangerouslySetInnerHTML`, or
- * `document.createElement('iframe')`.
+ * SCOPE, honestly — every clause below was MEASURED by mutating the component,
+ * not reasoned about:
+ *   - CAUGHT: a literal `<iframe` anywhere in the JSX.
+ *   - CAUGHT: a literal `<iframe` inside a template literal passed to
+ *     `dangerouslySetInnerHTML` (an earlier draft of this paragraph claimed the
+ *     opposite — it was wrong; the token is still in the source text).
+ *   - CAUGHT: a `/*` inside a string literal placed before the frame. That one
+ *     DID evade the stripped-source count (the non-greedy comment regex runs
+ *     from that `/*` up to the next block-comment terminator and swallows the
+ *     frame), which is why the second, strip-free positional assertion below
+ *     exists. That is the check that kills this mutant.
+ *   - NOT caught: HTML assembled so the token never appears literally
+ *     (`'<' + 'iframe'`), a frame rendered by a wrapper component, or
+ *     `document.createElement('iframe')`.
  */
 describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
   const SOURCE = path.resolve(__dirname, '../AppListingDetailBody.tsx');
@@ -349,31 +360,74 @@ describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
 
   const countIframes = (s: string) => [...s.matchAll(/<iframe\b/g)].length;
 
-  it('the matcher and the comment-stripper both actually work (positive control)', () => {
+  /**
+   * Lines holding `<iframe` that are NOT positioned inside a comment.
+   *
+   * 🔴 STRIPS NOTHING — that is the entire point. The count above depends on
+   * `stripComments`, so it inherits every way that regex can remove too much;
+   * this one only asks where the token sits. A block-comment continuation line
+   * (` * …`) or a `//` line is fine — the file docstring legitimately names
+   * `<iframe src={liveUrl}>` twice. JSX never starts a line with `*`, so a real
+   * frame cannot hide here. Its only failure mode is a FALSE RED (an inline
+   * trailing block comment naming an iframe on a code line), which is the safe
+   * direction.
+   */
+  const uncommentedIframeLines = (s: string) =>
+    s
+      .split('\n')
+      .filter((l) => l.includes('<iframe'))
+      .filter((l) => {
+        const t = l.trimStart();
+        return !(t.startsWith('*') || t.startsWith('//') || t.startsWith('/*'));
+      });
+
+  const WHY =
+    'A raw <iframe> is back in AppListingDetailBody.tsx. A block at ' +
+    '<slug>.civit.ai does not boot from its URL — it needs a host to post ' +
+    'BLOCK_INIT — so a bare frame renders the pre-init light-theme shell ' +
+    'and nothing else. See the file docstring; ReviewBlockPreviewHost is ' +
+    'the bridged reference.';
+
+  it('the matcher and BOTH directions of the stripper work (positive control)', () => {
     // Without this, a `countIframes` that can never match anything — a typo'd
     // regex, say — would make the real assertion below a green that means
-    // nothing. Drive both directions through the same two helpers.
+    // nothing. Drive every helper through a fixture whose answer is known.
     expect(countIframes('<div>\n  <iframe src={x} />\n</div>')).toBe(1);
     const commented = '/* <iframe src={liveUrl}> */\nconst a = 1;\n';
     expect(countIframes(commented)).toBe(1); // …unstripped, the DOC matches,
     expect(countIframes(stripComments(commented))).toBe(0); // …stripped, it doesn't.
+
+    // 🔴 The OTHER direction — "removes enough" is only half of it; the stripper
+    // must also not remove CODE. Every assertion above is satisfied by
+    // `stripComments = () => ''`, so without this line the control cannot see
+    // an over-strip at all — and an over-strip is exactly how the `/*`-in-a-
+    // string mutant evaded the count (see SCOPE).
+    expect(stripComments('const a = 1;')).toContain('const a = 1;');
+
+    // The strip-free positional check must be able to SEE a frame, and must not
+    // fire on the docstring shape it exists to tolerate.
+    expect(uncommentedIframeLines('  <iframe src={x} />')).toHaveLength(1);
+    expect(uncommentedIframeLines(' * <iframe src={liveUrl}> — in a docstring')).toHaveLength(0);
   });
 
   it('🔴 the component source contains no <iframe> element', () => {
-    const code = stripComments(fs.readFileSync(SOURCE, 'utf8'));
-    expect(
-      countIframes(code),
-      'A raw <iframe> is back in AppListingDetailBody.tsx. A block at ' +
-        '<slug>.civit.ai does not boot from its URL — it needs a host to post ' +
-        'BLOCK_INIT — so a bare frame renders the pre-init light-theme shell ' +
-        'and nothing else. See the file docstring; ReviewBlockPreviewHost is ' +
-        'the bridged reference.'
-    ).toBe(0);
+    const raw = fs.readFileSync(SOURCE, 'utf8');
+    // (a) nothing survives comment-stripping…
+    expect(countIframes(stripComments(raw)), WHY).toBe(0);
+    // (b) …and, independently and WITHOUT stripping, every `<iframe` in the file
+    // sits on a comment line. (a) alone is evadable by a `/*` inside a string
+    // literal before the frame; (b) is what kills that.
+    expect(uncommentedIframeLines(raw), WHY).toEqual([]);
   });
 
   it('the deleted preview view-model is not imported back', () => {
-    const code = stripComments(fs.readFileSync(SOURCE, 'utf8'));
-    expect(code).not.toMatch(/appListingPreview/);
+    // Positive control FIRST: `not.toMatch` is zero-shaped and passes against an
+    // empty string, so on its own it proves nothing about the read or the regex.
+    expect(
+      stripComments("import { getListingPreview } from '~/components/Apps/appListingPreview';")
+    ).toMatch(/appListingPreview/);
+
+    expect(stripComments(fs.readFileSync(SOURCE, 'utf8'))).not.toMatch(/appListingPreview/);
   });
 });
 
