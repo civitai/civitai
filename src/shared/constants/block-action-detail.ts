@@ -50,6 +50,18 @@ export type BlockActionDetail = {
   entityType?: string;
   /** Storage key (already scoped to the user's own namespace). */
   key?: string;
+  /**
+   * Orchestrator workflow id for a `workflow.submit`. Lives HERE, not in the
+   * `endpoint` column: `endpoint` is an AGGREGATION key (the `topEndpoints`
+   * rollup groups on it), so embedding a per-submit id there makes the column
+   * unbounded and every rollup bucket count 1 — the same cardinality reasoning
+   * `boundAppBlockIdLabel` applies to the prom `app_block_id` label. `detail` is
+   * the per-row payload ("stores IDS, not display names"), so the Activity
+   * panel's Detail column reads the id from here instead of parsing it back out
+   * of the endpoint string. Absent when the submit had no id yet (was
+   * `workflow:submit:pending`).
+   */
+  workflowId?: string;
   /** Terminal outcome of the action. */
   outcome?: 'ok' | 'failed';
   /**

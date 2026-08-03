@@ -4438,6 +4438,13 @@ export const blocksRouter = router({
       // workflow:submit is a synthetic endpoint string (this path is
       // tRPC, not REST) — the UI's Activity panel humanises it via the
       // 'ai:write:budgeted' scope to "Generated an image".
+      //
+      // 🔴 The endpoint is a TEMPLATE, never `workflow:submit:<workflowId>`.
+      // `endpoint` is the GROUP BY key of the `topEndpoints` rollup
+      // (app-analytics.service), so a per-submit id makes the column unbounded
+      // and every bucket count 1 — the rollup becomes pure noise. Same
+      // cardinality reasoning as `boundAppBlockIdLabel`. The workflow id is the
+      // per-ROW payload and goes in `detail.workflowId` instead.
       void (async () => {
         const { recordScopeInvocation } = await import(
           '~/server/services/blocks/user-app-surface.service'
@@ -4447,17 +4454,20 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           blockInstanceId: claims.blockInstanceId,
           scope: 'ai:write:budgeted',
-          endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+          endpoint: 'workflow:submit',
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
           // W13 richer detail — the buzz SPEND (negative) + terminal outcome so
           // the activity row reads "Generated an image (spent N Buzz)". `cost`
-          // is the reserved/charged budget for this submit.
+          // is the reserved/charged budget for this submit. `workflowId` is the
+          // per-row id the Activity panel's Detail column renders (it used to be
+          // parsed back out of the endpoint string).
           detail: {
             action: 'workflow.submit',
             amount: typeof cost === 'number' ? -Math.abs(cost) : undefined,
             outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+            ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
           },
           // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
           // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
@@ -6326,12 +6336,16 @@ async function submitCustomComfyWorkflow(opts: {
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
         scope: 'ai:write:budgeted',
-        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
         statusCode: snapshot.status === 'failed' ? 500 : 200,
         detail: {
           action: 'workflow.submit',
           amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
         // + synthetic_app_id path so the pre-approval audit row persists.
@@ -7137,11 +7151,16 @@ async function submitStepWorkflow(opts: {
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
         scope: 'ai:write:budgeted',
-        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
         statusCode: snapshot.status === 'failed' ? 500 : 200,
         // 🔴 THE TWO STEP DIMENSIONS. Everything else on this row is identical
-        // to what the txt2img path writes — same `scope`, same
-        // `workflow:submit:<id>` endpoint shape — so WITHOUT these a step submit
+        // to what the txt2img path writes — same `scope`, and now the same
+        // BOUNDED `workflow:submit` endpoint (this PR templated it; the id moved
+        // to `detail.workflowId`, so the endpoint discriminates even less than
+        // it used to) — so WITHOUT these a step submit
         // and a txt2img submit are indistinguishable in `block_scope_invocations`,
         // and two different step types are indistinguishable from each other.
         // That is the gap: per-(user, app, capability) usage was not answerable
@@ -7170,6 +7189,10 @@ async function submitStepWorkflow(opts: {
           // entry that makes its model its variant this IS the model; for
           // `convert-image` it is always `'default'`.
           variant,
+          // The per-ROW workflow id, moved here from the endpoint string by this
+          // PR (see the `endpoint` note above). Additive alongside the two step
+          // dimensions — same nullable JSON column, no schema change.
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         dev: claims.dev === true,
       });
