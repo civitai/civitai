@@ -83,9 +83,7 @@ describe('🔴 test/component-setup.tsx awaits cleanup()', () => {
   it('cleanup() is never called as a bare, unawaited statement', () => {
     // The exact regression shape: `cleanup();` on its own line with nothing
     // awaiting or returning it.
-    const bare = code
-      .split('\n')
-      .filter((l) => /^\s*cleanup\s*\(\s*\)\s*;\s*$/.test(l));
+    const bare = code.split('\n').filter((l) => /^\s*cleanup\s*\(\s*\)\s*;\s*$/.test(l));
     expect(bare, `bare unawaited cleanup() call(s): ${JSON.stringify(bare)}`).toEqual([]);
   });
 });
