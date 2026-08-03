@@ -152,6 +152,7 @@ import {
   estimateStepBuzz,
   getStep,
   planStepSpend,
+  resolveStepVariant,
 } from '~/server/services/blocks/steps';
 // Moderation dispatch for the same registry. A SEPARATE module because it pulls
 // `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
@@ -6514,6 +6515,14 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  *
  * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
  * exactly as submit does — the same `.strict()` schema runs on both paths.
+ *
+ * 🔴 AND fail-closed on an out-of-set VARIANT, which it previously was not.
+ * `estimateStepBuzz` resolves through `resolveStepVariant` before dispatching, so
+ * a resolution outside the entry's declared `variants` throws here exactly as it
+ * does on submit. Before that bound existed the two paths disagreed: for an entry
+ * whose variant is its model, an out-of-set model returned HTTP 200 with
+ * `cost: { total: undefined }` here while the submit threw — estimate/submit
+ * drift on the surface whose entire job is to predict the submit.
  */
 async function estimateStepWorkflow(opts: { claims: BlockClaims; body: StepBody }) {
   const { claims, body } = opts;
@@ -6613,10 +6622,31 @@ async function submitStepWorkflow(opts: {
 
   const token = await getOrchestratorToken(userId, ctx);
 
+  // ── THE RESOLVED VARIANT — derived ONCE, HERE, before any reservation exists.
+  //
+  // 🔴 WHY IT IS HOISTED RATHER THAN CALLED AT EACH USE. Three consumers key off
+  // this value (the price lookup below, the settle `engine`, and the usage audit
+  // row), and it used to be re-derived at each of them — against the registry's
+  // own stated invariant that there is a SINGLE source of truth for "which
+  // variant did this submit resolve to?". Re-deriving is not merely wasteful: a
+  // resolver that is not a pure function of `params` could answer differently at
+  // each site, so the row would record a variant the caller was not charged for.
+  //
+  // 🔴 AND WHY THE POSITION MATTERS. `resolveStepVariant` THROWS on an out-of-set
+  // resolution. Resolved here, that throw lands before the orchestrator quote and
+  // before every reservation — nothing to refund. The audit-row derivation it
+  // replaces sits inside a `void (async () => …)().catch(() => {})` AFTER the
+  // submit is billed, where the same throw would have been silently swallowed
+  // with the money already committed.
+  //
+  // Order-preserving: `planStepSpend` resolved this internally, as its first act,
+  // at exactly this point in the sequence.
+  const variant = resolveStepVariant(step, params);
+
   // ── SPEND PLAN — dispatched on the entry's declared BILLING MODE. This is the
   // single place the money shape is decided; the rest of this function is
   // mode-agnostic and never re-inspects `billingMode`.
-  const plan = planStepSpend(step, params);
+  const plan = planStepSpend(step, params, variant);
   const declaredBuzz = Math.ceil(plan.reserveBuzz);
 
   // Built ONCE, then used for the quote and the real submit, so the two can
@@ -7056,7 +7086,10 @@ async function submitStepWorkflow(opts: {
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling: reserveBuzz,
-      engine: step.resolveVariant(params),
+      // The ONE derivation hoisted to the top of this function — bounded to the
+      // entry's declared `variants` by `resolveStepVariant`, and the same value
+      // the reservation was priced from.
+      engine: variant,
       recipe: step.id,
       submittedAt,
     });
@@ -7106,10 +7139,37 @@ async function submitStepWorkflow(opts: {
         scope: 'ai:write:budgeted',
         endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
         statusCode: snapshot.status === 'failed' ? 500 : 200,
+        // 🔴 THE TWO STEP DIMENSIONS. Everything else on this row is identical
+        // to what the txt2img path writes — same `scope`, same
+        // `workflow:submit:<id>` endpoint shape — so WITHOUT these a step submit
+        // and a txt2img submit are indistinguishable in `block_scope_invocations`,
+        // and two different step types are indistinguishable from each other.
+        // That is the gap: per-(user, app, capability) usage was not answerable
+        // from the table that exists to answer it.
+        //
+        // 🔴 NO SCHEMA CHANGE. `detail` is a nullable JSON column, so these are
+        // additive keys on new rows; existing rows and every other writer are
+        // untouched, and `describeBlockAction` ignores keys it does not read.
+        //
+        // 🔴 NOT A PER-STEP BRANCH — this stays inside the dispatch rule at the
+        // top of this section. Both values are read off the registry entry
+        // generically (`step.id`, and the entry's own variant resolver); nothing
+        // here tests WHICH step it is.
         detail: {
           action: 'workflow.submit',
           amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: step.id,
+          // 🔴 THE HOISTED VALUE, not a fresh resolution. Bounded to the entry's
+          // declared `variants` by `resolveStepVariant` — that wrapper, not the
+          // entry's promise, is what makes it safe to persist — and identical by
+          // construction to the one the reservation was priced from, which is the
+          // only thing that makes this row a usable billing dimension. Resolving
+          // it HERE would also put a throwing call inside this swallowed
+          // fire-and-forget block, after the submit is already billed. For an
+          // entry that makes its model its variant this IS the model; for
+          // `convert-image` it is always `'default'`.
+          variant,
         },
         dev: claims.dev === true,
       });

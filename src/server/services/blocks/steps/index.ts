@@ -181,6 +181,35 @@ export type OrchestratorStepTemplate = {
 // included — a checkpoint IS an AIR, so it is a `staticAllowlist` case, not a
 // separate field), and until one exists it fails at registry LOAD. Same
 // unskippable property moderation already had.
+//
+// 🔴 THIS AXIS IS AIR-SPECIFIC, AND READING IT WIDER IS THE MISTAKE TO AVOID.
+// Both policy kinds are about AIR URNs and nothing else: `staticAllowlist`'s
+// only field is `airs`, clause 7's enforcement is `containsAirReference` (a
+// `urn:air:` substring scan), and the harm it names is the generation-graph
+// ENTITLEMENT belt — reaching a gated / early-access / Private model version.
+// So `resourcePolicy: 'none'` means "no AIR reference", NOT "this entry's model
+// surface is bounded", and a reviewer who reads it as the latter has stopped
+// checking the thing that matters.
+//
+// The concrete case, because it is coming: the orchestrator's `chatCompletion`
+// input takes `model: string` — a plain provider id ("gpt-4o"), NOT an AIR
+// (`ChatCompletionInput` in the generated `@civitai/client` types). Such an
+// entry would declare `'none'` TRUTHFULLY and pass clause 7, while forwarding
+// an arbitrary model name from an untrusted iframe. There is also no
+// orchestrator-side model validation to catch it — a fabricated name quotes
+// fine and fails only at execution.
+//
+// 🔴 DO NOT FORCE A NON-AIR MODEL ALLOWLIST INTO `staticAllowlist`. Putting
+// "gpt-4o" in a field named `airs` would make the eventual AIR-allowlist
+// implementation (which has to compare against the entitlement belt) wrong for
+// whichever entries lied to it. The smallest honest shape is the one the
+// registry ALREADY provides, with no new field: put the permitted models in the
+// entry's own `.strict()` `paramSchema` as a `z.enum`, AND declare them as the
+// entry's `variants` with `resolveVariant` returning the chosen one. That gets
+// the pinning from the schema (a non-member is a BAD_REQUEST at parse), the
+// bound from `resolveStepVariant`, and per-model pricing from
+// `priceForVariant` — which a flat price today does not need but a rate card
+// eventually will.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepResourcePolicy =
   /**
@@ -513,9 +542,33 @@ interface BlockStepBase<P> {
   variants: readonly string[];
   /**
    * The SINGLE source of truth for "which variant did this submit resolve to?".
-   * The price/budget, the built step, and the display estimate MUST all agree on
-   * this one value, so they all derive it here. Returns a bounded id from
-   * `variants` — never a client-raw string.
+   * Returns a bounded id from `variants` — never a client-raw string.
+   *
+   * 🔴 WHAT ACTUALLY DERIVES FROM IT — stated exactly, because the previous
+   * wording ("the price/budget, the built step, and the display estimate MUST
+   * all agree on this one value, so they all derive it here") over-claimed and a
+   * reader who trusted it would have looked for a bound that was not there. Only
+   * the PRICE/BUDGET is computed FROM this value (`priceForVariant(variant)`);
+   * the settle `engine` and the usage audit row RECORD it. The BUILT STEP
+   * (`buildStep(params)`) and the DISPLAY ESTIMATE (`estimateBuzz(params)`) are
+   * computed from the PARAMS and never receive the variant at all — they are
+   * only required to be CONSISTENT with it, which registry load checks for the
+   * canonical params of each variant (clause 5, and the price-equals-estimate
+   * clause) and nothing re-checks at request time.
+   *
+   * What estimate and submit DO share is the BOUND: `estimateStepBuzz` and
+   * `planStepSpend` both resolve through `resolveStepVariant` before dispatching
+   * to a billing-mode handler, so an out-of-set resolution fails identically on
+   * both. Before that they did not, and an entry whose variant is its model
+   * would have answered an out-of-set model with HTTP 200 and
+   * `cost: { total: undefined }` on estimate while the submit threw.
+   *
+   * 🔴 CALL IT THROUGH `resolveStepVariant`, NEVER DIRECTLY. "Returns a bounded
+   * id" is a promise the ENTRY makes about a function that receives untrusted
+   * params; the wrapper is what checks it. Clause 5 below only checks the
+   * canonical params, i.e. one author-chosen input per variant. The return type
+   * of the wrapper (`BoundedStepVariant`) is what carries that proof into every
+   * downstream consumer.
    */
   resolveVariant(params: P): string;
   /**
@@ -682,10 +735,139 @@ export type StepSpendPlan = {
   stepTimeoutSeconds: number | null;
 };
 
-type BillingModeHandler = {
-  estimateBuzz(step: AnyBlockStep, params: unknown): number;
-  planSpend(step: AnyBlockStep, params: unknown): StepSpendPlan;
+/**
+ * Everything a billing-mode handler is allowed to see.
+ *
+ * 🔴 THE VARIANT IS PASSED IN, ALREADY BOUNDED. The previous shape handed a
+ * handler `(step, params)` and asked, in a comment, that it route its own
+ * resolution through `resolveStepVariant`. A comment is not a choke point — a
+ * future `timeBounded` handler written as
+ * `budgetForVariant(entry.resolveVariant(params))` would have reopened the
+ * budget-gate fail-open verbatim while reading as ordinary code, because nothing
+ * would have been there to stop it. Now the bound happens ONCE in the dispatcher
+ * below, for every mode, before any handler runs.
+ *
+ * 🔴 BE EXACT ABOUT THE STRENGTH OF THAT. A handler still receives `step` and
+ * `params`, so it CAN call `step.resolveVariant` — no type prevents it. What
+ * changed is that doing so is now visibly a second, unbounded re-derivation of a
+ * value the handler was already handed, rather than the only way to obtain one.
+ * The type system's part is narrower and exact: a handler cannot pass its own
+ * re-derivation to anything that takes a `BoundedStepVariant` without an explicit
+ * cast.
+ */
+type StepSpendContext = {
+  step: AnyBlockStep;
+  /** The entry's own `.strict()`-parsed params. Still untrusted CONTENT. */
+  params: unknown;
+  /** Proven a member of `step.variants` — see `resolveStepVariant`. */
+  variant: BoundedStepVariant;
 };
+
+type BillingModeHandler = {
+  estimateBuzz(ctx: StepSpendContext): number;
+  planSpend(ctx: StepSpendContext): StepSpendPlan;
+};
+
+/**
+ * A variant string PROVEN to be a member of its entry's declared `variants`.
+ *
+ * 🔴 THE BRAND IS THE ENFORCEMENT. `resolveStepVariant` is the only function
+ * that produces one, so every consumer that declares this type — the
+ * billing-mode handlers, and through them the price lookup — cannot be handed a
+ * raw `step.resolveVariant(params)` without an explicit cast that a reviewer
+ * will see. The alternative was a prose instruction to use the wrapper, which is
+ * exactly the class of guarantee this file has repeatedly failed to keep.
+ *
+ * It is a `string` at runtime; the brand exists only in the type system.
+ */
+export type BoundedStepVariant = string & { readonly __boundedStepVariant: 'bounded' };
+
+/**
+ * `step.resolveVariant(params)`, BOUNDED to the entry's declared `variants`.
+ *
+ * 🔴 WHY A WRAPPER RATHER THAN THE RAW CALL. `resolveVariant` is documented as
+ * returning "a bounded id from `variants` — never a client-raw string", and
+ * until now that was a PROSE promise the entry made: nothing checked it, and
+ * clause 5 only checks it for `canonicalParamsFor(v)` — one fixed input per
+ * variant, chosen by the entry author. At REQUEST time the argument is the
+ * untrusted iframe's `.strict()`-parsed params, and the return value is fed
+ * straight into `priceForVariant` on the money path.
+ *
+ * 🔴 THE FAILURE THAT MOTIVATES IT, MEASURED RATHER THAN REASONED. With an
+ * entry whose `resolveVariant` returns a param (`(p) => p.model`) and whose
+ * `priceForVariant` is a record lookup, an out-of-set value made
+ * `priceForVariant` return `undefined` → `planStepSpend().reserveBuzz`
+ * `undefined` → the router's `Math.ceil(...)` `NaN` → and `NaN > buzzBudget`
+ * evaluates **false**, so the per-call budget gate PASSES. Executed on
+ * unmodified `main` before this wrapper existed; the numbers are from that run,
+ * not from reading the code.
+ *
+ * 🔴 BE EXACT ABOUT REACHABILITY — this is a LATENT fail-open, not a live one.
+ * The sole registered entry today (`convert-image`) returns a CONSTANT
+ * (`() => 'default'`), so no params can steer it and the shape above cannot be
+ * reached by any shipped code path. It becomes reachable the moment an entry
+ * derives its variant FROM params — which is exactly what a model-allowlisted
+ * entry wants to do, since per-model pricing has to key off the variant. This
+ * wrapper is therefore a prerequisite for that shape, not a fix for a live bug,
+ * and the test that pins it says so.
+ *
+ * 🔴 AND BE EXACT ABOUT WHAT IT BINDS. It proves the resolved value is a MEMBER
+ * of `step.variants`. It does NOT prove `variants` itself is a sensible set —
+ * that stays what it always was, a reviewed declaration in a code-reviewed
+ * trust root. What it buys is that everything downstream (the price lookup, the
+ * settle `engine`, the audit row) receives a value from a fixed, reviewed,
+ * enumerable set rather than whatever the entry chose to return.
+ *
+ * Throws a plain `Error` (not a TRPC caller error) on purpose: the params were
+ * already accepted by the entry's own `.strict()` schema, so a resolution
+ * outside the declared set is a REGISTRY-ENTRY bug, not a caller mistake, and
+ * it should surface as a 500 the way any other broken invariant does. A plain
+ * `Error` also keeps this module import-light, which `workflow.schema` depends
+ * on.
+ *
+ * 🔴 THE MESSAGE IS ECHOED TO THE UNTRUSTED IFRAME. `trpc.ts`'s `errorFormatter`
+ * is pass-through (`({ shape }) => shape`), and `getTRPCErrorFromUnknown`
+ * preserves an unrecognized throw's `message`, so everything below reaches the
+ * block's own JS — INCLUDING `step.variants.join(', ')`, i.e. the entry's ENTIRE
+ * declared allowlist. For `convert-image` that is the single word `default` and
+ * discloses nothing. For the model-allowlisted entry this is groundwork for, it
+ * would be the full model list, which may name a model that is not public yet.
+ * 🔴 So an entry whose `variants` are not all public information must choose
+ * this message deliberately — either by keeping unreleased ids out of
+ * `variants`, or by making the resolution unreachable (a `z.enum` paramSchema
+ * over the same set turns an out-of-set value into a BAD_REQUEST at parse,
+ * before this guard is ever reached).
+ */
+export function resolveStepVariant(step: AnyBlockStep, params: unknown): BoundedStepVariant {
+  // Deliberately typed `unknown`: `resolveVariant`'s declared `string` return is
+  // the entry's CLAIM, and this function exists precisely because the entry's
+  // claims are not checked anywhere else.
+  const variant: unknown = step.resolveVariant(params);
+  // 🔴 THE TYPE CHECK IS NOT REDUNDANT WITH THE MEMBERSHIP CHECK BELOW.
+  // `Array.prototype.includes` uses SameValueZero, under which `NaN` matches
+  // `NaN` — so an entry declaring `variants: [NaN as any]` with
+  // `resolveVariant: () => NaN` would PASS `includes` and hand `NaN` to
+  // `priceForVariant`, reopening the exact `undefined` → `Math.ceil` → `NaN` →
+  // `NaN > buzzBudget === false` budget-gate bypass this wrapper exists to
+  // close. TypeScript rejects that entry without the cast, so it is latent, not
+  // live — the same posture as the fail-open itself.
+  if (typeof variant !== 'string') {
+    throw new Error(
+      `block step '${step.id}': resolveVariant() returned a non-string ` +
+        `(${typeof variant}: ${String(variant)}) — the price lookup keys off this value, and a ` +
+        'non-string resolution is a money-path input nobody reviewed'
+    );
+  }
+  if (!step.variants.includes(variant)) {
+    throw new Error(
+      `block step '${step.id}': resolveVariant() returned '${variant}', which is not one of the ` +
+        `declared variants [${step.variants.join(', ')}] — the price lookup, the settle record ` +
+        'and the audit row all key off this value, so an unbounded one is a money-path input ' +
+        'nobody reviewed'
+    );
+  }
+  return variant as BoundedStepVariant;
+}
 
 /**
  * A mode that is DECLARED (so the type + wire surface is stable and future
@@ -710,11 +892,22 @@ function unimplementedMode(mode: StepBillingMode): BillingModeHandler {
 
 const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
   prepaidFixed: {
-    estimateBuzz: (step, params) => step.estimateBuzz(params),
-    planSpend: (step, params) => {
+    // The display estimate is computed from the PARAMS — the variant is not an
+    // input to it, and this handler deliberately does not destructure one. What
+    // the bound buys this path is that `estimateStepBuzz` already threw on an
+    // out-of-set resolution before reaching here, so estimate can no longer
+    // answer 200 where submit throws.
+    estimateBuzz: ({ step, params }) => step.estimateBuzz(params),
+    planSpend: ({ step, variant }) => {
       const entry = step as PrepaidFixedStep<unknown>;
       return {
-        reserveBuzz: entry.priceForVariant(entry.resolveVariant(params)),
+        // 🔴 A `BoundedStepVariant`, resolved ONCE by the dispatcher. The price
+        // lookup is the money-path consumer that made an unbounded resolution a
+        // budget-gate bypass (see `resolveStepVariant`'s header for the measured
+        // sequence), so it takes the value it was handed — substituting a fresh
+        // `entry.resolveVariant(params)` here is what the bound exists to stop
+        // being the normal way to write this line.
+        reserveBuzz: entry.priceForVariant(variant),
         // Exact price → the reservation is final; never touch the post-paid
         // settle machinery.
         postPaidSettle: false,
@@ -733,14 +926,39 @@ export function isBillingModeImplemented(mode: StepBillingMode): boolean {
   return mode === 'prepaidFixed';
 }
 
-/** The display estimate for a step, dispatched on its declared billing mode. */
-export function estimateStepBuzz(step: AnyBlockStep, params: unknown): number {
-  return billingModeHandlers[step.billingMode].estimateBuzz(step, params);
+/**
+ * The display estimate for a step, dispatched on its declared billing mode.
+ *
+ * Resolves the variant through `resolveStepVariant` before dispatching — see
+ * `planStepSpend` below for why the resolution lives in the dispatcher, and note
+ * that this is what makes an out-of-set resolution fail IDENTICALLY on estimate
+ * and on submit.
+ */
+export function estimateStepBuzz(
+  step: AnyBlockStep,
+  params: unknown,
+  variant: BoundedStepVariant = resolveStepVariant(step, params)
+): number {
+  return billingModeHandlers[step.billingMode].estimateBuzz({ step, params, variant });
 }
 
-/** The spend plan for a step submit, dispatched on its declared billing mode. */
-export function planStepSpend(step: AnyBlockStep, params: unknown): StepSpendPlan {
-  return billingModeHandlers[step.billingMode].planSpend(step, params);
+/**
+ * The spend plan for a step submit, dispatched on its declared billing mode.
+ *
+ * 🔴 THE VARIANT IS RESOLVED HERE, NOT IN A HANDLER. Every billing mode keys its
+ * price/budget off a variant, so the bound belongs at the one place all modes
+ * pass through rather than being re-applied (or forgotten) per handler. `variant`
+ * is a parameter so a caller that has ALREADY resolved it — `submitStepWorkflow`
+ * does, once, before any reservation — threads that single derivation down
+ * instead of recomputing it; omitting it resolves here. Either way the value is
+ * a `BoundedStepVariant`, which only `resolveStepVariant` can produce.
+ */
+export function planStepSpend(
+  step: AnyBlockStep,
+  params: unknown,
+  variant: BoundedStepVariant = resolveStepVariant(step, params)
+): StepSpendPlan {
+  return billingModeHandlers[step.billingMode].planSpend({ step, params, variant });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
