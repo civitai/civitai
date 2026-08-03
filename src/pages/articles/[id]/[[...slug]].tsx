@@ -94,6 +94,9 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+    let suppressAds = false;
+
     // Redirect old ?imageId= URLs to the clean article URL
     if (ctx.query.imageId) {
       const slug = result.data.slug?.join('/');
@@ -106,6 +109,11 @@ export const getServerSideProps = createServerSideProps({
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
       const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (article) {
+        gating = { contentNsfwLevel: article.nsfwLevel };
+        suppressAds = !article.publishedAt;
+      }
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (article) {
@@ -138,7 +146,7 @@ export const getServerSideProps = createServerSideProps({
       await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating, suppressAds };
   },
 });
 
@@ -315,6 +323,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     <Gated
       contentNsfwLevel={article.nsfwLevel}
       bypassRating={isOwner}
+      suppressAds={!article.publishedAt}
       meta={{
         title: `${article.title} | Civitai`,
         description: truncate(articleBodyText, { length: 150 }),

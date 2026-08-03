@@ -117,8 +117,49 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 
+/**
+ * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
+ * ceiling a moderator's OWN account can spend across ALL run-for-real
+ * generations of ONE pending publish request. This is the number surfaced in
+ * the loud consent copy ("…spends YOUR Buzz, capped at N…") AND the number the
+ * server enforces as a per-(mod, publishRequestId) cumulative Redis reservation
+ * in `blocks.router.ts` (see `reserveReviewRunForRealBuzzSpend`).
+ *
+ * SINGLE SOURCE OF TRUTH: defined HERE (a client-safe shared constants module)
+ * so the server enforcement, the mint service, and the client consent dialog all
+ * read the identical value — a low per-call `buzzBudget` alone is NOT sufficient
+ * (a hostile app loops sub-budget calls; see `blocks.router.ts:594`), so this
+ * cumulative ceiling is what actually bounds a run-for-real session.
+ */
+export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
+/**
+ * Membership test against the authoritative scope vocabulary.
+ *
+ * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks
+ * the prototype chain, so `BLOCK_SCOPE_TO_OAUTH_BIT` being a plain object
+ * literal made 12 inherited `Object.prototype` keys answer "known scope":
+ * `__proto__`, `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+ * `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, and the four
+ * `__define*`/`__lookup*` accessors. Every caller treats a `true` here as
+ * "this string is part of the fixed platform vocabulary" and several then read
+ * `BLOCK_SCOPE_TO_OAUTH_BIT[scope]` expecting a number — for those keys that
+ * read yields a FUNCTION.
+ *
+ * The registration-time manifest path was never reachable (its `SCOPE_RE`
+ * requires at least one colon and rejects all 12 before this predicate runs),
+ * so this is defense-in-depth for the paths that call the predicate on
+ * untrusted runtime input WITHOUT a shape check first — notably the review
+ * host's REQUEST_CONSENT notice, whose `payload.scopes` comes straight from
+ * the reviewed app's own frame and whose filtered output is rendered into
+ * moderator-facing text.
+ *
+ * `Object.prototype.hasOwnProperty.call(...)` rather than
+ * `BLOCK_SCOPE_TO_OAUTH_BIT.hasOwnProperty(...)` so a future map that is
+ * null-prototype or that ever declares its own `hasOwnProperty` key still works.
+ */
 export function isKnownBlockScope(scope: string): scope is BlockScopeString {
-  return scope in BLOCK_SCOPE_TO_OAUTH_BIT;
+  return Object.prototype.hasOwnProperty.call(BLOCK_SCOPE_TO_OAUTH_BIT, scope);
 }
 
 /**
@@ -133,10 +174,15 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`)
  *
- * This is a PRESENTATION classification only — it changes how a scope is
- * displayed, never whether it is granted/enforced (that stays with the
- * server-side per-op gates + consent grant). Keeping it a set (not a per-scope
- * flag on the map) keeps the enforcement map and the UI emphasis decoupled.
+ * This set does two things. (1) PRESENTATION — it drives the distinct,
+ * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
+ * now also gates MANIFEST VALIDITY: at submit time the manifest validator
+ * REQUIRES a non-empty `scopeJustifications` entry for every declared sensitive
+ * scope (see `block-manifest-validator.service.ts`), so a moderator always sees
+ * WHY an elevated-risk permission was requested. It does NOT change whether a
+ * granted scope is enforced at call time — that stays with the server-side
+ * per-op gates + consent grant. Keeping it a set (not a per-scope flag on the
+ * map) keeps the enforcement map and this classification decoupled.
  *
  * INVARIANT (guarded by a test): every entry must be a currently-known scope in
  * `BLOCK_SCOPE_TO_OAUTH_BIT`. If a scope is renamed/removed (as
@@ -153,6 +199,77 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
 
 export function isSensitiveBlockScope(scope: string): boolean {
   return SENSITIVE_BLOCK_SCOPES.has(scope);
+}
+
+/**
+ * Manifest-shaped input for the sensitive-scope-justification gate. Only the two
+ * fields the rule actually reads are needed, and both are `unknown` because
+ * callers pass raw, not-yet-fully-validated manifests — the ZIP-extracted blob
+ * at submit (`submitVersion`) and the stored/deep-validated manifest at
+ * `validate`. Keeping the shape this loose is what lets ONE helper back both
+ * enforcement sites.
+ */
+export type SensitiveScopeManifestInput = {
+  scopes?: unknown;
+  scopeJustifications?: unknown;
+};
+
+/**
+ * Returns the DECLARED sensitive scopes that lack a non-empty
+ * `scopeJustifications` entry (deduped, in declaration order). Empty when the
+ * manifest is compliant, declares no sensitive scope, or has a non-array
+ * `scopes`. A justification "counts" only when it is a string with non-whitespace
+ * content — an empty/whitespace value, a non-string value, or a missing key all
+ * leave the sensitive scope unjustified.
+ *
+ * SINGLE SOURCE OF TRUTH for the "sensitive scopes must be justified" rule: the
+ * manifest validator (`validate`) and the submit path (`submitVersion`) both
+ * call this so the two enforcement sites can never drift. Pure + client-safe.
+ */
+export function unjustifiedSensitiveScopes(manifest: SensitiveScopeManifestInput): string[] {
+  if (!Array.isArray(manifest.scopes)) return [];
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? (manifest.scopeJustifications as Record<string, unknown>)
+      : {};
+  return [
+    ...new Set(
+      (manifest.scopes as unknown[])
+        .filter((s): s is string => typeof s === 'string')
+        .filter((scope) => isSensitiveBlockScope(scope))
+        .filter((scope) => {
+          const raw = justifications[scope];
+          return !(typeof raw === 'string' && raw.trim().length > 0);
+        })
+    ),
+  ];
+}
+
+/**
+ * The exact operator-facing message both enforcement sites raise for an
+ * unjustified sensitive scope. Single-sourced so the validator's
+ * `errors.push(...)` string and `submitVersion`'s `throw` stay byte-identical.
+ */
+export function sensitiveScopeJustificationError(unjustifiedScopes: string[]): string {
+  return `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedScopes.join(
+    ', '
+  )}`;
+}
+
+/**
+ * Throws (with `sensitiveScopeJustificationError`) when any declared sensitive
+ * scope lacks a justification; a no-op when the manifest is compliant. This is
+ * the imperative form used by `submitVersion` at submit time — the validator
+ * uses `unjustifiedSensitiveScopes` directly so it can accumulate the message
+ * into its `errors[]` alongside the other checks.
+ */
+export function assertSensitiveScopesJustified(manifest: SensitiveScopeManifestInput): void {
+  const unjustifiedScopes = unjustifiedSensitiveScopes(manifest);
+  if (unjustifiedScopes.length > 0) {
+    throw new Error(sensitiveScopeJustificationError(unjustifiedScopes));
+  }
 }
 
 /**

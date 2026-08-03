@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
@@ -16,13 +17,16 @@ import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
+import { collectionAiReview } from '~/server/jobs/collection-ai-review';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
+import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
+import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
@@ -168,9 +172,12 @@ export const jobs: Job[] = [
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
+  sweepStaleAgentReviewsJob,
+  purgeReviewSnapshotsJob,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
+  collectionAiReview,
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
@@ -204,6 +211,7 @@ export const jobs: Job[] = [
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
+  announcementMediaCheckJob,
 ];
 
 const log = createLogger('jobs', 'green');

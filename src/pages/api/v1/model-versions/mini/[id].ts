@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { DEFAULT_GENERATION_TRIAL_LIMIT, capMediaType, effectiveLicensingFee } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
@@ -11,6 +12,7 @@ import {
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { getCapTiers } from '~/server/services/paid-access.service';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
@@ -69,6 +71,8 @@ type VersionRow = {
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
+  sourceModelType: string | null;
+  sourceBaseModel: string | null;
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -115,7 +119,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
-      mv."earlyAccessEndsAt",
+      pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
       mv."licensingFee"::float8 AS "licensingFee",
@@ -124,6 +128,8 @@ export default MixedAuthEndpoint(async function handler(
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
+      lsm."type" AS "sourceModelType",
+      lsv."baseModel" AS "sourceBaseModel",
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
@@ -131,9 +137,9 @@ export default MixedAuthEndpoint(async function handler(
       u."flags" AS "userFlags",
       (
         (
-            (mv."earlyAccessEndsAt" > NOW() OR mv."earlyAccessPermanent")
-            AND mv."availability" = 'EarlyAccess'
-            AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
+            pa."entityId" IS NOT NULL
+            AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
+            AND (pa."terms"->'generation'->>'free' IS NULL OR pa."terms"->'generation'->>'free' != 'true')
         )
         OR
         (mv."availability" = 'Private')
@@ -145,10 +151,12 @@ export default MixedAuthEndpoint(async function handler(
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
-          mv."earlyAccessConfig"->>'chargeForGeneration'
-        WHEN 'true'
+          -- A paid generation tier is a generation grant that is NOT free (its price is optional and
+          -- falls back to the download price), mirroring paidGenerationGrant().
+          WHEN pa."terms"->'generation' IS NOT NULL
+            AND COALESCE(pa."terms"->'generation'->>'free', '') <> 'true'
         THEN
-          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10)
+          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})::int
         ELSE
           NULL
         END
@@ -156,6 +164,7 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     JOIN "User" u ON u.id = m."userId"
+    LEFT JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
     LEFT JOIN "LicensingRoot" lr ON lr."modelVersionId" = mv.id
     LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     LEFT JOIN "Model" lsm ON lsm.id = lsv."modelId"
@@ -315,6 +324,16 @@ export default MixedAuthEndpoint(async function handler(
   // `recipientUserId` is the owner of `recipientModelVersionId` at request time, so
   // payouts and the orchestrator's ResourceCompensation records follow ownership
   // transfers instead of crediting a past owner.
+  // Each component is capped against ITS OWN recipient's tier — the two can be different creators — so
+  // both are looked up. Amounts only: the orchestrator's contract is this response shape, and a positive
+  // fee can never clamp to 0 (the lowest cap of any tier is 0.1), so no entry ever drops out.
+  const capTiers = await getCapTiers([
+    isLicensingRoot || hasOwnFee ? modelVersion.modelUserId : null,
+    hasSourceRule ? modelVersion.sourceLicensingFeeRecipientUserId : null,
+  ]);
+  const ownFeeTier = capTiers.get(modelVersion.modelUserId) ?? null;
+  const sourceFeeTier = capTiers.get(modelVersion.sourceLicensingFeeRecipientUserId!) ?? null;
+
   const fees: Array<{
     role: 'baseModel' | 'version';
     amount: number;
@@ -326,7 +345,12 @@ export default MixedAuthEndpoint(async function handler(
   if (isLicensingRoot) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.licensingFee!,
+      amount: effectiveLicensingFee(
+        modelVersion.licensingFee,
+        ownFeeTier,
+        modelVersion.type,
+        capMediaType(modelVersion.baseModel)
+      ),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
@@ -335,7 +359,12 @@ export default MixedAuthEndpoint(async function handler(
   } else if (hasSourceRule) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.sourceLicensingFee!,
+      amount: effectiveLicensingFee(
+        modelVersion.sourceLicensingFee,
+        sourceFeeTier,
+        modelVersion.sourceModelType,
+        capMediaType(modelVersion.sourceBaseModel)
+      ),
       type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
@@ -345,7 +374,12 @@ export default MixedAuthEndpoint(async function handler(
   if (hasOwnFee) {
     fees.push({
       role: 'version',
-      amount: modelVersion.licensingFee!,
+      amount: effectiveLicensingFee(
+        modelVersion.licensingFee,
+        ownFeeTier,
+        modelVersion.type,
+        capMediaType(modelVersion.baseModel)
+      ),
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,

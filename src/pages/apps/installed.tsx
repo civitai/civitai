@@ -30,6 +30,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
@@ -502,7 +503,7 @@ export default function InstalledAppsPage() {
     <>
       <Meta title="Installed Apps — Civitai" deIndex />
       <AppsPageLayout
-        size="lg"
+        size={APPS_PAGE_WIDTHS['/apps/installed']}
         title="Your installed apps"
         subtitle="Manage where Civitai Apps show up across the site."
         actions={

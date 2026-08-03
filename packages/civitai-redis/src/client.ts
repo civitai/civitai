@@ -1624,6 +1624,40 @@ export const REDIS_SYS_KEYS = {
     // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
     TIP_CAP: 'system:blocks:tip-cap',
     /**
+     * Idempotency record for the block TIP endpoint (`POST /api/v1/blocks/tip`),
+     * keyed `system:blocks:tip-idem:${userId}:${clientIdempotencyKey}`. A tip
+     * moves REAL Buzz to a third party and is IRREVERSIBLE, so a timeout /
+     * lost-response retry that re-POSTs the same logical tip must NOT move money
+     * twice. The endpoint claims this key with `SET NX` before it reserves/charges;
+     * a replay that finds it set either (a) replays the cached TERMINAL result
+     * (200/4xx/5xx) verbatim — no second reserve, no second charge — or (b) gets a
+     * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
+     * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
+     * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
+     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
+     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     */
+    TIP_IDEM: 'system:blocks:tip-idem',
+    /**
+     * Idempotency record for the block GENERATION submit (`blocks.submitWorkflow`
+     * — both the txt2img and customComfy branches), keyed
+     * `system:blocks:gen-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`. A
+     * generation submit RESERVES the viewer's daily/per-app Buzz cap and SUBMITS to
+     * the orchestrator (a real charge), so two CONCURRENT same-key submits (a
+     * double-click / SDK auto-retry racing before the orchestrator's own
+     * `(userId, externalId)` dedupe engages) could otherwise BOTH reserve and BOTH
+     * charge. The handler `SET NX`-claims this key BEFORE the cap reservation; a
+     * concurrent submit that finds it in-progress gets a 409 (no 2nd reservation,
+     * no 2nd orchestrator submit), and a lost-response retry AFTER success replays
+     * the cached snapshot (no re-submit). DISTINCT from BUZZ_CAP (the daily-spend
+     * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
+     * logical generation across retries. Per-(user, app, key) so a key can never
+     * collide across apps or users. Short TTL (covers realistic retry windows); a
+     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
+     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     */
+    GEN_IDEM: 'system:blocks:gen-idem',
+    /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
      * bounds a single USER's daily Buzz SPEND; this one bounds the daily
@@ -1675,6 +1709,16 @@ export const REDIS_SYS_KEYS = {
      */
     SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
     /**
+     * Per-user (fallback per-IP) rate-limit counter for the PUBLIC app-catalog
+     * read (`/api/v1/apps` list + `/api/v1/apps/{slug}` detail). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
+     * created with its TTL), on `sysRedis`. Mirrors the 60/60 limit the tRPC
+     * marketplace procs carry, keyed on the authenticated user when a bearer is
+     * present and the client IP otherwise. Bounds a scripted crawler of the
+     * published-apps listing.
+     */
+    APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -1718,6 +1762,20 @@ export const REDIS_SYS_KEYS = {
      * absent for them (synthetic appBlockId), matching the txt2img caps.
      */
     CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
+    /**
+     * MOD REVIEW SANDBOX "run for real" (#2831) — AGGREGATE Buzz-spend ceiling
+     * for a moderator opting IN to run an UNAPPROVED review app for real against
+     * their OWN account. Keyed `${REVIEW_RUN_FOR_REAL_BUZZ_CAP}:<modUserId>:<publishRequestId>`
+     * so ALL run-for-real generations by one mod against one pending request
+     * accumulate against a SINGLE tight session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+     * — a per-call budget alone can't bound a hostile app looping sub-budget calls
+     * (blocks.router.ts §aggregate-cap). The key intentionally binds to
+     * (mod, publishRequestId) NOT the token jti, so re-minting/re-confirming the
+     * consent CANNOT reset the ceiling within the window. Same atomic INCRBY
+     * reserve-and-refund + hard-TTL EX shape as the sibling BLOCKS caps, on
+     * `sysRedis`.
+     */
+    REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -2008,6 +2066,8 @@ export const REDIS_KEYS = {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
+    PAID_ACCESS: 'packed:caches:paid-access',
+    PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',

@@ -1,5 +1,5 @@
-import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useLocalStorage } from '@mantine/hooks';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -8,7 +8,6 @@ import { ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import useIsClient from '~/hooks/useIsClient';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
@@ -16,6 +15,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -55,6 +55,28 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
   );
 }
 
+// VIDEO is here so arrow keys still seek a focused player with native controls
+const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
+
+function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return false;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return true;
+  if (target.isContentEditable) return false;
+  if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
+  if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // A dialog stacked on top of the detail view (report, add-to-collection) owns
+  // its own arrow handling. The detail view's own modal shell is also a dialog,
+  // but it contains the carousel, which is what tells the two apart.
+  const dialog = target.closest('[role="dialog"]');
+  return !dialog || (!!carouselRoot && dialog.contains(carouselRoot));
+}
+
+// Comfortably longer than embla's scroll animation (duration 25), so it only
+// ever fires for a 'settle' that was genuinely dropped.
+const SETTLE_FALLBACK_MS = 800;
+
 export function ImageDetailCarousel({
   images,
   videoRef,
@@ -62,66 +84,144 @@ export function ImageDetailCarousel({
   index,
   canNavigate,
   navigate,
+  next,
+  previous,
+  onSettle,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
   index: number;
   navigate?: (index: number) => void;
+  next: () => void;
+  previous: () => void;
+  onSettle?: (index: number) => void;
   canNavigate: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  const emblaRef = useRef<EmblaCarouselType | null>(null);
+  const handleSetEmbla = (api: EmblaCarouselType) => {
+    emblaRef.current = api;
+    setEmbla(api);
+  };
 
-  // const [slidesInView, setSlidesInView] = useState<number[]>([index]);
+  // Embla owns the slide animation, but `index` is the source of truth. Feeding
+  // it back in as `startIndex` would reInit the engine on every navigation,
+  // which tears down the pointer handlers mid-swipe.
+  //
+  // Keep every other option static too: embla's `reActivate` merges the options
+  // it is handed OVER the index it just preserved, so a changing option would
+  // snap the carousel back to whichever image was open at mount.
+  const startIndexRef = useRef(index);
 
-  // useEffect(() => {
-  //   if (!embla) return;
-  //   const onSelect = () => {
-  //     setSlidesInView([...embla.slidesInView(true)]);
-  //   };
+  const navigationRef = useRef({ next, previous, canNavigate });
+  navigationRef.current = { next, previous, canNavigate };
 
-  //   embla.on('select', onSelect);
-  //   return () => {
-  //     embla.off('select', onSelect);
-  //   };
-  // }, [embla]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const { next, previous, canNavigate } = navigationRef.current;
+      if (!canNavigate || !shouldHandleHotkey(event, emblaRef.current?.rootNode() ?? null)) return;
+      event.preventDefault();
+      if (event.key === 'ArrowLeft') previous();
+      else next();
+    };
 
-  useHotkeys([
-    ['ArrowLeft', () => embla?.scrollPrev()],
-    ['ArrowRight', () => embla?.scrollNext()],
-  ]);
+    // capture phase so the keypress reaches us regardless of what currently has
+    // focus (reaction buttons, controls) or what stops propagation on the way up
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
+
+  // `scrollTo` emits 'select' synchronously, which would echo straight back into
+  // `navigate` and run the whole onChange side-effect chain a second time.
+  const syncingRef = useRef(false);
+  const handleSlideChange = (slideIndex: number) => {
+    if (!syncingRef.current) navigate?.(slideIndex);
+  };
+
+  useEffect(() => {
+    if (!embla || embla.selectedScrollSnap() === index) return;
+    syncingRef.current = true;
+    embla.scrollTo(index);
+    syncingRef.current = false;
+  }, [embla, index]);
+
+  // The URL replace and the incoming neighbor's full-size decode hang off the
+  // settled index rather than the live one — landing either mid-transform is
+  // what makes the swipe stutter on mobile. Embla emits 'settle' once the
+  // animation is done AND the finger is up.
+  const [settledIndex, setSettledIndex] = useState(index);
+  const onSettleRef = useRef(onSettle);
+  onSettleRef.current = onSettle;
+
+  useEffect(() => {
+    if (!embla) return;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+
+    const commit = () => {
+      if (fallback) {
+        clearTimeout(fallback);
+        fallback = undefined;
+      }
+      const current = embla.selectedScrollSnap();
+      setSettledIndex(current);
+      onSettleRef.current?.(current);
+    };
+
+    // 'settle' only fires from the animation loop, so anything that destroys the
+    // engine mid-flight swallows it — including `loadMore` appending slides,
+    // which trips embla's own container MutationObserver into a reInit. Without
+    // a fallback the URL would just silently stop tracking the visible image.
+    const armFallback = () => {
+      if (fallback) clearTimeout(fallback);
+      fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
+    };
+
+    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
+    return () => {
+      if (fallback) clearTimeout(fallback);
+      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
+    };
+  }, [embla]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {
     embla?.reInit();
   });
-
-  const os = useOs();
-  const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
-
-  // useEffect(() => {
-  //   if (!slidesInView.includes(index)) {
-  //     embla?.scrollTo(index, true);
-  //   }
-  // }, [index, slidesInView]); // eslint-disable-line
 
   if (!images.length) return null;
 
   return (
     <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
-        key={images.length}
         withControls={canNavigate}
         className="flex-1"
-        onSlideChange={navigate}
-        setEmbla={setEmbla}
-        startIndex={index}
+        onSlideChange={handleSlideChange}
+        setEmbla={handleSetEmbla}
+        startIndex={startIndexRef.current}
         loop
-        watchDrag={!isDesktop && canNavigate}
+        watchDrag={canNavigate && watchTouchDrag}
         withKeyboardEvents={false}
       >
-        <Embla.Viewport className="h-full">
+        {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
+        <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
             {images.map((image, i) => (
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
-                {index === i && <ImageContent image={image} {...connect} videoRef={videoRef} />}
+                {/* function child opts out of Embla's own in-view gating — adjacency
+                    is the gate here, so a neighbor is painted before the drag reveals it.
+                    Neighbors key off the settled index so a new full-size decode never
+                    starts mid-swipe. While a settle is outstanding the next slide along
+                    isn't mounted yet, so a drag started in that window reveals it late;
+                    the fallback timer above bounds how long that can last. */}
+                {() =>
+                  (i === index || isAdjacent(i, settledIndex, images.length)) && (
+                    <ImageContent
+                      image={image}
+                      active={index === i}
+                      {...connect}
+                      videoRef={index === i ? videoRef : undefined}
+                    />
+                  )
+                }
               </Embla.Slide>
             ))}
           </Embla.Container>
@@ -131,11 +231,19 @@ export function ImageDetailCarousel({
   );
 }
 
+// the carousel loops, so the neighbors of the first/last slide wrap around
+function isAdjacent(i: number, index: number, length: number) {
+  if (length < 2) return i === index;
+  const distance = Math.abs(i - index);
+  return Math.min(distance, length - distance) <= 1;
+}
+
 function ImageContent({
   image,
   videoRef,
+  active = true,
   ...connect
-}: { image: ImageProps } & ConnectProps & ImageDetailCarouselProps) {
+}: { image: ImageProps; active?: boolean } & ConnectProps & ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -185,10 +293,14 @@ function ImageContent({
                 },
               }}
               // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              // `anim` and `original` feed the CDN URL — an inactive slide has to
+              // request the same URL the active one will, or it warms nothing
               anim
               quality={90}
               original={isVideo ? true : undefined}
-              html5Controls={features.nativeVideoControls || shouldDisplayHtmlControls(image)}
+              html5Controls={
+                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+              }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
                 setDefaultMuted(isMuted);
@@ -204,9 +316,9 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls
+              controls={active}
               videoProps={{
-                autoPlay: true,
+                autoPlay: active,
               }}
             />
           )}

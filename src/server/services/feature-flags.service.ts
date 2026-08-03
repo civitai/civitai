@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -193,6 +194,7 @@ const featureFlags = createFeatureFlags({
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
   krea2Training: { availability: ['mod'], fliptKey: 'krea2-training' },
+  mageflowTraining: { availability: ['mod'], fliptKey: 'mageflow-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
@@ -246,6 +248,7 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
+  collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,
     default: true,
@@ -353,6 +356,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
+  giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
@@ -559,7 +563,7 @@ function checkRegionAccess(
 }
 
 // Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
-type FliptModule = typeof import('~/server/flipt/client');
+type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 

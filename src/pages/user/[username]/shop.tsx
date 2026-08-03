@@ -1,15 +1,13 @@
-import { Alert, Anchor, Center, Loader, Stack } from '@mantine/core';
-import { IconAlertTriangle, IconEye } from '@tabler/icons-react';
+import { Alert, Center, Loader, Stack } from '@mantine/core';
+import { IconEye } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useMutateCreatorShop,
   useQueryCreatorShop,
 } from '~/components/CreatorShop/creator-shop.util';
-import { ManageUpsell } from '~/components/CreatorShop/Manage/ManageUpsell';
 import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
@@ -17,9 +15,7 @@ import { StorefrontSections } from '~/components/CreatorShop/Storefront/Storefro
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -58,20 +54,10 @@ function UserShopPage() {
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const canManage = isOwner || isModerator;
 
-  // The Creator Shop is a Creator Program benefit — an owner who hasn't joined
-  // the program (a valid subscription alone isn't enough) sees the upsell here
-  // on their storefront rather than on the manage page.
-  const isCreatorProgramMember =
-    !!currentUser && Flags.hasFlag(currentUser.onboarding ?? 0, OnboardingSteps.CreatorProgram);
-
   if (!username) return <NotFound />;
   // A disabled shop returns NOT_FOUND to visitors — stay quiet about it.
-  // Moderators bypass the gates below so they can view/manage any creator's shop.
+  // Moderators bypass the gate so they can view/manage any creator's shop.
   if (isError && !isModerator) return <NotFound />;
-  if (!isModerator) {
-    if (isOwner && !isCreatorProgramMember) return <ManageUpsell />;
-    if (!isOwner && !isCreatorProgramMember) return <NotFound />;
-  }
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;
@@ -103,17 +89,6 @@ function UserShopPage() {
                 Preview mode — sections are filled with site-wide sample cosmetics and models for
                 design work. This is not {displayName}&apos;s real shop; don&apos;t purchase from
                 preview, as buys would resolve against these sample items.
-              </Alert>
-            )}
-
-            {isOwner && shop?.membershipLapsed && (
-              <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-                Your shop is hidden from visitors because your Creator Program membership has
-                lapsed.{' '}
-                <Anchor component={NextLink} href="/creator-program" fw={600}>
-                  Renew your membership
-                </Anchor>{' '}
-                to make it public again.
               </Alert>
             )}
 

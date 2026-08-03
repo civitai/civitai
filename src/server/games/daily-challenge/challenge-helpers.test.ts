@@ -14,6 +14,7 @@ vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { DEFAULT_CATEGORY_ROWS } = await import('~/shared/constants/challenge.constants');
 
 // Stored shape: label/criteria were derived server-side at write time and persisted.
 const VALID_CATEGORIES = [
@@ -67,6 +68,16 @@ describe('resolveChallengeReviewInputs — categories resolution', () => {
       allowedNsfwLevel: 1,
     });
     expect(categories).toBeUndefined();
+  });
+
+  // The seeded default rubric is not special-cased — it resolves like any other stored rubric.
+  it('the seeded default rubric is used like any other', async () => {
+    const { categories } = await resolveChallengeReviewInputs({
+      source: ChallengeSource.System,
+      judgingCategories: DEFAULT_CATEGORY_ROWS,
+      allowedNsfwLevel: 1,
+    });
+    expect(categories?.map((c) => c.key)).toEqual(['theme', 'wittiness', 'humor', 'aesthetic']);
   });
 
   it('maps key/label/criteria to the key/name/criteria shape generateReview expects', async () => {

@@ -208,6 +208,10 @@ import {
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
+import {
+  classifyImageScanFailure,
+  ImageScanFailureClass,
+} from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
@@ -852,6 +856,76 @@ export const imageScanTypes: ImageScanType[] = [
   ImageScanType.SpineRating,
 ];
 
+function extractSubmitErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object') {
+    const { errors, title } = error as { errors?: { messages?: unknown }; title?: unknown };
+    const messages = errors?.messages;
+    if (Array.isArray(messages) && messages.length) return messages.join('; ');
+    if (typeof title === 'string') return title;
+  }
+  return null;
+}
+
+// Permanent terminalizes on the first attempt, so only codes that describe this input
+// belong here. A systemic code (401/403/404, or 413 when our own body is the thing that
+// grew) would terminalize every image submitted during the outage.
+const PERMANENT_SUBMIT_STATUSES = [400, 415, 422];
+
+async function markImageScanSubmitFailure({
+  dbClient,
+  imageId,
+  status,
+  error,
+}: {
+  dbClient: { $executeRaw: typeof dbWrite.$executeRaw };
+  imageId: number;
+  status?: number;
+  error: unknown;
+}) {
+  const reason = extractSubmitErrorMessage(error);
+  const failureClass =
+    !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
+      ? ImageScanFailureClass.Permanent
+      : classifyImageScanFailure({ reason, failureType: 'send-fail' });
+  const isPermanent = failureClass === ImageScanFailureClass.Permanent;
+
+  const errorJson = JSON.stringify({
+    failureType: 'send-fail',
+    responseStatus: status,
+    reason: reason ?? undefined,
+    failureClass,
+    at: new Date().toISOString(),
+  });
+
+  await dbClient.$executeRaw`
+    UPDATE "Image"
+    SET
+      -- Transient keeps its status; Error would demote a fresh upload to the hourly lane.
+      "ingestion" = CASE
+        WHEN ${isPermanent}::boolean THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+        ELSE "ingestion"
+      END,
+      "scanRequestedAt" = ${new Date()},
+      "scanJobs" = jsonb_set(
+        jsonb_set(
+          COALESCE("scanJobs", '{}'),
+          '{retryCount}',
+          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+        ),
+        '{error}',
+        ${errorJson}::jsonb
+      )
+    WHERE id = ${imageId}
+      -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
+      AND "ingestion" = ANY(ARRAY['Pending','Rescan','Error']::"ImageIngestionStatus"[])
+  `;
+
+  return failureClass;
+}
+
 export const ingestImage = async ({
   image,
   lowPriority,
@@ -902,7 +976,11 @@ export const ingestImage = async ({
   }
 
   if (await isImageScannerNewEnabled()) {
-    const { data: workflowResponse } = await createImageIngestionRequest({
+    const {
+      data: workflowResponse,
+      error: submitError,
+      status: submitStatus,
+    } = await createImageIngestionRequest({
       imageId: id,
       url,
       type,
@@ -911,6 +989,12 @@ export const ingestImage = async ({
     });
     if (!workflowResponse) {
       imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
+      const failureClass = await markImageScanSubmitFailure({
+        dbClient,
+        imageId: id,
+        status: submitStatus,
+        error: submitError,
+      });
       // The orchestrator submit already logs the transient failure in
       // createImageIngestionRequest, but from here it's otherwise a silent
       // `return false` — surface it at the dispatch layer so the failure is
@@ -920,6 +1004,8 @@ export const ingestImage = async ({
         type: 'error',
         reason: 'no-workflow-response',
         failureType: 'send-fail',
+        failureClass,
+        responseStatus: submitStatus,
         imageId: id,
         mediaType: type,
       }).catch(() => null);
@@ -6411,8 +6497,58 @@ export async function updateImageNsfwLevel({
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
 // downleveled-review queues) now live in the spoke app (apps/moderator). updateImageNsfwLevel STAYS — it
 // backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
-// NOTE(moderator-migration): getIngestionErrorImages + resolveIngestionError (the ingestion-error-review
-// queue + its nsfwLevel setter) now live in the spoke app (apps/moderator, Kysely).
+// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in the
+// spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
+// (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
+export async function resolveIngestionError({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      ingestion: true,
+      postId: true,
+      userId: true,
+      metadata: true,
+    },
+  });
+  if (!image) throw new Error('Image not found');
+
+  const metadata = (image.metadata as ImageMetadata) ?? {};
+
+  await dbWrite.image.update({
+    where: { id },
+    data: {
+      nsfwLevel,
+      nsfwLevelLocked: true,
+      ingestion: ImageIngestionStatus.Scanned,
+      scannedAt: new Date(),
+      metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
+    },
+  });
+  await imageMetadataCache.refresh(id);
+
+  await tagIdsForImagesCache.refresh(id);
+
+  if (image.postId) await updatePostNsfwLevel(image.postId);
+
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  await trackModActivity(userId, {
+    entityType: 'image',
+    entityId: id,
+    activity: 'setNsfwLevel',
+  });
+}
 
 // #region [image tools]
 async function authorizeImagesAction({

@@ -94,6 +94,9 @@ export const appRouter = router({
   redeemableCode: lazy(() =>
     import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
   ),
+  membershipGift: lazy(() =>
+    import('~/server/routers/membership-gift.router').then((m) => m.membershipGiftRouter)
+  ),
   tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
   cosmeticShop: lazy(() => import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)),
   creatorShop: lazy(() => import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)),

@@ -125,7 +125,7 @@ const benignPhraseRegexCache = createLruCache<BlocklistType, { pattern: RegExp |
   fetchFn: async (type) => ({ pattern: buildBenignPhraseRegex(await getBlocklistData(type)) }),
 });
 
-export async function stripBenignPhrases(text: string | undefined, type: BlocklistType) {
+export async function stripBenignPhrases(text = '', type: BlocklistType) {
   if (!text) return text;
   const { pattern } = await benignPhraseRegexCache.fetch(type);
   if (!pattern) return text;

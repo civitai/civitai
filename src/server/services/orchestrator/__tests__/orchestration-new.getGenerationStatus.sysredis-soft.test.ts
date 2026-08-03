@@ -79,7 +79,7 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
   it('happy path: reads status through withSysReadDeadline, resolves, no fail-open', async () => {
     mockHGet.mockResolvedValue(JSON.stringify({ available: true }));
 
-    const result = await buildGenerationContext('free', {}, {});
+    const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
     expect(result).toBeDefined();
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
@@ -89,7 +89,7 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
   it('DOWN: hGet throws → local status fails open to defaults, resolves, logs defaults-firing', async () => {
     mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
 
-    const result = await buildGenerationContext('free', {}, {});
+    const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
     expect(result).toBeDefined(); // did NOT throw
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
@@ -102,7 +102,7 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
     mockHGet.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
-    const result = await buildGenerationContext('free', {}, {});
+    const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
     expect(result).toBeDefined();
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);

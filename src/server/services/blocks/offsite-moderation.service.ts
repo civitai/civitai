@@ -20,6 +20,7 @@ import {
   type UnpublishOwnListingInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
+import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -501,6 +502,11 @@ export async function relistListing(opts: {
   let onsiteBlockRestoreDrift = false;
 
   await dbWrite.$transaction(async (tx) => {
+    // 🔴 Scan-clean go-live gate — a relist (removed → approved) republishes the
+    // listing's EXISTING assets; refuse if any is still scanning or was `Blocked`
+    // (the removed listing was directly asset-editable). No-op for a normally-scanned
+    // listing. Runs BEFORE the flip so a scan-dirty listing is never made live.
+    await assertListingAssetsScanCleanInTx(tx, input.appListingId);
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved' },
@@ -1384,6 +1390,13 @@ export async function republishOwnListing(opts: {
         'This listing was removed by a moderator and cannot be restored by its owner.'
       );
     }
+    // 🔴 Scan-clean go-live gate — republish (removed → approved) puts the listing's
+    // EXISTING assets back on the store; refuse if any is still scanning or was
+    // `Blocked`. This is the primary hole the audit found: owner-unpublish leaves
+    // iconId/coverId set, the removed listing stays directly asset-editable, so an
+    // owner could attach a Pending/later-Blocked image then self-restore. No-op for a
+    // normally-scanned listing; runs BEFORE the flip.
+    await assertListingAssetsScanCleanInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },

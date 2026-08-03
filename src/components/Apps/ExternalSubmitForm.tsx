@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Code,
@@ -7,11 +8,13 @@ import {
   Loader,
   Select,
   Stack,
-  Stepper,
   Text,
   TextInput,
   Textarea,
+  Stepper,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -21,13 +24,7 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
@@ -38,22 +35,37 @@ import {
   isClientStepComplete,
   isCreateDetailsStepComplete,
   isCreateUrlStepComplete,
-  normalizeLinkUrl,
   toSubmitExternalInput,
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
-import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
+import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import { describeMissingChannels } from '~/components/Apps/listingAutofillStatus';
+import { useListingAutofill } from '~/components/Apps/useListingAutofill';
 import { ExternalListingEditForm } from '~/components/Apps/ExternalListingEditForm';
 import { FadeIn } from '~/components/Apps/wizardMotion';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * A moderator's global-search OAuth-client option — the SECRET-FREE projection
+ * returned by `oauthClient.searchForModerator` (plus what we pin for the selected
+ * FOREIGN client). Kept minimal so a searched client not in the caller's own list
+ * still resolves its `allowedScopes` for `deriveScopesFromClient`.
+ */
+type ModClientOption = {
+  id: string;
+  name: string;
+  allowedScopes: number;
+  user: { id: number; username: string | null } | null;
+};
 
 /**
  * /apps/submit — "External app" mode body (W13 P3a, MERGED external+connect model).
@@ -109,16 +121,21 @@ function ExternalCreateForm() {
   // SENSITIVE justification surfaces its required error at once.
   const [showScopeErrors, setShowScopeErrors] = useState(false);
 
-  // App-URL metadata auto-pull: once a valid URL is entered, fetch the target page's
-  // OG metadata SERVER-side (SSRF-safe) and surface prefill + asset suggestions.
-  const [metaUrl, setMetaUrl] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
-  const [autofillApplied, setAutofillApplied] = useState(false);
-  const appliedMetaRef = useRef<string | null>(null);
-  // Host-derived name kept as a FALLBACK only — used to fill `name` when the OG-meta
-  // fetch settles with no usable `<title>`. The real page title is preferred (see the
-  // meta effect); we never seed this up front so the title can win.
+  // App-URL metadata auto-pull is owned by the shared `useListingAutofill` hook
+  // (declared below `applyNormalizedUrl`): once a valid https URL is entered — on blur,
+  // Enter, step-advance, OR a debounced pause in typing — it fetches the target page's
+  // OG metadata SERVER-side (SSRF-safe) and surfaces fill-if-empty prefill + asset
+  // suggestions. Host-derived name kept as a FALLBACK only — used to fill `name` when
+  // the OG-meta fetch settles with no usable `<title>` (the real page title is
+  // preferred); never seeded up front so the title can win.
   const hostNameFallbackRef = useRef<string>('');
+  // Latest `values` for the hook's emptiness reads (its async `setValues` updater hasn't
+  // committed yet when the status note is computed).
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+
+  const currentUser = useCurrentUser();
+  const isModerator = !!currentUser?.isModerator;
 
   const clientsQuery = trpc.oauthClient.getAll.useQuery(undefined, {
     retry: false,
@@ -133,58 +150,66 @@ function ExternalCreateForm() {
     [clientsQuery.data]
   );
 
-  const selectedClient = useMemo(
+  // MODERATOR picker: a debounced async global search over ALL non-App-Block clients.
+  // An empty search returns the mod's own clients (server default), so mods get the
+  // same starting point as regular devs before typing. Non-mods never fire this.
+  const [clientSearch, setClientSearch] = useState('');
+  const [debouncedClientSearch] = useDebouncedValue(clientSearch.trim(), 300);
+  const modSearchQuery = trpc.oauthClient.searchForModerator.useQuery(
+    { query: debouncedClientSearch || undefined },
+    {
+      enabled: isModerator,
+      retry: false,
+      refetchOnWindowFocus: false,
+      placeholderData: keepPreviousData,
+    }
+  );
+  const modResults = useMemo<ModClientOption[]>(
+    () => modSearchQuery.data?.items ?? [],
+    [modSearchQuery.data]
+  );
+
+  // The full selected-client object — the ONLY source of `allowedScopes` for mods,
+  // because a searched FOREIGN client is not in the caller's own `clients` list. Also
+  // pinned into the Select's `data` so Mantine can render its label across searches.
+  const [selectedClientData, setSelectedClientData] = useState<ModClientOption | null>(null);
+
+  // Options the mod Select can render/select from: the current search results, PLUS
+  // the pinned selected client (so its label survives when a later search drops it).
+  const modOptionClients = useMemo<ModClientOption[]>(() => {
+    const map = new Map<string, ModClientOption>();
+    for (const c of modResults) map.set(c.id, c);
+    if (selectedClientData && !map.has(selectedClientData.id)) {
+      map.set(selectedClientData.id, selectedClientData);
+    }
+    return [...map.values()];
+  }, [modResults, selectedClientData]);
+
+  // Role-aware resolution of the selected client + its scope ceiling. Mods resolve from
+  // the pinned/search object (FOREIGN-client safe); non-mods from their own list.
+  const ownSelectedClient = useMemo(
     () => clients.find((c) => c.id === values.connectClientId) ?? null,
     [clients, values.connectClientId]
   );
+  const selectedClient = isModerator
+    ? values.connectClientId === selectedClientData?.id
+      ? selectedClientData
+      : null
+    : ownSelectedClient;
   const allowedScopes = selectedClient?.allowedScopes ?? 0;
 
-  const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
-    { url: metaUrl ?? '' },
-    { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
-  );
-
-  // Apply the OG-meta prefill ONCE per settled URL. Runs only after the fetch settles
-  // (success OR error) for the current `metaUrl`, so the real page `<title>`
-  // (`data.name`) has a chance to arrive before we touch the `name` field — the Name
-  // input lives on the later Details step, so the fetch has time. NAME precedence:
-  // prefer the extracted `<title>`; if the fetch yields none (or errors), fall back to
-  // the host-derived name. Every field is fill-if-empty, so typed text is never
-  // clobbered.
-  useEffect(() => {
-    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
-    // Wait until the fetch settles for THIS url. With a per-url cache key + retry:false,
-    // `metaQuery.data` (when present) belongs to `metaUrl`, and `isError` is its result.
-    if (metaQuery.isFetching) return;
-    const data = metaQuery.data;
-    const settled = !!data || metaQuery.isError;
-    if (!settled) return;
-    appliedMetaRef.current = metaUrl;
-
-    // Prefer the page <title> (data.name) over the host-derived fallback name.
-    const resolvedName = data?.name || hostNameFallbackRef.current;
-    setValues((v) => ({
-      ...v,
-      name: v.name.trim().length === 0 && resolvedName ? resolvedName : v.name,
-      tagline: v.tagline.trim().length === 0 && data?.tagline ? data.tagline : v.tagline,
-      // Description autofill: fill ONLY when empty, truncated to the field bound —
-      // a suggestion the author can freely edit or clear (never clobbers typed text).
-      description:
-        v.description.trim().length === 0 && data?.description
-          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
-          : v.description,
-    }));
-    setSuggestions({ coverImageUrl: data?.coverImageUrl, iconImageUrl: data?.iconImageUrl });
-    // Reveal the "we found your details" note whenever the link yielded anything the
-    // author can accept (computed from `data` directly — NOT the async setValues
-    // updater, whose side effects haven't run yet at this point).
-    if (
-      data &&
-      (data.name || data.tagline || data.description || data.coverImageUrl || data.iconImageUrl)
-    ) {
-      setAutofillApplied(true);
-    }
-  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError]);
+  // Shared autofill core (auto-trigger + fill-if-empty apply + suggestions + status +
+  // repull). CREATE prefers the page <title>, falling back to the host-derived name;
+  // every asset slot starts empty so all suggestions are actionable (default). The
+  // Name input lives on the later Details step, so the fetch has time to settle before
+  // the author sees it.
+  const autofill = useListingAutofill({
+    externalUrl: values.externalUrl,
+    setValues,
+    valuesRef,
+    nameFallbackRef: hostNameFallbackRef,
+    onBeforeFire: applyNormalizedUrl,
+  });
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -210,8 +235,20 @@ function ExternalCreateForm() {
     // Changing the client RE-DERIVES the requested scopes from the new client's
     // `allowedScopes` (the listing requests exactly the client's set — no picker) and
     // re-keys the justifications, dropping any whose scope the new client doesn't have.
-    const nextClient = clientId ? clients.find((c) => c.id === clientId) ?? null : null;
-    const nextAllowed = nextClient?.allowedScopes ?? 0;
+    // Mods resolve the picked client from the global-search options (which may be a
+    // FOREIGN client) and PIN it so its scopes + label survive later searches; non-mods
+    // resolve from their own client list, unchanged.
+    let nextAllowed = 0;
+    if (isModerator) {
+      const nextClient = clientId
+        ? modOptionClients.find((c) => c.id === clientId) ?? null
+        : null;
+      setSelectedClientData(nextClient);
+      nextAllowed = nextClient?.allowedScopes ?? 0;
+    } else {
+      const nextClient = clientId ? clients.find((c) => c.id === clientId) ?? null : null;
+      nextAllowed = nextClient?.allowedScopes ?? 0;
+    }
     setValues((v) => deriveScopesFromClient({ ...v, connectClientId: clientId }, nextAllowed));
     setShowScopeErrors(false);
     setErrors((prev) => ({ ...prev, connectClientId: undefined, requestedScopes: undefined }));
@@ -239,18 +276,14 @@ function ExternalCreateForm() {
     }));
   }
 
-  // The App URL is REQUIRED. Blur tidies it into canonical https (no blocking); the
-  // required gate is enforced on advance.
+  // The App URL is REQUIRED. Blur tidies it into canonical https (no blocking) and
+  // auto-fires the OG pull via the hook (once per distinct URL); the required gate is
+  // enforced on advance. `onBeforeFire` (applyNormalizedUrl) canonicalises + derives
+  // the slug + stashes the host-name fallback when the pull fires.
   function handleUrlBlur() {
     if (values.externalUrl.trim().length === 0) return;
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) {
-      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
-      return;
-    }
-    applyNormalizedUrl(result.url);
-    setMetaUrl(result.url);
-    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    setErrors((prev) => ({ ...prev, externalUrl: error }));
   }
 
   function handleAdvanceFromUrl() {
@@ -258,13 +291,11 @@ function ExternalCreateForm() {
       setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app’s URL to continue.' }));
       return;
     }
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) {
-      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    if (error) {
+      setErrors((prev) => ({ ...prev, externalUrl: error }));
       return;
     }
-    applyNormalizedUrl(result.url);
-    setMetaUrl(result.url);
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
     setActive(STEP_APP);
   }
@@ -325,6 +356,45 @@ function ExternalCreateForm() {
 
   const busy = submitMutation.isPending;
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
+  const modClientOptions = modOptionClients.map((c) => ({
+    value: c.id,
+    label: `${c.name} — by @${c.user?.username ?? 'unknown'}`,
+  }));
+
+  // Create-client deeplink for EVERYONE (mods + regular devs) — opens the OAuth-apps
+  // card on /user/account in a NEW TAB so the in-progress wizard isn't lost. Rendered
+  // ONCE, persistently below the picker. Deliberately NOT reused as the mod Select's
+  // `nothingFoundMessage` — see `noClientsFoundMessage` for why.
+  const createClientLink = (
+    <Anchor
+      href="/user/account"
+      target="_blank"
+      rel="noopener noreferrer"
+      size="xs"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+      data-testid="apps-offsite-create-client-link"
+    >
+      Don’t see your app? Create an OAuth client
+      <IconExternalLink size={12} />
+    </Anchor>
+  );
+
+  // Empty-state copy for the mod global-search Select. Mantine renders
+  // `nothingFoundMessage` via `Combobox.Empty` INSIDE `Combobox.Options`, which carries
+  // `role="listbox"` — and because setting `nothingFoundMessage` flips `hiddenWhenEmpty`
+  // to false while `Combobox` defaults to `keepMounted: true`, that node stays in the DOM
+  // (merely `display:none`) whenever the option list is empty, open or not. So this must
+  // stay NON-INTERACTIVE prose: an <a> here would be a `link` inside a `listbox` (not a
+  // permitted child role, and it breaks combobox arrow/Enter semantics while the dropdown
+  // is open), and it would duplicate `createClientLink` — two identical controls with the
+  // same accessible name reachable at once on exactly the no-results path this message
+  // exists for. The actionable affordance is the persistent link rendered below.
+  const noClientsFoundMessage = (
+    <Text size="xs" c="dimmed" data-testid="apps-offsite-client-search-empty">
+      No matching apps. Use the “Create an OAuth client” link below the picker to register
+      one.
+    </Text>
+  );
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-form">
@@ -381,13 +451,56 @@ function ExternalCreateForm() {
                 data-testid="apps-offsite-submit-url"
               />
 
-              {metaQuery.isFetching && (
+              {/* The OG pull now auto-fires once a valid https URL is entered (blur,
+                  Enter, Next, or a debounced pause) — no manual button. A subtle inline
+                  status reports loading / applied / partial / empty / error. */}
+              {autofill.loading && (
                 <Group gap={6} data-testid="apps-offsite-meta-loading">
                   <Loader size={12} />
                   <Text size="xs" c="dimmed">
                     Looking for a name, description and images from your link…
                   </Text>
                 </Group>
+              )}
+              {!autofill.loading && autofill.result?.status === 'error' && (
+                <Text size="xs" c="red" data-testid="apps-offsite-submit-autofill-error">
+                  Couldn’t read that site’s details — check the URL, or add your images and
+                  description manually.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-empty">
+                  {autofill.result.siteExposedNothing ? (
+                    <>
+                      Your site didn’t expose a name, description, icon or cover to pull. Add them
+                      to the page’s <Code>&lt;head&gt;</Code>, or add your details and images
+                      manually on the next steps.
+                    </>
+                  ) : (
+                    'Nothing new to pull — your details and assets are already set.'
+                  )}
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'partial' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-partial">
+                  Pulled what your link exposed — {describeMissingChannels(autofill.result.missing)}{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check the
+                  Details and Assets steps for what we found.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-submit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details step for the
+                    name and description, and the Assets step for the suggested icon/cover.
+                  </Text>
+                </Alert>
               )}
 
               <Group justify="space-between">
@@ -419,7 +532,30 @@ function ExternalCreateForm() {
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              {clientsQuery.isLoading ? (
+              {isModerator ? (
+                // MOD: async global search over ALL non-App-Block clients. Empty search
+                // returns the mod's own clients (server default). Server does the
+                // matching, so client-side Select filtering is disabled (`filter`
+                // passthrough) — otherwise it would re-filter the label locally.
+                <Select
+                  label="OAuth app"
+                  description="Search any developer’s OAuth client by app name, author username, or author ID. Leave empty to see your own."
+                  placeholder="Search apps…"
+                  searchable
+                  searchValue={clientSearch}
+                  onSearchChange={setClientSearch}
+                  filter={({ options }) => options}
+                  data={modClientOptions}
+                  value={values.connectClientId}
+                  onChange={handleSelectClient}
+                  error={errors.connectClientId}
+                  disabled={busy}
+                  required
+                  nothingFoundMessage={noClientsFoundMessage}
+                  rightSection={modSearchQuery.isFetching ? <Loader size={14} /> : undefined}
+                  data-testid="apps-offsite-client-search"
+                />
+              ) : clientsQuery.isLoading ? (
                 <Group gap={8} data-testid="apps-offsite-clients-loading">
                   <Loader size={16} />
                   <Text size="sm" c="dimmed">
@@ -434,30 +570,31 @@ function ExternalCreateForm() {
                   </Text>
                 </Alert>
               ) : (
-                <>
-                  <Select
-                    label="OAuth app"
-                    description="One of your registered OAuth clients. Users will grant this app access."
-                    placeholder="Choose an app"
-                    data={clientOptions}
-                    value={values.connectClientId}
-                    onChange={handleSelectClient}
-                    error={errors.connectClientId}
-                    disabled={busy}
-                    required
-                    data-testid="apps-offsite-client-select"
-                  />
+                <Select
+                  label="OAuth app"
+                  description="One of your registered OAuth clients. Users will grant this app access."
+                  placeholder="Choose an app"
+                  data={clientOptions}
+                  value={values.connectClientId}
+                  onChange={handleSelectClient}
+                  error={errors.connectClientId}
+                  disabled={busy}
+                  required
+                  data-testid="apps-offsite-client-select"
+                />
+              )}
 
-                  {selectedClient && (
-                    <DerivedScopesDisclosure
-                      requestedScopes={values.requestedScopes}
-                      justifications={values.scopeJustifications}
-                      onJustificationChange={handleJustificationChange}
-                      disabled={busy}
-                      forceShowErrors={showScopeErrors}
-                    />
-                  )}
-                </>
+              {/* Persistent create-client deeplink — both roles, every picker state. */}
+              {createClientLink}
+
+              {selectedClient && (
+                <DerivedScopesDisclosure
+                  requestedScopes={values.requestedScopes}
+                  justifications={values.scopeJustifications}
+                  onJustificationChange={handleJustificationChange}
+                  disabled={busy}
+                  forceShowErrors={showScopeErrors}
+                />
               )}
 
               <Group justify="space-between">
@@ -491,7 +628,7 @@ function ExternalCreateForm() {
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              {autofillApplied && (
+              {autofill.applied && (
                 <FadeIn>
                   <Alert
                     color="grape"
@@ -506,7 +643,7 @@ function ExternalCreateForm() {
                   </Alert>
                 </FadeIn>
               )}
-              {metaQuery.isFetching && (
+              {autofill.loading && (
                 <Group gap={6} data-testid="apps-offsite-meta-loading">
                   <Loader size={12} />
                   <Text size="xs" c="dimmed">
@@ -640,7 +777,9 @@ function ExternalCreateForm() {
               <ListingAssetStep
                 listingId={submitted.listingId}
                 contentRating={values.contentRating}
-                suggestions={suggestions}
+                suggestions={autofill.suggestions}
+                onRepull={autofill.repull}
+                repullLoading={autofill.loading}
                 header={
                   <Alert
                     color="green"
@@ -649,9 +788,9 @@ function ExternalCreateForm() {
                     title="Draft created"
                   >
                     <Text size="sm">
-                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon,
-                      a cover and at least one screenshot below — a moderator can only approve an
-                      asset-complete listing. Content rating:{' '}
+                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon
+                      and a cover below to be approved — screenshots are recommended but optional and
+                      can be added later. Content rating:{' '}
                       <Badge size="xs">{values.contentRating}</Badge>
                     </Text>
                   </Alert>

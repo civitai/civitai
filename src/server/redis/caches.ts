@@ -1,3 +1,22 @@
+/* eslint-disable local-rules/no-module-scope-cache --
+ * 22 module-scope caches, every one of them keyed off REDIS_KEYS during module
+ * evaluation. This is a tracked BACKLOG, not a safe shape: it is structurally the
+ * same tripwire as the eager `capTierCache` that broke three suites at collection
+ * and turned `Unit tests` red on main (#3505 / #3506), and this module is imported
+ * far more widely than paid-access.service.ts was. Any suite that wholesale-mocks
+ * `~/server/redis/client` without `REDIS_KEYS.CACHES` and reaches this file
+ * unmocked dies during COLLECTION — the three suites in #3505 stay green only
+ * because they additionally mock this module.
+ *
+ * Disabled file-wide rather than converted here because that is 22 call-site
+ * migrations across the busiest cache module in the repo, and it wants to be its
+ * own reviewable change. The file-wide form also silences a NEW cache added here,
+ * which is accepted: a 23rd cache in this file adds no NEW tripwire, because
+ * anything reaching this module already has to mock it. A new cache in a SERVICE
+ * does add one, and that is what the rule is scoped to catch.
+ *
+ * Delete this disable once the caches below are lazy — the rule then guards them.
+ */
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -11,7 +30,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
 import {
   publicDonationGoalsLookupFn,
-  type ModelVersionPublicDonationGoalsCacheItem,
+  type ModelVersionPublicDonationGoalCacheItem,
 } from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -27,6 +46,7 @@ import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -60,11 +80,17 @@ export const tagIdsForImagesCache = createCachedObject<{
   ttl: CacheTTL.hour * 8,
   staleWhileRevalidateTtl: CacheTTL.hour,
   // L1: image tag-ids are near-static display metadata (busted on scan/tag edits);
-  // an 8h Redis TTL dwarfs a 15s per-pod L1, which only delays a cross-pod tag
-  // edit by ≤15s. Not a visibility gate (feed SQL enforces that). Hot-image set.
-  localTtl: 15,
-  localMax: 10000,
-  localMaxBytes: 6 * 1024 * 1024, // hard heap cap ~6MB (tag-id arrays are small)
+  // an 8h Redis TTL dwarfs the per-pod L1, which only delays a cross-pod tag edit by
+  // ≤localTtl. Not a visibility gate (feed SQL enforces that). This is the single
+  // largest driver of api-heavy's per-id Redis GET volume (feed streams distinct
+  // imageIds), so the L1 was starved at localTtl=15s/localMax=10k. Enlarged to a
+  // ~3min window + 50k hot entries so cross-user popular-image overlap + scroll-back
+  // land as L1 hits. Strictly byte-bounded (see l1-cache-budget) — the byte cap, not
+  // the entry cap, is the binding heap guard. The longer localTtl is safe here BECAUSE
+  // this value gates nothing (only delays a busted tag-list edit by ≤localTtl).
+  localTtl: 180,
+  localMax: 50000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.tagIdsForImages,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -357,10 +383,46 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   // cross-pod delay on a rename/avatar/soft-delete propagating — imperceptible.
   localTtl: 30,
   localMax: 10000,
-  localMaxBytes: 4 * 1024 * 1024, // hard heap cap ~4MB (tiny records)
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.userBasic, // ~4MB (tiny records)
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
+export type ModelVersionAccessCache = EntityAccessDataType & {
+  publishedAt: Date;
+  status: ModelStatus;
+};
+
+/**
+ * The authoritative availability read behind modelVersionAccessCache. Exported because
+ * `dontCacheFn` below means the cache is *allowed* to hold nothing for an id, and callers that
+ * gate access on the result (hasEntityAccess) must be able to resolve those ids for real rather
+ * than assume the worst.
+ */
+export async function lookupModelVersionAccess(
+  ids: number[],
+  fromWrite?: boolean
+): Promise<Record<string, ModelVersionAccessCache>> {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    SELECT
+      mv.id AS "entityId",
+      mmv."userId" AS "userId",
+      -- Model availability prevails if it's private
+      CASE
+        WHEN mmv.availability = 'Private'
+          THEN mmv."availability"
+        ELSE mv."availability"
+      END AS "availability",
+      mv."publishedAt" AS "publishedAt",
+      mv."status" as "status"
+    FROM "ModelVersion" mv
+         JOIN "Model" mmv ON mv."modelId" = mmv.id
+    WHERE
+      mv.id IN (${Prisma.join(goodIds, ',')})
+  `);
+  return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+}
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -381,29 +443,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
-      SELECT
-        mv.id AS "entityId",
-        mmv."userId" AS "userId",
-        -- Model availability prevails if it's private
-        CASE
-          WHEN mmv.availability = 'Private'
-            THEN mmv."availability"
-          ELSE mv."availability"
-        END AS "availability",
-        mv."publishedAt" AS "publishedAt",
-        mv."status" as "status"
-      FROM "ModelVersion" mv
-           JOIN "Model" mmv ON mv."modelId" = mmv.id
-      WHERE
-        mv.id IN (${Prisma.join(goodIds, ',')})
-    `);
-    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupModelVersionAccess(ids as number[], fromWrite),
 });
 
 type TagLookup = {
@@ -433,6 +473,24 @@ export const tagCache = createCachedObject<TagLookup>({
     );
   },
   ttl: CacheTTL.day,
+  // L1: the tag catalog is a small, near-static, SHARED universe keyed by tag id, so a
+  // per-pod L1 sized to hold the hot catalog reaches a near-100% feed hit ratio and
+  // removes tagCache's per-id Redis GET fan-out. The 1d Redis TTL dwarfs a 30s L1.
+  // BEHAVIOR-AUDIT (2026-07): the value carries nsfwLevel + unlisted. Every reader was
+  // grepped — neither field feeds a HARD content-visibility gate on the feed. Readers
+  // use tag NAMES for display (getTagNamesForImages, search-index tagNames), tag id/name
+  // for category filtering (model.service), and `unlisted` ONLY in stripUnlistedTags —
+  // a non-moderator filter on the model VOTABLE-TAGS panel (a tag-label surface, not
+  // image/content visibility; the ImageTag SQL view already drops unlisted at the DB
+  // layer, and moderators bypass it). Image/model visibility is gated by the entity's
+  // OWN nsfwLevel, never the tag's. So a ≤30s L1 delay on a busted tag-level/unlisted
+  // edit is a cosmetic tag-label lag, not a moderation-visibility bug. localTtl kept
+  // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
+  // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
+  // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
+  localTtl: 30,
+  localMax: 100000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
 });
 
 export const tagCacheByName = {
@@ -1518,7 +1576,7 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   // hidden-tag filtering, not a hard visibility gate. max 5000: ~4.2KB/key, heavy.
   localTtl: 15,
   localMax: 5000,
-  localMaxBytes: 16 * 1024 * 1024, // hard heap cap ~16MB (heaviest remaining value)
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.imageTags, // ~16MB (heaviest remaining value)
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 
@@ -1583,8 +1641,8 @@ export const modelVotableTagsCache = createCachedObject<ModelVotableTagsCacheIte
 });
 
 export type {
-  ModelVersionPublicDonationGoal,
-  ModelVersionPublicDonationGoalsCacheItem,
+  DonationGoalWithTotal,
+  ModelVersionPublicDonationGoalCacheItem,
 } from '~/server/redis/donation-goals-cache';
 
 /**
@@ -1593,13 +1651,13 @@ export type {
  * NOT vary by viewer), so a single shared entry is correct for every anonymous / non-owner /
  * non-moderator caller. The privileged (owner/mod) variant — which additionally exposes
  * inactive/draft goals — is computed fresh and NEVER routed through this cache (see
- * `modelVersionDonationGoals`), so a draft-inclusive payload can never leak into the shared
+ * `modelVersionDonationGoal`), so a draft-inclusive payload can never leak into the shared
  * key and a cached public payload can never be served to a privileged viewer.
  *
- * TTL is short (CacheTTL.xs, 60s): a newly created goal or an updated donation total lags at
- * most 60s, acceptable for a donation-progress display. Donation/goal-completion writes also
- * bust the key eagerly (see `donation-goal.service.ts`), so the TTL only bounds the rare
- * publish-time goal-create path.
+ * Correctness rides on explicit busts, not TTL expiry — every writer (goal create in
+ * `ensureDonationGoal`, donation + goal-completion in `checkDonationGoalComplete`) busts the key
+ * eagerly, so the TTL (CacheTTL.hour, matching `PaidAccess`) is just a backstop. `staleWhileRevalidate:
+ * false` so a bust truly clears the entry rather than serving one more stale read.
  *
  * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
  * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).
@@ -1609,10 +1667,10 @@ export type {
  * divergence).
  */
 export const modelVersionPublicDonationGoalsCache =
-  createCachedObject<ModelVersionPublicDonationGoalsCacheItem>({
+  createCachedObject<ModelVersionPublicDonationGoalCacheItem>({
     key: REDIS_KEYS.CACHES.MODEL_VERSION_PUBLIC_DONATION_GOALS,
     idKey: 'modelVersionId',
-    ttl: CacheTTL.xs,
+    ttl: CacheTTL.hour,
     staleWhileRevalidate: false,
     cacheNotFound: false,
     lookupFn: publicDonationGoalsLookupFn,
@@ -1687,13 +1745,14 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   // edits, 8h Redis TTL. A 30s per-pod L1 only delays a cross-pod resource edit by
   // ≤30s. Not sensitive / not a visibility gate.
   //
-  // Per-pod L1 total HARD heap ceiling across the 4 enabled caches (localMaxBytes):
-  //   userBasic 4MB + imageResources 12MB + tagIdsForImages 6MB + imageTags 16MB
-  //   = 38MB/pod — well under the heap-headroom alert; byte-bounded so a per-value
-  //   size spike can never blow the cap (deterministic, deploy fleet-wide safely).
+  // Per-pod L1 byte budgets are centralized + ceiling-enforced in l1-cache-budget.ts
+  //   (userBasic 4 + imageResources 12 + imageTags 16 + tagIdsForImages 30 + basicTags 20
+  //   = 82MB/pod, under the 96MB ceiling; well below the >3200MB heap-headroom alert and
+  //   the 4096MB old-space limit). Byte-bounded so a per-value size spike can never blow
+  //   the cap (deterministic, deploy fleet-wide safely).
   localTtl: 30,
   localMax: 10000,
-  localMaxBytes: 12 * 1024 * 1024, // hard heap cap ~12MB
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.imageResources, // ~12MB
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};

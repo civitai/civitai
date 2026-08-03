@@ -72,6 +72,43 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(payload.buzzBudget).toBe(200);
   });
 
+  it('stamps reviewRunForReal:true ONLY when supplied (absent otherwise)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const withFlag = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: {},
+      buzzBudget: 50,
+      dev: true,
+      reviewRunForReal: true,
+    });
+    const withoutFlag = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['user:read:self'],
+      ctx: {},
+    });
+    const { payload: withPayload } = await jwtVerify(withFlag.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const { payload: withoutPayload } = await jwtVerify(withoutFlag.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(withPayload.reviewRunForReal).toBe(true);
+    expect(withoutPayload.reviewRunForReal).toBeUndefined();
+  });
+
   it('stamps maxBrowsingLevel + domain claims when supplied (SFW domain)', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const r = await BlockTokenService.sign({

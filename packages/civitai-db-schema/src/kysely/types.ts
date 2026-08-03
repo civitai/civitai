@@ -15,6 +15,7 @@ import type {
   CryptoTransactionStatus,
   RewardsEligibility,
   PaymentProvider,
+  MembershipGiftStatus,
   UserEngagementType,
   LinkType,
   ModelType,
@@ -81,6 +82,7 @@ import type {
   BountyEngagementType,
   CsamReportType,
   Availability,
+  PaidAccessEntityType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
@@ -103,6 +105,7 @@ import type {
   PoolTrigger,
   ChallengeReviewCostType,
   ChallengeIngestionStatus,
+  ChallengeEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -160,6 +163,10 @@ export type Announcement = {
   endsAt: Timestamp | null;
   metadata: unknown | null;
   disabled: Generated<boolean>;
+};
+export type AnnouncementUser = {
+  announcementId: number;
+  userId: number;
 };
 export type Answer = {
   id: Generated<number>;
@@ -271,6 +278,9 @@ export type AppBlock = {
   featured_order: number | null;
   screenshots: unknown | null;
   external_url: string | null;
+  spend_tier: Generated<string>;
+  spend_cap_buzz_per_day: number | null;
+  spend_velocity_max_gens: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -1399,6 +1409,12 @@ export type ChallengeCategory = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ChallengeEngagement = {
+  userId: number;
+  challengeId: number;
+  type: ChallengeEngagementType;
+  createdAt: Generated<Timestamp>;
+};
 export type ChallengeEvent = {
   id: Generated<number>;
   title: string;
@@ -1739,6 +1755,7 @@ export type ComicChapter = {
   earlyAccessConfig: unknown | null;
   earlyAccessEndsAt: Timestamp | null;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   nsfwLevel: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -1903,6 +1920,8 @@ export type Cosmetic = {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: string | null;
+  pHashUrl: string | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -2025,10 +2044,10 @@ export type DonationGoal = {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: Generated<number>;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   createdAt: Generated<Timestamp>;
-  isEarlyAccess: Generated<boolean>;
   active: Generated<boolean>;
 };
 export type DownloadHistory = {
@@ -2354,6 +2373,24 @@ export type Link = {
   entityId: number;
   entityType: string;
 };
+export type MembershipGift = {
+  id: string;
+  gifterId: number;
+  recipientId: number;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: Generated<MembershipGiftStatus>;
+  message: string | null;
+  anonymous: Generated<boolean>;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type ModActivity = {
   id: Generated<number>;
   userId: number | null;
@@ -2385,7 +2422,6 @@ export type Model = {
   uploadType: Generated<ModelUploadType>;
   locked: Generated<boolean>;
   underAttack: Generated<boolean>;
-  earlyAccessDeadline: Timestamp | null;
   mode: ModelModifier | null;
   unlisted: Generated<boolean>;
   gallerySettings: Generated<unknown>;
@@ -2664,6 +2700,7 @@ export type ModelVersion = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   status: Generated<ModelStatus>;
   trainingStatus: TrainingStatus | null;
   trainingDetails: unknown | null;
@@ -2676,9 +2713,6 @@ export type ModelVersion = {
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
-  earlyAccessEndsAt: Timestamp | null;
-  earlyAccessConfig: unknown | null;
-  earlyAccessPermanent: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
@@ -2804,6 +2838,16 @@ export type Outbox = {
   createdAt: Generated<Timestamp | null>;
   details: unknown | null;
   attempts: number | null;
+};
+export type PaidAccess = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Timestamp | null;
+  timeframeDays: number | null;
+  terms: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Partner = {
   id: Generated<number>;
@@ -3604,6 +3648,14 @@ export type UserLink = {
   url: string;
   type: LinkType;
 };
+export type UserMembershipOverride = {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type UserMetric = {
   userId: number;
   timeframe: MetricTimeframe;
@@ -3868,6 +3920,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementUser: AnnouncementUser;
   Answer: Answer;
   AnswerMetric: AnswerMetric;
   AnswerRank: AnswerRank;
@@ -3931,6 +3984,7 @@ export type DB = {
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
+  ChallengeEngagement: ChallengeEngagement;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;
@@ -4026,6 +4080,7 @@ export type DB = {
   License: License;
   LicensingRoot: LicensingRoot;
   Link: Link;
+  MembershipGift: MembershipGift;
   ModActivity: ModActivity;
   Model: Model;
   Model3D: Model3D;
@@ -4062,6 +4117,7 @@ export type DB = {
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
   Outbox: Outbox;
+  PaidAccess: PaidAccess;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
@@ -4136,6 +4192,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;
+  UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;
   UserNotificationSettings: UserNotificationSettings;
   UserPaymentConfiguration: UserPaymentConfiguration;

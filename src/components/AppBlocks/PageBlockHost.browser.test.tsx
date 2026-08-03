@@ -1,9 +1,14 @@
 import { useState } from 'react';
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+// Type-only (erased at runtime, so it can't defeat vi.mock hoisting) — lets the
+// `importOriginal` generic below be written without an inline `import()` type,
+// which the repo's `consistent-type-imports` rule forbids (this file was the
+// last lint error in src/components/AppBlocks).
+import type * as MantineNotifications from '@mantine/notifications';
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
@@ -21,7 +26,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // mounting the full Notifications provider. Preserve the module's other exports.
 const showNotificationSpy = vi.fn();
 vi.mock('@mantine/notifications', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@mantine/notifications')>();
+  const actual = await importOriginal<typeof MantineNotifications>();
   return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
 });
 
@@ -57,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -69,6 +75,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },
@@ -153,6 +160,37 @@ const baseProps = {
   viewer: { id: 42, username: 'tester' },
   theme: 'light' as const,
 };
+
+/**
+ * Six tests below exercise PageBlockHost's two REAL product timeout windows —
+ * `BLOCK_READY_TIMEOUT_MS` (10s) and `TOKEN_WAIT_TIMEOUT_MS` (15s) in PageBlockHost.tsx.
+ * Sleeping through them in real time cost ~76s, ~95% of this file's runtime. Instead:
+ *
+ *   useFakeClock()  — install Vitest's fake clock BEFORE the render, so the product's
+ *                     `setTimeout` is scheduled on it (installing it after the render
+ *                     does nothing: the timer is already on the real clock).
+ *                     `shouldAdvanceTime` keeps the fake clock ticking with real time so
+ *                     browser-mode locator polling still progresses while it's installed.
+ *   advancePastWindow(ms) — jump the window, then hand control straight back to REAL
+ *                     timers, so every later assertion, `vi.waitFor` and (crucially)
+ *                     `userEvent`/locator click runs on the normal clock. No test
+ *                     interacts with the DOM while the fake clock is installed.
+ *
+ * These do NOT weaken the tests: each still asserts the same terminal DOM state, and
+ * the elapsed window is now explicit (advance 11s past a 10s window) rather than implied
+ * by a generous real-time poll. The `afterEach` below is a safety net so a mid-test
+ * failure can never leak the fake clock into the next test.
+ */
+function useFakeClock() {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+}
+async function advancePastWindow(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  vi.useRealTimers();
+}
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // Drive the handshake to BLOCK_READY (status='ready') so the consent gate's
 // `status === 'ready'` precondition is satisfied — same prerequisite a real
@@ -279,7 +317,13 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
-  test('Issue B: reviewMode never toasts an un-grantable consent request (untrusted preview stays silent)', async () => {
+  test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {
+    // Was: reviewMode dropped REQUEST_CONSENT silently, so a moderator clicking a
+    // consent-gated action in the review preview got nothing at all and the app
+    // parked forever on its consent card. The modal ban is unchanged (untrusted
+    // review code must never pop a permission prompt at the mod) — only the
+    // silence is fixed. Full coverage lives in
+    // PageBlockHostReviewMode.browser.test.tsx.
     renderWithProviders(
       <PageBlockHost
         {...baseProps}
@@ -292,10 +336,10 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     );
 
     await driveToReady();
-    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
-
-    await new Promise((r) => setTimeout(r, 150));
-    expect(showNotificationSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 });
@@ -391,17 +435,19 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
       // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
       // flips status 'loading' → 'timeout', clearing the loader and rendering the
       // fallback.
+      useFakeClock();
       renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
       await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      // Wait out the real 10s readiness window (poll with generous timeout). The
-      // loader must clear and the timeout fallback render.
+      // Jump the 10s readiness window on the fake clock instead of sleeping through it.
+      await advancePastWindow(11_000);
+      // The loader must clear and the timeout fallback render.
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-loading').query()).toBeNull();
         },
-        { timeout: 13_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
       await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
     },
@@ -416,17 +462,19 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
       // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
       // clearing the loader and rendering the fallback. (With a null token the
       // iframe still mounts in the loading state, so the overlay is shown first.)
+      useFakeClock();
       renderWithProviders(
         <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
       );
 
       await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
+      await advancePastWindow(16_000);
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-loading').query()).toBeNull();
         },
-        { timeout: 18_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
       await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
     },
@@ -483,14 +531,16 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     'timeout terminal state: readable timeout message + Retry, not the loader',
     async () => {
       // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
+      useFakeClock();
       renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
       await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
+      await advancePastWindow(11_000);
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
         },
-        { timeout: 13_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
       await expect
         .element(page.getByText("This app didn't load in time"))
@@ -505,16 +555,18 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     'no_token terminal state: readable auth message + Retry, not the loader',
     async () => {
       // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
+      useFakeClock();
       renderWithProviders(
         <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
       );
       await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
+      await advancePastWindow(16_000);
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
         },
-        { timeout: 18_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
       await expect
         .element(page.getByText("Couldn't authenticate this app"))
@@ -571,7 +623,15 @@ describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', (
     expect(page.getByTestId('app-page-fallback').query()).toBeNull();
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     expect(el.getAttribute('data-block-ready')).toBe('true');
-    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    // The launch veil now CROSS-FADES out over LAUNCH_REVEAL_MS once the block is
+    // ready (the "subtly animated" launch experience) rather than disappearing in
+    // the same commit, so poll for its removal instead of reading it synchronously.
+    // It is still gated structurally — every terminal state unmounts it with the
+    // whole iframe branch — so this can't mask a stuck spinner; the terminal-path
+    // tests above (and PageBlockHostLaunchReveal.browser.test.tsx) pin that.
+    await vi.waitFor(() => {
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    });
   });
 
   test('failure-after-retry: a second fatal error shows the fallback again (no timer leak / stuck state)', async () => {
@@ -637,6 +697,7 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     async () => {
       const onRetryToken = vi.fn();
       // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
+      useFakeClock();
       renderWithProviders(
         <PageBlockHost
           {...baseProps}
@@ -646,11 +707,15 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
           onRetryToken={onRetryToken}
         />
       );
+      // The loader is the precondition — and it also guarantees the render has committed
+      // (so the product's token-wait timer is on the fake clock) before we advance it.
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      await advancePastWindow(16_000);
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
         },
-        { timeout: 18_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
       expect(onRetryToken).not.toHaveBeenCalled();
 
@@ -690,14 +755,19 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     async () => {
       const onRetryToken = vi.fn();
       // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
+      useFakeClock();
       renderWithProviders(
         <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
       );
+      // The loader is the precondition — and it also guarantees the render has committed
+      // (so the product's readiness timer is on the fake clock) before we advance it.
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      await advancePastWindow(11_000);
       await vi.waitFor(
         () => {
           expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
         },
-        { timeout: 13_000, interval: 250 }
+        { timeout: 5_000, interval: 100 }
       );
 
       await page.getByRole('button', { name: 'Retry' }).click();
@@ -715,6 +785,17 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   // Analytics Phase 2 now emits via the /api/track/block-render BEACON
   // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
   // assert the beacon fires exactly once at BLOCK_READY (and never on re-render).
+  //
+  // 🔴 THIS DESCRIBE IS ALSO THE BATCHING-INDEPENDENCE GUARD for the beacon, and
+  // that is why it must keep rendering the REAL host with REAL hooks (no
+  // `@mantine/hooks` mock in this file). The beacon used to fire from inside the
+  // BLOCK_READY handler behind a flag set by the `setStatus` UPDATER, which only
+  // works while React can evaluate that updater EAGERLY — i.e. while nothing else
+  // is queued on the fiber. `useReducedMotion` (added by the launch-reveal work)
+  // commits its value in a post-mount effect, which is exactly such a pending
+  // update, and it made the impression drop 5/5 runs. The beacon now keys off the
+  // COMMITTED `status`. Mutation-verified: restoring the in-handler `acked`
+  // pattern fails the first test below, deterministically.
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   // Only the block-render beacon goes through fetch in this test; resolve OK.
@@ -752,11 +833,24 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     // keepalive so the beacon survives a page unload/navigation.
     expect((init as RequestInit | undefined)?.keepalive).toBe(true);
     const body = JSON.parse(String((init as RequestInit).body));
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       appBlockId: 'apb_test',
       blockInstanceId: 'page_apb_test',
       slotId: 'app.page',
     });
+    // 🔴 LAUNCH TIMINGS RIDE THIS BEACON — there is still exactly ONE beacon and
+    // the `ok` path still carries no `status`. The allowed key set is pinned so a
+    // future field cannot be added to the wire unnoticed.
+    expect(Object.keys(body).sort()).toEqual(
+      ['appBlockId', 'blockInstanceId', 'slotId', 'timings'].sort()
+    );
+    expect(typeof body.timings.totalMs).toBe('number');
+    expect(body.timings.totalMs).toBeGreaterThan(0);
+    // Never a zero-valued leg on the wire — an unobserved leg is OMITTED.
+    for (const [k, v] of Object.entries(body.timings)) {
+      expect(typeof v, `timings.${k}`).toBe('number');
+      expect(v, `timings.${k}`).toBeGreaterThan(0);
+    }
     // No isAnon/userId from the client — those are server-derived in the route.
     expect(body).not.toHaveProperty('isAnon');
     expect(body).not.toHaveProperty('userId');

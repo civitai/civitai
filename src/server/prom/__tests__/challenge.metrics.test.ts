@@ -8,6 +8,10 @@ import {
   normPaid,
   normVoidReason,
   normRefundReason,
+  normDivergenceField,
+  recordChallengeWinnerDuplicatePick,
+  recordChallengeWinnerPlaceDivergence,
+  recordChallengeWinnerConflictUnresolved,
   recordChallengeCreated,
   recordChallengeScanResult,
   recordChallengeEntrySubmitted,
@@ -279,6 +283,122 @@ describe('economy counters — inc by buzz amount, skip non-positive', () => {
   });
 });
 
+// The two money-path anomaly counters. Every other counter in this file is a volume signal where an
+// off-by-one is noise; these are documented as sitting FLAT AT ZERO, so a unit that should not have
+// been recorded is not a rounding error — it is the whole signal being wrong.
+describe('money-path anomaly counters — a unit must mean exactly one real event', () => {
+  /**
+   * Absent series vs a series holding 0. `valueFor` above collapses both to 0, which is precisely
+   * the distinction these counters live or die on, so they get their own reader.
+   */
+  async function seriesValue(
+    name: string,
+    labels: Record<string, string>
+  ): Promise<number | undefined> {
+    const values = await readMetric(name);
+    return values.find((v) => Object.entries(labels).every(([k, val]) => v.labels[k] === val))
+      ?.value;
+  }
+
+  const DUPLICATE_PICK = 'civitai_app_challenge_winner_duplicate_pick_total';
+  const DIVERGENCE = 'civitai_app_challenge_winner_place_divergence_total';
+  const UNRESOLVED = 'civitai_app_challenge_winner_conflict_unresolved_total';
+
+  it('an explicit count of 0 records NOTHING — "I dropped nothing" must never read as one drop', async () => {
+    recordChallengeWinnerDuplicatePick({ source: 'System', count: 0, origin: 'caller' });
+
+    // Absent, not zero: the emit must not have happened at all. Without the guard the count falls
+    // through to the `isPositiveFinite` default and this series reads 1 — a phantom dropped
+    // placement, i.e. phantom unpaid money, on a counter whose contract is that it stays at zero.
+    expect(
+      await seriesValue(DUPLICATE_PICK, { source: 'System', origin: 'caller' })
+    ).toBeUndefined();
+    expect(await readMetric(DUPLICATE_PICK)).toHaveLength(0);
+  });
+
+  it('an explicitly garbage count records NOTHING either — negative, NaN and Infinity', async () => {
+    // A caller that computed one of these has a bug; recording 1 for it invents a drop that did not
+    // happen and hides the bug behind a plausible-looking value.
+    recordChallengeWinnerDuplicatePick({ source: 'System', count: -1, origin: 'caller' });
+    recordChallengeWinnerDuplicatePick({ source: 'System', count: NaN, origin: 'caller' });
+    recordChallengeWinnerDuplicatePick({ source: 'System', count: Infinity, origin: 'caller' });
+
+    expect(await readMetric(DUPLICATE_PICK)).toHaveLength(0);
+  });
+
+  it('an OMITTED count still means one drop — the default is not collateral damage of the guard', async () => {
+    recordChallengeWinnerDuplicatePick({ source: 'System', origin: 'caller' });
+
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'System', origin: 'caller' })).toBe(1);
+  });
+
+  it('a real count is recorded verbatim, and origin/source are kept apart', async () => {
+    recordChallengeWinnerDuplicatePick({ source: 'User', count: 2, origin: 'caller' });
+    recordChallengeWinnerDuplicatePick({ count: 1, origin: 'chokepoint' });
+
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'caller' })).toBe(2);
+    // The choke point has no challenge in scope, so its source normalizes to `unknown` — the exact
+    // ambiguity the `origin` label exists to resolve.
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'unknown', origin: 'chokepoint' })).toBe(1);
+    expect(
+      await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'chokepoint' })
+    ).toBeUndefined();
+  });
+
+  it('normDivergenceField bounds to place|prize|both, else other', () => {
+    expect(normDivergenceField('place')).toBe('place');
+    expect(normDivergenceField('prize')).toBe('prize');
+    expect(normDivergenceField('both')).toBe('both');
+    expect(normDivergenceField('points')).toBe('other');
+    expect(normDivergenceField(undefined)).toBe('other');
+  });
+
+  it('the divergence counter keeps its three field values separate', async () => {
+    recordChallengeWinnerPlaceDivergence({ field: 'place' });
+    recordChallengeWinnerPlaceDivergence({ field: 'prize' });
+    recordChallengeWinnerPlaceDivergence({ field: 'both' });
+
+    expect(await seriesValue(DIVERGENCE, { field: 'place' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'prize' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'both' })).toBe(1);
+  });
+
+  it('the unresolved-conflict counter is its own series, unlabelled, and starts at a real 0', async () => {
+    // Unlabelled is load-bearing: it emits 0 from process start instead of being absent until the
+    // first increment, so a `> 0` rule on it cannot fail open the way one on a label-bearing
+    // counter can.
+    expect(await seriesValue(UNRESOLVED, {})).toBe(0);
+
+    recordChallengeWinnerConflictUnresolved();
+    expect(await seriesValue(UNRESOLVED, {})).toBe(1);
+
+    // And it must NOT be folded into the divergence counter: that one means "the payout was
+    // reconciled onto the stored row", the opposite money verdict.
+    expect(await readMetric(DIVERGENCE)).toHaveLength(0);
+  });
+
+  it('both helpers stay never-throw', () => {
+    expect(() =>
+      recordChallengeWinnerDuplicatePick({ count: undefined, origin: 'caller' })
+    ).not.toThrow();
+    expect(() => recordChallengeWinnerConflictUnresolved()).not.toThrow();
+  });
+
+  // The "starts at a real 0" assertion above is only meaningful if the reset helper actually clears
+  // this counter — and because counters live on a process-global registry, that assertion passes on
+  // execution ORDER alone as long as it happens to run before anything increments. That is the exact
+  // hazard __resetChallengeMetricsForTest exists to remove, so it needs its own guard rather than
+  // relying on file order: increment FIRST, then re-assert zero after a reset.
+  it('the reset helper clears the unresolved-conflict counter, not just the labelled ones', async () => {
+    recordChallengeWinnerConflictUnresolved();
+    expect(await seriesValue(UNRESOLVED, {})).toBe(1);
+
+    __resetChallengeMetricsForTest();
+
+    expect(await seriesValue(UNRESOLVED, {})).toBe(0);
+  });
+});
+
 describe('never-throw guarantee', () => {
   it('a throwing counter.inc is swallowed — the record helper never throws', async () => {
     const metric = client.register.getSingleMetric(
@@ -340,5 +460,89 @@ describe('state gauges — collect() emits series from injected (mocked) cache',
     expect(
       await valueFor('civitai_app_challenge_by_status', { source: 'unknown', status: 'unknown' })
     ).toBe(7);
+  });
+});
+
+describe('state gauges — zero-emit so a healthy 0 is distinguishable from dead instrumentation', () => {
+  // NOTE: these assert on the emitted SERIES LIST, never via valueFor() — valueFor returns
+  // `?? 0` for a missing series, so it cannot tell "emitted 0" from "emitted nothing", which is
+  // the entire bug under test.
+  const ZERO_EMIT_GAUGES = [
+    'civitai_app_challenge_ingestion_pending',
+    'civitai_app_challenge_completing_stuck',
+    'civitai_app_challenge_operation_budget_used_ratio',
+  ] as const;
+
+  async function sourcePairs(name: string): Promise<[string, number][]> {
+    const values = await readMetric(name);
+    return values
+      .map((v) => [v.labels.source, v.value] as [string, number])
+      // Codepoint sort (NOT localeCompare — that is locale-dependent and orders 'unknown'
+      // before 'User', which would make this assertion machine-dependent).
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  }
+
+  it('emits an explicit 0 for every known source when the query returns no rows', async () => {
+    // Exactly the production steady state: healthy system, every GROUP BY returns zero rows.
+    __setChallengeGaugeCacheForTest({});
+
+    for (const name of ZERO_EMIT_GAUGES) {
+      expect(await sourcePairs(name), `${name} must emit a real 0 per source, not nothing`).toEqual([
+        ['Mod', 0],
+        ['System', 0],
+        ['User', 0],
+      ]);
+    }
+  });
+
+  it('query rows overlay the zeros; sources missing from the rows still emit 0', async () => {
+    __setChallengeGaugeCacheForTest({
+      ingestionPending: [{ source: 'User', count: 3 }],
+      completingStuck: [{ source: 'System', count: 1 }],
+      budgetRatio: [{ source: 'System', ratio: 0.25 }],
+    });
+
+    expect(await sourcePairs('civitai_app_challenge_ingestion_pending')).toEqual([
+      ['Mod', 0],
+      ['System', 0],
+      ['User', 3],
+    ]);
+    expect(await sourcePairs('civitai_app_challenge_completing_stuck')).toEqual([
+      ['Mod', 0],
+      ['System', 1],
+      ['User', 0],
+    ]);
+    expect(await sourcePairs('civitai_app_challenge_operation_budget_used_ratio')).toEqual([
+      ['Mod', 0],
+      ['System', 0.25],
+      ['User', 0],
+    ]);
+  });
+
+  it('an out-of-enum source from the DB is added alongside the zeros, not instead of them', async () => {
+    __setChallengeGaugeCacheForTest({ ingestionPending: [{ source: 'GARBAGE', count: 5 }] });
+
+    expect(await sourcePairs('civitai_app_challenge_ingestion_pending')).toEqual([
+      ['Mod', 0],
+      ['System', 0],
+      ['User', 0],
+      ['unknown', 5],
+    ]);
+  });
+
+  it('challenge_by_status stays SPARSE — no source×status zero-fill (deliberate, cardinality)', async () => {
+    __setChallengeGaugeCacheForTest({
+      byStatus: [{ source: 'User', status: 'Active', count: 4 }],
+    });
+
+    // 1 series, not the 15-series 3×5 cross-product. See the ZERO-EMIT comment in the module.
+    expect(await readMetric('civitai_app_challenge_by_status')).toHaveLength(1);
+  });
+
+  it('gauge collect() never throws even if the injected cache holds junk', async () => {
+    __setChallengeGaugeCacheForTest({
+      ingestionPending: [{ source: null as unknown as string, count: NaN }],
+    });
+    await expect(readMetric('civitai_app_challenge_ingestion_pending')).resolves.toBeDefined();
   });
 });

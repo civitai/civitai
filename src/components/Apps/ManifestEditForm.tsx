@@ -1,7 +1,6 @@
 import {
   Alert,
   Button,
-  Checkbox,
   Group,
   Select,
   Stack,
@@ -12,9 +11,18 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconDeviceFloppy, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { ALLOWED_CONTENT_RATINGS } from '~/server/services/block-manifest-validator.service';
-import { MODEL_SLOT_IDS } from '~/shared/constants/slot-registry';
+import { useState } from 'react';
+import { BlockScopeSelector } from '~/components/Apps/BlockScopeSelector';
+import { buildScopeJustifications } from '~/components/Apps/blockScopeSelection';
+import {
+  ALLOWED_CONTENT_RATINGS,
+  MANIFEST_TAGLINE_MAX_LENGTH,
+} from '~/server/services/block-manifest-validator.service';
+import {
+  MARKETPLACE_CATEGORIES,
+  MARKETPLACE_CATEGORY_LABELS,
+  isMarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -36,6 +44,8 @@ type StoredManifest = Record<string, unknown> & {
   version?: string;
   name?: string;
   description?: string;
+  tagline?: string;
+  category?: string;
   contentRating?: string;
   scopes?: string[];
   scopeJustifications?: Record<string, string>;
@@ -60,30 +70,30 @@ export function ManifestEditForm({
 
   const [name, setName] = useState<string>(manifest.name ?? '');
   const [description, setDescription] = useState<string>(manifest.description ?? '');
+  // One-line store pitch + marketplace category. Both are MANIFEST-GOVERNED for
+  // an onsite listing (the /apps/[appBlockId]/edit Listing tab is media-only), so
+  // this form is the ONLY place an author sets them. Empty tagline / null
+  // category = "not set" and is sent as an explicit `null` so the server CLEARS
+  // the manifest key (see the nullable patch fields in blocks.router).
+  const [tagline, setTagline] = useState<string>(manifest.tagline ?? '');
+  const [category, setCategory] = useState<string | null>(
+    isMarketplaceCategory(manifest.category) ? manifest.category : null
+  );
   const [contentRating, setContentRating] = useState<string>(manifest.contentRating ?? 'g');
   const [version, setVersion] = useState<string>(bumpPatch(currentVersion));
-  const [scopesText, setScopesText] = useState<string>((manifest.scopes ?? []).join('\n'));
+  // Declared scopes, seeded from the stored manifest. Driven by the
+  // BlockScopeSelector checklist; a legacy/unknown scope in the stored set is
+  // preserved (shown selected + removable) rather than dropped.
+  const [scopes, setScopes] = useState<string[]>((manifest.scopes ?? []).filter(Boolean));
   // Per-scope justification the dev supplies for the moderator (scope-id →
   // rationale). Kept as a superset map keyed by scope; only justifications for
-  // currently-declared scopes are submitted (see handleSave). Editing a scope out
-  // of the textarea therefore hides its input but preserves any text if it's added
-  // back before saving.
+  // currently-SELECTED scopes are submitted (see handleSave). Deselecting a scope
+  // therefore hides its input and drops its justification from the payload, but
+  // preserves any typed text if the scope is re-selected before saving.
   const [justifications, setJustifications] = useState<Record<string, string>>(
     manifest.scopeJustifications && typeof manifest.scopeJustifications === 'object'
       ? { ...manifest.scopeJustifications }
       : {}
-  );
-  const [selectedSlots, setSelectedSlots] = useState<string[]>(
-    (manifest.targets ?? []).map((t) => t?.slotId).filter((s): s is string => !!s)
-  );
-
-  const scopes = useMemo(
-    () =>
-      scopesText
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [scopesText]
   );
 
   const versionValid = SEMVER_RE.test(version);
@@ -103,14 +113,10 @@ export function ManifestEditForm({
   });
 
   function handleSave() {
-    // Only submit justifications for currently-declared scopes, trimmed and
+    // Only submit justifications for currently-selected scopes, trimmed and
     // non-empty (the server rejects a justification for an undeclared scope, so
     // filtering here also avoids a needless validation error).
-    const scopeJustifications: Record<string, string> = {};
-    for (const scope of scopes) {
-      const j = (justifications[scope] ?? '').trim();
-      if (j.length > 0) scopeJustifications[scope] = j;
-    }
+    const scopeJustifications = buildScopeJustifications(scopes, justifications);
     // Decide whether to SEND the map. Send an explicit (possibly EMPTY) object
     // whenever there is something to write OR something to clear — i.e. the
     // stored manifest already had justifications. If we sent `undefined` for the
@@ -132,15 +138,30 @@ export function ManifestEditForm({
         version,
         name: name.trim() || undefined,
         description: description.trim() || undefined,
+        // Explicit `null` = clear the manifest key (an `undefined` may be dropped
+        // in transit and the server merge would then retain the stored value).
+        tagline: tagline.trim() || null,
+        category: category ?? null,
         contentRating,
         scopes,
         scopeJustifications: shouldSend ? scopeJustifications : undefined,
-        targets: selectedSlots.map((slotId) => ({ slotId })),
+        // Target slots are a DEFERRED feature — the editor no longer edits them.
+        // OMIT `targets` from the patch entirely: the server merges
+        // `{...stored, ...patch}`, so leaving the key out preserves
+        // `stored.targets` verbatim — no round-trip, no clobber. Re-sending the
+        // stored targets would instead re-validate them against the strict
+        // `updateManifest` targets schema, so a pre-existing malformed/oversized
+        // stored target would fail the whole save (the old textarea path never
+        // touched targets either).
       },
     });
   }
 
-  const canSave = versionValid && versionHigher && !mutation.isPending && name.trim().length > 0;
+  // Advisory client gate only — the server re-validates every field with
+  // BlockManifestValidator (which is what actually enforces the tagline cap).
+  const taglineTooLong = tagline.trim().length > MANIFEST_TAGLINE_MAX_LENGTH;
+  const canSave =
+    versionValid && versionHigher && !mutation.isPending && name.trim().length > 0 && !taglineTooLong;
 
   return (
     <Stack gap="md">
@@ -162,6 +183,16 @@ export function ManifestEditForm({
         error={name.trim().length === 0 ? 'Name is required' : undefined}
       />
 
+      <TextInput
+        label="Tagline"
+        description={`A one-line pitch shown under your app's name in the Apps store. Optional — leave it empty for no tagline. Max ${MANIFEST_TAGLINE_MAX_LENGTH} characters.`}
+        value={tagline}
+        onChange={(e) => setTagline(e.currentTarget.value)}
+        error={
+          taglineTooLong ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters` : undefined
+        }
+      />
+
       <Textarea
         label="Description"
         autosize
@@ -169,6 +200,19 @@ export function ManifestEditForm({
         maxRows={6}
         value={description}
         onChange={(e) => setDescription(e.currentTarget.value)}
+      />
+
+      <Select
+        label="Category"
+        description="Where your app is filed in the Apps store. Optional — a moderator can categorise it for you. A category a moderator has already set is not overwritten."
+        placeholder="No category"
+        clearable
+        data={[...MARKETPLACE_CATEGORIES].map((c) => ({
+          value: c,
+          label: MARKETPLACE_CATEGORY_LABELS[c],
+        }))}
+        value={category}
+        onChange={setCategory}
       />
 
       <Select
@@ -193,15 +237,16 @@ export function ManifestEditForm({
         }
       />
 
-      <Textarea
-        label="Scopes"
-        description="One scope per line (or comma-separated). Must be a subset of your app's granted scopes — the server enforces this."
-        autosize
-        minRows={2}
-        maxRows={8}
-        value={scopesText}
-        onChange={(e) => setScopesText(e.currentTarget.value)}
-      />
+      <Stack gap={4}>
+        <Text size="sm" fw={500}>
+          Scopes
+        </Text>
+        <Text size="xs" c="dimmed">
+          The permissions your app requests. Must be a subset of your app&apos;s granted
+          scopes — the server enforces this. Sensitive scopes are flagged.
+        </Text>
+        <BlockScopeSelector value={scopes} onChange={setScopes} />
+      </Stack>
 
       {scopes.length > 0 && (
         <Stack gap={4}>
@@ -233,22 +278,6 @@ export function ManifestEditForm({
           </Stack>
         </Stack>
       )}
-
-      <Stack gap={4}>
-        <Text size="sm" fw={500}>
-          Target slots
-        </Text>
-        <Text size="xs" c="dimmed">
-          Where the block mounts on a model page.
-        </Text>
-        <Checkbox.Group value={selectedSlots} onChange={setSelectedSlots}>
-          <Stack gap={4} mt={4}>
-            {MODEL_SLOT_IDS.map((slotId) => (
-              <Checkbox key={slotId} value={slotId} label={slotId} />
-            ))}
-          </Stack>
-        </Checkbox.Group>
-      </Stack>
 
       {mutation.error && (
         <Alert icon={<IconAlertTriangle size={16} />} color="red" variant="light">

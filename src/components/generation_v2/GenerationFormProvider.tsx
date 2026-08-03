@@ -37,7 +37,11 @@ import {
   getOutputTypeForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
-import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
+import {
+  useGenerationGraphStore,
+  generationGraphStore,
+  generationGraphPanel,
+} from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import {
@@ -169,6 +173,7 @@ const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
   'Boogu',
   'Krea2',
   'Anima',
+  'MageFlow',
 ]);
 
 const storageAdapter = createLocalStorageAdapter({
@@ -404,6 +409,30 @@ function InnerProvider({
       resources: decoded.resources,
       runType: 'remix',
     });
+  }, []);
+
+  // `/generate?modelVersionId=…` deep link. Scoped to the generate route on
+  // purpose: model pages use the same param to pick a version, and the panel
+  // mounts there too — without the guard, opening a model page would yank the
+  // generator open. Yields to a `?gen=` handoff, which has already queued data
+  // by the time this runs.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get('modelVersionId');
+    if (!raw) return;
+
+    url.searchParams.delete('modelVersionId');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (useGenerationGraphStore.getState().data) return;
+
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+
+    generationGraphPanel.open({ type: 'modelVersion', id });
   }, []);
 
   // Sync generation graph store data into the graph

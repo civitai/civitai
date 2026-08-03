@@ -75,6 +75,16 @@ export interface BlockTokenClaims {
    * the SHORTER 15min cap (and a non-boolean is rejected outright).
    */
   dev?: boolean;
+  /**
+   * MOD REVIEW SANDBOX "run for real" marker (#2831) — present (true) ONLY on a
+   * token minted by `mintReviewBlockToken({ runForReal: true })` (a moderator's
+   * consent-gated opt-in). The runtime spend paths (submitWorkflow / customComfy)
+   * read it to enforce the TIGHT per-(mod, publishRequestId) AGGREGATE Buzz
+   * ceiling instead of the ordinary per-user daily cap. Trustworthy ONLY because
+   * the RS256 signature is verified before it is read. Optional; MUST be a boolean
+   * if present (a non-boolean is rejected outright; absent → treated as false).
+   */
+  reviewRunForReal?: boolean;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -518,6 +528,14 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // our own signer (jwtVerify already checked the RS256 signature against
       // our keys above), so the flag is trustworthy at this point.
       if (claims.dev !== undefined && typeof claims.dev !== 'boolean') {
+        return null;
+      }
+      // RUN-FOR-REAL marker shape guard. Optional (absent on every non-review
+      // token); if PRESENT it MUST be a boolean — a forged/garbage value is
+      // rejected outright so the runtime aggregate-cap selector can trust it. A
+      // signature-valid `reviewRunForReal:true` is only producible by our own
+      // signer (the RS256 signature was already verified above).
+      if (claims.reviewRunForReal !== undefined && typeof claims.reviewRunForReal !== 'boolean') {
         return null;
       }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`

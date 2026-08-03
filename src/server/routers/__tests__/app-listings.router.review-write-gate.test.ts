@@ -30,24 +30,28 @@ const STORE_IDS = new Set([5]); // widened store cohort (non-mod, store-visible)
 const {
   mockIsAppListingsEnabled,
   mockIsAppBlocksEnabled,
+  mockResolveStoreVisibilityScope,
   mockUpsertReview,
   mockGetMyReview,
   mockListReviews,
 } = vi.hoisted(() => ({
   mockIsAppListingsEnabled: vi.fn(),
   mockIsAppBlocksEnabled: vi.fn(),
+  mockResolveStoreVisibilityScope: vi.fn(),
   mockUpsertReview: vi.fn(async () => ({ id: 1, recommended: true })),
   mockGetMyReview: vi.fn(async () => ({ id: 1, recommended: true, details: null, createdAt: new Date() })),
   mockListReviews: vi.fn(async () => ({ items: [{ id: 1 }], nextCursor: undefined })),
 }));
 
-// The write gate now reads `isAppListingsEnabled`; the router module ALSO
-// references `isAppBlocksEnabled`/`isAppBlocksAuthorEnabled` for OTHER procs'
-// middleware, so provide all three (only the two under test are exercised here).
+// The write gate reads `isAppListingsEnabled`; the READ gate now resolves a store
+// scope via `resolveStoreVisibilityScope`. The router module ALSO references
+// `isAppBlocksEnabled`/`isAppBlocksAuthorEnabled` for OTHER procs' middleware, so
+// provide all of them (only the ones under test are exercised here).
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppListingsEnabled: mockIsAppListingsEnabled,
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: vi.fn(async () => false),
+  resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
 }));
 // The review service is dynamically imported by the procs; mock it so the DB /
 // generated client is never loaded, and so we can assert "NOT consulted".
@@ -78,6 +82,16 @@ function fakeListingsFlag(opts?: { user?: { id?: number; isModerator?: boolean }
 function fakeBlocksFlag(opts?: { user?: { isModerator?: boolean } }) {
   return Promise.resolve(!!opts?.user?.isModerator);
 }
+/**
+ * Store read scope: `full` iff the caller is store-visible (mod OR store cohort),
+ * else `none`. Mirrors the OR-fallback posture the read tests assert (listings ON
+ * → served; listings OFF → empty). The public-external axis stays dark here.
+ */
+function fakeResolveScope(opts?: { user?: { id?: number; isModerator?: boolean } }) {
+  const u = opts?.user;
+  const full = !!u && (!!u.isModerator || STORE_IDS.has(u.id ?? -1));
+  return Promise.resolve(full ? 'full' : 'none');
+}
 
 function fakeCtx(user: unknown) {
   return {
@@ -107,6 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockIsAppListingsEnabled.mockImplementation(fakeListingsFlag);
   mockIsAppBlocksEnabled.mockImplementation(fakeBlocksFlag);
+  mockResolveStoreVisibilityScope.mockImplementation(fakeResolveScope);
 });
 
 // ---------------------------------------------------------------------------

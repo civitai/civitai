@@ -515,7 +515,10 @@ export function Collection({
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
   const submissionPeriod =
-    metadata.submissionStartDate || metadata.submissionEndDate || metadata.maxItemsPerUser ? (
+    metadata.submissionStartDate ||
+    metadata.submissionEndDate ||
+    metadata.maxItemsPerUser ||
+    metadata.baseModels?.length ? (
       <Popover
         zIndex={200}
         position="bottom-end"
@@ -532,7 +535,8 @@ export function Collection({
           <Stack gap="xs">
             {metadata.submissionStartDate && (
               <Text size="sm">
-                Submission start date: {formatDate(metadata.submissionStartDate, 'MMM D, YYYY h:mma')}
+                Submission start date:{' '}
+                {formatDate(metadata.submissionStartDate, 'MMM D, YYYY h:mma')}
               </Text>
             )}
             {metadata.submissionEndDate && (
@@ -543,6 +547,10 @@ export function Collection({
 
             {metadata.maxItemsPerUser && (
               <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
+            )}
+
+            {!!metadata.baseModels?.length && (
+              <Text size="sm">Allowed base models: {metadata.baseModels.join(', ')}</Text>
             )}
           </Stack>
         </Popover.Dropdown>
@@ -562,6 +570,7 @@ export function Collection({
             currentUser?.id === collection.user.id ||
             (currentUser?.isModerator ?? false)
           }
+          suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
               collection.user.username ? ` - collection posted by ${collection.user.username}` : ''

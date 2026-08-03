@@ -1,5 +1,6 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
   getEarlyAccessPricesSchema,
@@ -15,6 +16,7 @@ import {
 import {
   archiveCreatorShopItem,
   deleteCreatorShopItem,
+  getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
   getEarlyAccessModelPrices,
@@ -41,9 +43,8 @@ import {
 // Every Creator Shop endpoint is gated on the `creatorShop` feature flag
 // server-side (the flag also hides the UI). The flag falls back to `['mod']` but
 // is Flipt-controllable (`creator-shop`), so testers can be unlocked without a
-// deploy. Creator mutations additionally enforce Creator-Program eligibility
-// (submitCreatorShopItem → getCreatorRequirements) — the flag alone is not
-// sufficient at GA.
+// deploy. Shops are open to all users (ClickUp 868kj4q5a) — the flag is the only
+// gate.
 const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop'));
 
 export const creatorShopRouter = router({
@@ -114,6 +115,11 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)
     .query(({ input }) => getEarlyAccessModelPrices(input)),
+  // Site-wide community cosmetics hub feed on /shop.
+  getCommunityCosmetics: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getCommunityCosmeticsSchema)
+    .query(({ input, ctx }) => getCommunityCosmetics({ ...input, viewerId: ctx.user?.id })),
   // #endregion
 
   // #region [Shop settings]

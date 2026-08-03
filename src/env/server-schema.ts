@@ -373,6 +373,21 @@ export const serverSchema = z
     TEXT_MODERATION_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+    // Age-out threshold (minutes) for never-returning image scans. A scan verdict
+    // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
+    // call back (dropped callback, or a stuck/unassigned workflow), and neither
+    // civitai nor the orchestrator times that out — so those images stay
+    // ingestion='Pending' forever and the retry cron re-drives them with no
+    // ceiling. The `ingest-images` cron flips a NON-backfill image whose
+    // `createdAt` (immutable first-upload time ~= first scan request; NOT
+    // `scanRequestedAt`, which every re-send resets) is older than this to Error,
+    // routing it into the existing capped Error-retry path. Conservative default:
+    // must exceed the wall-time of any legitimately in-flight scan so a healthy
+    // scan is never terminalized — well beyond a normal scan (seconds–minutes),
+    // while the never-returning cases are hours-to-days old. Positive to avoid a
+    // zero/negative threshold aging out every fresh Pending image. Tune via env
+    // without a redeploy; takes effect on the next pod restart (read at boot).
+    IMAGE_SCANNING_PENDING_TIMEOUT: z.coerce.number().int().positive().default(60),
     // Upper bound on how many queued images the `ingest-images` retry/backfill cron
     // pulls (and therefore can submit) per run. Sized to the scanner's sustainable
     // throughput so a large backlog drains gradually across runs instead of in one
@@ -462,6 +477,15 @@ export const serverSchema = z
     MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
     MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(30),
     MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
+    // The resource-select picker runs on its own limiter, outside the shared
+    // `search` semaphore + circuit (see withMeiliResourceSelect). It is
+    // user-initiated and un-polled, so shedding it produces a blank modal
+    // rather than the deferred retry that shedding the feed produces — a much
+    // worse trade. Concurrency is high-but-bounded (a runaway backstop, not a
+    // brownout guard) and the timeout stays well under Traefik's 30s router
+    // timeout so a hung backend still can't pin event-loop slots.
+    MEILI_RESOURCE_SELECT_CONCURRENCY: z.coerce.number().int().min(1).optional().default(500),
+    MEILI_RESOURCE_SELECT_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(10_000),
     PODNAME: z.string().optional(),
     INTEGRATION_TOKEN: z.string().optional(),
     NEWSLETTER_ID: z.string().optional(),
@@ -802,6 +826,20 @@ export const serverSchema = z
     // sync without spuriously failing a healthy preview. Tunable per-environment
     // without a code change. See waitForReviewHostReachable.
     REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
+    // APPS_REVIEW_INGRESS_TARGET   the Traefik LB IP the review-preview
+    //   reachability probe connects to ORIGIN-DIRECT (raw IP + Host header),
+    //   instead of the review host's PUBLIC DNS name. Probing the public name
+    //   during the ~40s before external-dns creates the record gets NXDOMAIN,
+    //   and the civit.ai SOA negative-cache (min 1800s / 30min) then hides the
+    //   real record from the resolver for the rest of the window — spuriously
+    //   failing a healthy preview. An origin-direct probe never touches public
+    //   DNS, so it dodges that poisoning entirely (see waitForReviewHostReachable).
+    //   OPTIONAL + intentionally NO default (never commit the origin IP to a
+    //   PUBLIC repo). When UNSET it FALLS BACK to APPS_DEV_TUNNEL_INGRESS_TARGET
+    //   (the same shared Traefik LB IP, already set on dp-prod) so the fix is
+    //   live on dp-prod with no config change; when NEITHER is set the probe
+    //   falls back to the legacy public-DNS probe (nothing regresses locally).
+    APPS_REVIEW_INGRESS_TARGET: z.string().optional(),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1). Per-review spend ceiling handed to
     // the review agent pod as COST_CAP_USD — the runner self-aborts (status
     // 'cost-capped') once its LLM spend crosses this. A STRING (envsubst-rendered

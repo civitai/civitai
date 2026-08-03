@@ -26,6 +26,7 @@ import {
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
+  isModRemovedListing,
   ownerListingState,
   ownerStateChip,
   type OwnerListingState,
@@ -37,10 +38,16 @@ import {
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
+import {
   bucketGroupsByStatus,
   filterGroups,
   groupSubmissionsByApp,
+  OWNER_STATUS_BUCKETS,
   sortGroups,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SubmissionAccessors,
   type SubmissionGroup,
@@ -105,6 +112,9 @@ export type OffsiteSubmission = {
    *  listing) — `owner-unpublish` ⇒ owner-hidden (republish-eligible), anything else
    *  (a moderator `delist`) ⇒ mod-removed (republish forbidden). */
   lastModerationAction?: string | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Field adapters for the shared filter/sort/group helpers. Collapse identity =
@@ -153,7 +163,10 @@ function StatusCell({
       : null;
   return (
     <Stack gap={6} align="flex-start">
-      <Badge color={chip.color}>{chip.label}</Badge>
+      <Group gap={6} wrap="nowrap">
+        <Badge color={chip.color}>{chip.label}</Badge>
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && (
         <ReviewerNotesButton
           notes={notes}
@@ -418,9 +431,12 @@ export function OffsiteSubmissionsList({
     onViewHistory: (id, slug) => setHistoryTarget({ id, slug }),
   };
 
-  // Group → filter → sort newest-first → partition into status SECTIONS. Status is
-  // now the section (Live / Pending / Rejected / Withdrawn), so the header column is
-  // no longer sortable; a plain submittedAt-desc sort orders rows within a section.
+  // Group → filter → sort newest-first → partition into status SECTIONS (Live /
+  // Pending / Rejected / Withdrawn / Removed-by-a-moderator). Status is now the
+  // section, so the header column is no longer sortable; a plain submittedAt-desc sort
+  // orders rows within a section. `overrideBucketOf` routes a moderator-removed
+  // listing into its own collapsed section, taking precedence over the any-approved→
+  // Live rule (a once-live app a mod took down would otherwise misfile under Live).
   const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
@@ -433,14 +449,26 @@ export function OffsiteSubmissionsList({
       { column: 'submitted', direction: 'desc' },
       OFFSITE_ACCESSORS
     );
-    return bucketGroupsByStatus(sorted, OFFSITE_ACCESSORS.status);
+    return bucketGroupsByStatus(sorted, OFFSITE_ACCESSORS.status, OWNER_STATUS_BUCKETS, (g) =>
+      // INVARIANT: the backing-listing fields (`appListing.status` + `lastModerationAction`)
+      // are keyed per APP (the single `AppListing`), not per version — the server
+      // projects the same values onto every publish-request row in the group — so
+      // reading them off `g.latest` is equivalent to reading them off any version.
+      isModRemovedListing({
+        listingStatus: g.latest.appListing?.status,
+        lastModerationAction: g.latest.lastModerationAction,
+      })
+        ? 'mod-removed'
+        : null
+    );
   }, [submissions, query]);
 
   const totalGroups =
     buckets.live.length +
     buckets.pending.length +
     buckets.rejected.length +
-    buckets.withdrawn.length;
+    buckets.withdrawn.length +
+    buckets['mod-removed'].length;
 
   const toggle = (identity: string) =>
     setExpanded((prev) => {
@@ -452,55 +480,66 @@ export function OffsiteSubmissionsList({
 
   const renderTable = (groups: SubmissionGroup<OffsiteSubmission>[]) => (
     <Card withBorder p={0}>
-      <Table verticalSpacing="md" horizontalSpacing="md">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>App</Table.Th>
-            <Table.Th>Link</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Submitted</Table.Th>
-            <Table.Th>Reviewed</Table.Th>
-            <Table.Th />
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {groups.map((g) => {
-            const isExpanded = expanded.has(g.identity);
-            return (
-              <Fragment key={g.identity}>
-                <OffsiteRow
-                  submission={g.latest}
-                  nested={false}
-                  onWithdraw={onWithdraw}
-                  withdrawing={withdrawing}
-                  owner={owner}
-                  toggle={
-                    g.older.length > 0 ? (
-                      <VersionToggle
-                        expanded={isExpanded}
-                        count={g.versionCount}
-                        onToggle={() => toggle(g.identity)}
-                        testId={`apps-offsite-versions-${g.identity}`}
+      {/*
+        Same scroll container + shared floor as the onsite list (see
+        SUBMISSIONS_TABLE_MIN_WIDTH): `.mantine-Card-root` is `overflow: hidden`, so an
+        action cell that outgrows the card is silently clipped rather than scrolled.
+      */}
+      <Table.ScrollContainer
+        minWidth={SUBMISSIONS_TABLE_MIN_WIDTH}
+        type="native"
+        data-testid="apps-offsite-submissions-table-scroll"
+      >
+        <Table verticalSpacing="md" horizontalSpacing="md">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>App</Table.Th>
+              <Table.Th>Link</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Submitted</Table.Th>
+              <Table.Th>Reviewed</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {groups.map((g) => {
+              const isExpanded = expanded.has(g.identity);
+              return (
+                <Fragment key={g.identity}>
+                  <OffsiteRow
+                    submission={g.latest}
+                    nested={false}
+                    onWithdraw={onWithdraw}
+                    withdrawing={withdrawing}
+                    owner={owner}
+                    toggle={
+                      g.older.length > 0 ? (
+                        <VersionToggle
+                          expanded={isExpanded}
+                          count={g.versionCount}
+                          onToggle={() => toggle(g.identity)}
+                          testId={`apps-offsite-versions-${g.identity}`}
+                        />
+                      ) : undefined
+                    }
+                  />
+                  {isExpanded &&
+                    g.older.map((older) => (
+                      <OffsiteRow
+                        key={older.id}
+                        submission={older}
+                        nested
+                        onWithdraw={onWithdraw}
+                        withdrawing={withdrawing}
+                        owner={owner}
                       />
-                    ) : undefined
-                  }
-                />
-                {isExpanded &&
-                  g.older.map((older) => (
-                    <OffsiteRow
-                      key={older.id}
-                      submission={older}
-                      nested
-                      onWithdraw={onWithdraw}
-                      withdrawing={withdrawing}
-                      owner={owner}
-                    />
-                  ))}
-              </Fragment>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
+                    ))}
+                </Fragment>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
     </Card>
   );
 

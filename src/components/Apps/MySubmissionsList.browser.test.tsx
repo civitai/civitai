@@ -762,6 +762,8 @@ describe('MySubmissionsList — P4 onsite owner status badge', () => {
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // A mod-removed app now lives in its own default-collapsed section — expand it.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     // The overridden status badge.
     await expect
       .element(page.getByText('removed by a moderator', { exact: true }))
@@ -772,6 +774,86 @@ describe('MySubmissionsList — P4 onsite owner status badge', () => {
     expect(page.getByTestId('apps-onsite-republish-gone-app').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-onsite-unpublish-gone-app').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-submissions-open-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — mod-removed collapsed section', () => {
+  test('a moderator-removed app sits in its OWN section, collapsed by default (aria-expanded=false), NOT in Live', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live(), modRemoved()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // The Live app is visible (Live is always expanded); the moderator-removed app is
+    // NOT — it's in the default-collapsed "Removed by a moderator" section.
+    await expect.element(page.getByText('live-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('gone-app', { exact: false }).elements()).toHaveLength(0);
+
+    // The section exists and its toggle starts collapsed.
+    await expect
+      .element(page.getByTestId('apps-submissions-section-mod-removed'))
+      .toBeInTheDocument();
+    const toggle = page.getByTestId('apps-submissions-section-mod-removed-toggle');
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    // The header uses the "removed by a moderator" wording.
+    await expect
+      .element(page.getByText('Removed by a moderator', { exact: false }))
+      .toBeInTheDocument();
+
+    // Expanding reveals the mod-removed app.
+    await toggle.click();
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('true');
+    await expect.element(page.getByText('gone-app', { exact: false })).toBeInTheDocument();
+  });
+
+  test('an OWNER-hidden app stays in Live (never swept into the mod-removed section)', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // Owner-hidden is a distinct, republishable state — it keeps its Live placement
+    // (visible up-front) and the mod-removed section never renders.
+    await expect.element(page.getByText('hidden-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submissions-section-mod-removed').elements()).toHaveLength(0);
+  });
+
+  test('the collapsed header is an at-a-glance signal: shows the count in a RED accent while rows stay hidden', async () => {
+    // Two moderator-removed apps → the collapsed header must read "Removed by a
+    // moderator (2)" in red BEFORE expanding, with the two rows still out of the DOM.
+    const modRemoved2 = () => ({
+      ...modRemoved(),
+      id: 'm2',
+      slug: 'gone-app-2',
+      appBlockId: 'block-m2',
+      appListingId: 'l-m2',
+    });
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live(), modRemoved(), modRemoved2()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+
+    const toggle = page.getByTestId('apps-submissions-section-mod-removed-toggle');
+    await expect.element(toggle).toBeInTheDocument();
+    // Collapsed by default, and both rows are hidden until expand.
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    expect(page.getByText('gone-app', { exact: false }).elements()).toHaveLength(0);
+    expect(page.getByText('gone-app-2', { exact: false }).elements()).toHaveLength(0);
+
+    // The header itself carries the label + the count (2) without expanding.
+    const headerText = toggle.element().textContent ?? '';
+    expect(headerText).toContain('Removed by a moderator');
+    expect(headerText).toContain('2');
+
+    // RED accent: the section is styled with the red/danger token — asserted via the
+    // deterministic `data-accent` (the visual `c="red"` label + red count badge need
+    // Mantine's theme CSS, which the browser-test env doesn't load, so the token is the
+    // stable signal). Ties the at-a-glance accent to the danger color, not a coincidence.
+    const section = page.getByTestId('apps-submissions-section-mod-removed');
+    expect(section.element().getAttribute('data-accent')).toBe('red');
   });
 });
 
@@ -820,6 +902,8 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // Expand the default-collapsed moderator-removed section to reach the row.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     await page.getByTestId('apps-onsite-history-gone-app').click();
     await expect.element(page.getByText('Reported for policy')).toBeInTheDocument();
     await expect.element(page.getByText('Delisted')).toBeInTheDocument();
@@ -845,13 +929,16 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
 });
 
 describe('MySubmissionsList — P4 surfaced manage links', () => {
-  test('a live app links Edit → edit-manifest and Revenue → revenue for the app block', async () => {
+  test('a live app links Edit → /edit, Listing images → /edit?tab=media, Revenue → revenue', async () => {
     renderWithProviders(
       <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
     const edit = page.getByTestId('apps-onsite-edit-live-app');
     await expect.element(edit).toBeInTheDocument();
-    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit-manifest');
+    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit');
+    const media = page.getByTestId('apps-onsite-listing-media-live-app');
+    await expect.element(media).toBeInTheDocument();
+    expect(media.element().getAttribute('href')).toBe('/apps/block-a/edit?tab=media');
     const revenue = page.getByTestId('apps-onsite-revenue-live-app');
     await expect.element(revenue).toBeInTheDocument();
     expect(revenue.element().getAttribute('href')).toBe('/apps/block-a/revenue');
@@ -861,8 +948,47 @@ describe('MySubmissionsList — P4 surfaced manage links', () => {
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // Expand the default-collapsed moderator-removed section to reach the row.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     await expect.element(page.getByTestId('apps-onsite-revenue-gone-app')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-edit-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — advisory listing-problems warning', () => {
+  test('a row WITH problems renders the warning icon; hovering lists each problem label', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            problems: [
+              { code: 'missing-icon', label: 'Missing icon' },
+              { code: 'empty-tagline', label: 'Missing tagline' },
+            ],
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const warn = page.getByTestId('apps-submission-problems');
+    await expect.element(warn).toBeInTheDocument();
+    // The HoverCard dropdown mounts on hover and enumerates each problem label.
+    await warn.hover();
+    await expect.element(page.getByText('Missing icon', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Missing tagline', { exact: false })).toBeInTheDocument();
+  });
+
+  test('a clean row (no problems) shows NO warning icon', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ problems: [] })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submission-problems').elements()).toHaveLength(0);
   });
 });
 
@@ -906,8 +1032,53 @@ describe('MySubmissionsList — P4 Open-live run-page branching (graceful, no de
     );
     const open = page.getByTestId('apps-submissions-open-live-app');
     await expect.element(open).toBeInTheDocument();
-    // Not the standalone origin — it links to the block detail (install lives there).
-    expect(open.element().getAttribute('href')).not.toBe('https://live-app.civit.ai/');
+    // 🔴 NO href at all — not the standalone origin, and (post-#3493) not the
+    // retired `/apps/<appBlockId>` detail either. That route now 302s to
+    // `/apps/store-preview/<slug>` or 404s, so `getDetailPrimaryAction`'s
+    // model-slot branch returns informational copy with no target and this
+    // renders as plain text. Asserting `toBeNull` rather than `not.toBe(origin)`
+    // because the latter also passes for a null href — it could not fail here.
+    expect(open.element().getAttribute('href')).toBeNull();
     await expect.element(page.getByText('Runs on model pages', { exact: false })).toBeInTheDocument();
+  });
+});
+
+/**
+ * S3 — the row actions must SCROLL, not be clipped.
+ *
+ * Measured defect: the table sits in `<Card withBorder p={0}>`, whose
+ * `.mantine-Card-root` is `overflow: hidden`, and the action cell is a
+ * `wrap="nowrap"` group of up to six buttons — so 138 px of actions were cut off
+ * with no scrollbar (card `clientWidth 1286` vs `scrollWidth 1424` at 1497 px).
+ *
+ * 🔴 This asserts DOM STRUCTURE only — that the table's nearest scroll wrapper IS
+ * the `Table.ScrollContainer`. It does NOT (and cannot) assert the computed
+ * `overflow-x` or that nothing is clipped: this env has no Mantine theme CSS and
+ * no real viewport. The clipping itself is verified by manual re-measurement.
+ */
+describe('MySubmissionsList — row actions scroll rather than clip (S3)', () => {
+  test('the table renders inside the Table.ScrollContainer wrapper', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[live({})]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    const scroll = page.getByTestId('apps-submissions-table-scroll');
+    await expect.element(scroll).toBeInTheDocument();
+    const scrollEl = scroll.element();
+    const table = scrollEl.querySelector('table');
+    expect(table).not.toBeNull();
+    // PLACEMENT, which is the whole fix: the scroll box must sit INSIDE the clipping
+    // Card (`.mantine-Card-root` is `overflow: hidden`), between it and the table.
+    // Hoisting the wrapper outside the Card restores the defect in full, and a
+    // presence-only assertion would not notice.
+    //
+    // (The obvious-looking `table.closest('[data-testid=…]') === scrollEl` is a
+    // TAUTOLOGY — `scrollEl.querySelector('table')` already found the table inside
+    // scrollEl, so its nearest such ancestor is scrollEl by construction. It proves
+    // nothing about the Card. Hence the two assertions below instead.)
+    const card = scrollEl.closest('.mantine-Card-root');
+    expect(card).not.toBeNull();
+    // …and no further Card sits between the wrapper and the table, which would
+    // re-introduce the clip below the scroll box.
+    expect(table?.closest('.mantine-Card-root')).toBe(card);
   });
 });

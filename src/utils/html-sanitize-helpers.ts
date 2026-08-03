@@ -16,6 +16,7 @@ const DEFAULT_ALLOWED_TAGS = [
   'img',
   'iframe',
   'div',
+  'blockquote',
   'code',
   'pre',
   'span',
@@ -64,10 +65,6 @@ export type santizeHtmlOptions = sanitize.IOptions & {
 };
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   const { stripEmpty = false, transformTags, ...options } = args ?? {};
-  // if (throwOnBlockedDomain) {
-  //   const blockedDomains = getBlockedDomains(html);
-  //   if (blockedDomains.length) throw new Error(`invalid urls: ${blockedDomains.join(', ')}`);
-  // }
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
     allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
@@ -86,12 +83,6 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
         if (!hrefDomain) return { tagName: 'span', ...attr };
 
-        // const isBlocked = getIsBlockedDomain(hrefDomain);
-        // if (isBlocked)
-        //   return {
-        //     tagName: 'span',
-        //     text: '[Blocked Link]',
-        //   };
         return {
           tagName: 'a',
           attribs: {

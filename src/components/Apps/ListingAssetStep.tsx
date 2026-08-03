@@ -2,8 +2,10 @@ import { Alert, Badge, Button, Card, FileInput, Group, Image, Loader, Stack, Tex
 import {
   IconAlertTriangle,
   IconCheck,
+  IconInfoCircle,
   IconPhoto,
   IconRefresh,
+  IconSparkles,
   IconTrash,
   IconUpload,
   IconX,
@@ -12,7 +14,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import {
   classifyAttachResult,
+  classifyScanStatus,
+  nextPollDelay,
   shouldKeepPolling,
+  type AssetScanBadge,
   type AttachOutcome,
 } from '~/components/Apps/assetPolling';
 import {
@@ -41,8 +46,18 @@ import { trpc } from '~/utils/trpc';
  * thumbnail, replaceable — and screenshots removable when `allowRemove`).
  */
 
-/** Server-suggested image URLs from the URL's page metadata (cover = og:image, icon = favicon/apple-touch). */
-export type MetaSuggestions = { coverImageUrl?: string; iconImageUrl?: string };
+/**
+ * Server-suggested image URLs from the URL's page metadata (cover = og:image, icon =
+ * favicon/apple-touch). `iconDataUri` is a DISTINCT channel: an inline `data:image/...`
+ * favicon the https-only URL path can't fetch — accepted through a separate server
+ * ingest that rasterizes it to PNG (never stores raw SVG). Preferred order for the icon
+ * slot: an https `iconImageUrl` first, else the inline `iconDataUri`.
+ */
+export type MetaSuggestions = {
+  coverImageUrl?: string;
+  iconImageUrl?: string;
+  iconDataUri?: string;
+};
 
 type AssetKind = 'icon' | 'cover' | 'screenshot';
 
@@ -54,6 +69,13 @@ export type AssetState = {
   message: string | null;
   /** An edge-resolved preview URL for an already-attached (prefilled) asset. */
   previewUrl?: string | null;
+  /**
+   * Per-asset SCAN badge, independent of `status`. The image is STORED
+   * (`status: 'attached'`) immediately now — even mid-scan — so the submit floor
+   * (icon+cover attached) is met right away; this drives a separate badge:
+   * `scanning` → `scanned` / `blocked`. Undefined ⇒ no badge (prefilled asset).
+   */
+  scan?: AssetScanBadge | null;
 };
 
 export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
@@ -61,7 +83,8 @@ export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: 
 /** Seed an icon/cover AssetState from an edit-prefill asset (attached iff it has an imageId). */
 function assetFromInitial(a: EditAsset | undefined): AssetState {
   if (!a || a.imageId == null) return emptyAsset;
-  return { status: 'attached', imageId: a.imageId, message: null, previewUrl: a.url };
+  // A prefilled asset was already scan-clean when the listing was saved — no badge.
+  return { status: 'attached', imageId: a.imageId, message: null, previewUrl: a.url, scan: null };
 }
 
 /**
@@ -96,6 +119,9 @@ export function ListingAssetStep({
   footer,
   allowRemove = false,
   onAssetMutated,
+  onCompletenessChange,
+  onRepull,
+  repullLoading = false,
 }: {
   listingId: string;
   contentRating: OffsiteContentRating;
@@ -111,6 +137,17 @@ export function ListingAssetStep({
   /** Called after any successful asset mutation (attach / remove) — edit mode uses
    *  it to know a revision has diverged from the live listing. */
   onAssetMutated?: () => void;
+  /** Called whenever the floor/completeness state changes so a caller can gate a
+   *  submit button. `meetsFloor` = icon+cover attached (the publish floor);
+   *  `complete` = also has ≥1 screenshot (advisory). */
+  onCompletenessChange?: (state: { meetsFloor: boolean; complete: boolean }) => void;
+  /** Re-pull the OG metadata from the app's URL (the shared autofill hook's `repull`).
+   *  When provided, renders a step-level "Re-pull from site" button that refreshes the
+   *  icon/cover suggestion tiles — the manual retry that replaces the removed URL-step
+   *  button. Omit to hide it. */
+  onRepull?: () => void;
+  /** True while a `onRepull()` fetch is in flight (drives the button spinner). */
+  repullLoading?: boolean;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(() => assetFromInitial(initial?.icon));
@@ -134,14 +171,20 @@ export function ListingAssetStep({
     return seed;
   });
 
+  const utils = trpc.useUtils();
   const persistMutation = trpc.appListings.persistAssetImage.useMutation();
   const ingestMutation = trpc.appListings.ingestAssetFromUrl.useMutation();
+  const ingestDataUriMutation = trpc.appListings.ingestAssetFromDataUri.useMutation();
   const setIconMutation = trpc.appListings.setIcon.useMutation();
   const setCoverMutation = trpc.appListings.setCover.useMutation();
   const addScreenshotMutation = trpc.appListings.addScreenshot.useMutation();
   const removeScreenshotMutation = trpc.appListings.removeScreenshot.useMutation();
 
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // SEPARATE timer map for the per-asset SCAN poll (distinct from the attach timer).
+  // The attach commits in one call now (the id is stored even mid-scan), so this poll
+  // only updates the scan badge and never re-attaches.
+  const scanTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const epochsRef = useRef<Map<string, number>>(new Map());
   // Slot key → the AppListingScreenshot row id returned by addScreenshot (so a
   // freshly-added screenshot is also removable). Prefilled rows use screenshotMeta.
@@ -176,6 +219,13 @@ export function ListingAssetStep({
       clearTimeout(t);
       timersRef.current.delete(key);
     }
+    // A replace / cancel / attach-restart must also stop any in-flight SCAN poll for
+    // this key so a stale poll can't flip the badge on the new upload.
+    const st = scanTimersRef.current.get(key);
+    if (st !== undefined) {
+      clearTimeout(st);
+      scanTimersRef.current.delete(key);
+    }
   }
   function bumpEpoch(key: string): number {
     const next = (epochsRef.current.get(key) ?? 0) + 1;
@@ -188,14 +238,57 @@ export function ListingAssetStep({
 
   useEffect(() => {
     const timers = timersRef.current;
+    const scanTimers = scanTimersRef.current;
     const urls = objectUrlsRef.current;
     return () => {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      for (const t of scanTimers.values()) clearTimeout(t);
+      scanTimers.clear();
       for (const u of urls.values()) URL.revokeObjectURL(u);
       urls.clear();
     };
   }, []);
+
+  // Poll `getAssetScanStatuses` until a freshly-attached (but still-scanning) asset's
+  // scan lands. Updates only the per-asset SCAN badge (`scanning` → `scanned` /
+  // `blocked`); the asset is already `status: 'attached'` so the submit floor is
+  // unaffected. Epoch-guarded so a replace/cancel mid-scan drops a resolving poll;
+  // budget-bounded (reusing the attach backoff) — on budget-out the badge simply
+  // stays `scanning` (a stuck scan is rare and the go-live gate is the real safety net).
+  async function driveScan(
+    key: string,
+    imageId: number,
+    attempt: number,
+    epoch: number,
+    applyScan: (scan: AssetScanBadge) => void
+  ) {
+    let badge: AssetScanBadge;
+    try {
+      const res = await utils.appListings.getAssetScanStatuses.fetch({ imageIds: [imageId] });
+      badge = classifyScanStatus(res.statuses.find((s) => s.imageId === imageId)?.status);
+    } catch {
+      // A transient query failure is not terminal — keep polling.
+      badge = 'scanning';
+    }
+    if (!isCurrentEpoch(key, epoch)) return;
+    if (badge === 'scanned' || badge === 'blocked') {
+      const st = scanTimersRef.current.get(key);
+      if (st !== undefined) {
+        clearTimeout(st);
+        scanTimersRef.current.delete(key);
+      }
+      applyScan(badge);
+      return;
+    }
+    applyScan('scanning');
+    const delayMs = nextPollDelay(attempt);
+    if (delayMs === null) return; // budget exhausted — leave the "scanning" badge.
+    const timer = setTimeout(() => {
+      void driveScan(key, imageId, attempt + 1, epoch, applyScan);
+    }, delayMs);
+    scanTimersRef.current.set(key, timer);
+  }
 
   async function uploadAndPersist(file: File): Promise<number> {
     const { width, height } = await readImageDimensions(file);
@@ -256,13 +349,24 @@ export function ListingAssetStep({
     if (!isCurrentEpoch(key, epoch)) return;
     if (outcome.kind === 'attached') {
       clearTimer(key);
-      apply({ status: 'attached', imageId, message: null });
+      // The id is STORED now (even mid-scan). Mark it attached (so the submit floor
+      // is met) and seed the scan badge: `scanning` while the scan is in-flight (then
+      // poll it to `scanned` / `blocked`), else `scanned` immediately.
+      const scan: AssetScanBadge = outcome.scanPending ? 'scanning' : 'scanned';
+      apply({ status: 'attached', imageId, message: null, scan });
       // Promote a captured row id into screenshotMeta so the Remove button appears.
       const rowId = rowIdRef.current.get(key);
       if (rowId) {
         setScreenshotMeta((prev) => ({ ...prev, [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null } }));
       }
       onAssetMutated?.();
+      // Kick off the scan-status poll only while the scan is still in-flight. Updates
+      // just the badge; never re-attaches. Epoch-guarded so a replace/cancel drops it.
+      if (outcome.scanPending) {
+        const applyScan = (s: AssetScanBadge) =>
+          apply({ status: 'attached', imageId, message: null, scan: s });
+        void driveScan(key, imageId, 0, epoch, applyScan);
+      }
       return;
     }
     if (outcome.kind === 'error') {
@@ -339,6 +443,37 @@ export function ListingAssetStep({
       clearTimer(key);
       apply({ status: 'error', imageId: null, message: (err as Error).message });
       showErrorNotification({ title: `Could not import ${kind}`, error: err as Error });
+    }
+  }
+
+  /**
+   * Accept an inline `data:image/...` icon suggestion (radio.civitai.com's favicon).
+   * Distinct from `acceptSuggestion`: the server DECODES + RASTERIZES the data URI to
+   * PNG (never storing raw SVG) via `ingestAssetFromDataUri`, then it flows through the
+   * SAME attach + scan-poll path as any other icon. The data URI is itself a usable
+   * preview (a browser renders it in an `<img>` — no HTML injection), shown through the
+   * scan. Only ever an icon.
+   */
+  async function acceptDataUriSuggestion(
+    key: string,
+    dataUri: string,
+    apply: (s: AssetState) => void
+  ) {
+    clearTimer(key);
+    const epoch = bumpEpoch(key);
+    // The data URI renders as a preview in an <img>; it's NOT an object URL, so drop
+    // any prior blob for this key (never track it).
+    revokeObjectUrl(key);
+    apply({ status: 'working', imageId: null, message: null, previewUrl: dataUri });
+    try {
+      const { imageId } = await ingestDataUriMutation.mutateAsync({ dataUri, kind: 'icon' });
+      if (!isCurrentEpoch(key, epoch)) return;
+      await drive(key, 'icon', imageId, 0, epoch, apply);
+    } catch (err) {
+      if (!isCurrentEpoch(key, epoch)) return;
+      clearTimer(key);
+      apply({ status: 'error', imageId: null, message: (err as Error).message });
+      showErrorNotification({ title: 'Could not import icon', error: err as Error });
     }
   }
 
@@ -426,12 +561,40 @@ export function ListingAssetStep({
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
-  const complete =
-    icon.status === 'attached' && cover.status === 'attached' && attachedScreenshots >= 1;
+  // Publish FLOOR = icon + cover attached (screenshots OPTIONAL). A listing can be
+  // submitted + published at the floor; screenshots are advisory/recommended.
+  const meetsFloor = icon.status === 'attached' && cover.status === 'attached';
+  // FULL completeness additionally requires ≥1 screenshot — advisory only now.
+  const complete = meetsFloor && attachedScreenshots >= 1;
+
+  // Surface floor/completeness up to callers that gate a submit button (e.g. the
+  // `/apps/[appBlockId]/listing` "Submit for review" button gates on `meetsFloor`).
+  useEffect(() => {
+    onCompletenessChange?.({ meetsFloor, complete });
+  }, [meetsFloor, complete, onCompletenessChange]);
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-success">
       {header}
+
+      {onRepull && (
+        <Group gap="xs" align="center" data-testid="apps-offsite-assets-repull-row">
+          <Button
+            variant="light"
+            color="grape"
+            size="compact-sm"
+            leftSection={<IconSparkles size={16} />}
+            onClick={onRepull}
+            loading={repullLoading}
+            data-testid="apps-offsite-assets-repull"
+          >
+            Re-pull from site
+          </Button>
+          <Text size="xs" c="dimmed">
+            Re-scan your link for an icon and cover — only refreshes the suggestions below.
+          </Text>
+        </Group>
+      )}
 
       <AssetRow
         kind="icon"
@@ -443,10 +606,14 @@ export function ListingAssetStep({
           if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, applyIcon);
         }}
         onCancel={() => cancelAsset('icon', applyIcon)}
-        suggestionUrl={suggestions.iconImageUrl}
+        suggestionUrl={suggestions.iconImageUrl ?? suggestions.iconDataUri}
         onAcceptSuggestion={() => {
+          // Prefer an https URL (re-fetched SSRF-safe); else the inline data-URI icon
+          // (decoded + rasterized to PNG server-side — the radio.civitai.com case).
           if (suggestions.iconImageUrl)
             void acceptSuggestion('icon', 'icon', suggestions.iconImageUrl, applyIcon);
+          else if (suggestions.iconDataUri)
+            void acceptDataUriSuggestion('icon', suggestions.iconDataUri, applyIcon);
         }}
       />
       <AssetRow
@@ -492,12 +659,17 @@ export function ListingAssetStep({
               {screenshots.map((s, i) => {
                 const previewUrl = screenshotMeta[s.id]?.previewUrl ?? null;
                 const rowId = screenshotMeta[s.id]?.rowId ?? rowIdRef.current.get(s.id) ?? null;
-                // Attached (has a server row) → server-side delete, gated by
-                // allowRemove (edit mode). Otherwise (in-progress / error / timeout,
-                // no row) → a LOCAL cancel, ALWAYS allowed — cancelling your own
-                // in-flight upload is never gated by allowRemove.
-                const attached = s.status === 'attached' && rowId != null;
-                const showControl = attached ? allowRemove : true;
+                // The id is stored immediately now (even mid-scan), so a freshly-added
+                // screenshot is `attached` WITH a rowId while its scan is still in-flight.
+                // Treat that scanning-but-committed row as still CANCELLABLE (a server
+                // remove) — cancelling your own just-added upload is never gated by
+                // allowRemove, mirroring the old mid-scan cancel. A SETTLED attached row
+                // (scan landed: scanned/blocked) → the server-delete Remove, gated by
+                // allowRemove (edit mode). An in-progress (working, no row) row → a LOCAL
+                // cancel.
+                const hasRow = rowId != null;
+                const settled = s.status === 'attached' && hasRow && s.scan !== 'scanning';
+                const showControl = settled ? allowRemove : true;
                 return (
                   <Group key={s.id} gap={8} justify="space-between">
                     <Group gap={8}>
@@ -527,7 +699,7 @@ export function ListingAssetStep({
                         </Button>
                       )}
                       {showControl &&
-                        (attached ? (
+                        (settled ? (
                           <Button
                             size="compact-xs"
                             variant="subtle"
@@ -544,7 +716,10 @@ export function ListingAssetStep({
                             variant="subtle"
                             color="red"
                             leftSection={<IconX size={12} />}
-                            onClick={() => cancelScreenshot(s.id)}
+                            // A scanning-but-committed row (has a server row) must be
+                            // removed on the server; a not-yet-committed (working) row is
+                            // a local-only cancel.
+                            onClick={() => (hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id))}
                             data-testid={`apps-offsite-screenshot-cancel-${i}`}
                           >
                             Cancel
@@ -559,15 +734,30 @@ export function ListingAssetStep({
         </Stack>
       </Card>
 
+      {/* Tri-state completeness advisory:
+          (a) below floor (missing icon or cover) → warning, submit blocked;
+          (b) floor met but no screenshots → neutral, submit ENABLED (optional);
+          (c) fully complete → success. */}
       <Alert
-        color={complete ? 'green' : 'yellow'}
+        color={!meetsFloor ? 'red' : complete ? 'green' : 'blue'}
         variant="light"
-        icon={complete ? <IconCheck size={16} /> : <IconAlertTriangle size={16} />}
+        icon={
+          !meetsFloor ? (
+            <IconAlertTriangle size={16} />
+          ) : complete ? (
+            <IconCheck size={16} />
+          ) : (
+            <IconInfoCircle size={16} />
+          )
+        }
+        data-testid="apps-listing-assets-completeness"
       >
         <Text size="sm">
-          {complete
-            ? 'All required assets attached. Your submission is ready for moderator review.'
-            : 'A moderator can only approve once an icon, a cover and ≥1 screenshot are attached.'}
+          {!meetsFloor
+            ? 'Add an icon and cover to publish.'
+            : complete
+            ? 'All set.'
+            : 'Ready to publish. Screenshots are recommended but optional — you can add them later.'}
         </Text>
       </Alert>
 
@@ -720,8 +910,40 @@ type BadgeState = {
   status: ScreenshotSlot['status'];
   imageId: number | null;
   message: string | null;
+  scan?: AssetScanBadge | null;
 };
 function AssetStatusBadge({ state }: { state: BadgeState }) {
+  // Once ATTACHED (the id is stored even mid-scan), the SCAN sub-state drives the
+  // badge: still scanning → yellow spinner; blocked → red "replace"; else attached.
+  if (state.status === 'attached') {
+    if (state.scan === 'scanning')
+      return (
+        <Badge
+          size="xs"
+          color="yellow"
+          leftSection={<Loader size={10} color="yellow" />}
+          data-testid="apps-asset-scan-scanning"
+        >
+          Scanning…
+        </Badge>
+      );
+    if (state.scan === 'blocked')
+      return (
+        <Badge size="xs" color="red" data-testid="apps-asset-scan-blocked">
+          Blocked — replace
+        </Badge>
+      );
+    return (
+      <Badge
+        size="xs"
+        color="green"
+        leftSection={<IconCheck size={10} />}
+        data-testid="apps-asset-scan-scanned"
+      >
+        {state.scan === 'scanned' ? 'Scanned' : 'attached'}
+      </Badge>
+    );
+  }
   switch (state.status) {
     case 'working':
       return (
@@ -734,12 +956,6 @@ function AssetStatusBadge({ state }: { state: BadgeState }) {
       return (
         <Badge size="xs" color="yellow" leftSection={<Loader size={10} color="yellow" />}>
           Scanning image…
-        </Badge>
-      );
-    case 'attached':
-      return (
-        <Badge size="xs" color="green" leftSection={<IconCheck size={10} />}>
-          attached
         </Badge>
       );
     case 'timeout':

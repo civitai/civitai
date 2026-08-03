@@ -17,8 +17,16 @@ import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 // `<name>.recipe.ts`, register it below, add golden-graph tests. The `kind`
 // (`customComfy`) and the SDK are untouched — only the recipe id enum widens.
 //
-// INERT/DARK: nothing here is wired into the live blocks.router submit/estimate
-// path yet — PR6 (router + post-paid budget belt) is what will call `getRecipe`.
+// 🔴 LIVE — this registry is on the SECURITY-CRITICAL post-paid submit path.
+// `blocks.router` branches on `kind === 'customComfy'` and resolves the recipe
+// through `getRecipe`, then runs the §5.3 timeout-cap budget belt over the
+// recipe's declared `budgetFor()` ceiling. A change here changes what a block
+// can spend, so treat every edit as a spend-safety review, not a content edit.
+//
+// (Previously marked INERT/DARK pending PR6 — that shipped; the router calls
+// `getRecipe` on the live path. Kept as a note because a stale "nothing here is
+// wired up yet" on a spend-critical trust root is exactly the comment that gets
+// a future reviewer to wave a change through.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A ComfyUI /prompt graph node: class_type + inputs, link refs `['id', slot]`. */

@@ -155,6 +155,13 @@ export const mergePermissionInput = licensingSchema.extend({
 export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
 
+export const templateOmittableFields = ['description', 'tags'] as const;
+export type TemplateOmittableField = (typeof templateOmittableFields)[number];
+export const getModelTemplateFieldsSchema = getByIdSchema.extend({
+  omit: z.array(z.enum(templateOmittableFields)).optional(),
+});
+export type GetModelTemplateFieldsInput = z.infer<typeof getModelTemplateFieldsSchema>;
+
 export const getDownloadSchema = z.object({
   modelId: z.coerce.number(),
   modelVersionId: z.coerce.number().optional(),
@@ -252,6 +259,9 @@ export const toggleModelLockSchema = z.object({
   id: z.number(),
   locked: z.boolean(),
 });
+
+export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
+export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
 
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;

@@ -29,10 +29,20 @@ export const announcementMetaSchema = z
     targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
     colSpan: z.number().default(6),
+    // A bare media object key — NOT an `Image` row id and NOT a URL.
+    //
+    // 🔴 These keys are intentionally not registered as `Image` rows. `deleteImageFromS3`
+    // is row-scoped (every call site passes an `Image` row's id + url), so a key with no
+    // row cannot be deleted by any app path — which is the whole point, after a deleted
+    // `Image` row took a live sitewide banner's object with it. Do not "normalise" this
+    // into an `Image` FK, and any future orphan sweeper over the uploads bucket must
+    // exclude the keys held here. Monitored by `~/server/jobs/announcement-media-check`.
     image: z.string().optional(),
     index: z.number().optional(),
   })
   .partial();
+
+export const MAX_ANNOUNCEMENT_TARGET_USERS = 50_000;
 
 export type UpsertAnnouncementSchema = z.infer<typeof upsertAnnouncementSchema>;
 export const upsertAnnouncementSchema = z.object({
@@ -45,6 +55,13 @@ export const upsertAnnouncementSchema = z.object({
   endsAt: z.date().nullish(),
   disabled: z.boolean().optional(),
   metadata: announcementMetaSchema,
+  // Replace-set semantics: undefined leaves targeting unchanged, [] clears it
+  // (announcement shows to everyone), a non-empty array restricts the
+  // announcement to exactly those users.
+  targetUserIds: z.array(z.number().int().positive()).max(MAX_ANNOUNCEMENT_TARGET_USERS).optional(),
+  // Only acted on when targetUserIds resolves to a non-empty set: sends a
+  // system-announcement notification to each targeted user on this save.
+  notifyTargetedUsers: z.boolean().optional(),
 });
 
 export type GetAnnouncementsPagedSchema = z.infer<typeof getAnnouncementsPagedSchema>;

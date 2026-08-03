@@ -20,6 +20,8 @@ export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle" | "Civitai";
 
+export type MembershipGiftStatus = "Pending" | "Fulfilled" | "Failed" | "Refunded" | "Revoked";
+
 export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
@@ -152,6 +154,8 @@ export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "Exte
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
+export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
@@ -195,6 +199,8 @@ export type PoolTrigger = "Entry" | "User";
 export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
 export type ChallengeIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
+export type ChallengeEngagementType = "Notify";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -474,6 +480,8 @@ export interface User {
   createdAt: Date;
   deletedAt: Date | null;
   subscriptions?: CustomerSubscription[];
+  membershipGiftsGiven?: MembershipGift[];
+  membershipGiftsReceived?: MembershipGift[];
   mutedAt: Date | null;
   muted: boolean;
   muteExpiresAt: Date | null;
@@ -505,6 +513,7 @@ export interface User {
   oauthClients?: OauthClient[];
   oauthConsents?: OauthConsent[];
   roles?: UserRole[];
+  membershipOverride?: UserMembershipOverride | null;
   links?: UserLink[];
   comments?: Comment[];
   commentReactions?: CommentReaction[];
@@ -606,6 +615,7 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
+  challengeEngagements?: ChallengeEngagement[];
   rewardsBonusEventsCreated?: RewardsBonusEvent[];
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
@@ -644,6 +654,7 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  targetedAnnouncements?: AnnouncementUser[];
 }
 
 export interface CustomerSubscription {
@@ -665,6 +676,27 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface MembershipGift {
+  id: string;
+  gifterId: number;
+  gifter?: User;
+  recipientId: number;
+  recipient?: User;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: MembershipGiftStatus;
+  message: string | null;
+  anonymous: boolean;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Product {
@@ -792,7 +824,6 @@ export interface Model {
   uploadType: ModelUploadType;
   locked: boolean;
   underAttack: boolean;
-  earlyAccessDeadline: Date | null;
   mode: ModelModifier | null;
   unlisted: boolean;
   gallerySettings: JsonValue;
@@ -904,6 +935,7 @@ export interface ModelVersion {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   status: ModelStatus;
   trainingStatus: TrainingStatus | null;
   trainingDetails: JsonValue | null;
@@ -917,9 +949,6 @@ export interface ModelVersion {
   settings: JsonValue | null;
   availability: Availability;
   nsfwLevel: number;
-  earlyAccessEndsAt: Date | null;
-  earlyAccessConfig: JsonValue | null;
-  earlyAccessPermanent: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
@@ -1793,6 +1822,16 @@ export interface Role {
   members?: UserRole[];
 }
 
+export interface UserMembershipOverride {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  user?: User;
+}
+
 export interface AppBlock {
   id: string;
   appId: string;
@@ -1818,6 +1857,9 @@ export interface AppBlock {
   featuredOrder: number | null;
   screenshots: JsonValue | null;
   externalUrl: string | null;
+  spendTier: string;
+  spendCapBuzzPerDay: number | null;
+  spendVelocityMaxGens: number | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;
@@ -2532,6 +2574,14 @@ export interface Announcement {
   endsAt: Date | null;
   metadata: JsonValue | null;
   disabled: boolean;
+  targetUsers?: AnnouncementUser[];
+}
+
+export interface AnnouncementUser {
+  announcementId: number;
+  userId: number;
+  announcement?: Announcement;
+  user?: User;
 }
 
 export interface RewardsBonusEvent {
@@ -2569,6 +2619,8 @@ export interface Cosmetic {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: bigint | null;
+  pHashUrl: string | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
@@ -3043,6 +3095,17 @@ export interface EntityAccess {
   meta: JsonValue | null;
 }
 
+export interface PaidAccess {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Date | null;
+  timeframeDays: number | null;
+  terms: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface EntityCollaborator {
   entityType: EntityType;
   entityId: number;
@@ -3410,11 +3473,11 @@ export interface DonationGoal {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: number;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   modelVersion?: ModelVersion | null;
   createdAt: Date;
-  isEarlyAccess: boolean;
   active: boolean;
   donations?: Donation[];
 }
@@ -3682,6 +3745,7 @@ export interface Challenge {
   winners?: ChallengeWinner[];
   threads?: Thread[];
   reports?: ChallengeReport[];
+  engagements?: ChallengeEngagement[];
   eventId: number | null;
   event?: ChallengeEvent | null;
 }
@@ -3724,6 +3788,15 @@ export interface ChallengeCategory {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ChallengeEngagement {
+  userId: number;
+  user?: User;
+  challengeId: number;
+  challenge?: Challenge;
+  type: ChallengeEngagementType;
+  createdAt: Date;
 }
 
 export interface ChallengeWinner {
@@ -4656,6 +4729,7 @@ export interface ComicChapter {
   earlyAccessConfig: JsonValue | null;
   earlyAccessEndsAt: Date | null;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   nsfwLevel: number;
   createdAt: Date;
   updatedAt: Date;

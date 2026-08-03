@@ -3,7 +3,11 @@ import type { SearchParams, SearchResponse } from 'meilisearch';
 import { uniq } from 'lodash-es';
 import { constants, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  searchClient,
+  withMeiliResourceSelect,
+} from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GetResourceSelectInput } from '~/server/schema/model.schema';
@@ -188,7 +192,7 @@ async function searchModels(
     return { hits: [], estimatedTotalHits: 0 } as unknown as SearchResponse<ModelSearchIndexRecord>;
   const client = searchClient;
   try {
-    return await withMeili('search', () =>
+    return await withMeiliResourceSelect(() =>
       client.index(MODELS_SEARCH_INDEX).search<ModelSearchIndexRecord>(query, request)
     );
   } catch (err) {
@@ -244,8 +248,10 @@ export async function getResourceSelectModels(
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the
   // ecosystem base model aren't in the Meili stream anyway, so excluding them is a
   // no-op; the actual pin below narrows to base-model matches.
+  // `?? []` is belt-and-braces over the cache-helper fix: the pin is a nice-to-have,
+  // so it must never be able to take the whole picker down with it.
   const officialIdsForType = officialPinActive
-    ? (await getOfficialModelIds())
+    ? ((await getOfficialModelIds()) ?? [])
         .filter((m) => input.resources.some((r) => r.type === m.type))
         .map((m) => m.id)
     : [];

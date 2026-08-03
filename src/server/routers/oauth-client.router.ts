@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { v4 as uuidv4 } from 'uuid';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
@@ -11,10 +11,15 @@ import {
   deriveAllowedOriginsFromRedirectUris,
   getOauthClientByIdSchema,
   rotateOauthClientSecretSchema,
+  searchOauthClientsForModeratorSchema,
   updateOauthClientSchema,
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+import {
+  APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
+  isAppBlockOauthClientId,
+} from '~/shared/constants/block-scope.constants';
+import type { Prisma } from '@prisma/client';
 
 /**
  * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
@@ -78,6 +83,75 @@ export const oauthClientRouter = router({
       orderBy: { createdAt: 'desc' },
     });
   }),
+
+  // MODERATOR-ONLY global OAuth-client search (App-Blocks external-submit mod picker).
+  // An empty/absent query returns the CALLER's own clients (mirrors the non-mod
+  // `getAll` default); a non-empty query searches ALL clients by app name / author
+  // username / (numeric) author id. App-Block (`appblk-*`) clients are ALWAYS excluded
+  // at the DB level (never a hand-authored external-app target, and post-filtering
+  // would corrupt keyset pagination). The projection is SECRET-FREE — the client
+  // secret / hashed secret is NEVER selected.
+  searchForModerator: moderatorProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(searchOauthClientsForModeratorSchema)
+    .query(async ({ ctx, input }) => {
+      const query = input.query?.trim() ?? '';
+      const limit = input.limit;
+
+      // Always exclude App-Block-provisioned clients (clean `appblk-` prefix →
+      // `startsWith`; mirrors `isAppBlockOauthClientId`).
+      const excludeAppBlocks: Prisma.OauthClientWhereInput = {
+        NOT: { id: { startsWith: APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } },
+      };
+
+      let where: Prisma.OauthClientWhereInput;
+      if (query.length === 0) {
+        // Default (empty search): the mod's OWN clients, same as the non-mod picker.
+        where = { AND: [{ userId: ctx.user.id }, excludeAppBlocks] };
+      } else {
+        // Global search: app name OR author username (both case-insensitive ILIKE) OR,
+        // when the query is an integer, the author's exact user id.
+        const numeric = Number(query);
+        // Only treat the query as an author id when it's a valid positive
+        // Postgres int4 — an all-digits query beyond int32 (e.g. a pasted long
+        // number) passes Number.isInteger but would 500 on int4 overflow.
+        const numericIsUserId =
+          Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
+        const or: Prisma.OauthClientWhereInput[] = [
+          { name: { contains: query, mode: 'insensitive' } },
+          { user: { username: { contains: query, mode: 'insensitive' } } },
+          ...(numericIsUserId ? [{ userId: numeric }] : []),
+        ];
+        where = { AND: [{ OR: or }, excludeAppBlocks] };
+      }
+
+      const rows = await dbRead.oauthClient.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          allowedScopes: true,
+          logoUrl: true,
+          isConfidential: true,
+          isVerified: true,
+          createdAt: true,
+          user: { select: { id: true, username: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        // Fetch one extra to detect a further page (Prisma cursor is INCLUSIVE, so the
+        // popped extra becomes the first row of the next page — no overlap, no skip).
+        take: limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor } } : {}),
+      });
+
+      let nextCursor: string | undefined;
+      if (rows.length > limit) {
+        const nextItem = rows.pop();
+        nextCursor = nextItem?.id;
+      }
+
+      return { items: rows, nextCursor };
+    }),
 
   // Register a new OAuth client
   create: protectedProcedure

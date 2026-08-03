@@ -14,7 +14,10 @@ export function PageModal({ children, ...props }: ModalProps) {
       removeScrollProps={{ allowPinchZoom: true }}
       zIndex={250}
     >
-      <ScrollArea pb={0}>{children}</ScrollArea>
+      {/* a drag inside a modal should never reload the page underneath it */}
+      <ScrollArea pb={0} withPullToRefresh={false}>
+        {children}
+      </ScrollArea>
     </Modal>
   );
 }

@@ -22,7 +22,6 @@ import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
   IconCheck,
-  IconCode,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
@@ -113,6 +112,13 @@ export type ApprovedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   approvalNotes: string | null;
   reviewedBy: UserProfile | null;
+  /** Build/deploy lifecycle for the approved version — `null` means either a
+   *  legacy pre-feature row OR the STRANDED case (approved, but the build never
+   *  started). Selected by `listApprovedRequests`; optional so older callers /
+   *  fixtures that omit it still typecheck. */
+  deployState?: string | null;
+  deployDetail?: string | null;
+  deployUpdatedAt?: string | Date | null;
 };
 
 export type RejectedRequest = ReviewedRequestCommon & {
@@ -166,9 +172,15 @@ export function formatDate(d: string | Date | null | undefined): string {
 export function OnsiteReviewModal({
   selection,
   onClose,
+  onActioned,
 }: {
   selection: OnsiteReviewSelection;
   onClose: () => void;
+  /** Fired after a successful approve/reject, forwarded to the inline
+   *  `ReviewActionBar`. The unified review page passes the tab's `resetPaging` so a
+   *  decided item leaves the accumulated list (mirrors the off-site modal). Optional
+   *  + additive — no approve/reject logic change. */
+  onActioned?: () => void | Promise<void>;
 }) {
   // Set by the body while an approve/reject mutation is in flight so this shell's
   // onClose (Escape / overlay click / the X) refuses to close mid-action — the
@@ -193,6 +205,7 @@ export function OnsiteReviewModal({
           key={selection.request.id}
           selection={selection}
           onClose={onClose}
+          onActioned={onActioned}
           busyRef={busyRef}
         />
       )}
@@ -253,6 +266,7 @@ export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
+  onActioned,
   hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
@@ -260,6 +274,9 @@ export function OnsiteReviewModalBody({
   /** Modal shell close-guard ref, passed through to the inline action bar.
    *  Omitted by the page, which renders its own (sticky) action bar. */
   busyRef?: { current: boolean };
+  /** Forwarded to the inline `ReviewActionBar` — fired after a successful
+   *  approve/reject (e.g. the review page's tab paging reset). Optional + additive. */
+  onActioned?: () => void | Promise<void>;
   /** Suppress the inline approve/reject footer so the page can render the actions
    *  in its own sticky bottom bar (the modal keeps them inline). */
   hideInlineActions?: boolean;
@@ -396,28 +413,22 @@ export function OnsiteReviewModalBody({
               </Badge>
             )}
           </Group>
-          <Button
-            component="a"
-            href={request.pushCommitUrl ?? request.reviewRepoUrl}
-            target="_blank"
-            rel="noopener"
-            variant="default"
-            leftSection={<IconCode size={14} />}
-            rightSection={<IconExternalLink size={12} />}
-          >
-            View full source
-          </Button>
+          {/* The raw-source deep-link that used to sit here has been retired
+              (#3498). In-review snapshots are private now, so an anonymous
+              click on it 404s — a dead link is worse than no link. Source
+              review happens in the "Show code diff" panel below, which reads
+              the submitted artifact server-side and needs no second login.
+              `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally
+              still carried on the payload: a richer in-app file browser is
+              being designed separately and will reuse them. */}
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
           {/* Line-level code diff — lazy (only fetched when the mod toggles it
               open) so the modal stays light by default. Bounded server-side;
-              binary / oversized / huge-diff files fall back to the Forgejo link
-              above. */}
-          <CodeDiffPanel
-            publishRequestId={request.id}
-            forgejoUrl={request.pushCommitUrl ?? request.reviewRepoUrl}
-          />
+              binary / oversized / huge-diff files are labelled as not-shown
+              rather than linked out. */}
+          <CodeDiffPanel publishRequestId={request.id} />
         </Stack>
 
         <Stack gap={4}>
@@ -445,7 +456,12 @@ export function OnsiteReviewModalBody({
             which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
             The bar self-suppresses for read-only approved/rejected history. */}
         {!hideInlineActions && (
-          <ReviewActionBar selection={selection} onClose={onClose} busyRef={busyRef} />
+          <ReviewActionBar
+            selection={selection}
+            onClose={onClose}
+            onActioned={onActioned}
+            busyRef={busyRef}
+          />
         )}
       </Stack>
   );
@@ -831,8 +847,8 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // Line-level code diff — expands the file-level summary with the actual unified
 // line diff per changed/added text file. Lazy: the query only fires once the mod
 // toggles "Show code diff" on, so the modal default stays light. Bounded
-// server-side (text-only, byte/line/file caps); elided files render a "view in
-// Forgejo" fallback rather than inlining unbounded content.
+// server-side (text-only, byte/line/file caps); elided files are labelled with
+// WHY they were skipped rather than inlining unbounded content.
 //
 // The presentational panels (FileListPreview / FileDiffEntry / DiffHunkView /
 // ManifestDiffPreview) + the FileLineDiff type live in the server-free
@@ -840,13 +856,7 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-function CodeDiffPanel({
-  publishRequestId,
-  forgejoUrl,
-}: {
-  publishRequestId: string;
-  forgejoUrl: string;
-}) {
+function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
   const [show, setShow] = useState(false);
 
@@ -871,7 +881,7 @@ function CodeDiffPanel({
         {show && !isLoading && !error && (
           <Text size="xs" c="dimmed">
             {files.length} file{files.length === 1 ? '' : 's'} changed
-            {data?.truncated ? ' (some elided — view in Forgejo)' : ''}
+            {data?.truncated ? ' (some elided)' : ''}
           </Text>
         )}
       </Group>
@@ -892,7 +902,7 @@ function CodeDiffPanel({
         ) : (
           <Stack gap={6}>
             {files.map((f) => (
-              <FileDiffEntry key={f.path} file={f} forgejoUrl={forgejoUrl} />
+              <FileDiffEntry key={f.path} file={f} />
             ))}
           </Stack>
         ))}
@@ -914,6 +924,12 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'version',
   'name',
   'description',
+  // Store-visible copy: both are MANIFEST-GOVERNED and flow to the app's `/apps`
+  // listing on approve, so the reviewer must see them INLINE next to name +
+  // description — not buried in the "Other manifest fields" raw-JSON disclosure.
+  // The mod is the only gate on store-visible copy changing.
+  'tagline',
+  'category',
   'type',
   'minApiVersion',
   'contentRating',
@@ -991,6 +1007,8 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const name = typeof manifest.name === 'string' ? manifest.name : null;
   const description =
     typeof manifest.description === 'string' ? manifest.description : null;
+  const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
+  const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
   const contentRating =
@@ -1008,12 +1026,25 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
                 {name}
               </Text>
             )}
+            {/* Store-visible one-liner (manifest-governed — goes live on approve). */}
+            {tagline && (
+              <Text size="sm" c="dimmed">
+                {tagline}
+              </Text>
+            )}
             <Group gap={6}>
               {blockId && <Code>{blockId}</Code>}
               {version && (
                 <Badge color="gray" variant="light">
                   v{version}
                 </Badge>
+              )}
+              {category && (
+                <Tooltip label="Marketplace category">
+                  <Badge color="gray" variant="light">
+                    {category}
+                  </Badge>
+                </Tooltip>
               )}
             </Group>
           </Stack>

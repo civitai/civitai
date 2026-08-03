@@ -3,6 +3,7 @@ import {
   getOffsiteReviewChecklist,
   getOnsiteReviewChecklist,
   getReviewChecklist,
+  unjustifiedSensitiveBlockScopes,
   unjustifiedSensitiveScopeKeys,
   type OffsiteChecklistData,
 } from '../offsiteReviewChecklist';
@@ -107,6 +108,49 @@ describe('getOffsiteReviewChecklist — auto-derived statuses', () => {
   });
 });
 
+describe('getOffsiteReviewChecklist — kind-aware url item (onsite media revision)', () => {
+  it("kind='onsite' (URL-less media revision) OMITS the url-https item entirely", () => {
+    const ids = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'onsite',
+      externalUrl: null,
+    }).map((i) => i.id);
+    expect(ids).not.toContain('url-https');
+    // The rest of the content checklist is unchanged.
+    expect(ids).toContain('name');
+    expect(ids).toContain('icon');
+    expect(ids).toContain('cover');
+    expect(ids).toContain('screenshots');
+    expect(ids).toContain('description');
+    expect(ids).toContain('category');
+  });
+
+  it("offsite (kind omitted) with a bad/http URL STILL warns on url-https", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      externalUrl: 'http://insecure.example.com',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('warn');
+  });
+
+  it("kind='offsite' with a bad/http URL STILL warns on url-https (explicit)", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'offsite',
+      externalUrl: 'http://insecure.example.com',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('warn');
+  });
+
+  it("kind='offsite' with a valid https URL keeps the item ok (behaviour unchanged)", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'offsite',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('ok');
+  });
+});
+
 describe('getOffsiteReviewChecklist — connect sensitive-scope item (PR3)', () => {
   const connectBase: OffsiteChecklistData = {
     ...complete,
@@ -144,6 +188,71 @@ describe('getOffsiteReviewChecklist — connect sensitive-scope item (PR3)', () 
       connectScopeJustifications: {},
     }).find((i) => i.id === 'connect-sensitive-scopes');
     expect(item?.status).toBe('ok');
+  });
+});
+
+describe('getOnsiteReviewChecklist — auto-derived scopes item (block sensitive scopes)', () => {
+  const scopesStatus = (data?: Parameters<typeof getOnsiteReviewChecklist>[0]) =>
+    getOnsiteReviewChecklist(data).find((i) => i.id === 'scopes');
+
+  it('with NO data the scopes item stays a mod-judgment todo (backward compatible)', () => {
+    expect(scopesStatus()?.status).toBe('todo');
+  });
+
+  it('a declared sensitive scope WITHOUT a justification → warn, hint names the scope', () => {
+    const item = scopesStatus({ scopes: ['apps:storage:shared:write'] });
+    expect(item?.status).toBe('warn');
+    expect(item?.hint).toContain('apps:storage:shared:write');
+  });
+
+  it('every declared sensitive scope justified → ok, hint surfaces the justification', () => {
+    const item = scopesStatus({
+      scopes: ['apps:storage:shared:write'],
+      scopeJustifications: {
+        'apps:storage:shared:write': 'We persist shared gallery entries.',
+      },
+    });
+    expect(item?.status).toBe('ok');
+    expect(item?.hint).toContain('apps:storage:shared:write');
+    expect(item?.hint).toContain('We persist shared gallery entries.');
+  });
+
+  it('data present but NO sensitive scopes declared → ok (nothing to justify)', () => {
+    const item = scopesStatus({ scopes: ['models:read:self'] });
+    expect(item?.status).toBe('ok');
+  });
+
+  it('multiple sensitive scopes, one justified one not → warn, hint names the unjustified one', () => {
+    const item = scopesStatus({
+      scopes: ['collections:read:private', 'apps:storage:shared:write'],
+      scopeJustifications: { 'collections:read:private': 'We read private collections.' },
+    });
+    expect(item?.status).toBe('warn');
+    expect(item?.hint).toContain('apps:storage:shared:write');
+  });
+});
+
+describe('unjustifiedSensitiveBlockScopes', () => {
+  it('returns declared sensitive block scopes lacking a non-empty justification', () => {
+    expect(
+      unjustifiedSensitiveBlockScopes({
+        scopes: ['models:read:self', 'collections:read:private', 'apps:storage:shared:write'],
+        scopeJustifications: { 'collections:read:private': 'ok' }, // shared:write missing
+      })
+    ).toEqual(['apps:storage:shared:write']);
+  });
+
+  it('empty when no sensitive scope is declared', () => {
+    expect(unjustifiedSensitiveBlockScopes({ scopes: ['models:read:self'] })).toEqual([]);
+  });
+
+  it('whitespace-only justification counts as missing', () => {
+    expect(
+      unjustifiedSensitiveBlockScopes({
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: { 'apps:storage:shared:write': '   ' },
+      })
+    ).toEqual(['apps:storage:shared:write']);
   });
 });
 

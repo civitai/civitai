@@ -1,26 +1,26 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
 
 // A single public (non-owner, non-moderator) donation goal, shaped byte-identically to
-// `modelVersionDonationGoals`' output element: the DonationGoal row fields it selects plus
+// `modelVersionDonationGoal`' output element: the DonationGoal row fields it selects plus
 // the summed `total`. Privileged (owner/mod) responses can include unpublished/draft goals
-// and MUST NOT enter the shared public cache — see `modelVersionDonationGoals` for the gate.
-export type ModelVersionPublicDonationGoal = {
+// and MUST NOT enter the shared public cache — see `modelVersionDonationGoal` for the gate.
+export type DonationGoalWithTotal = {
   id: number;
   goalAmount: number;
   title: string;
   active: boolean;
-  isEarlyAccess: boolean;
   userId: number;
   createdAt: Date;
   description: string | null;
   total: number;
 };
-export type ModelVersionPublicDonationGoalsCacheItem = {
+export type ModelVersionPublicDonationGoalCacheItem = {
   modelVersionId: number;
-  goals: ModelVersionPublicDonationGoal[];
+  // A version has at most one donation goal. `null` = exists but no public goal (distinct from a
+  // missing entry, which means the version itself doesn't exist → 404).
+  goal: DonationGoalWithTotal | null;
 };
 
 /**
@@ -30,17 +30,18 @@ export type ModelVersionPublicDonationGoalsCacheItem = {
  * inactive/draft goals out of the shared public key — can be tested against the REAL function
  * the cache uses, with no hand-copied "mirror" that could silently diverge.
  *
- * Computes the PUBLIC variant for a set of model version ids: existence (with the same
- * replica→primary fallback as the uncached read), the `active: true` goal filter, the
- * per-version early-access filter, and the summed donation totals. Seeds an entry for every
- * EXISTING version (even with zero goals) so the caller can tell "exists, no goals" (→ []) from
- * "does not exist" (→ 404); missing versions get no entry.
+ * Holds ONLY the version's active donation goal + summed total (busted when a donation lands). The
+ * display-time public filters — the early-access window (from PaidAccess) and the creator opt-out
+ * (CP membership) — are time/membership-sensitive and applied at READ time in `getDonationGoals`,
+ * NOT baked in here where a short TTL would serve a stale verdict. Existence uses the same
+ * replica→primary fallback as the uncached read; seeds an entry for every EXISTING version (goal
+ * null if none) so the caller can tell "exists, no goal" from "does not exist" (→ 404).
  */
 export const publicDonationGoalsLookupFn = async (
   ids: number[],
   fromWrite?: boolean
-): Promise<Record<number, ModelVersionPublicDonationGoalsCacheItem>> => {
-  const versionSelect = { id: true, earlyAccessEndsAt: true } as const;
+): Promise<Record<number, ModelVersionPublicDonationGoalCacheItem>> => {
+  const versionSelect = { id: true } as const;
 
   let versions = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
@@ -63,48 +64,28 @@ export const publicDonationGoalsLookupFn = async (
   }
   if (versions.length === 0) return {};
 
-  const earlyAccessById = new Map(versions.map((v) => [v.id, v.earlyAccessEndsAt]));
   const db = fromWrite ? dbWrite : dbRead;
 
   // PUBLIC filter: only active goals (draft/inactive goals are owner/mod-only). This
   // `active: true` is the one invariant that keeps drafts out of the shared public key — do
   // NOT drop it. (`model-version.donation-goals-lookup.test.ts` asserts it.)
   const goals = await db.donationGoal.findMany({
-    where: { modelVersionId: { in: versions.map((v) => v.id) }, active: true },
+    where: {
+      entityType: 'ModelVersion',
+      entityId: { in: versions.map((v) => v.id) },
+      active: true,
+    },
     select: {
       id: true,
       goalAmount: true,
       title: true,
       active: true,
-      isEarlyAccess: true,
       userId: true,
       createdAt: true,
       description: true,
-      modelVersionId: true,
+      entityId: true,
     },
   });
-
-  // Creator opt-out (Creator Program benefit): an owner can hide the public
-  // donation-goal display for ALL their goals via `hideDonationGoals`. It only takes
-  // effect while the owner holds a valid CP membership — a lapsed/never-member owner's
-  // goals become publicly visible again with no stored flip, mirroring the metric-
-  // privacy gate. Non-owner/non-mod viewers go through this cache; owners/mods bypass
-  // it entirely (see `modelVersionDonationGoals`) and always see their own goals.
-  const ownerIds = [...new Set(goals.map((g) => g.userId))];
-  const hiddenOwnerIds = new Set<number>();
-  if (ownerIds.length > 0) {
-    const owners = await db.user.findMany({
-      where: { id: { in: ownerIds } },
-      select: { id: true, settings: true },
-    });
-    const optedOutOwnerIds = owners
-      .filter((o) => (o.settings as { hideDonationGoals?: boolean } | null)?.hideDonationGoals)
-      .map((o) => o.id);
-    if (optedOutOwnerIds.length > 0) {
-      const membershipMap = await getValidCreatorMembershipMap(optedOutOwnerIds);
-      for (const id of optedOutOwnerIds) if (membershipMap.get(id)) hiddenOwnerIds.add(id);
-    }
-  }
 
   const totalByGoalId = new Map<number, number>();
   const goalIds = goals.map((g) => g.id);
@@ -120,21 +101,14 @@ export const publicDonationGoalsLookupFn = async (
     for (const t of totals) totalByGoalId.set(t.donationGoalId, t.total);
   }
 
-  const result: Record<number, ModelVersionPublicDonationGoalsCacheItem> = {};
-  for (const v of versions) result[v.id] = { modelVersionId: v.id, goals: [] };
+  const result: Record<number, ModelVersionPublicDonationGoalCacheItem> = {};
+  for (const v of versions) result[v.id] = { modelVersionId: v.id, goal: null };
 
-  const now = new Date();
   for (const goal of goals) {
-    const { modelVersionId, ...rest } = goal;
-    if (modelVersionId == null) continue;
-    if (hiddenOwnerIds.has(goal.userId)) continue;
-    // Public early-access filter: an early-access goal is shown publicly only while the
-    // version's early-access window is still open. Once it has ended (missing or past
-    // `earlyAccessEndsAt`) the goal is hidden from the public — the goal itself keeps
-    // working; owners/mods still see it via the uncached privileged path.
-    const earlyAccessEndsAt = earlyAccessById.get(modelVersionId);
-    if (goal.isEarlyAccess && (!earlyAccessEndsAt || earlyAccessEndsAt <= now)) continue;
-    result[modelVersionId].goals.push({ ...rest, total: totalByGoalId.get(goal.id) ?? 0 });
+    const { entityId, ...rest } = goal;
+    if (entityId == null) continue;
+    if (result[entityId].goal != null) continue; // a version has at most one goal — first match wins
+    result[entityId].goal = { ...rest, total: totalByGoalId.get(goal.id) ?? 0 };
   }
 
   return result;

@@ -7,6 +7,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticShopItemMeta,
+  CosmeticShopSectionMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetPreviewImagesInput,
@@ -25,14 +26,18 @@ import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import {
   createEntityImages,
   getAllImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
+import {
+  getCosmeticArtworkUrl,
+  queueCosmeticPerceptualHash,
+} from '~/server/services/cosmetic-phash.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -103,7 +108,9 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   const { id, videoUrl, name, description, type, source, permanentUnlock, data } = input;
 
   if (id) {
-    return dbWrite.cosmetic.update({
+    const previous =
+      data !== undefined ? await dbRead.cosmetic.findUnique({ where: { id } }) : null;
+    const cosmetic = await dbWrite.cosmetic.update({
       where: { id },
       data: {
         videoUrl,
@@ -115,6 +122,13 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
         ...(data !== undefined ? { data: data as Prisma.InputJsonValue } : {}),
       },
     });
+
+    const url = getCosmeticArtworkUrl(cosmetic.data);
+    if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
+      queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+    }
+
+    return cosmetic;
   }
 
   // Create — schema-level refinement guarantees these are present.
@@ -122,7 +136,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
     throw new Error('name, type, and source are required to create a cosmetic');
   }
 
-  return dbWrite.cosmetic.create({
+  const cosmetic = await dbWrite.cosmetic.create({
     data: {
       name,
       description: description ?? null,
@@ -133,6 +147,11 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
       videoUrl: videoUrl ?? null,
     },
   });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url) queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+
+  return cosmetic;
 };
 
 export const upsertCosmeticShopItem = async ({
@@ -449,9 +468,18 @@ export const reorderCosmeticShopSections = async ({
 export const getShopSectionsWithItems = async ({
   isModerator,
   creatorShopEnabled,
+  userId,
   cosmeticTypes,
   sectionId,
-}: { isModerator?: boolean; creatorShopEnabled?: boolean } & GetShopInput = {}) => {
+}: {
+  isModerator?: boolean;
+  creatorShopEnabled?: boolean;
+  userId?: number;
+} & GetShopInput = {}) => {
+  // Creator items are only visible to flagged viewers, so blocks only matter
+  // there; official items (createdById null) are never block-filtered.
+  const blockedPairIds =
+    !isModerator && creatorShopEnabled && userId ? await getBlockedPairIds(userId) : [];
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -484,6 +512,11 @@ export const getShopSectionsWithItems = async ({
               // disappears entirely for unflagged viewers via the
               // empty-section filter below.
               ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+              // A block between viewer and creator (either direction) hides
+              // that creator's items even when featured in official sections.
+              ...(blockedPairIds.length
+                ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
+                : {}),
             },
             archivedAt: null,
             // Creator items in official sections can lose their Published
@@ -498,12 +531,17 @@ export const getShopSectionsWithItems = async ({
       },
     },
     where: {
-      items: {
-        some: {},
-      },
+      // Community-hub sections carry no curated items — their feed is queried
+      // separately by the client — so they skip the has-items requirement. The
+      // feed itself is flag-gated, so hide the hub from unflagged viewers.
+      OR: [
+        { items: { some: {} } },
+        ...(isModerator || creatorShopEnabled
+          ? [{ meta: { path: ['communityHub'], equals: true } }]
+          : []),
+      ],
       published: true,
       ...(sectionId ? { id: sectionId } : undefined),
-      // id: sectionId ? { equals: sectionId } : undefined,
     },
     orderBy: {
       placement: 'asc',
@@ -512,8 +550,8 @@ export const getShopSectionsWithItems = async ({
 
   return (
     sections
-      // Ensures we don't return empty sections
-      .filter((s) => s.items.length > 0)
+      // Ensures we don't return empty sections (except the community hub)
+      .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
         image: !!section.image
@@ -531,6 +569,7 @@ export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
   viaShopUserId,
+  payWith = 'default',
   buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -578,6 +617,20 @@ export const purchaseCosmeticShopItem = async ({
   // Creators can't buy their own cosmetic — they're granted it on approval.
   if (shopItem.cosmetic.createdById === userId) {
     throw new Error('You already own this cosmetic');
+  }
+
+  // A block between the buyer and the item's creator or lister (either
+  // direction) makes the item unpurchasable no matter where it surfaced — the
+  // generic error keeps the block from being revealed. Official items (no
+  // creator) are unaffected.
+  if (shopItem.cosmetic.createdById) {
+    const blockedPairIds = await getBlockedPairIds(userId);
+    const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
+      (id): id is number => id != null
+    );
+    if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+      throw new Error('Cosmetic is not available');
+    }
   }
 
   if (
@@ -629,22 +682,35 @@ export const purchaseCosmeticShopItem = async ({
 
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
 
-  // Confirms user has enough buzz:
-  const transaction = await createBuzzTransaction({
+  // Blue payment is a per-item creator opt-in (meta.acceptsBlueBuzz).
+  if (payWith !== 'default' && !meta.acceptsBlueBuzz) {
+    throw new Error('This item does not accept Blue Buzz');
+  }
+  // 'blue-first' drains blue before completing with the domain color.
+  const fromAccountTypes: BuzzSpendType[] =
+    payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
+
+  // Confirms user has enough buzz across the chosen accounts. The bank credit
+  // lands under the API's default account type — that's bookkeeping only: the
+  // bank is the system ledger, not a balance-constrained account, so the
+  // per-color payouts below don't depend on what the bank was credited in
+  // (auction bids and green-domain purchases have always worked this way).
+  const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`;
+  const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
-    // Can use a combination of all these accounts:
-    fromAccountType: buzzType,
+    fromAccountTypes,
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
-    externalTransactionId: `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`,
+    externalTransactionIdPrefix: transactionId,
   });
-
-  const transactionId = transaction.transactionId;
-  if (!transactionId) {
+  if (!transaction.transactionCount) {
     throw new Error('There was an error creating the transaction');
   }
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
 
   try {
     const data = await dbWrite.$transaction(async (tx) => {
@@ -756,20 +822,29 @@ export const purchaseCosmeticShopItem = async ({
           }));
         }
 
+        // Pay recipients in the same Buzz color(s) the buyer paid with: the
+        // blue-paid portion of the price pays out as blue (pro-rated per
+        // recipient, floored), the rest in the domain color.
+        const payouts = recipients.flatMap((r) => {
+          const blueAmount = price > 0 ? Math.floor((r.amount * bluePaid) / price) : 0;
+          return [
+            { userId: r.userId, amount: blueAmount, color: 'blue' as BuzzSpendType },
+            { userId: r.userId, amount: r.amount - blueAmount, color: buzzType },
+          ].filter((p) => p.amount > 0);
+        });
+
         await Promise.all(
-          recipients.map((r) =>
+          payouts.map((p) =>
             createBuzzTransaction({
               fromAccountId: 0,
-              toAccountId: r.userId,
-              // Pay creators/resellers in the same Buzz color the buyer paid with.
-              toAccountType: buzzType,
-              amount: r.amount,
+              toAccountId: p.userId,
+              toAccountType: p.color,
+              amount: p.amount,
               type: TransactionType.Sell,
               description: `A user has purchased your cosmetic - ${shopItem.title}`,
-              // Unique per recipient when the pool is split, so the two payouts
-              // don't collide on the same external id.
-              externalTransactionId:
-                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
+              // Unique per recipient and color so payouts never collide on the
+              // same external id.
+              externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
             })
           )
@@ -791,7 +866,10 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await refundTransaction(transactionId, `Failed to purchase cosmetic - ${shopItem.title}`);
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: transactionId,
+      description: `Failed to purchase cosmetic - ${shopItem.title}`,
+    });
 
     throw new Error('Failed to purchase cosmetic');
   }

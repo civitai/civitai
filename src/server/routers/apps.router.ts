@@ -13,7 +13,7 @@
 
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
@@ -94,8 +94,14 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
 async function resolveStorageContext(blockToken: string, op: StorageOp): Promise<{
   userId: number | null;
   slug: string;
+  /** The resolved, quoted Postgres schema the op MUST read/write — either the
+   *  approved app's `app_<slug>` schema OR (run-for-real) the disposable,
+   *  per-publishRequest `apprev_<pubreq>` preview schema. */
+  schema: string;
   appBlockId: string;
   blockInstanceId: string;
+  /** True when this resolved to the run-for-real preview namespace. */
+  reviewPreview: boolean;
 }> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) {
@@ -110,6 +116,73 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
       message: 'block id is not a valid storage slug',
     });
   }
+
+  // The DECLARED-scope gate (A5 / design-gaps H4). Reads need apps:storage:read;
+  // mutations need apps:storage:write. This runs for BOTH the approved and the
+  // run-for-real paths — a review token only carries the scope if the PENDING
+  // manifest declared it AND it survived the run-for-real allowlist clamp.
+  const requiredScope: string = op === 'set' || op === 'delete'
+    ? 'apps:storage:write'
+    : 'apps:storage:read';
+
+  // ── MOD REVIEW SANDBOX "run for real" (#2831) ──────────────────────────────
+  // ONLY when the verified token carries the signed `reviewRunForReal` claim: a
+  // moderator opted in to run an UNAPPROVED app for real against their OWN
+  // account. Resolve a DISPOSABLE, per-publishRequest, ISOLATED preview schema
+  // instead of the approved `app_<slug>` schema (which may not exist yet). This
+  // branch is GATED entirely on the signed claim — a normal (render-only) review
+  // token, or any prod token, never reaches it and keeps failing closed on the
+  // approved-status check below, byte-identical to before. Cross-user shared
+  // storage is untouched (apps:storage:shared:* lives in a different resolver and
+  // is never granted in run-for-real).
+  if (claims.reviewRunForReal === true) {
+    if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
+      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: `storage ${op} requires the ${requiredScope} scope`,
+      });
+    }
+    const userId = parseSubjectUserId(claims.sub);
+    // Self-bound: reads/writes land in the reviewing MOD's own rows. A non-mod
+    // subject can't hold a review token (mint is mod-gated); assert developer.
+    if (userId != null) {
+      await assertViewerIsAppDeveloper(userId);
+    }
+    // The preview namespace is keyed on the publishRequestId (the token's
+    // `appBlockId` claim = `pubreq_<ULID>`), so it is isolated per pending app AND
+    // never aliases the eventual approved `app_<slug>` schema.
+    const publishRequestId = claims.appBlockId;
+    // ORPHAN GUARD: a run-for-real token lives 4h, but the review preview only
+    // exists while the request is PENDING (teardown drops the preview schema on
+    // approve/reject). A still-valid token used AFTER the decision must NOT
+    // re-provision a fresh `apprev_` schema that nothing would ever tear down
+    // again. Mirror the mint's pending-only gate: refuse (and do NOT provision)
+    // once the request has left the pending state. Read from the PRIMARY so a
+    // just-landed approve/reject isn't missed to replication lag.
+    const pr = await dbWrite.appBlockPublishRequest.findUnique({
+      where: { id: publishRequestId },
+      select: { status: true },
+    });
+    if (!pr || pr.status !== 'pending') {
+      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'review preview is no longer active for this request',
+      });
+    }
+    // Provision on demand (idempotent; fast-paths once the schema exists).
+    const { schema } = await AppStorageProvisioner.provisionReviewPreview({ publishRequestId });
+    return {
+      userId,
+      slug,
+      schema,
+      appBlockId: publishRequestId,
+      blockInstanceId: claims.blockInstanceId,
+      reviewPreview: true,
+    };
+  }
+
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
     select: { id: true, status: true },
@@ -127,13 +200,9 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   // carries the storage scope appropriate to the op. The scope only reaches
   // the token if it was in the manifest AND in the block's approvedScopes
   // snapshot (block-tokens/index.ts), so this re-checks the issuance contract
-  // at the point of use. Reads need apps:storage:read; mutations need
-  // apps:storage:write. (Previously resolveStorageContext never inspected
+  // at the point of use. (Previously resolveStorageContext never inspected
   // claims.scopes, so a block approved for e.g. only models:read:self could
   // still read/write 50MB of per-user KV it never disclosed.)
-  const requiredScope: string = op === 'set' || op === 'delete'
-    ? 'apps:storage:write'
-    : 'apps:storage:read';
   if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
     appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
     throw new TRPCError({
@@ -153,8 +222,10 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   return {
     userId,
     slug,
+    schema: appSchemaIdent(slug),
     appBlockId: block.id,
     blockInstanceId: claims.blockInstanceId,
+    reviewPreview: false,
   };
 }
 
@@ -177,7 +248,7 @@ export const appsStorageRouter = router({
     .query(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'get' });
       try {
-        const { userId, slug, blockInstanceId } = await resolveStorageContext(
+        const { userId, schema, blockInstanceId } = await resolveStorageContext(
           input.blockToken,
           'get'
         );
@@ -188,7 +259,7 @@ export const appsStorageRouter = router({
         const pool = requireAppsDb();
         const rows = (
           await pool.query<{ value: unknown }>(
-            `SELECT value FROM ${appSchemaIdent(slug)}.kv
+            `SELECT value FROM ${schema}.kv
                WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
             [blockInstanceId, userId, input.key]
           )
@@ -221,7 +292,7 @@ export const appsStorageRouter = router({
     .mutation(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'set' });
       try {
-      const { userId, slug, appBlockId, blockInstanceId } = await resolveStorageContext(
+      const { userId, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
         input.blockToken,
         'set'
       );
@@ -244,7 +315,6 @@ export const appsStorageRouter = router({
       }
 
       const pool = requireAppsDb();
-      const schema = appSchemaIdent(slug);
 
       // Pre-flight quota read. used_bytes already reflects all previous
       // writes through the trigger. Worst case the gate is one write
@@ -352,7 +422,11 @@ export const appsStorageRouter = router({
           appBlockId,
           blockInstanceId,
           scope: 'apps:storage',
-          endpoint: `storage:set:${input.key}`,
+          // Templated, NOT `storage:set:<key>` — `endpoint` is the GROUP BY key
+          // of the `topEndpoints` rollup, so a per-key value makes the column
+          // unbounded and every bucket count 1. The key is already carried as
+          // the per-row payload in `detail` below, so nothing is lost.
+          endpoint: 'storage:set',
           statusCode: 200,
           // W13 richer detail — structured ref for the render-time sentence.
           detail: { action: 'storage.set', key: input.key, outcome: 'ok' },
@@ -370,7 +444,7 @@ export const appsStorageRouter = router({
     .mutation(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'delete' });
       try {
-        const { userId, slug, appBlockId, blockInstanceId } = await resolveStorageContext(
+        const { userId, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
           input.blockToken,
           'delete'
         );
@@ -382,7 +456,6 @@ export const appsStorageRouter = router({
           });
         }
         const pool = requireAppsDb();
-        const schema = appSchemaIdent(slug);
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -417,7 +490,9 @@ export const appsStorageRouter = router({
                 appBlockId,
                 blockInstanceId,
                 scope: 'apps:storage',
-                endpoint: `storage:delete:${input.key}`,
+                // Templated, NOT `storage:delete:<key>` — bounded aggregation
+                // key; the key itself rides in `detail` below (see set above).
+                endpoint: 'storage:delete',
                 statusCode: 200,
                 // W13 richer detail — structured ref for the render-time sentence.
                 detail: { action: 'storage.delete', key: input.key, outcome: 'ok' },
@@ -455,7 +530,7 @@ export const appsStorageRouter = router({
     .query(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'list' });
       try {
-        const { userId, slug, blockInstanceId } = await resolveStorageContext(
+        const { userId, schema, blockInstanceId } = await resolveStorageContext(
           input.blockToken,
           'list'
         );
@@ -474,7 +549,7 @@ export const appsStorageRouter = router({
 
         const rows = (
           await pool.query<{ key: string; updated_at: Date }>(
-            `SELECT key, updated_at FROM ${appSchemaIdent(slug)}.kv
+            `SELECT key, updated_at FROM ${schema}.kv
                WHERE block_instance_id = $1 AND user_id = $2
                  AND key LIKE $3 ESCAPE '\\'
                  AND key > $4
@@ -510,8 +585,28 @@ export const appsStorageRouter = router({
     .query(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'getQuota' });
       try {
-        const { slug, appBlockId } = await resolveStorageContext(input.blockToken, 'getQuota');
-        const quota = await AppStorageProvisioner.getQuota({ slug, appBlockId });
+        const { slug, schema, appBlockId, reviewPreview } = await resolveStorageContext(
+          input.blockToken,
+          'getQuota'
+        );
+        let quota: { usedBytes: number; rowCount: number } | null;
+        if (reviewPreview) {
+          // Read the preview schema's own quota row directly (the schema is
+          // provisioned by resolveStorageContext, so it always exists here).
+          const pool = requireAppsDb();
+          const rows = (
+            await pool.query<{ used_bytes: string; row_count: string }>(
+              `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
+              [appBlockId]
+            )
+          ).rows;
+          quota = {
+            usedBytes: Number(rows[0]?.used_bytes ?? '0'),
+            rowCount: Number(rows[0]?.row_count ?? '0'),
+          };
+        } else {
+          quota = await AppStorageProvisioner.getQuota({ slug, appBlockId });
+        }
         appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
         return {
           usedBytes: quota?.usedBytes ?? 0,

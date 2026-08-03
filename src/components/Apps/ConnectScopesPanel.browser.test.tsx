@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * PR3 — OAuth-connect mod review UI. Two seams:
@@ -18,13 +19,24 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
+// The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
+// which reads useCurrentUser — boundary-stub it (null user is fine).
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
-vi.mock('~/utils/trpc', () => {
+// Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
+// (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
+// transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
+// gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
+// Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
+// link ("does not provide an export named X") and the whole file collects 0 tests.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
+    ...actual,
     trpc: {
       useUtils: () => ({
         appListings: {
@@ -50,6 +62,11 @@ vi.mock('~/utils/trpc', () => {
         },
         approveExternalRequest: { useMutation: mutation },
         rejectExternalRequest: { useMutation: mutation },
+        // Listing-preview projection — undefined data → the section falls back to
+        // the placeholder-art layout preview (fine for these connect-panel tests).
+        getListingPreviewForReview: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+        },
       },
     },
   };

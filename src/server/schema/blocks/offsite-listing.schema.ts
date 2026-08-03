@@ -213,6 +213,25 @@ export const beginListingRevisionSchema = z.object({
 export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchema>;
 
 /**
+ * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
+ * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
+ * on-site listing-media page. Returns the `AppListing.id` (the target for
+ * `beginListingRevision` + the asset procs). Owner-bound in the service
+ * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+ */
+export const getMyListingForAppSchema = z
+  .object({
+    appBlockId: z.string().min(1).max(64).optional(),
+    // W13 draft-at-submit: a FIRST-version app has no AppBlock yet, so the
+    // owner-media page resolves its pre-approval draft BY SLUG while pending.
+    slug: z.string().min(1).max(64).optional(),
+  })
+  .refine((v) => v.appBlockId != null || v.slug != null, {
+    message: 'either appBlockId or slug is required',
+  });
+export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
+
+/**
  * AUTHOR: owner-gated prefill read for the dual-mode edit wizard
  * (`/apps/submit?edit=<listingId>`). Returns the listing's scalars + current
  * assets + status + hasPendingRevision (resolving an approved parent's

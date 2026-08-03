@@ -8,8 +8,6 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   settings: true,
   availability: true,
   clipSkip: true,
-  earlyAccessEndsAt: true,
-  earlyAccessConfig: true,
   model: {
     select: {
       id: true,

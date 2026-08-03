@@ -2,6 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
 import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 
 /**
@@ -32,7 +33,12 @@ const mocks = vi.hoisted(() => ({
   reviewsProps: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => ({
+// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
+// module-mock): a hand-written replacement silently breaks every importer the
+// day '~/utils/trpc' grows an export this factory omits — the whole FILE then
+// fails to load with 0 tests collected and no failing assertion.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
     blocks: {
       getAppDetail: {
@@ -104,6 +110,9 @@ function makeDetail(overrides: Partial<PublicAppDetail> = {}): PublicAppDetail {
     blockId: 'my-block',
     appId: 'app-1',
     appName: 'My App',
+    // The app's real owner chip. Distinct from `appName` (the OAuth client's
+    // name, which in prod IS the app title) — see `getAppDetailAuthor`.
+    owner: { id: 42, username: 'owner-user', image: null },
     manifest: {
       name: 'My App',
       description: 'Does a thing.',
@@ -133,21 +142,62 @@ beforeEach(() => {
 
 describe('AppDetailsModal', () => {
   test('closed → renders nothing visible', async () => {
-    renderWithProviders(<AppDetailsModal opened={false} onClose={onClose} block={makeBlock()} />);
+    // 🔴 RENDER BARRIER FIRST. Without something to await, this whole test ran
+    // its `.query()` assertions against a DOM that had not committed yet — it
+    // passed no matter what the modal did. The sibling marker gives the
+    // assertions a point in time to be true AT.
+    renderWithProviders(
+      <>
+        <div data-testid="render-barrier" />
+        <AppDetailsModal opened={false} onClose={onClose} block={makeBlock()} />
+      </>
+    );
+    await expect.element(page.getByTestId('render-barrier')).toBeInTheDocument();
     // Mantine Modal renders no content when closed.
     expect(page.getByText('reviews for', { exact: false }).query()).toBeNull();
     expect(page.getByText('Does a thing.', { exact: false }).query()).toBeNull();
   });
 
-  test('open → header renders title + author + description (from the listing block while loading)', async () => {
-    // detail null (loading) — title/author/description come from the block.
+  test('open + detail LOADING → title/description from the listing block, and NO author line', async () => {
+    // The listing row (`AvailableBlock`) carries no owner, so there is no
+    // attribution until `getAppDetail` resolves. Deliberate: a blank beats the
+    // old `by {appName}`, which rendered the APP's OWN TITLE as its author.
     renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
 
     // Title appears (Mantine Modal title). Use a tolerant matcher — title may
     // appear in the modal header region.
     await expect.element(page.getByText('My App', { exact: false }).first()).toBeInTheDocument();
-    await expect.element(page.getByText('by My App', { exact: false })).toBeInTheDocument();
     await expect.element(page.getByText('Does a thing.', { exact: false })).toBeInTheDocument();
+    // Absence checked with `.elements()` AFTER the two positive awaits above —
+    // `await expect.element(x).not.toBeInTheDocument()` polls until the
+    // assertion passes, so with `.not` an empty pre-commit DOM satisfies it on
+    // poll #0 and the check proves nothing.
+    expect(page.getByTestId('app-detail-author').elements()).toHaveLength(0);
+    expect(page.getByText('by My App', { exact: false }).elements()).toHaveLength(0);
+  });
+
+  test('🔴 open + detail RESOLVED → the author is the real OWNER, never appName/appId', async () => {
+    // The prod bug: every approved block's OauthClient.name equals the app's own
+    // title, so `by {appName}` showed "by My App" — the app crediting itself.
+    resolveDetail(makeDetail());
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+
+    const author = page.getByTestId('app-detail-author');
+    await expect.element(author).toBeInTheDocument();
+    await expect.element(author).toHaveAttribute('href', '/user/owner-user');
+    await expect.element(page.getByText('by owner-user', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('by My App', { exact: false }).elements()).toHaveLength(0);
+    expect(page.getByText('by app-1', { exact: false }).elements()).toHaveLength(0);
+  });
+
+  test('open + detail resolved with NO owner → no attribution line at all (not a fallback)', async () => {
+    resolveDetail(makeDetail({ owner: null }));
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+
+    // Positive barrier first, then the absence check.
+    await expect.element(page.getByText('Does a thing.', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('app-detail-author').elements()).toHaveLength(0);
+    expect(page.getByText('by My App', { exact: false }).elements()).toHaveLength(0);
   });
 
   test('open → renders the reviews section (reuses AppBlockReviews) with the app id + aggregate', async () => {
@@ -213,15 +263,19 @@ describe('AppDetailsModal', () => {
     expect(shots.length).toBe(0);
   });
 
-  test('detail-provided title/author override the listing block when loaded', async () => {
+  test('detail-provided title/description override the listing block when loaded', async () => {
     resolveDetail(makeDetail({
+      // `appName` is deliberately set to something author-shaped: it must NOT
+      // reach the author slot no matter how plausible it looks.
       appName: 'Detail Author',
+      owner: { id: 42, username: 'real-owner', image: null },
       manifest: { name: 'Detail Name', description: 'Detail description.' },
     }));
     renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
 
-    await expect.element(page.getByText('by Detail Author', { exact: false })).toBeInTheDocument();
     await expect.element(page.getByText('Detail description.', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('by real-owner', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('by Detail Author', { exact: false }).elements()).toHaveLength(0);
   });
 
   // ── M1 (audit, REQUIRED): disclosure correctness ───────────────────────────

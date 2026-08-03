@@ -90,6 +90,14 @@ export const PaymentProvider = {
   Civitai: 'Civitai',
 } as const;
 export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvider];
+export const MembershipGiftStatus = {
+  Pending: 'Pending',
+  Fulfilled: 'Fulfilled',
+  Failed: 'Failed',
+  Refunded: 'Refunded',
+  Revoked: 'Revoked',
+} as const;
+export type MembershipGiftStatus = (typeof MembershipGiftStatus)[keyof typeof MembershipGiftStatus];
 export const UserEngagementType = {
   Follow: 'Follow',
   Hide: 'Hide',
@@ -603,6 +611,11 @@ export const Availability = {
   EarlyAccess: 'EarlyAccess',
 } as const;
 export type Availability = (typeof Availability)[keyof typeof Availability];
+export const PaidAccessEntityType = {
+  ModelVersion: 'ModelVersion',
+  ComicChapter: 'ComicChapter',
+} as const;
+export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -771,6 +784,11 @@ export const ChallengeIngestionStatus = {
 } as const;
 export type ChallengeIngestionStatus =
   (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
+export const ChallengeEngagementType = {
+  Notify: 'Notify',
+} as const;
+export type ChallengeEngagementType =
+  (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

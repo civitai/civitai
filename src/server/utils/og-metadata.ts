@@ -30,14 +30,41 @@ const MAX_DESCRIPTION_LEN = 2000; // mirrors OFFSITE_DESCRIPTION_MAX
  * fallback skips it. A logo is never 32px or smaller on either declared side.
  */
 const MIN_HEADER_IMG_PX = 32;
-// Only the first slice of a document is parsed for metadata — all signals (og:*,
-// <title>, <link rel=icon>, brand/header <img>) live at the page top. Bounds the
-// cost of scanning adversarial HTML (see extractListingMeta).
-const META_HTML_PARSE_CAP = 256_000;
-// A single <header>/<nav> block is never anywhere near this large; bounding the
-// lazy inner capture stops the container regex from rescanning to EOF at every
-// unmatched open tag (the O(n^2) event-loop-freeze vector on hostile input).
-const HEADER_NAV_BLOCK_MAX = 8_000;
+/**
+ * Only the first slice of a document is parsed for metadata — all signals (og:*,
+ * <title>, <link rel=icon>, brand/header <img>) live at the page top. Bounds the
+ * cost of scanning adversarial HTML (see extractListingMeta).
+ *
+ * 🔴 EXPORTED because it is a COST CONTRACT, not an implementation detail: it is
+ * one of the two explicit bounds that make parsing linear-with-small-constant on
+ * hostile input, and the ReDoS regression tests assert it is enforced by
+ * OBSERVING the truncation (content past the cap is not extracted) rather than by
+ * timing the parse on whatever box happens to run CI.
+ */
+export const META_HTML_PARSE_CAP = 256_000;
+/**
+ * A single <header>/<nav> block is never anywhere near this large; bounding the
+ * lazy inner capture stops the container regex from rescanning to EOF at every
+ * unmatched open tag (the O(n^2) event-loop-freeze vector on hostile input).
+ *
+ * 🔴 EXPORTED for the same reason as {@link META_HTML_PARSE_CAP}: the bound is
+ * observable (a header block longer than this yields no icon candidate), which is
+ * what lets the regression test pin it deterministically.
+ */
+export const HEADER_NAV_BLOCK_MAX = 8_000;
+/**
+ * Allowed inline-icon data-URI image MIME types (mirrors the server ingest
+ * allowlist). A `data:text/html` / `data:application/*` / script URI is NEVER
+ * surfaced as an `iconDataUri` — it is not an image and the accept path rejects it.
+ */
+const ICON_DATA_URI_RE = /^data:image\/(svg\+xml|png|jpeg|jpg|webp|gif)[;,]/i;
+/**
+ * Upper bound on the surfaced data-URI string length. The parse cap
+ * ({@link META_HTML_PARSE_CAP}) already bounds it, but a hard skip keeps an
+ * absurd inline blob out of the suggestion payload. The SERVER re-caps the
+ * DECODED byte size independently on accept.
+ */
+const MAX_ICON_DATA_URI_LEN = 2_000_000;
 
 export type ListingMetaSuggestion = {
   name?: string;
@@ -46,6 +73,18 @@ export type ListingMetaSuggestion = {
   description?: string;
   coverImageUrl?: string;
   iconImageUrl?: string;
+  /**
+   * An inline `data:image/...` icon (e.g. a favicon declared as
+   * `<link rel="icon" href="data:image/svg+xml,...">`) — a DISTINCT channel from
+   * `iconImageUrl`. The https-only `resolveUrl`/`safeFetch` path deliberately drops
+   * `data:` URIs (they can't be re-fetched), so a site whose ONLY icon is inline
+   * (radio.civitai.com) would otherwise surface no icon at all. This is NOT routed
+   * through `safeFetch`; on accept the server decodes + RASTERIZES it to PNG through
+   * a separate, size-capped, image-mime-allowlisted ingest path (never stores raw
+   * SVG — an XSS vector). Only a `data:image/(svg+xml|png|jpeg|webp|gif)` href is
+   * ever surfaced here (a `data:text/html` / script URI is not).
+   */
+  iconDataUri?: string;
 };
 
 /** Read one attribute value from a single tag string (double, single, or unquoted). */
@@ -145,6 +184,28 @@ function pickIconHref(candidates: IconCandidate[]): string | undefined {
     .filter((c) => c.rel.includes('icon'))
     .sort((a, b) => b.sizePx - a.sizePx);
   return icons[0]?.href;
+}
+
+/**
+ * Pick the best INLINE `data:` icon from the candidates (radio.civitai.com's only
+ * icon is `<link rel="icon" href="data:image/svg+xml,...">`). Prefer apple-touch,
+ * then the largest declared `rel=icon`; only an image-MIME data URI within the
+ * length bound is returned (a `data:text/html` / oversized blob is skipped). The
+ * raw href is returned; the server validates + rasterizes it on accept.
+ */
+function pickIconDataUri(candidates: IconCandidate[]): string | undefined {
+  const dataUris = candidates.filter((c) => /^data:/i.test(c.href.trim()));
+  if (dataUris.length === 0) return undefined;
+  const apple = dataUris
+    .filter((c) => c.rel.includes('apple-touch-icon'))
+    .sort((a, b) => b.sizePx - a.sizePx);
+  const rest = dataUris.filter((c) => c.rel.includes('icon')).sort((a, b) => b.sizePx - a.sizePx);
+  for (const c of [...apple, ...rest]) {
+    const href = c.href.trim();
+    if (href.length > MAX_ICON_DATA_URI_LEN) continue;
+    if (ICON_DATA_URI_RE.test(href)) return href;
+  }
+  return undefined;
 }
 
 /**
@@ -280,12 +341,20 @@ export function extractListingMeta(html: string, finalUrl: string): ListingMetaS
     meta.get('twitter:image:src');
   const coverImageUrl = resolveUrl(coverHref, finalUrl);
 
+  const iconCandidates = extractIconCandidates(html);
   // Favicon / apple-touch-icon first; a header/nav brand <img> is the LAST-RESORT
   // icon so a site with no declared icon still gets a suggestion (never
   // auto-committed — the author accepts it, then it re-fetches through safeFetch).
+  // For the https channel, IGNORE `data:` candidates so a data-URI apple-touch-icon
+  // can't shadow a real https favicon (the inline one is surfaced separately below).
+  const httpsIconCandidates = iconCandidates.filter((c) => !/^data:/i.test(c.href.trim()));
   const iconImageUrl =
-    resolveUrl(pickIconHref(extractIconCandidates(html)), finalUrl) ??
+    resolveUrl(pickIconHref(httpsIconCandidates), finalUrl) ??
     resolveUrl(extractHeaderNavImgHref(html), finalUrl);
+  // Inline data-URI icon — a DISTINCT channel (never routed through the https-only
+  // safeFetch path). Surfaced when present so a site whose only icon is inline
+  // (radio.civitai.com) still gets an accept-able suggestion.
+  const iconDataUri = pickIconDataUri(iconCandidates);
 
   const result: ListingMetaSuggestion = {};
   if (name) result.name = name;
@@ -293,5 +362,6 @@ export function extractListingMeta(html: string, finalUrl: string): ListingMetaS
   if (description) result.description = description;
   if (coverImageUrl) result.coverImageUrl = coverImageUrl;
   if (iconImageUrl) result.iconImageUrl = iconImageUrl;
+  if (iconDataUri) result.iconDataUri = iconDataUri;
   return result;
 }

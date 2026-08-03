@@ -514,10 +514,10 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
 async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version donations. These are the only way to "tip" a model version
-    SELECT DISTINCT "modelVersionId" as id
+    SELECT DISTINCT dg."entityId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
+    WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -527,14 +527,14 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       ctx,
       `-- get version tip metrics
       SELECT
-        dg."modelVersionId",
+        dg."entityId" AS "modelVersionId",
         COUNT(amount) AS "tippedCount",
         SUM(amount) AS "tippedAmountCount"
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-      WHERE dg."modelVersionId" = ANY($1::int[])
-        AND dg."modelVersionId" BETWEEN $2 AND $3
-      GROUP BY dg."modelVersionId"`,
+      WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" = ANY($1::int[])
+        AND dg."entityId" BETWEEN $2 AND $3
+      GROUP BY dg."entityId"`,
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getVersionBuzzTasks', i + 1, 'of', tasks.length, 'done');

@@ -59,6 +59,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -71,6 +72,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },

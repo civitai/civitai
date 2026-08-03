@@ -2,8 +2,16 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
+import type { UserMeta } from '~/server/schema/user.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
+import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
   CacheTTL,
   constants,
@@ -28,10 +36,9 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   dataForModelsCache,
   modelVersionAccessCache,
-  modelVersionPublicDonationGoalsCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
-import type { ModelVersionPublicDonationGoal } from '~/server/redis/caches';
+import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
@@ -52,7 +59,7 @@ import type {
   GetModelVersionByModelTypeProps,
   GetModelVersionPopularityInput,
   GetModelVersionsPopularityInput,
-  ModelVersionEarlyAccessConfig,
+  ModelVersionPaidAccessInputSchema,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
@@ -63,7 +70,7 @@ import type {
   LinkedComponentSettings,
   LinkOfficialFileByHashInput,
   SetLinkedComponentsInput,
-  UpdateEarlyAccessConfigInput,
+  UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -73,6 +80,23 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
+import {
+  assertPaidAccessInput,
+  getCachedCapTier,
+  getPaidAccess,
+  materializePaidAccessEndsAt,
+  writePaidAccessForModelVersion,
+} from '~/server/services/paid-access.service';
+import {
+  type ModelVersionTerms,
+  capMediaType,
+  effectivePaidAccessPrice,
+  isPermanentGate,
+  generationPrice,
+  isPaidAccessActive,
+  isTimedGateActive,
+  paidGenerationGrant,
+} from '@civitai/buzz';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
@@ -80,13 +104,19 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import {
+  checkDonationGoalComplete,
+  ensureDonationGoal,
+  getDonationGoals,
+  getOwnerDonationGoals,
+} from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  sleep,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -99,11 +129,10 @@ import type {
 import {
   Availability,
   CommercialUse,
-  LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelStatus,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
@@ -263,17 +292,55 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
 };
 
 export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: number }) => {
-  return await dbRead.modelVersion.findMany({
-    where: {
-      earlyAccessEndsAt: { gt: new Date() },
-      model: {
-        userId,
-        deletedAt: null,
-      },
-    },
-    select: { id: true },
-  });
+  // Timed-active only (the concurrent-EA cap): `endsAt > now()` excludes permanent (endsAt NULL)
+  // gates, matching the old `earlyAccessEndsAt: { gt: now }` which permanent versions never satisfied.
+  return await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT mv.id
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE m."userId" = ${userId}
+      AND m."deletedAt" IS NULL
+      AND EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id AND pa."endsAt" > now()
+      )
+  `;
 };
+
+// The user-level early-access caps (max timed-window days + max concurrent timed-EA models), enforced
+// in ONE place for both the tRPC upsert and the REST early-access endpoint. Throws BAD_REQUEST on
+// violation; a no-op for moderators, permanent gates, and non-gated writes (no timeframeDays).
+export async function assertUserEarlyAccessLimits({
+  userId,
+  userMeta,
+  features,
+  isModerator,
+  timeframeDays,
+  versionId,
+}: {
+  userId: number;
+  userMeta?: UserMeta;
+  features?: FeatureAccess;
+  isModerator?: boolean;
+  timeframeDays?: number | null;
+  versionId?: number;
+}) {
+  if (!timeframeDays || isModerator) return;
+
+  if (timeframeDays > getMaxEarlyAccessDays({ userMeta, features })) {
+    throw throwBadRequestError('Early access days exceeds user limit');
+  }
+
+  const active = await getUserEarlyAccessModelVersions({ userId });
+  if (
+    active.length >= getMaxEarlyAccessModels({ userMeta, features }) &&
+    (!versionId || !active.some((v) => v.id === versionId))
+  ) {
+    throw throwBadRequestError(
+      'You have exceeded the maximum number of early access models you can have.'
+    );
+  }
+}
 
 // Licensing lineage roots selectable for a given base model — versions
 // registered in `LicensingRoot` whose fee others inherit (e.g. an ecosystem's
@@ -322,51 +389,74 @@ export const getLicensingRoots = async ({
   return { roots, defaultVersionId };
 };
 
-// Field-level early-access requirements (status-independent): a timeframe needs
-// a charge, and each enabled charge needs a price.
-function assertEarlyAccessChargeConfig(config: ModelVersionEarlyAccessConfig | null | undefined) {
-  if (
-    (config?.timeframe || config?.permanent) &&
-    !config.chargeForDownload &&
-    !config.chargeForGeneration
-  ) {
-    throw throwBadRequestError(
-      'You must charge for downloads or generations if you gate this version behind payment.'
-    );
-  }
-  if (config?.chargeForDownload && !config.downloadPrice) {
-    throw throwBadRequestError('You must provide a download price when charging for downloads.');
-  }
-  if (config?.chargeForGeneration && !config.generationPrice) {
-    throw throwBadRequestError(
-      'You must provide a generation price when charging for generations.'
-    );
-  }
+// Shared tail of both upsertModelVersion branches: write the gate + (optional) donation goal natively,
+// then invalidate the derived caches. Kept out of the version write's transaction deliberately.
+async function writeModelVersionGateAndGoal(
+  version: { id: number; modelId: number },
+  ownerId: number,
+  paidAccess: ModelVersionPaidAccessInputSchema | null | undefined,
+  donationGoal: { amount: number } | null | undefined
+) {
+  await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
+  if (donationGoal)
+    await ensureDonationGoal({
+      entityType: 'ModelVersion',
+      entityId: version.id,
+      amount: donationGoal.amount,
+      userId: ownerId,
+    });
+
+  await Promise.all([
+    preventModelVersionLag(version.modelId, version.id),
+    bustMvCache(version.id, version.modelId),
+    dataForModelsCache.refresh(version.modelId),
+  ]);
 }
 
-// Post-publish edits are unrestricted except donation goals: a purchase is a durable entityAccess entitlement not
-// re-evaluated against current config, so changing terms never affects existing buyers (CU 868ke4944).
-function mergeEarlyAccessConfigUpdate({
-  existingConfig,
-  updatedConfig,
-  status,
-}: {
-  existingConfig: ModelVersionEarlyAccessConfig | null;
-  updatedConfig: ModelVersionEarlyAccessConfig | null | undefined;
-  status: ModelStatus;
-}): ModelVersionEarlyAccessConfig | null | undefined {
-  if (status === ModelStatus.Published && updatedConfig && existingConfig) {
-    if (
-      updatedConfig.donationGoalEnabled !== existingConfig.donationGoalEnabled ||
-      updatedConfig.donationGoal !== existingConfig.donationGoal
-    ) {
-      throw throwBadRequestError(
-        'You cannot update donation goals on a published early access model version.'
-      );
-    }
-  }
+// Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
+// PaidAccess row and the write input to one comparable shape so the differ only emits
+// when the effective gate config changes. `null` = no gate, matching
+// writePaidAccessForModelVersion (an ungated input clears the row). endsAt is excluded
+// on purpose — it's materialized at publish, which isn't a settings change.
+function toPaidAccessAuditState(input: ModelVersionPaidAccessInputSchema | null | undefined) {
+  const permanent = !!input?.permanent;
+  const timeframeDays = input?.timeframeDays ?? 0;
+  if (!input || (!permanent && timeframeDays <= 0)) return null;
+  return { permanent, timeframeDays: permanent ? null : timeframeDays, terms: input.terms };
+}
 
-  return updatedConfig ? { ...existingConfig, ...updatedConfig } : updatedConfig;
+async function readPaidAccessAuditState(versionId: number) {
+  const row = await dbWrite.paidAccess.findUnique({
+    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+    select: { timeframeDays: true, terms: true },
+  });
+  if (!row) return null;
+  return {
+    permanent: row.timeframeDays == null,
+    timeframeDays: row.timeframeDays,
+    terms: row.terms,
+  };
+}
+
+function toMonetizationAuditShape(
+  m?: {
+    type?: string | null;
+    unitAmount?: number | null;
+    sponsorshipSettings?: { type?: string | null; unitAmount?: number | null } | null;
+  } | null
+) {
+  return m?.type
+    ? {
+        type: m.type,
+        unitAmount: m.unitAmount ?? null,
+        sponsorshipSettings: m.sponsorshipSettings
+          ? {
+              type: m.sponsorshipSettings.type ?? null,
+              unitAmount: m.sponsorshipSettings.unitAmount ?? null,
+            }
+          : null,
+      }
+    : null;
 }
 
 export const upsertModelVersion = async ({
@@ -375,12 +465,19 @@ export const upsertModelVersion = async ({
   settings,
   recommendedResources,
   templateId,
-  earlyAccessConfig: updatedEarlyAccessConfig,
+  paidAccess,
+  donationGoal,
   meta: metaInput,
+  tracker,
+  actorUserId,
+  isModerator,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
@@ -388,18 +485,34 @@ export const upsertModelVersion = async ({
     ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
     : 0;
 
-  // Versions with a license fee earn through that channel, so they opt out of
-  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
-  // doesn't strip it, since a creator may have set the bit independently.
+  // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
+  // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
+  // absent as cleared would wipe a creator's fee when a moderator declines a review.
+  const feeProvided = data.licensingFee !== undefined;
+  const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
+
+  // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
+  // read a stored 0 as "still has a fee".
+  if (feeProvided && !hasLicensingFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
+
+  // Versions with a license fee earn through that channel, so they opt out of tip + creator-comp
+  // payouts. This is the flag's only set site, so clearing the fee has to strip it — otherwise the
+  // version earns neither the fee nor payouts (CU 868kk4j2k).
   let flagsOverride: number | undefined;
-  if (data.licensingFee != null && data.licensingFee > 0) {
+  if (hasLicensingFee) {
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  } else if (feeProvided && Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
+    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true },
+    select: { nsfw: true, meta: true, userId: true },
   });
 
   // Validate NSFW + restricted base model combination
@@ -422,9 +535,7 @@ export const upsertModelVersion = async ({
   // versions on commercial base models can still monetize.
   if (isNonCommercialBaseModel(data.baseModel)) {
     const attemptsMonetization =
-      (data.licensingFee != null && data.licensingFee > 0) ||
-      !!monetization?.type ||
-      !!updatedEarlyAccessConfig;
+      (data.licensingFee != null && data.licensingFee > 0) || !!monetization?.type || !!paidAccess;
     if (attemptsMonetization) {
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
@@ -440,7 +551,22 @@ export const upsertModelVersion = async ({
     );
   }
 
-  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
+  // Paid access is limited to downloadable or on-site-generation versions; API-only generation can't be
+  // gated, and a gen-only version can't charge for download (mirrors updateModelVersionPaidAccess).
+  if (
+    !!paidAccess &&
+    data.usageControl !== ModelUsageControl.Download &&
+    data.usageControl !== ModelUsageControl.Generation
+  ) {
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
+  }
+  if (data.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
+    throw throwBadRequestError(
+      'Cannot charge for download if downloads are disabled for this model version'
+    );
+  }
+
+  assertPaidAccessInput(paidAccess);
 
   if (!id || templateId) {
     const existingVersions = await dbWrite.modelVersion.findMany({
@@ -473,8 +599,6 @@ export const upsertModelVersion = async ({
           )
             ? Availability.Public
             : Availability.Private,
-          earlyAccessConfig:
-            updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
           settings: settings !== null ? settings : Prisma.JsonNull,
           monetization:
             monetization && monetization.type
@@ -514,11 +638,9 @@ export const upsertModelVersion = async ({
       ),
     ]);
 
-    await Promise.all([
-      preventModelVersionLag(version.modelId, version.id),
-      bustMvCache(version.id, version.modelId),
-      dataForModelsCache.refresh(version.modelId),
-    ]);
+    // Native: derive the gate straight from the config input (endsAt materialized at publish for a
+    // timed window), and create the EA donation goal here (option A) instead of at publish.
+    await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
     return version;
   } else {
@@ -529,10 +651,12 @@ export const upsertModelVersion = async ({
         status: true,
         description: true,
         trainedWords: true,
-        earlyAccessEndsAt: true,
-        earlyAccessConfig: true,
         publishedAt: true,
         meta: true,
+        baseModel: true,
+        usageControl: true,
+        flags: true,
+        licensingFee: true,
         model: {
           select: {
             id: true,
@@ -548,22 +672,13 @@ export const upsertModelVersion = async ({
             sponsorshipSettings: {
               select: {
                 id: true,
+                type: true,
+                unitAmount: true,
               },
             },
           },
         },
       },
-    });
-
-    const earlyAccessConfig =
-      existingVersion.earlyAccessConfig !== null
-        ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
-        : null;
-
-    updatedEarlyAccessConfig = mergeEarlyAccessConfigUpdate({
-      existingConfig: earlyAccessConfig,
-      updatedConfig: updatedEarlyAccessConfig,
-      status: existingVersion.status,
     });
 
     // Check if trying to publish a model version when model is marked as cannotPublish
@@ -588,8 +703,6 @@ export const upsertModelVersion = async ({
         meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
         flags: flagsOverride,
         availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
-        earlyAccessConfig:
-          updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
           existingVersion.monetization?.id && !monetization
@@ -668,87 +781,141 @@ export const upsertModelVersion = async ({
       },
     });
 
-    await Promise.all([
-      preventModelVersionLag(version.modelId, version.id),
-      bustMvCache(version.id, version.modelId),
-      dataForModelsCache.refresh(version.modelId),
-    ]);
+    const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
+    await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+
+    if (tracker) {
+      const changeRows = diffEntityChanges({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        ownerId: model.userId,
+        before: {
+          ...existingVersion,
+          licensingFee:
+            existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null,
+          monetization: toMonetizationAuditShape(existingVersion.monetization),
+          paidAccess: paidAccessBefore,
+        },
+        after: {
+          ...data,
+          // Mirror the write semantics above: paidAccess + monetization are always
+          // applied (absent input = gate cleared / monetization deleted).
+          paidAccess: toPaidAccessAuditState(paidAccess),
+          monetization: toMonetizationAuditShape(monetization),
+          flags: flagsOverride,
+        },
+        actorRole: resolveActorRole({
+          actorUserId: actorUserId ?? 0,
+          ownerId: model.userId,
+          isModerator,
+        }),
+        systemFields:
+          flagsOverride !== undefined
+            ? { flags: hasLicensingFee ? 'licensing-fee-disable-payout' : 'licensing-fee-cleared' }
+            : undefined,
+      });
+      tracker.entityChanges(changeRows).catch(() => null);
+    }
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
 
+    // The orchestrator caches fee + payoutEnabled per version, so a fee or flag change that doesn't
+    // invalidate it keeps pricing and paying against the old value. Never rejects: the write has
+    // already committed, and a failed bust must not surface as a failed save.
+    const feeBefore =
+      existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
+    const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
+    if (feeBefore !== feeAfter || flagsOverride !== undefined)
+      await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
+
     return version;
   }
 };
 
-// Narrow write for just the early-access config — the studio (and any caller
-// that only wants to edit monetization) doesn't have to round-trip the whole
-// version payload through `upsertModelVersion`. Shares the same guards + merge.
-export const updateModelVersionEarlyAccessConfig = async ({
+// Narrow write for just the paid-access config — the studio (and any caller that only wants to edit
+// monetization) doesn't have to round-trip the whole version payload through `upsertModelVersion`.
+// Applies the same monetization guards, then writes PaidAccess + the donation goal natively.
+export const updateModelVersionPaidAccess = async ({
   id,
-  earlyAccessConfig: updatedEarlyAccessConfig,
-}: UpdateEarlyAccessConfigInput) => {
+  paidAccess,
+  donationGoal,
+  tracker,
+  actorUserId,
+  isModerator,
+}: UpdateModelVersionPaidAccessInput & {
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
+}) => {
   const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
     where: { id },
     select: {
       id: true,
-      status: true,
       baseModel: true,
       usageControl: true,
-      earlyAccessConfig: true,
       modelId: true,
+      model: { select: { userId: true } },
     },
   });
 
-  if (isNonCommercialBaseModel(existingVersion.baseModel) && !!updatedEarlyAccessConfig) {
+  if (isNonCommercialBaseModel(existingVersion.baseModel) && !!paidAccess) {
     throw throwBadRequestError(
       `The base model "${existingVersion.baseModel}" is licensed for non-commercial use and cannot be monetized.`
     );
   }
 
+  // Only downloadable or on-site-generation versions can be gated; API-only generation can't.
   if (
+    !!paidAccess &&
     existingVersion.usageControl !== ModelUsageControl.Download &&
-    updatedEarlyAccessConfig?.chargeForDownload
+    existingVersion.usageControl !== ModelUsageControl.Generation
   ) {
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
+  }
+
+  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
     throw throwBadRequestError(
       'Cannot charge for download if downloads are disabled for this model version'
     );
   }
 
-  assertEarlyAccessChargeConfig(updatedEarlyAccessConfig);
+  assertPaidAccessInput(paidAccess);
 
-  const existingConfig =
-    existingVersion.earlyAccessConfig !== null
-      ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
-      : null;
-
-  const mergedConfig = mergeEarlyAccessConfigUpdate({
-    existingConfig,
-    updatedConfig: updatedEarlyAccessConfig,
-    status: existingVersion.status,
-  });
-
-  const version = await dbWrite.modelVersion.update({
-    where: { id },
-    data: {
-      earlyAccessConfig: mergedConfig !== null ? mergedConfig : Prisma.JsonNull,
-    },
-    select: { id: true, modelId: true, earlyAccessConfig: true },
-  });
-
-  await Promise.all([
-    preventModelVersionLag(version.modelId, version.id),
-    bustMvCache(version.id, version.modelId),
-    dataForModelsCache.refresh(version.modelId),
-  ]);
-
-  ingestModelById({ id: version.modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+  const { modelId } = existingVersion;
+  const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
+  // Native: paid access + donation goal are written directly (a published version's existing goal is
+  // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
+  await writeModelVersionGateAndGoal(
+    { id, modelId },
+    existingVersion.model.userId,
+    paidAccess,
+    donationGoal
   );
 
-  return version;
+  if (tracker) {
+    const changeRows = diffEntityChanges({
+      entityType: 'ModelVersion',
+      entityId: id,
+      ownerId: existingVersion.model.userId,
+      before: { paidAccess: paidAccessBefore },
+      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      actorRole: resolveActorRole({
+        actorUserId: actorUserId ?? 0,
+        ownerId: existingVersion.model.userId,
+        isModerator,
+      }),
+    });
+    tracker.entityChanges(changeRows).catch(() => null);
+  }
+
+  ingestModelById({ id: modelId }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId })
+  );
+
+  return { id, modelId };
 };
 
 // Evict the by-hash single-lookup endpoint from the Cloudflare edge.
@@ -824,8 +991,6 @@ export const deleteVersionById = async ({
         id: true,
         modelId: true,
         status: true,
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
         meta: true,
       },
     });
@@ -838,18 +1003,28 @@ export const deleteVersionById = async ({
         );
       }
       // Moderators may only delete once the early access period is over —
-      // deleting mid-period would strip buyers of paid access with no refund.
-      if (data.earlyAccessEndsAt && data.earlyAccessEndsAt > new Date()) {
+      // deleting mid-period would strip buyers of paid access with no refund. Read the gate row
+      // fresh from the tx (primary), not the cache/replica: this guard protects buyers' money, so
+      // it must not act on a lagged endsAt. Timed gate only; permanent (endsAt null) never blocked.
+      const paidAccess = await tx.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: id } },
+      });
+      if (paidAccess && isTimedGateActive(paidAccess)) {
         throw throwBadRequestError(
           'Cannot delete a model version while its early access period is still active.'
         );
       }
     }
 
-    // EntityAccess is polymorphic (no FK), so the version cascade won't remove
-    // purchased-access rows — clean them up here or they orphan.
+    // EntityAccess and PaidAccess are polymorphic (no FK), so the version cascade won't remove
+    // purchased-access / gate rows — clean them up here or they orphan. (A permanent gate passes
+    // the delete guard above, so its PaidAccess row would otherwise survive and inflate the owner's
+    // permanent-cap count.)
     await tx.entityAccess.deleteMany({
       where: { accessToId: id, accessToType: 'ModelVersion' },
+    });
+    await tx.paidAccess.deleteMany({
+      where: { entityType: 'ModelVersion', entityId: id },
     });
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
@@ -1002,7 +1177,12 @@ export const updateModelVersionById = async ({
       // patching here callers reading `result.publishedAt` would see the
       // pre-guard value. When writeCount = 0 the guard blocked the write
       // and the original returned value is still authoritative.
-      if (writeCount > 0) updated.publishedAt = publishedAt;
+      if (writeCount > 0) {
+        updated.publishedAt = publishedAt;
+        // Native: a (re)publish materializes a pending timed gate (endsAt = publishedAt +
+        // timeframeDays); no-op when the version has no PaidAccess row.
+        await materializePaidAccessEndsAt(id, publishedAt, tx);
+      }
     }
     return updated;
   });
@@ -1033,7 +1213,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
       id: true,
       name: true,
       baseModel: true,
-      earlyAccessConfig: true,
+      publishedAt: true,
       model: { select: { id: true, userId: true, name: true, nsfw: true, meta: true } },
     },
   });
@@ -1068,38 +1248,11 @@ export const publishModelVersionsWithEarlyAccess = async ({
   const updatedVersions = await Promise.all(
     versions.map(async (currentVersion) => {
       try {
-        const earlyAccessConfig =
-          currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-
-        if (earlyAccessConfig && !earlyAccessConfig.donationGoalId) {
-          earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
-
-          if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
-            // Good time to also create the donation goal:
-            const donationGoal = await dbClient.donationGoal.create({
-              data: {
-                goalAmount: earlyAccessConfig.donationGoal as number,
-                title: `Early Access Donation Goal`,
-                active: true,
-                isEarlyAccess: true,
-                modelVersionId: currentVersion.id,
-                userId: currentVersion.model.userId,
-              },
-            });
-
-            if (donationGoal) {
-              earlyAccessConfig.donationGoalId = donationGoal.id;
-            }
-          }
-        }
-
         const updatedVersion = await dbClient.modelVersion.update({
           where: { id: currentVersion.id },
           data: {
             status: ModelStatus.Published,
-            earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
-            // Will be overwritten anyway by EA.
             availability: Availability.Public,
           },
           select: {
@@ -1113,14 +1266,29 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // Anti-bump guard: publishedAt is immutable once a version has gone
         // public. Allowed transitions: NULL (Draft) -> set, or future
         // (Scheduled) -> reschedule. Republish of an already-public version
-        // is a no-op for this column. Mirrors the Post guard below.
+        // is a no-op for this column.
         if (publishedAt !== undefined) {
-          await dbClient.$executeRaw`
+          const writeCount = await dbClient.$executeRaw`
             UPDATE "ModelVersion"
             SET "publishedAt" = ${publishedAt}
             WHERE id = ${currentVersion.id}
             AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
           `;
+          // Native: materialize the pending timed gate (endsAt = publishedAt + timeframeDays) only when
+          // publishedAt was actually (re)set — a no-op republish leaves the already-materialized endsAt.
+          if (writeCount > 0) {
+            await materializePaidAccessEndsAt(currentVersion.id, publishedAt, dbClient);
+          }
+        } else if (currentVersion.publishedAt != null) {
+          // Caller didn't pass publishedAt (the scheduled-publishing job sets it at schedule time and
+          // only flips status here). Materialize the pending timed gate from the version's already-set
+          // publishedAt — otherwise a scheduled EA version keeps endsAt NULL and becomes a PERMANENT
+          // gate that never releases. materializePaidAccessEndsAt no-ops on permanent/tombstoned gates.
+          await materializePaidAccessEndsAt(
+            currentVersion.id,
+            currentVersion.publishedAt,
+            dbClient
+          );
         }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);
@@ -1189,7 +1357,6 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       baseModel: true,
-      earlyAccessConfig: true,
       model: {
         select: {
           userId: true,
@@ -1230,11 +1397,22 @@ export const publishModelVersionById = async ({
     );
   }
 
+  // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
+  // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
+  const paidAccessGate = await dbWrite.paidAccess.findFirst({
+    where: {
+      entityType: 'ModelVersion',
+      entityId: id,
+      OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }],
+    },
+    select: { entityId: true },
+  });
+
   const version = await dbWrite.$transaction(
     async (tx) => {
       let updatedVersion;
-      if (status === ModelStatus.Published && currentVersion.earlyAccessConfig) {
-        // We should charge for thisL
+      if (status === ModelStatus.Published && paidAccessGate) {
+        // Materialize the timed gate's endsAt from the publish timestamp (see the EA publish path).
         const [updated] = await publishModelVersionsWithEarlyAccess({
           modelVersionIds: [id],
           publishedAt,
@@ -1768,11 +1946,10 @@ export const earlyAccessPurchase = async ({
     id: modelVersionId,
     select: {
       id: true,
-      earlyAccessEndsAt: true,
-      earlyAccessConfig: true,
-      earlyAccessPermanent: true,
       status: true,
       name: true,
+      meta: true,
+      baseModel: true,
       model: {
         select: {
           id: true,
@@ -1792,37 +1969,32 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('You cannot purchase early access for your own model.');
   }
 
-  const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-
-  if (
-    !earlyAccesConfig ||
-    (!modelVersion.earlyAccessEndsAt && !modelVersion.earlyAccessPermanent)
-  ) {
+  // Gate + terms sourced from PaidAccess: active <=> a row exists and endsAt is null (permanent) or
+  // future. isPaidAccessActive checks the live timestamp, so a just-lapsed (tombstone) gate is rejected.
+  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersionId]))[modelVersionId];
+  if (!paidAccess || !isPaidAccessActive(paidAccess)) {
     throw throwBadRequestError('This model version does not have early access enabled.');
   }
+  const terms = paidAccess.terms as ModelVersionTerms;
+  const generationTier = paidGenerationGrant(terms);
 
-  const earlyAccessDonationGoal = earlyAccesConfig.donationGoalId
-    ? await dbRead.donationGoal.findFirst({
-        where: { id: earlyAccesConfig.donationGoalId, isEarlyAccess: true, active: true },
-      })
-    : undefined;
+  // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
+  // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
+  // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
+  // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
+  // trip completion; the goal is never returned to the purchaser.
+  const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
+  const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 
   if (modelVersion.status !== ModelStatus.Published) {
     throw throwBadRequestError('You can only purchase early access for published models.');
   }
 
-  if (modelVersion.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt < new Date()) {
-    throw throwBadRequestError('This model is public and does not require purchase.');
-  }
-
-  if (type === 'download' && !earlyAccesConfig.chargeForDownload) {
+  if (type === 'download' && !terms.download) {
     throw throwBadRequestError('This model version does not support purchasing download.');
   }
 
-  if (
-    type === 'generation' &&
-    (!earlyAccesConfig.chargeForGeneration || !earlyAccesConfig.generationPrice)
-  ) {
+  if (type === 'generation' && !generationTier) {
     throw throwBadRequestError('This model version does not support purchasing generation only.');
   }
 
@@ -1842,10 +2014,21 @@ export const earlyAccessPurchase = async ({
   }
 
   let buzzTransactionId: string | undefined;
-  const amount =
-    type === 'download'
-      ? (earlyAccesConfig.downloadPrice as number)
-      : (earlyAccesConfig.generationPrice as number);
+  // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
+  // unit-tested in @civitai/buzz, so the charged amount stays covered).
+  //
+  // A PERMANENT gate is charged at the OWNER's current cap, not the stored price: a lapsed membership
+  // drops what buyers pay to the free-tier cap (CU 868kj4q4j), and the stored value is left alone so
+  // re-subscribing restores it. A TIMED early-access window has no ceiling, so it charges as stored —
+  // this must mirror getViewerMonetization, or buyers see one price and get billed another.
+  const storedPrice = type === 'download' ? terms.download?.price : generationPrice(terms);
+  const permanent = isPermanentGate(paidAccess);
+  // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
+  const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
+  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
+    permanent,
+    mediaType: capMediaType(modelVersion.baseModel),
+  });
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
@@ -1863,7 +2046,9 @@ export const earlyAccessPurchase = async ({
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
-      description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
+        modelVersion.model.name
+      } - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
@@ -1874,79 +2059,59 @@ export const earlyAccessPurchase = async ({
 
     buzzTransactionId = externalTransactionIdPrefix;
 
-    await dbWrite.$transaction(
-      async (tx) => {
-        if (accessRecord) {
-          // Should only happen if the user purchased Generation but NOT download.
-          // Update entity access:
-          await tx.entityAccess.update({
-            where: {
-              accessToId_accessToType_accessorId_accessorType: {
-                accessToId: modelVersionId,
-                accessToType: 'ModelVersion',
-                accessorId: userId,
-                accessorType: 'User',
-              },
-            },
-            data: {
-              permissions: Math.max(
-                EntityAccessPermission.EarlyAccessDownload +
-                  EntityAccessPermission.EarlyAccessGeneration,
-                access.permissions ?? 0
-              ),
-              meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
-            },
-          });
-        } else {
-          // Grant entity access:
-          await tx.entityAccess.create({
-            data: {
-              accessToId: modelVersionId,
-              accessToType: 'ModelVersion',
-              accessorId: userId,
-              accessorType: 'User',
-              permissions:
-                type === 'generation'
-                  ? EntityAccessPermission.EarlyAccessGeneration
-                  : EntityAccessPermission.EarlyAccessGeneration +
-                    EntityAccessPermission.EarlyAccessDownload,
-              meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
-              addedById: userId, // Since it's a purchase
-            },
-          });
-        }
-
-        if (earlyAccessDonationGoal) {
-          // Create a donation record:
-          await tx.donation.create({
-            data: {
-              amount,
-              donationGoalId: earlyAccessDonationGoal.id,
-              userId,
-              buzzTransactionId: buzzTransactionId as string,
-            },
-          });
-        }
-
-        // Set model version early access purchase as true:
-        await tx.$queryRaw`
-        UPDATE "ModelVersion"
-        SET meta = jsonb_set(
-          COALESCE(meta, '{}'::jsonb),
-          '{hadEarlyAccessPurchase}',
-          to_jsonb(${true})
-        )
-        WHERE "id" = ${modelVersionId}; -- Your conditions here
-      `;
+    // The grant is the only write whose failure warrants a refund, and it's a single
+    // statement on purpose: the previous interactive transaction's client-side timeout
+    // could fire while the COMMIT was still in flight on the server, so the catch
+    // refunded buyers who ended up keeping access (see ClickUp 868k97v07).
+    await dbWrite.entityAccess.upsert({
+      where: {
+        accessToId_accessToType_accessorId_accessorType: {
+          accessToId: modelVersionId,
+          accessToType: 'ModelVersion',
+          accessorId: userId,
+          accessorType: 'User',
+        },
       },
-      { timeout: 10000 }
-    ); // Doubled timeout since this transaction involves multiple steps and external calls.
+      create: {
+        accessToId: modelVersionId,
+        accessToType: 'ModelVersion',
+        accessorId: userId,
+        accessorType: 'User',
+        permissions:
+          type === 'generation'
+            ? EntityAccessPermission.EarlyAccessGeneration
+            : EntityAccessPermission.EarlyAccessGeneration +
+              EntityAccessPermission.EarlyAccessDownload,
+        meta: { [buzzTransactionKey]: buzzTransactionId },
+        addedById: userId, // Since it's a purchase
+      },
+      // An existing row means the user previously acquired partial access
+      // (e.g. generation-only) and is now upgrading.
+      update: {
+        permissions: Math.max(
+          EntityAccessPermission.EarlyAccessDownload + EntityAccessPermission.EarlyAccessGeneration,
+          accessRecord?.permissions ?? 0
+        ),
+        meta: {
+          ...((accessRecord?.meta as Prisma.JsonObject | null) ?? {}),
+          [buzzTransactionKey]: buzzTransactionId,
+        },
+      },
+    });
 
-    // Post-transaction side effects: failures here must not trigger a refund,
-    // since the purchase itself already succeeded.
+    // Post-grant side effects: failures here must not trigger a refund,
+    // since the purchase itself (charge + grant) already succeeded.
     if (earlyAccessDonationGoal) {
       try {
-        await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+        await dbWrite.donation.create({
+          data: {
+            amount,
+            donationGoalId: earlyAccessDonationGoal.id,
+            userId,
+            buzzTransactionId,
+          },
+        });
+        await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: modelVersionId });
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -1954,6 +2119,25 @@ export const earlyAccessPurchase = async ({
           error,
           modelVersionId,
           donationGoalId: earlyAccessDonationGoal.id,
+          buzzTransactionId,
+        });
+      }
+    }
+
+    if (!(modelVersion.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase) {
+      try {
+        await dbWrite.$queryRaw`
+          UPDATE "ModelVersion"
+          SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{hadEarlyAccessPurchase}', to_jsonb(${true}))
+          WHERE "id" = ${modelVersionId}
+            AND COALESCE((meta->>'hadEarlyAccessPurchase')::boolean, false) = false;
+        `;
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-had-purchase-flag',
+          error,
+          modelVersionId,
         });
       }
     }
@@ -1974,30 +2158,76 @@ export const earlyAccessPurchase = async ({
     return true;
   } catch (error) {
     if (buzzTransactionId) {
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: buzzTransactionId,
-        description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
-      });
-
-      if (!accessRecord) {
-        // Remove the entity access record if it was created during this transaction.
-        await dbWrite.entityAccess.deleteMany({
-          where: {
-            accessorId: userId,
-            accessorType: 'User',
-            accessToId: modelVersionId,
-            accessToType: 'ModelVersion',
-          },
-        });
+      // A thrown error does NOT prove the grant didn't commit — a timeout can fire
+      // while the write is still in flight. Refunding blindly here is exactly how
+      // buyers got refunded while keeping access. Verify the final DB state first,
+      // re-checking to let any in-flight write land.
+      let grantCommitted: boolean | undefined;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt > 0) await sleep(2000);
+        try {
+          const grant = await dbWrite.entityAccess.findUnique({
+            where: {
+              accessToId_accessToType_accessorId_accessorType: {
+                accessToId: modelVersionId,
+                accessToType: 'ModelVersion',
+                accessorId: userId,
+                accessorType: 'User',
+              },
+            },
+            select: { meta: true },
+          });
+          grantCommitted =
+            (grant?.meta as Record<string, unknown> | null)?.[buzzTransactionKey] ===
+            buzzTransactionId;
+          if (grantCommitted) break;
+        } catch {
+          grantCommitted = undefined;
+        }
       }
 
-      logToAxiom({
-        type: 'error',
-        name: 'early-access-purchase-refund',
-        error,
-        modelVersionId,
-        buzzTransactionId,
-      });
+      if (grantCommitted) {
+        // The purchase actually went through — recover instead of refunding.
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-recovered',
+          error,
+          modelVersionId,
+          userId,
+          buzzTransactionId,
+        });
+        try {
+          await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+        } catch {}
+        return true;
+      }
+
+      if (grantCommitted === false) {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: buzzTransactionId,
+          description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+        });
+
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-refund',
+          error,
+          modelVersionId,
+          buzzTransactionId,
+        });
+      } else {
+        // Verification itself failed, so the grant state is unknown. Do NOT refund:
+        // an unrefunded charge is recoverable by support via the buzz transaction id,
+        // while an erroneous refund with access kept is the ongoing incident.
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-unverified',
+          error,
+          modelVersionId,
+          userId,
+          buzzTransactionId,
+        });
+      }
     }
     throw throwDbError(error);
   }
@@ -2007,14 +2237,14 @@ export const earlyAccessPurchase = async ({
 // keyed cache. A missing entry means the version doesn't exist → 404, matching the uncached
 // read→primary-fallback→NOT_FOUND behavior (the cache's lookupFn does the same primary
 // fallback and only seeds entries for versions that exist).
-const getPublicDonationGoals = async (id: number): Promise<ModelVersionPublicDonationGoal[]> => {
-  const cached = await modelVersionPublicDonationGoalsCache.fetch([id]);
-  const entry = cached[id];
-  if (!entry) throw throwNotFoundError(`No model version with id ${id}`);
-  return entry.goals;
+const getPublicDonationGoal = async (id: number): Promise<DonationGoalWithTotal | null> => {
+  const goals = await getDonationGoals('ModelVersion', [id]);
+  // getDonationGoals omits non-existent versions (existing-but-no-goal → null).
+  if (!(id in goals)) throw throwNotFoundError(`No model version with id ${id}`);
+  return goals[id] ?? null;
 };
 
-export const modelVersionDonationGoals = async ({
+export const modelVersionDonationGoal = async ({
   id,
   userId,
   isModerator,
@@ -2022,13 +2252,13 @@ export const modelVersionDonationGoals = async ({
   id: number;
   userId?: number;
   isModerator?: boolean;
-}): Promise<ModelVersionPublicDonationGoal[]> => {
+}): Promise<DonationGoalWithTotal | null> => {
   // Fast path — a caller that can be NEITHER the owner NOR a moderator always receives the
   // public variant, which does not vary by viewer. Serve it from the shared cache with no
   // per-viewer DB read. (canSeeAllGoals below can only be true when userId === ownerId or
   // isModerator, so this branch can never be a privileged caller.)
   if (!isModerator && userId == null) {
-    return getPublicDonationGoals(id);
+    return getPublicDonationGoal(id);
   }
 
   // The caller MIGHT be privileged (owner or moderator) — resolve the version to learn the
@@ -2038,7 +2268,6 @@ export const modelVersionDonationGoals = async ({
     select: {
       id: true,
       modelId: true,
-      earlyAccessEndsAt: true,
       model: {
         select: {
           userId: true,
@@ -2051,7 +2280,7 @@ export const modelVersionDonationGoals = async ({
     .catch(() => {
       // Replica miss (often replica lag) — retry against the primary before
       // deciding the record is truly gone.
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoal' });
       return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
     })
     .catch((error) => {
@@ -2071,45 +2300,13 @@ export const modelVersionDonationGoals = async ({
   // the same shared cache: it can only ever hold the public payload, so no privileged/draft
   // data can leak in, and the expensive donationGoal.findMany + Donation SUM are elided.
   if (!canSeeAllGoals) {
-    return getPublicDonationGoals(id);
+    return getPublicDonationGoal(id);
   }
 
-  // PRIVILEGED (owner or moderator): computed fresh and NEVER read from / written to the
-  // public cache. This variant may include inactive/draft goals (active/isEarlyAccess filters
-  // dropped), so it must never enter the shared key.
-  const donationGoals = await dbRead.donationGoal.findMany({
-    where: {
-      modelVersionId: id,
-    },
-    select: {
-      id: true,
-      goalAmount: true,
-      title: true,
-      active: true,
-      isEarlyAccess: true,
-      userId: true,
-      createdAt: true,
-      description: true,
-    },
-  });
-
-  if (donationGoals.length === 0) {
-    return [];
-  }
-
-  const donationTotals = await dbRead.$queryRaw<{ donationGoalId: number; total: number }[]>`
-    SELECT
-      "donationGoalId",
-      SUM("amount")::int as total
-    FROM "Donation"
-    WHERE "donationGoalId" IN (${Prisma.join(donationGoals.map((x) => x.id))})
-    GROUP BY "donationGoalId"
-  `;
-
-  return donationGoals.map((goal) => {
-    const total = donationTotals.find((x) => x.donationGoalId === goal.id)?.total ?? 0;
-    return { ...goal, total };
-  });
+  // PRIVILEGED (owner or moderator): the raw goal incl. inactive/draft, computed fresh and NEVER
+  // routed through the public cache (which holds only active goals) — so a draft-inclusive payload
+  // can't leak into the shared key. Ownership was authorized above (`canSeeAllGoals`).
+  return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
 export async function queryModelVersions<TSelect extends Prisma.ModelVersionSelect & { id: true }>({
@@ -2621,7 +2818,6 @@ export const mergeVersions = async ({
           name: true,
           description: true,
           status: true,
-          earlyAccessEndsAt: true,
           monetization: { select: { id: true, type: true } },
           meta: true,
         },
@@ -2652,14 +2848,21 @@ export const mergeVersions = async ({
     throw throwBadRequestError('No source versions to merge.');
   }
 
-  // Block if any source version has active monetization or early access purchases
+  // Block if any source version has active monetization or early access purchases. Read gate rows
+  // fresh from the primary (dbWrite), not the cache/replica — this guard protects buyers' money.
+  const paidAccessSources = await dbWrite.paidAccess.findMany({
+    where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
+    select: { entityId: true, endsAt: true },
+  });
+  const endsAtBySource = new Map(paidAccessSources.map((r) => [r.entityId, r.endsAt]));
+  const now = new Date();
   for (const sv of model.modelVersions.filter((v) => sourceVersionIds.includes(v.id))) {
     if (sv.monetization) {
       throw throwBadRequestError(
         `Version "${sv.name}" has active monetization. Remove it before merging.`
       );
     }
-    if (sv.earlyAccessEndsAt && sv.earlyAccessEndsAt > new Date()) {
+    if (isTimedGateActive({ endsAt: endsAtBySource.get(sv.id) ?? null }, now)) {
       throw throwBadRequestError(
         `Version "${sv.name}" has active early access. Wait for it to end or remove it before merging.`
       );
@@ -2909,7 +3112,12 @@ export const mergeVersions = async ({
         }
       }
 
-      // 12. Delete source versions (cascade handles remaining child records)
+      // 12. Delete source versions (cascade handles remaining child records).
+      // PaidAccess is polymorphic (no FK) so the cascade misses it — a permanent-gated source
+      // passes the merge guard above, so remove its gate row explicitly or it orphans.
+      await tx.paidAccess.deleteMany({
+        where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
+      });
       await tx.modelVersion.deleteMany({
         where: { id: { in: sourceVersionIds } },
       });

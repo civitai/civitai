@@ -18,6 +18,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -266,7 +267,7 @@ export default function AppBlocksDashboardPage() {
     <>
       <Meta title="Apps Dashboard — Civitai" deIndex />
       <AppsPageLayout
-        size="lg"
+        size={APPS_PAGE_WIDTHS['/apps/revenue']}
         title="Apps Dashboard"
         subtitle={
           <>

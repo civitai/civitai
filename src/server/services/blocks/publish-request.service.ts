@@ -17,7 +17,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
+import {
+  assertSensitiveScopesJustified,
+  deriveOauthBitmaskFromBlockScopes,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
@@ -37,6 +40,18 @@ import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
 import { sanitizeAppSlug } from '~/server/utils/apps-slug';
+// Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
+// a deploy "stalled" — shared so the mod retrigger gate and the badge can never
+// disagree about whether a build is stuck.
+import {
+  DEPLOY_PENDING_GRACE_MS,
+  DEPLOY_STALE_AFTER_MS,
+} from '~/shared/constants/app-block-deploy.constants';
+// Pure, dependency-free sanitizer. Applied to EVERY value written to the
+// owner-visible `deploy_detail`, so the "guaranteed printable, bounded text"
+// invariant that module documents holds on all write paths — not just the
+// build-callback's.
+import { sanitizeBuildFailureReason } from './build-failure-reason';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -104,6 +119,11 @@ export type SubmitVersionResult = {
 };
 
 const MANIFEST_PATH = 'block.manifest.json';
+
+/** Org holding the per-slug in-review snapshot repos a review preview builds
+ *  from. Deliberately separate from the canonical build org so commits here
+ *  never fire the production build webhook. */
+const REVIEW_REPO_ORG = 'civitai-apps-review';
 
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
@@ -979,11 +999,12 @@ async function getPreviousApprovedState(
  * second round-trip.
  */
 export async function submitVersion(params: SubmitVersionParams): Promise<SubmitVersionResult> {
-  const [{ dbRead, dbWrite }, { newUlid }, { SEMVER_REGEX, SLUG_REGEX }] = await Promise.all([
-    import('~/server/db/client'),
-    import('~/server/utils/app-block-ids'),
-    import('~/server/schema/blocks/publish-request.schema'),
-  ]);
+  const [{ dbRead, dbWrite }, { newUlid, newAppListingId }, { SEMVER_REGEX, SLUG_REGEX }] =
+    await Promise.all([
+      import('~/server/db/client'),
+      import('~/server/utils/app-block-ids'),
+      import('~/server/schema/blocks/publish-request.schema'),
+    ]);
   const { bundleBuffer, submittedByUserId } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
@@ -1026,6 +1047,22 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   const slug = manifest.blockId;
   const version = manifest.version;
+
+  // Sensitive-scope justification gate — enforced AT SUBMIT (fail-fast, before
+  // the MinIO upload + review-repo push). The primary submit path (CLI `app
+  // submit` + the web session-submit route) deliberately defers the deep
+  // BlockManifestValidator to APPROVE — and approve exempts THIS rule
+  // (`enforceSensitiveScopeJustification:false`, to grandfather legacy pending
+  // requests) — so without this call the sensitive-scope enforcement shipped in
+  // #3451 never fires for a CLI/web-session submit (a live dogfood submitted an
+  // `ai:write:budgeted` app with no scopeJustifications and it was accepted).
+  // The check needs only the manifest's `scopes` + `scopeJustifications`, both
+  // already present in the extracted manifest — no AppContext needed — so we run
+  // the targeted rule here via the SAME single-sourced helper the validator
+  // uses (DRY; identical message). `assertSensitiveScopesJustified` throws a
+  // plain Error, which the CLI route surfaces as a 400 and the web session
+  // route surfaces likewise. Deep validation stays deferred to approve.
+  assertSensitiveScopesJustified(manifest);
 
   // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
   // too-many / oversized / fake-image / odd-named screenshot is rejected inline
@@ -1079,6 +1116,52 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     select: { id: true, appId: true },
   });
 
+  // (submit-draft pre-check) W13 draft-at-submit — a FIRST-version submit now also
+  // mints the on-site store `AppListing` as a pre-approval DRAFT (kind='onsite',
+  // status='draft', appBlockId=NULL) so the author can set listing media
+  // (icon/cover/screenshots) WHILE the app is still pending review (they carry
+  // forward on approve). Mirrors the proven off-site `submitExternalListing` shape (a
+  // draft listing minted at submit, deleted on reject/withdraw). Only a first-version
+  // submit (`existingApp == null`) is meaningful: a subsequent version already has an
+  // approved listing whose media edits go through the shadow-revision path.
+  //
+  // Fail fast (BEFORE the MinIO upload + review-repo push) if the store slug is
+  // already taken in `app_listings` by a NON-reusable listing — the draft reserves
+  // `AppListing.slug @unique`, and the friendly error mirrors `submitExternalListing`'s
+  // slug pre-check. An existing on-site pre-approval DRAFT for this slug (no backing
+  // AppBlock) is a REUSABLE orphan (a prior submit whose reject/withdraw cleanup didn't
+  // run) — reuse it idempotently rather than error, so a re-submit never duplicates.
+  //
+  // 🔴 Reuse is OWNER-SCOPED (`userId === submittedByUserId`). An orphan draft keeps its
+  // original owner, and the approve transition carries that `userId` FORWARD untouched —
+  // so reusing ANOTHER user's orphan would hand them ownership of THIS submitter's
+  // approved store listing (the listing-media procs gate on `AppListing.userId`, so they
+  // would control its media). A same-slug orphan owned by someone else is therefore
+  // treated as TAKEN, exactly like any other foreign listing on the slug.
+  let createDraftListing = false;
+  if (existingApp == null) {
+    const existingSlugListing = await dbRead.appListing.findFirst({
+      where: { slug },
+      select: { id: true, kind: true, status: true, appBlockId: true, userId: true },
+    });
+    if (!existingSlugListing) {
+      createDraftListing = true;
+    } else if (
+      !(
+        existingSlugListing.kind === 'onsite' &&
+        existingSlugListing.status === 'draft' &&
+        existingSlugListing.appBlockId == null &&
+        existingSlugListing.userId === submittedByUserId
+      )
+    ) {
+      throw new Error(
+        `store slug "${slug}" is already taken by another store listing; choose a different blockId`
+      );
+    }
+    // else: a reusable on-site pre-approval draft owned by THIS submitter already exists
+    // for this slug → reuse it (idempotent re-submit), so createDraftListing stays false.
+  }
+
   // Deep manifest validation (contentRating / scopes / iframe.sandbox /
   // targets / scope subset / iframe.src origin) happens at the
   // BlockManifestValidator step in the approve flow, when the
@@ -1126,7 +1209,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: 'civitai-apps-review',
+      org: REVIEW_REPO_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -1168,6 +1251,58 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       );
     }
     throw err;
+  }
+
+  // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
+  // `AppListing` now that the pending request exists. Ordered AFTER the request create
+  // so there is never a draft orphaned without a request: a request without a draft
+  // simply falls back to the legacy approve-time create path (new-submits-only compat),
+  // while a draft can only exist alongside its request.
+  //
+  // BEST-EFFORT (log-and-continue, same posture as the approve-path listing writes):
+  // the store listing is a convenience and must NEVER fail the primary submit. If the
+  // draft create loses a rare slug race (P2002) the pre-check above missed, or hits a
+  // transient DB error, the submit still succeeds — the author just can't set media
+  // until approve mints the listing the legacy way. Only created for a first-version
+  // submit that didn't reuse an existing orphan draft.
+  if (createDraftListing) {
+    try {
+      const { buildListingScalarSync } = await import('./app-listing-mapper');
+      const scalars = buildListingScalarSync({
+        manifest,
+        blockId: slug,
+        category: typeof manifest.category === 'string' ? manifest.category : null,
+      });
+      await dbWrite.appListing.create({
+        data: {
+          id: newAppListingId(),
+          kind: 'onsite',
+          status: 'draft',
+          slug,
+          name: scalars.name,
+          tagline: scalars.tagline,
+          description: scalars.description,
+          category: scalars.category,
+          // Seed the maturity rating from the submitted manifest (approve re-syncs it
+          // authoritatively from the AppBlock); default SFW so an omitted rating is never
+          // mature. Drives the asset NSFW-scan threshold while pending.
+          contentRating: typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g',
+          // No backing AppBlock until approve — the draft is tied to its pending request
+          // purely by the shared, @unique slug.
+          appBlockId: null,
+          userId: submittedByUserId,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[submitVersion] pre-approval draft AppListing create failed (slug=${slug}); submit STANDS — ` +
+          `the app is still reviewable and its store listing is minted at approve the legacy way, so the ` +
+          `author sets media after approval instead of while pending: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // Fire-and-forget Discord notify to the mod queue. Don't await — a
@@ -1307,6 +1442,24 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
 }
 
 /**
+ * W13 draft-at-submit cleanup — on REJECT or WITHDRAW of a first-version on-site
+ * publish request, delete the pre-approval DRAFT `AppListing` minted at submit so the
+ * store slug is released and the unreviewed media is discarded. Mirrors the off-site
+ * `closeTerminalListing` draft branch: a status-guarded `deleteMany` (`status:'draft'`)
+ * can never remove an approved/removed row; `AppListingScreenshot` is
+ * `onDelete: Cascade` so screenshots go with it, and the underlying `Image` rows are
+ * `onDelete: SetNull` (DETACHED, not hard-deleted — same as off-site). Resolved BY SLUG
+ * (no request→listing FK). No-op for a subsequent-version request (no such draft), an
+ * already-cleaned draft, or a legacy pre-ship pending request.
+ */
+async function deleteOnsiteDraftListingForSlug(opts: { slug: string }): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  await dbWrite.appListing.deleteMany({
+    where: { slug: opts.slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+  });
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1380,6 +1533,21 @@ export async function withdrawRequest(opts: {
     // owner self-restore — a mod must `relistListing` (which also un-suspends the
     // block). A first-time submission withdraw has no `pending` onsite listing → no-op.
     await closeOnsiteResetListingOnWithdraw({ slug: row.slug, actorUserId: userId });
+    // W13 draft-at-submit — also delete a FIRST-version pre-approval DRAFT listing
+    // (disjoint from the reset case above, which targets a `pending` on-site listing;
+    // a first-time draft is `status='draft'`). Release the slug + drop unreviewed
+    // media. Best-effort: the withdraw has already committed, so a cleanup failure must
+    // never fail the outcome (the slug stays reserved until a later cleanup / mod
+    // delete — recoverable).
+    try {
+      await deleteOnsiteDraftListingForSlug({ slug: row.slug });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[withdrawRequest] pre-approval draft cleanup failed (id=${publishRequestId}, slug=${row.slug}); ` +
+          `withdraw STANDS: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
     // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
     // the withdraw has already committed, so a teardown failure must never affect
@@ -1836,6 +2004,13 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // Build/deploy lifecycle — additive. The Approved tab is where a moderator
+      // sees that an approved app never actually built (deployState null =
+      // STRANDED) and can re-trigger it; without these three the queue shows a
+      // uniformly-healthy list of approvals regardless of what actually shipped.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -2100,7 +2275,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           o.toLowerCase()
         ),
       };
-  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx);
+  // APPROVE is a re-validation of the ALREADY-SUBMITTED manifest, not a new
+  // submit — exempt ONLY the new sensitive-scope-justification enforcement so a
+  // LEGACY pending request (submitted before that rule shipped, sensitive scope
+  // + no justification) stays approvable. Every OTHER manifest check still runs
+  // here (the H-4 invariant). A post-deploy submission already passed this gate
+  // at submit time, and nothing reaches the approve queue without the submit
+  // gate first, so skipping the re-check creates no bypass.
+  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
+    enforceSensitiveScopeJustification: false,
+  });
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
@@ -2292,8 +2476,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // listing-create reads the just-written category (read-your-writes). A first-
   // version approve whose manifest declares a category therefore mints a listing
   // already categorised; a manifest with no category leaves it null (mod-curated
-  // later). The "category added in a LATER version" case (listing already exists,
-  // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
+  // later). The "category added in a LATER version" case (the listing already
+  // exists) is now HANDLED — the (3b-sync) re-sync below propagates this column
+  // onto the existing listing on a subsequent-version approve. This null-gate is
+  // also what makes sourcing the re-sync's `category` from HERE safe: a curated
+  // value is never overwritten above, so propagating it can't undo curation.
   if (manifestCategory !== null) {
     try {
       await dbWrite.appBlock.updateMany({
@@ -2335,10 +2522,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // listing and the flow converges. The listing is never permanently orphaned.
   //
   // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
-  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
-  // curator edits (category/featured/featuredOrder) made after the first approve.
-  // A concurrent create (a racing approve or the backfill) is absorbed by the
-  // P2002 catch. We NEVER update an existing listing here.
+  // a subsequent-version approve finds it present and RE-SYNCS only the
+  // MANIFEST-GOVERNED scalars (see (3b-sync) below). A concurrent create (a racing
+  // approve or the backfill) is absorbed by the P2002 catch.
   //
   // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
   // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
@@ -2353,13 +2539,122 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
   try {
-    const existingListing = await dbRead.appListing.findUnique({
-      where: { appBlockId },
+    // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
+    // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
+    // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
+    // any listing media the author set while pending. TRANSITION that draft in place
+    // → approved (PRESERVING its icon/cover/screenshots) rather than minting a fresh
+    // media-less listing via the mapper. Resolved BY SLUG on the PRIMARY (the
+    // `AppBlockPublishRequest` has no appListingId FK; the primary read is
+    // read-your-writes-safe + consistent with the (3b-reset) resolve below). If NO
+    // draft exists — a request pending BEFORE this shipped (new-submits-only compat,
+    // no backfill) or a subsequent-version approve keyed by appBlockId — this no-ops
+    // and the UNCHANGED create-or-sync-by-appBlockId path below runs.
+    //
+    // 🔴 OWNER-SCOPED (`userId: request.submittedByUserId`) — defense-in-depth mirroring
+    // the submit-side reuse gate. The transition carries the draft's `userId` forward
+    // untouched, so transitioning a draft owned by ANOTHER user would hand them
+    // ownership of THIS submitter's approved listing (the listing-media procs gate on
+    // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
+    // through to the legacy create path below.
+    let handledByDraftTransition = false;
+    const draftListing = await dbWrite.appListing.findFirst({
+      where: {
+        slug: request.slug,
+        kind: 'onsite',
+        appBlockId: null,
+        status: 'draft',
+        userId: request.submittedByUserId,
+      },
       select: { id: true },
     });
-    if (!existingListing) {
+    if (draftListing) {
+      // A draft existed → this app's listing is handled here; NEVER fall through to
+      // the create branch (that would mint a second, media-less listing).
+      handledByDraftTransition = true;
+      // Scan-clean go-live gate (same invariant + shared helper as the (3b-reset)
+      // restore below and the off-site approve flip): the draft was directly
+      // asset-editable while pending, so before making it PUBLICLY visible re-assert
+      // its media is `Scanned` (never `Pending`/`Blocked`). A throw here is caught by
+      // THIS try (log-and-continue) → the draft stays `draft` (re-review), the app
+      // still deploys, and a re-approve after the scan lands transitions it. No-op for
+      // scan-clean media. Upholds: no approved listing may reference unscanned/Blocked
+      // media.
+      const { assertListingAssetsScanCleanInTx, resolveListingRatingFloorInTx } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      await assertListingAssetsScanCleanInTx(dbWrite, draftListing.id);
+      const abForTransition = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: { blockId: true, manifest: true, category: true, contentRating: true },
+      });
+      if (abForTransition) {
+        // 🔴 RATING FLOOR (go-live). The AppBlock's `contentRating` is MANIFEST-declared
+        // (author-controlled), but the author attached the icon/cover/screenshots
+        // DIRECTLY to this draft while pending, and the attach path never compares an
+        // image's `nsfwLevel` against the listing rating (it rejects only
+        // `Blocked`/`NotFound`). Stamping the declared rating verbatim would therefore
+        // let mature-but-Scanned media go live on a `g`-rated card and pass
+        // `listingMatureFilter(redCapable=false)` to SFW-only users. Raise the declared
+        // rating to the media-derived one when the media is more mature (RAISE-ONLY — a
+        // deliberately higher declaration is never lowered). Same floor the off-site
+        // approve applies via `resolveApprovalContentRating`; upholds the
+        // "draft/pending listings are rated at approve" invariant.
+        const flooredRating = await resolveListingRatingFloorInTx(
+          dbWrite,
+          draftListing.id,
+          abForTransition.contentRating
+        );
+        const transitioned = await dbWrite.appListing.updateMany({
+          // Status-guarded (draft): a re-approve after a mid-flight failure finds the
+          // row already `approved` (0-count, benign) → converges without a duplicate.
+          where: { id: draftListing.id, status: 'draft' },
+          data: {
+            // Link the now-existing AppBlock (was NULL) — first writer satisfies @unique.
+            appBlockId,
+            status: 'approved',
+            // The runtime AppBlock rating (single source of truth — same as the mapper's
+            // create path), FLOORED at the rating derived from the media the author
+            // attached while pending (raise-only; see the comment above).
+            contentRating: flooredRating,
+            // Manifest-governed scalars ONLY. iconId/coverId/screenshots, featured,
+            // slug are NOT touched, so the author's pending media carries forward.
+            ...buildListingScalarSync({
+              manifest: abForTransition.manifest,
+              blockId: abForTransition.blockId,
+              category: abForTransition.category,
+            }),
+          },
+        });
+        if (transitioned.count === 0) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+              `the draft may have been concurrently cleaned/approved — re-approve or backfill converges`
+          );
+        }
+      } else {
+        // Anomalous (the just-approved AppBlock read null) — leave the draft as-is
+        // (recoverable via re-approve / backfill) rather than mint a duplicate.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] draft→approved transition skipped: AppBlock ${appBlockId} not readable ` +
+            `(slug=${request.slug}); the draft stays 'draft' until a re-approve/backfill`
+        );
+      }
+    }
+
+    const existingListing = handledByDraftTransition
+      ? null
+      : await dbRead.appListing.findUnique({
+          where: { appBlockId },
+          select: { id: true, kind: true },
+        });
+    if (handledByDraftTransition) {
+      // Already transitioned the pre-approval draft above — nothing more to do.
+    } else if (!existingListing) {
       const ab = await dbWrite.appBlock.findUnique({
         where: { id: appBlockId },
         select: {
@@ -2384,6 +2679,77 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           select: { id: true },
         });
       }
+    } else {
+      // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
+      //
+      // WHY: an onsite listing's name / tagline / description / category have NO
+      // author surface other than the manifest ("ONSITE = ASSETS-ONLY" — the
+      // `/apps/[appBlockId]/edit` Listing tab is media-only, and
+      // `applyApprovedRevision`'s onsite branch deliberately copies ONLY assets).
+      // Before this, those scalars were snapshotted ONCE at the FIRST approve and
+      // never refreshed, so a dev who added/edited a description (or the newly
+      // manifest-governed tagline) in a later version kept seeing "Missing
+      // description" forever and the store kept serving the v1 copy.
+      //
+      // WHEN: only on a MODERATOR APPROVE — never on a manifest save. A save
+      // parks a pending review; the mod is the gate, so store-visible copy never
+      // changes without re-review.
+      //
+      // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
+      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
+      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      //
+      // `category` comes from `AppBlock.category` — NOT the manifest — because
+      // step (3a) writes the manifest category onto that column ONLY when it is
+      // still null, so a moderator's curated category (via `setMarketplaceMeta`)
+      // survives. Reading the manifest here would silently undo mod curation on
+      // every version bump. When the column is null we still write null (the
+      // "Missing category" advisory stands, and a mod can curate later).
+      //
+      // Keyed on `appBlockId`, which is `@unique` and NULL on shadow revision
+      // rows — so a live media revision in flight cannot be hit by this write.
+      //
+      // 🔴 The `kind: 'onsite'` scope is LOAD-BEARING, not decorative: an
+      // OFF-SITE listing's name/tagline/description are AUTHOR-supplied through
+      // the submit wizard, NOT manifest-governed, so syncing manifest copy onto
+      // one would clobber the author's edits. approveRequest only ever produces
+      // hosted blocks, so a non-onsite row here is anomalous — but a filter that
+      // can silently disable the whole feature must never fail QUIETLY, so we
+      // log the skip and the zero-row outcome rather than no-op into the void.
+      if (existingListing.kind !== 'onsite') {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] skipping listing copy re-sync (slug=${request.slug}, appBlockId=${appBlockId}): ` +
+            `the backing listing is kind='${existingListing.kind}', whose copy is author-supplied, not manifest-governed`
+        );
+      } else {
+        const ab = await dbWrite.appBlock.findUnique({
+          where: { id: appBlockId },
+          select: { blockId: true, manifest: true, category: true },
+        });
+        if (ab) {
+          const synced = await dbWrite.appListing.updateMany({
+            where: { appBlockId, kind: 'onsite' },
+            data: buildListingScalarSync({
+              manifest: ab.manifest,
+              blockId: ab.blockId,
+              category: ab.category,
+            }),
+          });
+          if (synced.count === 0) {
+            // The replica said a listing exists but the PRIMARY matched no row —
+            // replica lag, or the row changed kind between the two reads. Benign
+            // (the next approve converges) but it must be VISIBLE: otherwise the
+            // store silently keeps serving the previously-approved copy, which is
+            // the exact symptom this re-sync exists to fix.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[approveRequest] listing copy re-sync matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+                `the store copy stays on the previously-approved version until the next approve`
+            );
+          }
+        }
+      }
     }
   } catch (err) {
     // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
@@ -2403,8 +2769,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     if (code !== 'P2002') {
       // eslint-disable-next-line no-console
       console.warn(
-        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
-          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+        `[approveRequest] onsite AppListing auto-create/copy-sync failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run, ` +
+          `or (for an existing listing) its store copy stays on the previously-approved version until the next approve: ${
             err instanceof Error ? err.message : String(err)
           }`
       );
@@ -2434,6 +2801,26 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // flip touches only `status`. Same log-and-continue posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
+    // 🔴 Scan-clean go-live gate (same invariant + shared helper as the mod/owner
+    // republish/relist paths): a reset onsite listing was directly asset-editable while
+    // `pending`, so before restoring store visibility (pending → approved) re-read its
+    // assets on the PRIMARY and refuse the restore if any is still scanning or was
+    // `Blocked`. Throwing here is caught by THIS try (log-and-continue): the app code
+    // still deploys — only the store-listing restore is skipped, so the listing stays
+    // `pending` (re-review) instead of going live with unscanned/Blocked media. No-op
+    // for scan-clean assets. `dbWrite` is passed where the helper expects a tx client
+    // (approveRequest is deliberately non-transactional — see the :2326 comment; a
+    // PrismaClient is structurally a TransactionClient for these reads).
+    const resetListing = await dbWrite.appListing.findFirst({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      select: { id: true },
+    });
+    if (resetListing) {
+      const { assertListingAssetsScanCleanInTx } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      await assertListingAssetsScanCleanInTx(dbWrite, resetListing.id);
+    }
     const restored = await dbWrite.appListing.updateMany({
       where: { appBlockId, kind: 'onsite', status: 'pending' },
       data: { status: 'approved' },
@@ -2780,6 +3167,370 @@ export async function markRequestDeployState(
 }
 
 // ---------------------------------------------------------------------------
+// MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
+// ---------------------------------------------------------------------------
+
+/**
+ * The EXACT `deploy_detail` an app author sees when the moderator's re-trigger
+ * could not be handed to the build service.
+ *
+ * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
+ * owner-visible on both `blocks.listMyPublishRequests` and
+ * `GET /api/v1/blocks/submissions`, and the errors `triggerBuild` throws carry
+ * infrastructure detail (the trigger receiver's raw response body, the names of
+ * the trigger env vars). Those go to the server log instead.
+ *
+ * It says what the author actually needs: this is our failure, not their code, and
+ * they should not resubmit.
+ */
+export const RETRIGGER_FAILED_AUTHOR_DETAIL =
+  'Build re-trigger failed: Civitai could not reach the build service. ' +
+  'This is a problem on our side, not with your app — a moderator has to retry it. ' +
+  'No new version submission is needed.';
+
+/** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
+export class RetriggerBuildError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'RetriggerBuildError';
+    this.code = code;
+  }
+}
+
+export type RetriggerBuildParams = {
+  publishRequestId: string;
+  reviewerUserId: number;
+};
+
+export type RetriggerBuildResult = {
+  publishRequestId: string;
+  appBlockId: string;
+  forgejoCommitSha: string;
+};
+
+/**
+ * "APPROVED BUT NOT SUCCESSFULLY BUILT" — the precise, documented definition of a
+ * request this function will re-fire a build for:
+ *
+ *   - `deployState === null`      → the STRANDED case. `approveRequest` made the
+ *                                   approval durable (status='approved' +
+ *                                   forgejo_commit_sha) and then threw inside
+ *                                   `triggerBuild`, so `markRequestDeployState`
+ *                                   was never reached. Nothing is building and
+ *                                   nothing ever will. 🔴 Allowed ONLY once the
+ *                                   approval is older than
+ *                                   DEPLOY_PENDING_GRACE_MS — see below.
+ *   - `deployState === 'failed'`  → the build or the apply ended badly. Re-firing
+ *                                   is exactly the intended recovery (e.g. a
+ *                                   transient registry/cluster failure).
+ *   - `'building' | 'deploying'`  → allowed ONLY once `deployUpdatedAt` is older
+ *                                   than DEPLOY_STALE_AFTER_MS, i.e. the same
+ *                                   "stalled" threshold the owner-facing UI uses.
+ *                                   A genuinely in-flight build is NEVER
+ *                                   re-fired — that would race two PipelineRuns.
+ *
+ * Everything else is refused: `'live'` (already deployed — a rebuild would churn
+ * a serving app for no reason) and any `preview-*` value (the mod review-sandbox
+ * lane, which has its own build/teardown path and must not be driven from here).
+ *
+ * 🔴 WHY THE NULL BRANCH IS TIME-BOUNDED. `approveRequest` writes the approval,
+ * then `await`s `triggerBuild` (up to a 30s network timeout), and only THEN writes
+ * `deploy_state='building'`. In that window the row legitimately reads null on the
+ * PRIMARY while a PipelineRun is already being created — reading the primary
+ * (which this function's caller now does) cannot close it, because the gap is in
+ * WALL TIME, not replica lag. An unbounded null branch therefore let a second
+ * moderator race a second PipelineRun onto the same sha. The bound is
+ * DEPLOY_PENDING_GRACE_MS — the SHARED constant the owner UI already uses for
+ * exactly this approve→mark window, and comfortably above triggerBuild's own
+ * timeout. It is deliberately NOT DEPLOY_STALE_AFTER_MS: making a moderator wait
+ * 45 minutes to recover a request that is already provably stranded would defeat
+ * the recovery this whole procedure exists to provide.
+ *
+ * With NO anchor at all (`reviewedAt` and `deployUpdatedAt` both null) the window
+ * cannot be measured, so the null branch FAILS CLOSED — matching the in-flight
+ * branch's "no timestamp → refuse". `approveRequest` always stamps `reviewedAt`,
+ * so a real approved row always has an anchor.
+ */
+function assertRetriggerableDeployState(
+  deployState: string | null,
+  deployUpdatedAt: Date | null,
+  reviewedAt: Date | null,
+  now: number
+): void {
+  if (deployState === null) {
+    // Anchor: the approval time (the null case has no transition by definition;
+    // deployUpdatedAt is only a fallback for an odd null-state-with-transition row).
+    const anchor = reviewedAt?.getTime() ?? deployUpdatedAt?.getTime() ?? null;
+    if (anchor == null || now - anchor <= DEPLOY_PENDING_GRACE_MS) {
+      throw new RetriggerBuildError(
+        'NOT_RETRIGGERABLE',
+        'This request was just approved — its first build may still be starting. Wait a moment and retry.'
+      );
+    }
+    return; // stranded — the whole point
+  }
+  if (deployState === 'failed') return;
+  if (deployState === 'live') {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'This version is already deployed. Submit a new version instead of rebuilding a live one.'
+    );
+  }
+  if (deployState.startsWith('preview-')) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      `Request is in the review-preview lane (${deployState}); use the review preview controls.`
+    );
+  }
+  if (deployState === 'building' || deployState === 'deploying') {
+    const updated = deployUpdatedAt ? deployUpdatedAt.getTime() : null;
+    if (updated == null || now - updated <= DEPLOY_STALE_AFTER_MS) {
+      throw new RetriggerBuildError(
+        'NOT_RETRIGGERABLE',
+        `A build is already ${deployState}. Wait for it to finish or stall before re-triggering.`
+      );
+    }
+    return; // stalled past the shared threshold → recovery is legitimate
+  }
+  throw new RetriggerBuildError(
+    'NOT_RETRIGGERABLE',
+    `Unexpected deploy state "${deployState}"; not re-triggering.`
+  );
+}
+
+/**
+ * Re-fire the Tekton build for an ALREADY-APPROVED publish request, using the sha
+ * that was already committed and reviewed.
+ *
+ * WHY THIS EXISTS — `approveRequest` is not idempotent (`cannot approve a request
+ * in status approved`) and there was no other way to re-run a build, so an
+ * approved request whose `triggerBuild` threw was UNRECOVERABLE: the only fix was
+ * for the developer to resubmit at a brand-new version number. This is that
+ * missing recovery, and nothing more.
+ *
+ * DELIBERATELY NONE OF `approveRequest`'S SIDE EFFECTS: no Forgejo commit, no
+ * AppBlock / OauthClient mutation, no listing / category / storage provisioning,
+ * no approval notification, no supersede-others sweep. It re-runs step (7) of the
+ * approve flow and only step (7).
+ *
+ * MODERATION IS NOT BYPASSED. The sha comes from the DB row a moderator already
+ * approved; the caller cannot name a sha (see `retriggerBuildSchema`), and the
+ * supersede guard below refuses even the stored sha once a NEWER version has been
+ * approved for the app.
+ */
+export async function retriggerBuild(
+  params: RetriggerBuildParams
+): Promise<RetriggerBuildResult> {
+  const [{ dbWrite }, { env }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/env/server'),
+  ]);
+
+  // (1) The request must exist.
+  //
+  // 🔴 READ THE PRIMARY (`dbWrite`), NOT the replica. Every value below is a
+  // GUARD, and `dbRead` is a separate readonly client that can lag. Concretely:
+  // a moderator approves v2 (primary now has AppBlock.currentVersionSha = B) and
+  // within the lag window another moderator hits "Retrigger" on v1 — a replica
+  // still serving currentVersionSha = A lets the supersede guard (5) pass, and
+  // v1's older reviewed sha gets rebuilt and deployed OVER the newer approval.
+  // The same lag re-opens the deploy-state gate (6): a fresh `deploy_state =
+  // 'building'` can read back as null, so a second PipelineRun races the first.
+  // The redis NX lock does not help — `approveRequest` never takes it. This is a
+  // once-per-click moderator action, so the primary read costs nothing.
+  const request = await dbWrite.appBlockPublishRequest.findUnique({
+    where: { id: params.publishRequestId },
+    select: {
+      id: true,
+      status: true,
+      slug: true,
+      appBlockId: true,
+      forgejoCommitSha: true,
+      deployState: true,
+      deployUpdatedAt: true,
+      // Anchor for the null-deploy-state grace window (see
+      // assertRetriggerableDeployState).
+      reviewedAt: true,
+      appBlock: { select: { id: true, currentVersionSha: true } },
+    },
+  });
+  if (!request) {
+    throw new RetriggerBuildError(
+      'NOT_FOUND',
+      `publish request ${params.publishRequestId} not found`
+    );
+  }
+
+  // (2) Only an APPROVED request has a reviewed, committed sha to rebuild.
+  if (request.status !== 'approved') {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      `cannot re-trigger a build for a request in status ${request.status}`
+    );
+  }
+
+  // (3) The sha comes from the DB and must look like a real commit. The procedure
+  //     input carries no sha at all, so there is nothing to smuggle in here — this
+  //     is the integrity check on our OWN stored value, not input validation.
+  //
+  //     🔴 DISTINCT ERROR CODE, deliberately. Sharing NOT_RETRIGGERABLE with the
+  //     supersede guard (5) made this guard untestable: the stranded fixture also
+  //     trips (5), so a test asserting "malformed sha is refused" passed even with
+  //     this check deleted. A code only this guard can produce makes the assertion
+  //     load-bearing (see the mutation note in the retriggerBuild test suite).
+  const sha = request.forgejoCommitSha;
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new RetriggerBuildError(
+      'INVALID_STORED_SHA',
+      'Request has no valid committed sha to rebuild.'
+    );
+  }
+
+  // (4) An approved request always has a backing block; without it there is
+  //     nothing to build an image for.
+  const appBlockId = request.appBlockId;
+  if (!appBlockId) {
+    throw new RetriggerBuildError('NOT_RETRIGGERABLE', 'Request has no backing app block.');
+  }
+
+  // (5) SUPERSEDED — a newer version has been approved for this app since. The
+  //     app's current sha is what should be serving; rebuilding + deploying this
+  //     OLDER sha would roll the live app backwards. Refuse.
+  const currentSha = request.appBlock?.currentVersionSha ?? null;
+  if (currentSha && currentSha !== sha) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'A newer version has since been approved for this app — re-triggering this older version would deploy stale code.'
+    );
+  }
+
+  // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
+  assertRetriggerableDeployState(
+    request.deployState,
+    request.deployUpdatedAt,
+    request.reviewedAt,
+    Date.now()
+  );
+
+  if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN) {
+    throw new RetriggerBuildError('NOT_RETRIGGERABLE', 'Forgejo not configured');
+  }
+
+  // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
+  //     short-circuits for moderators and would be a no-op here.
+  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
+    '~/server/utils/blocks-retrigger-rate-limit'
+  );
+  const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
+  if (!quota.allowed) {
+    throw new RetriggerBuildError(
+      'RATE_LIMITED',
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+    );
+  }
+  // Single-flight: a double-click must not create two PipelineRuns.
+  if (!(await acquireRetriggerLock(request.id))) {
+    throw new RetriggerBuildError(
+      'RATE_LIMITED',
+      'A re-trigger for this request is already in flight.'
+    );
+  }
+
+  // (8) Fire it — the same step (7) `approveRequest` runs, nothing else.
+  const { triggerBuild } = await import('./apps-pipeline.service');
+  const { setCommitStatus } = await import('./forgejo.service');
+  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+    /\/$/,
+    ''
+  )}/api/internal/blocks/build-callback`;
+
+  await setCommitStatus({
+    slug: request.slug,
+    sha,
+    state: 'pending',
+    context: 'civitai/build',
+    description: 'Build re-queued by a moderator',
+  }).catch(() => undefined);
+
+  try {
+    await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
+  } catch (err) {
+    // Free the single-flight slot so the moderator can retry immediately rather
+    // than waiting out the TTL after a visible failure.
+    await releaseRetriggerLock(request.id);
+    const internalDetail = err instanceof Error ? err.message : String(err);
+    // 🔴 The INTERNAL detail goes to the server log ONLY. `triggerBuild` throws
+    // `trigger <status> <statusText>: <first 240 bytes of the receiver's response
+    // body>`, or a message naming the trigger env vars — infrastructure detail
+    // that must never reach a third-party app author.
+    void import('~/server/logging/client')
+      .then(({ logToAxiom }) =>
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'app-block-retrigger-failed',
+            message: 'retriggerBuild: the build trigger call failed',
+            details: {
+              publishRequestId: request.id,
+              slug: request.slug,
+              appBlockId,
+              reviewerUserId: params.reviewerUserId,
+              error: internalDetail,
+            },
+          },
+          'app-blocks'
+        )
+      )
+      .catch(() => undefined);
+    await setCommitStatus({
+      slug: request.slug,
+      sha,
+      state: 'failure',
+      context: 'civitai/build',
+      // The author can see their own repo's commit statuses, so this stays
+      // generic too — the detail is in the server log above.
+      description: 'Build re-trigger failed; see Civitai for details',
+    }).catch(() => undefined);
+    // 🔴 Make the failure VISIBLE — this is the half of the fix that matters most:
+    // a stranded request's whole problem is that it looks healthy while nothing is
+    // happening. Even when the retrigger ITSELF fails, the row now carries a
+    // 'failed' state + a reason instead of reverting to a silent null.
+    //
+    // 🔴 …but the reason stored here is OWNER-VISIBLE (`deploy_detail` is returned
+    // by BOTH `blocks.listMyPublishRequests` and GET /api/v1/blocks/submissions),
+    // so it is a FIXED, GENERIC, author-actionable string — never the thrown
+    // error. It still goes through `sanitizeBuildFailureReason` so the stored
+    // value keeps that module's "guaranteed printable, bounded text" invariant on
+    // every write path, not just the build-callback one.
+    await markRequestDeployState(
+      request.slug,
+      sha,
+      'failed',
+      sanitizeBuildFailureReason(RETRIGGER_FAILED_AUTHOR_DETAIL) ?? null
+    );
+    throw new RetriggerBuildError(
+      'TRIGGER_FAILED',
+      // Moderator-facing (a `moderatorProcedure` response), and deliberately also
+      // generic: the actionable internal detail is in the server log, keyed by the
+      // publish-request id above.
+      'The build re-trigger could not be sent to the build service. The request is now marked failed; try again once the build service is reachable.'
+    );
+  }
+
+  // Build is queued — advance the lifecycle exactly as approveRequest does, with
+  // an attributable detail so the mod queue shows who re-fired it and when.
+  await markRequestDeployState(
+    request.slug,
+    sha,
+    'building',
+    `Build re-triggered by moderator #${params.reviewerUserId} at ${new Date().toISOString()}`
+  );
+
+  return { publishRequestId: request.id, appBlockId, forgejoCommitSha: sha };
+}
+
+// ---------------------------------------------------------------------------
 // MOD REVIEW SANDBOX (#2831) — run a PENDING version in a temporary, mod-gated
 // preview before approving.
 //
@@ -3030,11 +3781,143 @@ export type PreviewRequestResult = {
 };
 
 /**
- * Start a review preview for a PENDING publish request. Reads the in-review repo
- * HEAD (the pending bundle's source), triggers a REVIEW build (separate image +
- * host from production), stamps state `preview-building`, and returns the review
- * URL the UI polls toward. The build-callback (review-build-callback) advances
- * deploying → live, or flips to failed.
+ * Git's object id for a file's BYTES: `sha1("blob " + <byteLength> + "\0" + bytes)`.
+ *
+ * This is the same id Forgejo reports as a tree entry's `sha`, so computing it
+ * locally lets us compare a reconstructed file set against a repo's tree listing
+ * WITHOUT fetching a single blob back. Verified against `git hash-object` for
+ * text, empty and binary (NUL + high-byte) inputs.
+ *
+ * `byteLength` — not `.length` — is deliberate: a Buffer's `length` happens to be
+ * its byte count today, but the git header is defined in bytes and the explicit
+ * property makes that non-accidental.
+ */
+function gitBlobSha(content: Buffer): string {
+  return createHash('sha1')
+    .update(`blob ${content.byteLength}\0`)
+    .update(content)
+    .digest('hex');
+}
+
+/**
+ * True ONLY when the in-review repo's `main` already holds EXACTLY `files` —
+ * the same set of paths in BOTH directions, and identical bytes at every path.
+ *
+ * Why both directions: the mirror commits with `replaceAllFiles: true`, so a
+ * path that exists in the repo but NOT in `files` would be DELETED by mirroring.
+ * Treating that as "unchanged" would leave a stale file served in the preview,
+ * which is the exact class of bug this whole change exists to remove. The
+ * size-equality check plus a per-path hit for every reconstructed file (with a
+ * duplicate-path guard) is what makes the comparison symmetric.
+ *
+ * FAILS TOWARD CORRECTNESS: any error — the repo or branch not existing yet, a
+ * truncated tree, a transport failure — returns false, i.e. mirror anyway. A
+ * needless mirror costs one commit; a wrong `true` serves a stale preview.
+ */
+async function reviewRepoAlreadyHoldsTree(
+  slug: string,
+  files: Array<{ path: string; content: Buffer }>
+): Promise<boolean> {
+  try {
+    const { listRepoTree } = await import('./forgejo.service');
+    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    if (tree.size !== files.length) return false;
+    const seen = new Set<string>();
+    for (const file of files) {
+      // A duplicate path makes the count argument unsound — refuse to reason.
+      if (seen.has(file.path)) return false;
+      seen.add(file.path);
+      const existing = tree.get(file.path);
+      if (!existing) return false;
+      if (existing !== gitBlobSha(file.content)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the sha the review build should clone + tag for a PENDING publish
+ * request, and make sure the in-review repo actually holds that tree first.
+ *
+ * A pending request has exactly one of two origins, and they do NOT share a
+ * review source:
+ *
+ *   - ZIP submission (`submitVersion`): a real `bundleKey`. That call already
+ *     pushed the submitted files into the in-review repo (replaceAllFiles), so
+ *     its HEAD *is* this version's source. Unchanged behaviour.
+ *   - git push (`recordPendingFromPush`): empty `bundleKey` + the pushed
+ *     `forgejoCommitSha`. Nothing was ever written to the in-review repo for
+ *     this version — the developer's own repo at the pushed commit is the
+ *     reviewable artifact. Reading the in-review HEAD here would build whatever
+ *     an OLDER ZIP submission left behind (a silently WRONG preview), or 404 on
+ *     a slug that has only ever been pushed to. So mirror the reviewed commit's
+ *     tree into the in-review repo first, using the same reconstruct → extract
+ *     pipeline `approveRequest` uses for this origin, and build the sha that
+ *     mirror produced.
+ *
+ * REPEAT-PREVIEW SHORT-CIRCUIT: on the push path, mirror only when the tree
+ * actually differs. `commitFiles` does NOT compare content — for an existing
+ * path it always emits an `update` op — so without this guard every "Rebuild
+ * preview" click would mint a NEW commit, hence a new sha, a new preview host
+ * and a new resource set for an unchanged tree. Three downstream guards are
+ * keyed on the sha being stable across rebuilds (the replay-dedup key, the
+ * concurrent-preview cap that excludes the current request, and the
+ * deploying-state callback write), so a churning sha silently weakens all
+ * three. Comparing first also means a byte-identical rebuild never has to rely
+ * on the remote accepting a batch of no-op update ops.
+ *
+ * INVARIANT: neither pointer set means the request cannot be attributed to a
+ * source tree at all — throw rather than fall through to the in-review HEAD and
+ * preview an unrelated version. (Mirrors `approveRequest`'s two-origin split;
+ * what actually SHIPS is still driven by the pinned commit there, untouched.)
+ */
+async function resolveReviewSourceSha(request: {
+  id: string;
+  slug: string;
+  bundleKey: string;
+  forgejoCommitSha: string | null;
+}): Promise<string> {
+  const { getReviewRepoHeadSha, ensureReviewRepo, commitFiles } = await import('./forgejo.service');
+
+  if (request.bundleKey) return getReviewRepoHeadSha(request.slug);
+
+  if (!request.forgejoCommitSha) {
+    throw new Error(`publish request ${request.id} has neither a bundle nor a commit to preview`);
+  }
+
+  const bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+  const files = await extractBundleFilesFromBuffer(bundleBuffer);
+  await ensureReviewRepo(request.slug);
+
+  // Unchanged tree (a repeat "Rebuild preview" on the same commit) → reuse the
+  // commit that already holds it, so the preview sha/host stay stable. Compares
+  // what would ACTUALLY be committed — the reconstructed file set — rather than
+  // the source tree listing, so a divergence introduced by the reconstruct →
+  // extract pipeline can never be mistaken for "nothing changed".
+  if (await reviewRepoAlreadyHoldsTree(request.slug, files)) {
+    return getReviewRepoHeadSha(request.slug);
+  }
+
+  const { sha } = await commitFiles({
+    org: REVIEW_REPO_ORG,
+    slug: request.slug,
+    files,
+    message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
+    replaceAllFiles: true,
+  });
+  return sha;
+}
+
+/**
+ * Start a review preview for a PENDING publish request. Resolves the pending
+ * version's source tree (see {@link resolveReviewSourceSha} — the in-review repo
+ * HEAD for a ZIP submission, the mirrored push commit for a git-push one),
+ * triggers a REVIEW build (separate image + host from production), stamps state
+ * `preview-building`, and returns the review URL the UI polls toward. The
+ * build-callback (review-build-callback) advances deploying → live, or flips to
+ * failed.
  *
  * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
  * fails — the router maps it. The whole feature is dark behind the mod-only
@@ -3048,12 +3931,14 @@ export async function previewRequest(
     import('~/server/db/client'),
     import('~/env/server'),
   ]);
-  const { getReviewRepoHeadSha } = await import('./forgejo.service');
   const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
 
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    select: { id: true, status: true, slug: true },
+    // bundleKey + forgejoCommitSha are the ORIGIN discriminator (ZIP upload vs
+    // git push). Without them this cannot tell which repo holds the pending
+    // version's source — see resolveReviewSourceSha.
+    select: { id: true, status: true, slug: true, bundleKey: true, forgejoCommitSha: true },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
@@ -3080,9 +3965,11 @@ export async function previewRequest(
     );
   }
 
-  // The in-review repo HEAD is the pending bundle's source (submitVersion pushed
-  // it there; one pending per slug). Build clones + tags at this sha.
-  const sha = await getReviewRepoHeadSha(request.slug);
+  // Resolve the pending version's source tree. ZIP submissions read the
+  // in-review repo HEAD (submitVersion pushed it there; one pending per slug);
+  // git-push submissions mirror the reviewed commit in first. Build clones +
+  // tags at this sha.
+  const sha = await resolveReviewSourceSha(request);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
@@ -3355,6 +4242,20 @@ export type MintReviewBlockTokenResult = {
   /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
    *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
   sandbox: string;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831) — true iff this token was minted
+   * with `runForReal:true` (a mod's consent-gated opt-in to run the unapproved app
+   * for real against their OWN account). The host uses it to run the REAL
+   * side-effect handlers instead of NACKing; default false → render-only sandbox.
+   */
+  runForReal: boolean;
+  /**
+   * The AGGREGATE (session) Buzz ceiling the mod's OWN account can spend across
+   * all run-for-real generations of THIS request (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`),
+   * surfaced so the consent copy + active banner show the exact enforced number.
+   * null on a render-only (runForReal:false) mint.
+   */
+  buzzCap: number | null;
 };
 
 /**
@@ -3391,7 +4292,20 @@ export async function mintReviewBlockToken(opts: {
   publishRequestId: string;
   /** The calling moderator's id — the token `sub` is bound to it (self-bound). */
   modUserId: number;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
+   * sandbox, BYTE-IDENTICAL to the pre-existing behaviour (render-only allowlist,
+   * keyCanSpend:false, no budget, no run-for-real claim). When true (a mod's
+   * EXPLICIT, consent-gated opt-in), the SAME audited clamp belt runs with the
+   * wider `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` and `keyCanSpend:true`, a
+   * per-call Buzz budget is attached, and a signed `reviewRunForReal` claim
+   * selects the tight aggregate session Buzz cap at runtime. STILL: self-bound to
+   * the mod, forced-SFW, money-OUT (`social:tip:self`) excluded, and clamped to
+   * (declared ∩ allowlist) — a malicious manifest can never exceed either.
+   */
+  runForReal?: boolean;
 }): Promise<MintReviewBlockTokenResult> {
+  const runForReal = opts.runForReal === true;
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: opts.publishRequestId },
@@ -3412,6 +4326,7 @@ export async function mintReviewBlockToken(opts: {
     scopes?: unknown;
     name?: unknown;
     iframe?: { sandbox?: unknown } | null;
+    page?: unknown;
   };
   const manifestScopes: string[] = Array.isArray(manifest.scopes)
     ? manifest.scopes.filter((s): s is string => typeof s === 'string')
@@ -3426,17 +4341,41 @@ export async function mintReviewBlockToken(opts: {
     clampDevScopes,
     signDevScopedPageToken,
     REVIEW_MINT_SCOPE_ALLOWLIST,
+    REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    resolveDevBuzzBudget,
+    parseManifestBuzzBudget,
     FORCED_SFW_CEILING,
   } = await import('./dev-scoped-mint.service');
+  const { REVIEW_RUN_FOR_REAL_BUZZ_CAP } = await import(
+    '~/shared/constants/block-scope.constants'
+  );
 
-  // The AUDITED clamp belt — render-only allowlist + NO OAuth ceiling (a pending
-  // app has no OauthClient) + keyCanSpend:false (belt-and-suspenders spend strip).
+  // The AUDITED clamp belt (SAME function both modes — never fork the clamp).
+  //   - render-only (default): render-only allowlist + keyCanSpend:false → the
+  //     spend scope is stripped even if the manifest declares it. BYTE-IDENTICAL
+  //     to the pre-existing sandbox.
+  //   - run-for-real (mod opt-in): the WIDER run-for-real allowlist + keyCanSpend:true.
+  //     Granted = (manifest DECLARED scopes) ∩ allowlist ∩ (page money-out forbid),
+  //     so a malicious manifest declaring extra scopes still gets ONLY declared∩allowlist.
+  // NO OAuth ceiling in either mode (a pending app has no OauthClient; passing 0
+  // would wrongly strip every non-skip scope — see clampDevScopes doc).
   const granted = clampDevScopes({
     scopeSource: manifestScopes,
     oauthAllowed: null,
-    keyCanSpend: false,
-    allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    keyCanSpend: runForReal,
+    allowlist: runForReal
+      ? REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST
+      : REVIEW_MINT_SCOPE_ALLOWLIST,
   });
+
+  // Per-call Buzz budget — ONLY for run-for-real AND only if the spend scope
+  // survived the clamp. Resolved from the manifest page's declared per-gen budget,
+  // hard-clamped to the dev per-call cap (DEV_BUZZ_BUDGET_CAP inside resolveDevBuzzBudget).
+  // The AGGREGATE session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP) is enforced
+  // separately at runtime — a per-call budget alone can't bound a looping app.
+  const buzzBudget = runForReal
+    ? resolveDevBuzzBudget(granted, undefined, parseManifestBuzzBudget(manifest.page))
+    : undefined;
 
   // SIGN — self-bound to the MOD, forced-SFW, domain:null, synthetic non-resolving
   // ids (see the fn doc). `signAppBlockId` = the `pubreq_<ULID>` request id (already
@@ -3452,7 +4391,8 @@ export async function mintReviewBlockToken(opts: {
     signAppBlockId: row.id,
     blockInstanceId: `page_${row.id}`,
     granted,
-    buzzBudget: undefined,
+    buzzBudget,
+    reviewRunForReal: runForReal,
   });
 
   // MINT-TIME AUDIT (mirror the `app-blocks.dev-tunnel.mint` structured event):
@@ -3467,6 +4407,12 @@ export async function mintReviewBlockToken(opts: {
       publishRequestId: row.id,
       slug: row.slug,
       scopes: granted,
+      // Run-for-real is a PRIVILEGED, money-touching action — record the opt-in
+      // (and the enforced budgets) distinctly so the forensic trail shows WHEN a
+      // mod ran an unapproved app for real against their own account.
+      runForReal,
+      buzzBudget: buzzBudget ?? null,
+      buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
     },
     'webhooks'
   ).catch(() => null);
@@ -3483,6 +4429,8 @@ export async function mintReviewBlockToken(opts: {
     blockInstanceId: `page_${row.id}`,
     appName: manifestName,
     sandbox: manifestSandbox,
+    runForReal,
+    buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
   };
 }
 
@@ -3493,6 +4441,27 @@ export async function mintReviewBlockToken(opts: {
  * review k8s resources by label selector, swallowing every error.
  */
 export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+  // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
+  // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
+  // for real. Runs FIRST, in its OWN try/catch, so a downstream failure (the
+  // fallible k8s `deleteReviewResources`, or a missing row) can NEVER skip the
+  // DROP and leak the mod's preview data in appsDb. Best-effort + idempotent (IF
+  // EXISTS): a request that never used preview storage has no schema to drop, and
+  // this NEVER touches the approved app's `app_<slug>` schema. Only needs the
+  // publishRequestId (not the row), so it's safe to run before the row lookup.
+  try {
+    const { AppStorageProvisioner } = await import(
+      '~/server/services/apps/storage-provision.service'
+    );
+    await AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId });
+  } catch (previewErr) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewForRequest] preview-storage teardown failed (id=${publishRequestId}): ${
+        previewErr instanceof Error ? previewErr.message : String(previewErr)
+      }`
+    );
+  }
   try {
     const { dbRead } = await import('~/server/db/client');
     const row = await dbRead.appBlockPublishRequest.findUnique({
@@ -3888,8 +4857,9 @@ async function getPreviousApprovedFiles(
  * Re-fetches the pending bundle (MinIO ZIP path or Forgejo push path, mirroring
  * getPublishRequestScreenshots) + the previous approved bundle's bytes, then
  * runs the pure, bounded computeBundleLineDiff. Binary / oversized / huge-diff
- * files are explicitly marked elided (never inlined) so the UI shows the Forgejo
- * fallback. First version ⇒ every file is a whole-file add.
+ * files are explicitly marked elided (never inlined) so the UI labels them with
+ * the reason instead of rendering them. First version ⇒ every file is a
+ * whole-file add.
  *
  * Mod-only at the router layer.
  */
@@ -3973,6 +4943,21 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       rejectionReason: reason,
     },
   });
+
+  // W13 draft-at-submit — a first-version REJECT discards the pre-approval DRAFT
+  // listing (release the slug + drop unreviewed media), mirroring the off-site
+  // `closeTerminalListing` draft branch. No-op for a subsequent version (no draft) or a
+  // legacy pre-ship pending request. Best-effort: the reject has already committed, so a
+  // cleanup failure must never fail the outcome.
+  try {
+    await deleteOnsiteDraftListingForSlug({ slug: row.slug });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] pre-approval draft cleanup failed (id=${params.publishRequestId}, slug=${row.slug}); ` +
+        `reject STANDS: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up.
   // Best-effort + non-blocking: the reject has landed, so a teardown failure

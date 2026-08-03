@@ -24,7 +24,11 @@ import {
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
-import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  assertAssetsScanClean,
+  assertListingMeetsFloor,
+} from '~/server/services/blocks/app-listing-assets.service';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -123,8 +127,10 @@ export type SubmitExternalListingResult = {
  * Owner-binding (IDOR): both the `AppListing.userId` and the
  * `AppListingPublishRequest.submittedByUserId` are set from the AUTHENTICATED
  * caller (`userId`) — the input carries NO owner field, so a caller can never
- * submit on another user's behalf. The linked OAuth client is ALSO ownership-checked
- * (`loadConnectClientForListing`: exists / owned-by-caller / not an App-Block client).
+ * submit on another user's behalf. The linked OAuth client is ALSO gated
+ * (`loadConnectClientForListing`: exists / not an App-Block client / owned-by-caller —
+ * the owner check is relaxed for a MODERATOR, who may link any non-App-Block client,
+ * mirroring the mod-only global client search).
  *
  * REQUIRES a `connectClientId` (the caller's own OAuth client) + a DISCLOSED
  * `requestedScopes` subset (⊆ the client's `allowedScopes` ceiling) + per-scope
@@ -149,8 +155,15 @@ export type SubmitExternalListingResult = {
 export async function submitExternalListing(opts: {
   input: SubmitExternalListingInput;
   userId: number;
+  /**
+   * The caller's moderator status. When true, `loadConnectClientForListing` skips the
+   * owner-only check so a mod may link ANY (non-App-Block) OAuth client — mirroring the
+   * mod-only global client search that feeds the submit picker. A non-mod stays
+   * restricted to their own clients. The listing OWNER is still the caller (`userId`).
+   */
+  isModerator?: boolean;
 }): Promise<SubmitExternalListingResult> {
-  const { input, userId } = opts;
+  const { input, userId, isModerator = false } = opts;
 
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
@@ -188,7 +201,7 @@ export async function submitExternalListing(opts: {
   // edit re-enters review). The subset check is trivially satisfied now (the set
   // equals its own ceiling) but kept as a defensive assertion; the per-scope
   // justifications are validated against the derived set.
-  const client = await loadConnectClientForListing(input.connectClientId, userId);
+  const client = await loadConnectClientForListing(input.connectClientId, userId, isModerator);
   const requestedScopes = client.allowedScopes;
   assertConnectScopesValid({
     requestedScopes,
@@ -292,19 +305,26 @@ export async function submitExternalListing(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Load the caller's OWN OAuth client and assert it is eligible to back an external
- * listing: it must EXIST, be OWNED by `userId` (IDOR), and NOT be an App-Block
- * client (`isAppBlockOauthClientId` — those are managed by the App Blocks flow, not
- * hand-listed). Returns the client's `allowedScopes` ceiling. An external listing does
- * NOT require the client to be `isVerified` (decision Q4). All failures are friendly
- * TRPCErrors (parity with `submitExternalListing`'s validation style).
+ * Load an OAuth client and assert it is eligible to back an external listing: it must
+ * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
+ * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
+ * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * does NOT require the client to be `isVerified` (decision Q4). All failures are
+ * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
+ *
+ * `isModerator`: when true, the owner-only check is BYPASSED — a moderator may link
+ * ANY (non-App-Block) OAuth client, mirroring the mod-only GLOBAL client search that
+ * feeds the external-submit picker (`oauthClient.searchForModerator`). This ONLY
+ * relaxes ownership: the App-Block exclusion (for everyone) and the existence check
+ * still hold. A non-moderator stays restricted to their own clients.
  */
-async function loadConnectClientForListing(
+export async function loadConnectClientForListing(
   connectClientId: string,
-  userId: number
+  userId: number,
+  isModerator = false
 ): Promise<{ id: string; allowedScopes: number }> {
   // App-block clients are excluded up-front (cheap, no DB) — they are never a
-  // hand-authored connect target.
+  // hand-authored connect target. This exclusion holds for EVERYONE, mods included.
   if (isAppBlockOauthClientId(connectClientId)) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -318,7 +338,9 @@ async function loadConnectClientForListing(
   if (!client) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
   }
-  if (client.userId !== userId) {
+  // Owner-only — BYPASSED for a moderator (who can pick any client via the mod-only
+  // global search). A non-mod picking a client they don't own is still FORBIDDEN.
+  if (!isModerator && client.userId !== userId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'you can only list an OAuth client you own',
@@ -367,13 +389,20 @@ function assertConnectScopesValid(opts: {
  * the new owner's ceiling. Validates the justifications against the derived set.
  * Shared by `updateListing` (in-place / material-shadow) and `updateRevisionDraft`
  * (approved shadow scalar write) so both snapshot scopes identically.
+ *
+ * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
+ * may edit a listing that links a client they don't own (mirroring the mod-only
+ * client search on submit). The existence check + scope-subset / justification
+ * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * are UNCHANGED. A non-mod is still refused a foreign client.
  */
-async function deriveScopePatch(opts: {
+export async function deriveScopePatch(opts: {
   connectClientId: string | null;
   patch: UpdateListingPatch;
   userId: number;
+  isModerator?: boolean;
 }): Promise<{ effectivePatch: UpdateListingPatch; connectAllowedScopes: number | null }> {
-  const { connectClientId, patch, userId } = opts;
+  const { connectClientId, patch, userId, isModerator = false } = opts;
   const editsScopes =
     patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
   if (!editsScopes) return { effectivePatch: patch, connectAllowedScopes: null };
@@ -391,7 +420,9 @@ async function deriveScopePatch(opts: {
   if (!client) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
   }
-  if (client.userId !== userId) {
+  // Owner re-assertion — BYPASSED for a moderator (the post-submit transfer guard is
+  // intentionally skipped for mods, who may link any client). Non-mods still refused.
+  if (!isModerator && client.userId !== userId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'you can only list an OAuth client you own',
@@ -829,8 +860,15 @@ export async function updateListing(opts: {
   listingId: string;
   patch: UpdateListingPatch;
   userId: number;
+  /**
+   * The caller's moderator status — threaded into `deriveScopePatch` so a mod editing
+   * a listing that links a foreign OAuth client isn't blocked by the owner re-assertion
+   * (mirrors the mod-only client search on submit). Listing OWNERSHIP is unaffected —
+   * `loadOwnedEditableListing` still requires the caller to own the LISTING itself.
+   */
+  isModerator?: boolean;
 }): Promise<UpdateListingResult> {
-  const { listingId, patch, userId } = opts;
+  const { listingId, patch, userId, isModerator = false } = opts;
   const listing = await loadOwnedEditableListing(listingId, userId);
 
   // A shadow is an internal draft — never editable via this top-level path (its
@@ -851,6 +889,7 @@ export async function updateListing(opts: {
     connectClientId: listing.connectClientId,
     patch,
     userId,
+    isModerator,
   });
   const patchOpts = { connectAllowedScopes };
 
@@ -1098,12 +1137,14 @@ export async function submitListingRevision(opts: {
     );
   }
 
-  // Asset-completeness (authoritative on the primary — the asset mutators write to
-  // dbWrite, so a replica count could be stale-complete under lag) + URL re-validate.
+  // Publish FLOOR gate (icon+cover required; screenshots optional) — authoritative
+  // on the primary (the asset mutators write to dbWrite, so a replica count could be
+  // stale under lag). screenshotCount is still computed for the arg shape but the
+  // floor helper ignores it. + URL re-validate.
   const screenshotCount = await dbWrite.appListingScreenshot.count({
     where: { appListingId: shadowId, imageId: { not: null } },
   });
-  assertListingAssetsComplete({
+  assertListingMeetsFloor({
     iconId: shadow.iconId,
     coverId: shadow.coverId,
     screenshotCount,
@@ -1230,15 +1271,37 @@ export type GetMyListingForEditResult = {
 };
 
 /** Load a listing's scalars + current assets (edge-resolved URLs) + connect scope
- *  snapshot for edit prefill. */
-async function loadListingEditView(listingId: string): Promise<{
+ *  snapshot for edit prefill.
+ *
+ * 🔴 READ-AFTER-WRITE: defaults to the REPLICA (`dbRead`) — correct only for a row that
+ * was written long ago. A caller reading a SHADOW revision MUST pass `dbWrite`.
+ *
+ * The predicate is "is the target a shadow?", NOT "did I just create it".
+ * `beginListingRevision(...).created === false` means only that *this* call did not do
+ * the INSERT — it says NOTHING about whether the replica has the row. The shadow is
+ * minted on the PRIMARY by whoever got there first, and in this flow that is routinely
+ * microseconds earlier and in a DIFFERENT request: the media editor fires its own
+ * client-side `beginListingRevision` mutation on mount, `getMyListingForEdit` mints one
+ * for the same parent, a second tab does either. So a `created === false` read off the
+ * replica misses under lag exactly like a `created === true` one: the `findUnique`
+ * returns null, this throws NOT_FOUND → tRPC NOT_FOUND → the editor renders
+ * `<NotFound />` (its query has `retry: false`), discarding the whole editor including
+ * any in-flight upload. Because the client invalidates on every asset mutation, that is
+ * once per mutation, not once per page load.
+ *
+ * Same hazard the screenshot re-pack guards against in `app-listing-assets.service.ts`.
+ * Do NOT route a non-shadow (in-place draft/pending) read to the primary. */
+async function loadListingEditView(
+  listingId: string,
+  db: typeof dbRead = dbRead
+): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
-  const row = (await dbRead.appListing.findUnique({
+  const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       name: true,
@@ -1388,7 +1451,9 @@ export async function getMyListingForEdit(opts: {
     const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
       where: {
         status: 'pending',
-        kind: 'offsite',
+        // Onsite media revisions are kind:'onsite'; widen so the onsite "revision in
+        // review" badge resolves (the probe is already scoped to this parent's shadows).
+        kind: { in: [...REVIEWABLE_LISTING_KINDS] },
         appListing: { revisionOfId: listingId },
       },
       select: { id: true },
@@ -1396,7 +1461,10 @@ export async function getMyListingForEdit(opts: {
     hasPendingRevision = !!pendingRevisionReq;
   }
 
-  const view = await loadListingEditView(effectiveId);
+  // 🔴 READ-AFTER-WRITE — same rule as `getMyListingForApp`: a SHADOW target is read
+  // from the PRIMARY (it may have been minted microseconds ago by ANY caller), an
+  // in-place target from the replica. See `loadListingEditView`.
+  const view = await loadListingEditView(effectiveId, effectiveId !== listingId ? dbWrite : dbRead);
 
   // Resolve the connect client's CURRENT allowedScopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
@@ -1426,6 +1494,220 @@ export async function getMyListingForEdit(opts: {
   };
 }
 
+export type GetMyListingForAppResult = {
+  /** The backing `AppListing.id` — the target for `beginListingRevision` + the owner asset procs. */
+  appListingId: string;
+  /** The listing's TRUE lifecycle status (`draft|pending|approved|rejected|removed`). */
+  status: string;
+  /** The listing's stored content rating (drives the asset NSFW-scan threshold). */
+  contentRating: string;
+  /** Whether a shadow-revision publish request is already under review for this listing. */
+  hasPendingRevision: boolean;
+  /**
+   * The in-progress SHADOW revision id for an APPROVED parent (resolved server-side,
+   * idempotently — the same id the client's `beginListingRevision` returns), else
+   * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
+   */
+  shadowId: string | null;
+  /**
+   * The id the client hands to the asset procs: `shadowId` when a shadow already
+   * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
+   * on an approved parent arrives carrying the PARENT id — the asset service mints the
+   * shadow and re-targets (and re-maps screenshot row ids) server-side. See
+   * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`.
+   */
+  editTargetId: string;
+  /**
+   * Non-null when this listing's media CANNOT be edited at all (`removed` / `rejected`
+   * / the row is itself an internal shadow). The editor renders it as its inline alert
+   * instead of mounting the asset step — the same surface the client's on-mount
+   * `beginListingRevision` used to produce via `INVALID_REVISION`. `null` for every
+   * editable listing (`draft` / `pending` edited in place; `approved` via a revision).
+   */
+  editBlockedReason: string | null;
+  /**
+   * The EDITABLE target's current assets, edge-resolved — icon / cover / screenshots.
+   *
+   * 🔴 These are the assets of the EFFECTIVE edit target: the SHADOW's rows when a
+   * shadow EXISTS, the listing's own rows otherwise. NEVER the live parent's rows
+   * when a shadow exists — the media editor mutates + floor-checks exactly what it
+   * is handed, so returning the parent's `AppListingScreenshot` ids alongside a live
+   * shadow would let a "remove screenshot" delete a row from the LIVE served listing,
+   * bypassing moderator review. Same rule as `getMyListingForEdit`.
+   *
+   * 🔴 Under LAZY creation an approved parent with NO shadow yet projects the PARENT's
+   * rows — which IS the hazard above, so it is contained on the WRITE side: every
+   * screenshot proc re-maps a parent row id onto the freshly-minted shadow's clone
+   * before mutating, and `assertOwnerAssetEditable` fires (fail-closed) if that re-map
+   * ever hands back the parent. See `resolveOwnerAssetEditTarget`.
+   */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
+};
+
+/**
+ * OWNER: resolve the caller's OWN listing for the owner-facing on-site
+ * listing-media page. Resolves by backing `appBlockId` (`AppListing.appBlockId` is
+ * `@unique`) when the app is approved; falls back to the pre-approval DRAFT BY SLUG
+ * (`kind='onsite', appBlockId IS NULL, status='draft'`) for a FIRST-version app that
+ * is still pending (no AppBlock exists yet) — the W13 draft-at-submit wiring gap that
+ * lets the author set media WHILE pending. At least one of `appBlockId` / `slug` must
+ * be given. Returns the `AppListing.id` (the target the page then passes to
+ * `beginListingRevision` + the owner-gated asset procs), the listing's lifecycle
+ * status + content rating, and whether a revision is already under review.
+ * Owner-bound: a listing owned by another user → NOT_OWNED (→FORBIDDEN); no listing
+ * row for the app → NOT_FOUND. Kind-agnostic (works for both on-site and off-site
+ * listings — the on-site owner UI is the first caller).
+ *
+ * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
+ * them the media editor had no way to see the icon/cover it is about to edit: it
+ * rendered every slot as "none" and its publish-floor check (icon+cover attached)
+ * could never be satisfied, so "Submit for review" stayed permanently disabled —
+ * the whole on-site listing-media flow was uncompletable. The assets come from the
+ * EFFECTIVE source: an approved parent's shadow WHEN ONE ALREADY EXISTS, else the
+ * listing's own rows.
+ *
+ * 🔴 THIS IS A READ. It does NOT create a shadow. It used to call
+ * `beginListingRevision`, so merely OPENING the media tab minted a `draft`
+ * `AppListing` — measured on prod 2026-07-30: 7 shadows, 7/7 with
+ * `updated_at == created_at` (never written since their clone tx), 6 of them minted
+ * that day purely by page views, three 1.5 s apart; 78% of approved onsite parents
+ * carried a shadow representing no edit, and they self-refilled on sight. A `.query`
+ * must not write. The shadow is now minted LAZILY by the first asset MUTATION (see
+ * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`), so every shadow
+ * that exists represents real work.
+ */
+export async function getMyListingForApp(opts: {
+  appBlockId?: string;
+  slug?: string;
+  userId: number;
+}): Promise<GetMyListingForAppResult> {
+  const { appBlockId, slug, userId } = opts;
+  const entrySelect = {
+    id: true,
+    userId: true,
+    status: true,
+    contentRating: true,
+    revisionOfId: true,
+  } as const;
+  let listing = appBlockId
+    ? await dbRead.appListing.findUnique({
+        where: { appBlockId },
+        select: entrySelect,
+      })
+    : null;
+  // (W13 draft-at-submit) Pre-approval DRAFT fallback: a FIRST-version app has no
+  // backing AppBlock yet, so its draft listing (minted at submit) has
+  // `appBlockId = NULL` and is only reachable BY SLUG. Resolve it when the appBlockId
+  // lookup missed (or only a slug was supplied) so the owner-media page can reach the
+  // draft to set icon/cover/screenshots WHILE the app is pending. Scoped to the exact
+  // pre-approval-draft shape so this can never resolve some other kind/status by slug.
+  // Owner-bound below (unchanged).
+  if (!listing && slug) {
+    listing = await dbRead.appListing.findFirst({
+      where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      select: entrySelect,
+    });
+  }
+  if (!listing) {
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
+    );
+  }
+  if (listing.userId !== userId) {
+    throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
+  }
+  // A pending revision REQUEST (not mere shadow existence) drives the "already
+  // under review" notice — mirrors `getMyListingForEdit`. Kind-agnostic: a revision
+  // request carries the parent listing's kind, so match on the shadow relation only.
+  const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
+    where: { status: 'pending', appListing: { revisionOfId: listing.id } },
+    select: { id: true },
+  });
+
+  // Resolve the EFFECTIVE edit target before reading assets — WITHOUT creating one.
+  // For an approved parent that is its shadow revision IF one already exists; a
+  // non-approved listing (draft / pending) has no shadow and is edited in place.
+  //
+  // 🔴 The existence probe reads the PRIMARY, not the replica. The client invalidates
+  // this query after EVERY asset mutation, and the FIRST such mutation is what mints
+  // the shadow — so the very next call is a read-after-write on a row inserted
+  // milliseconds ago. Missing it on a lagging replica would re-project the PARENT's
+  // rows (and their screenshot row ids) right after the shadow started diverging.
+  let effectiveId = listing.id;
+  let shadowId: string | null = null;
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
+    const existing = await dbWrite.appListing.findFirst({
+      where: { revisionOfId: listing.id },
+      select: { id: true },
+    });
+    if (existing) {
+      shadowId = existing.id;
+      effectiveId = existing.id;
+    }
+  }
+  // 🔴 READ-AFTER-WRITE: read a SHADOW back from the PRIMARY — always. A shadow read
+  // that misses on the replica throws NOT_FOUND → tRPC NOT_FOUND → `<NotFound />`
+  // (`retry: false`), discarding the editor mid-upload. Every non-shadow target
+  // (draft/pending edited in place, or an approved parent with no shadow yet) is old
+  // and stays on the replica.
+  const { assets } = await loadListingEditView(
+    effectiveId,
+    effectiveId !== listing.id ? dbWrite : dbRead
+  );
+
+  return {
+    appListingId: listing.id,
+    status: listing.status,
+    // Nullable column; fall back to the safest rating so the asset step's scan
+    // threshold is always defined.
+    contentRating: listing.contentRating ?? 'g',
+    hasPendingRevision: !!pendingRevisionReq,
+    shadowId,
+    editTargetId: effectiveId,
+    editBlockedReason: listingMediaEditBlockedReason(listing),
+    assets,
+  };
+}
+
+/**
+ * Why this listing's MEDIA cannot be edited at all, or `null` when it can.
+ *
+ * The client used to learn this by firing `beginListingRevision` on mount and
+ * rendering its `INVALID_REVISION` message inline — the only thing that stopped the
+ * media editor mounting against a `removed` / `rejected` listing. Lazy creation
+ * removes that call, so the verdict is computed here (read-only) and surfaced on the
+ * read. Mirrors `updateListing`'s state routing: draft/pending edit in place,
+ * approved edits through a revision, rejected → resubmit, removed → terminal. An
+ * internal shadow (`revisionOfId != null`) is not a page the owner addresses directly.
+ *
+ * Pure + exported so the branch table is unit-testable without a DB.
+ */
+export function listingMediaEditBlockedReason(listing: {
+  status: string;
+  revisionOfId: string | null;
+}): string | null {
+  if (listing.revisionOfId != null) {
+    return 'this listing is an internal revision draft and cannot be edited directly';
+  }
+  switch (listing.status) {
+    case 'draft':
+    case 'pending':
+    case 'approved':
+      return null;
+    case 'rejected':
+      return 'this listing was rejected; submit a new listing instead of editing it';
+    case 'removed':
+      return 'this listing has been removed by a moderator and can no longer be edited';
+    default:
+      return `cannot edit a listing in status ${listing.status}`;
+  }
+}
+
 /**
  * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the "direct once
  * shadow exists" scalar write for the approved edit flow). Symmetric with the
@@ -1438,8 +1720,14 @@ export async function updateRevisionDraft(opts: {
   shadowId: string;
   patch: UpdateListingPatch;
   userId: number;
+  /**
+   * The caller's moderator status — threaded into `deriveScopePatch` (same rationale
+   * as `updateListing`): a mod editing a shadow whose parent links a foreign OAuth
+   * client isn't blocked by the owner re-assertion. Listing OWNERSHIP unaffected.
+   */
+  isModerator?: boolean;
 }): Promise<{ shadowId: string }> {
-  const { shadowId, patch, userId } = opts;
+  const { shadowId, patch, userId, isModerator = false } = opts;
   const shadow = await loadOwnedEditableListing(shadowId, userId);
   if (shadow.revisionOfId == null) {
     throw new OffsiteRequestError(
@@ -1461,11 +1749,24 @@ export async function updateRevisionDraft(opts: {
     connectClientId: shadow.connectClientId,
     patch,
     userId,
+    isModerator,
   });
   const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
+
+// ---------------------------------------------------------------------------
+// Listing-request kinds surfaced by the CONSOLIDATION half of the flow
+// (approve/reject + the mod review queue + my-submissions).
+//
+// 🔴 INVARIANT: the ONLY producer of a `kind='onsite'` `AppListingPublishRequest`
+// is `submitListingRevision` on an onsite SHADOW (i.e. an onsite media revision) —
+// the onsite CODE review runs over a DIFFERENT table (`AppBlockPublishRequest`).
+// So widening these gates from `'offsite'` to this set surfaces EXACTLY onsite
+// media revisions, nothing else. (Asserted in the service tests.)
+// ---------------------------------------------------------------------------
+const REVIEWABLE_LISTING_KINDS = ['onsite', 'offsite'] as const;
 
 // ---------------------------------------------------------------------------
 // approveExternalRequest / rejectExternalRequest (moderator) — PR-b.
@@ -1476,6 +1777,14 @@ export async function updateRevisionDraft(opts: {
 // surfaces it in the store); reject DELETES the draft (releases the slug). Both
 // writes are status-guarded `updateMany`/`deleteMany` so a concurrent
 // approve/reject/withdraw can never double-act (TOCTOU).
+//
+// ONSITE (assets-only media revision): an onsite app's `AppListing` is auto-created
+// `approved`; its media (icon/cover/screenshots) is edited via the SAME shadow-draft
+// revision flow, so an onsite request is always a revision (its listing's
+// `revisionOfId != null`) and routes to `applyApprovedRevision`, which — for an
+// onsite parent — copies ONLY the asset columns and leaves the manifest-governed
+// scalars (name/tagline/description/category/contentRating) untouched. The offsite
+// path is unchanged.
 // ---------------------------------------------------------------------------
 
 export type ApproveExternalRequestResult = {
@@ -1574,11 +1883,12 @@ function assertConnectSensitiveScopesJustified(listing: {
  * MOD approve of a pending off-site request. Loads the request + its draft
  * `AppListing`, asserts `pending`, and enforces two gates BEFORE any mutation:
  *
- *   1. {@link assertListingAssetsComplete} — **THE P3 ACTIVATION.** Approve FAILS
- *      `BAD_REQUEST { missing }` unless the draft has an icon AND a cover AND ≥1
- *      screenshot (a screenshot whose backing Image was deleted — `imageId` null
- *      — does NOT count, mirroring `getListingAssets`' completeness math). This is
- *      the intended live wiring of the dark P1 gate.
+ *   1. {@link assertListingMeetsFloor} — the publish FLOOR gate. Approve FAILS
+ *      `BAD_REQUEST { missing }` unless the draft has an icon AND a cover.
+ *      Screenshots are OPTIONAL (a listing can go live with icon+cover and add
+ *      screenshots later); still-missing screenshots surface as advisory
+ *      incompleteness, never a block. This relaxed the former full-completeness
+ *      gate (which additionally required ≥1 screenshot) down to the floor.
  *   2. `validateExternalUrl` on the STORED `externalUrl` (defense-in-depth — a
  *      somehow-bad stored value blocks approve; the card link opens in the user's
  *      browser, so a non-https stored URL must never reach the store).
@@ -1617,10 +1927,11 @@ export async function approveExternalRequest(opts: {
   if (!request) {
     throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
   }
-  if (request.kind !== 'offsite') {
+  // Accept onsite media revisions too (assets-only apply; see REVIEWABLE_LISTING_KINDS).
+  if (!(REVIEWABLE_LISTING_KINDS as readonly string[]).includes(request.kind)) {
     throw new OffsiteRequestError(
       'NOT_FOUND',
-      `publish request ${publishRequestId} is not an off-site request`
+      `publish request ${publishRequestId} is not a reviewable listing request`
     );
   }
   if (request.status !== 'pending') {
@@ -1684,17 +1995,33 @@ export async function approveExternalRequest(opts: {
     });
   }
 
-  const screenshotCount = await dbRead.appListingScreenshot.count({
+  const screenshotRows = await dbRead.appListingScreenshot.findMany({
     where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
   });
+  const screenshotImageIds = screenshotRows
+    .map((s) => s.imageId)
+    .filter((id): id is number => id != null);
+  const screenshotCount = screenshotImageIds.length;
 
-  // (3) THE P3 ACTIVATION — mandatory-asset gate (throws BAD_REQUEST { missing }).
-  // Fail-fast copy on the replica; re-asserted authoritatively on the primary in (5).
-  assertListingAssetsComplete({
+  // (3) Publish FLOOR gate — icon+cover required, screenshots optional (throws
+  // BAD_REQUEST { missing }). Fail-fast copy on the replica; re-asserted
+  // authoritatively on the primary in (5).
+  assertListingMeetsFloor({
     iconId: listing.iconId,
     coverId: listing.coverId,
     screenshotCount,
   });
+
+  // (3b) Scan-clean gate — every attached asset must be terminally `Scanned` (none
+  // still pending, none `Blocked`) before it goes live. Fail-fast copy on the
+  // replica; re-asserted AUTHORITATIVELY on the primary/tx in (5) (TOCTOU: a scan
+  // can flip between these reads — the in-tx one is the authority). This is the
+  // QUALITY gate that lets attach + submit stay permissive with an in-flight scan.
+  await assertAssetsScanClean(
+    { iconId: listing.iconId, coverId: listing.coverId, screenshotImageIds },
+    dbRead
+  );
 
   // (4) Defense-in-depth: re-validate the STORED externalUrl before it can reach
   // the store (mirrors submit + the read-path `safeExternalUrl`). Also re-checked
@@ -1746,14 +2073,31 @@ export async function approveExternalRequest(opts: {
     if (!primaryListing) {
       throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
     }
-    const primaryScreenshotCount = await tx.appListingScreenshot.count({
+    const primaryScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId, imageId: { not: null } },
+      select: { imageId: true },
     });
-    assertListingAssetsComplete({
+    const primaryScreenshotImageIds = primaryScreenshotRows
+      .map((s) => s.imageId)
+      .filter((id): id is number => id != null);
+    assertListingMeetsFloor({
       iconId: primaryListing.iconId,
       coverId: primaryListing.coverId,
-      screenshotCount: primaryScreenshotCount,
+      screenshotCount: primaryScreenshotImageIds.length,
     });
+    // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — row-consistent with the
+    // flip. A scan that read `Scanned` on the replica in (3b) but flipped to
+    // Pending/Blocked on the primary is caught HERE and rolls the whole tx back
+    // before anything is approved. Upholds the invariant: no approved listing may
+    // ever reference a non-`Scanned` / `Blocked` image.
+    await assertAssetsScanClean(
+      {
+        iconId: primaryListing.iconId,
+        coverId: primaryListing.coverId,
+        screenshotImageIds: primaryScreenshotImageIds,
+      },
+      tx
+    );
     // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
     // model); a null URL approves fine. See step (4).
     if (primaryListing.externalUrl != null) {
@@ -1854,7 +2198,11 @@ export async function approveExternalRequest(opts: {
       where: {
         appListingId,
         status: 'pending',
-        kind: 'offsite',
+        // Match THIS request's kind (a listing has exactly one kind, so all its
+        // requests share it) rather than hard-coding 'offsite' — otherwise an onsite
+        // sibling pending request on the same appListingId would be stranded. Byte-
+        // identical for offsite (request.kind === 'offsite' here).
+        kind: request.kind,
         NOT: { id: publishRequestId },
       },
       data: { status: 'withdrawn' },
@@ -1913,9 +2261,12 @@ async function applyApprovedRevision(opts: {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
   // Parent must still exist (defense — its delete would CASCADE the shadow away).
+  // `kind` drives the assets-only branch below: an ONSITE parent's scalars mirror the
+  // manifest/AppBlock (single source), so an onsite media revision copies ONLY the
+  // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, kind: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -1964,14 +2315,29 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the revision draft is no longer available'
       );
     }
-    const screenshotCount = await tx.appListingScreenshot.count({
+    const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
+      select: { imageId: true },
     });
-    assertListingAssetsComplete({
+    const shadowScreenshotImageIds = shadowScreenshotRows
+      .map((s) => s.imageId)
+      .filter((id): id is number => id != null);
+    assertListingMeetsFloor({
       iconId: shadow.iconId,
       coverId: shadow.coverId,
-      screenshotCount,
+      screenshotCount: shadowScreenshotImageIds.length,
     });
+    // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
+    // live while any of its media is still scanning or was `Blocked`. Rolls the
+    // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    await assertAssetsScanClean(
+      {
+        iconId: shadow.iconId,
+        coverId: shadow.coverId,
+        screenshotImageIds: shadowScreenshotImageIds,
+      },
+      tx
+    );
     // Validate the stored externalUrl ONLY WHEN present (optional in the merged
     // model); a null URL is fine. See the first-time approve path (step 4).
     if (shadow.externalUrl != null) {
@@ -2024,37 +2390,58 @@ async function applyApprovedRevision(opts: {
       );
     }
 
-    // (3) Copy scalars onto the parent (id / slug / appBlockId / status untouched).
-    // The content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the
-    // mod override, floored) rather than trusting the shadow's declared value — same
-    // never-under-rate safety as the first-time approve path.
-    const finalRating = await resolveApprovalContentRating(tx, {
-      appListingId: shadowId,
-      iconId: shadow.iconId,
-      coverId: shadow.coverId,
-      override: opts.contentRating,
-    });
-    await tx.appListing.update({
-      where: { id: parentId },
-      data: {
-        name: shadow.name,
-        tagline: shadow.tagline,
-        description: shadow.description,
-        category: shadow.category,
-        contentRating: finalRating,
-        externalUrl: shadow.externalUrl,
-        connectClientId: shadow.connectClientId,
-        // Apply the revision's disclosed OAuth scopes + justifications onto the live
-        // parent (a scope change is material, so the shadow carries the reviewed set).
-        connectRequestedScopes: shadow.connectRequestedScopes,
-        connectScopeJustifications:
-          shadow.connectScopeJustifications === null
-            ? Prisma.DbNull
-            : (shadow.connectScopeJustifications as Prisma.InputJsonValue),
+    // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
+    // untouched). KIND-AWARE:
+    if (parent.kind === 'onsite') {
+      // 🔴 ONSITE = ASSETS-ONLY. An onsite listing's name/tagline/description/category/
+      // contentRating MIRROR the manifest/AppBlock (single source — the listing must
+      // never override the runtime serving gate). An onsite media revision therefore
+      // copies ONLY the asset columns (icon/cover; screenshots are reparented in step 4)
+      // and leaves ALL manifest-governed scalars untouched. CAP-AT-APP-RATING:
+      // `resolveApprovalContentRating`'s asset-floor is deliberately NOT applied here —
+      // the listing rating stays the app's manifest rating; over-rated media is a
+      // mod-reject at review, never an auto-raise. The connect fields are also left
+      // untouched (an onsite listing has no OAuth-connect client — always null).
+      await tx.appListing.update({
+        where: { id: parentId },
+        data: {
+          iconId: shadow.iconId,
+          coverId: shadow.coverId,
+        },
+      });
+    } else {
+      // OFFSITE (byte-identical to the prior behavior). Copy the FULL scalar set. The
+      // content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the mod
+      // override, floored) rather than trusting the shadow's declared value — same
+      // never-under-rate safety as the first-time approve path.
+      const finalRating = await resolveApprovalContentRating(tx, {
+        appListingId: shadowId,
         iconId: shadow.iconId,
         coverId: shadow.coverId,
-      },
-    });
+        override: opts.contentRating,
+      });
+      await tx.appListing.update({
+        where: { id: parentId },
+        data: {
+          name: shadow.name,
+          tagline: shadow.tagline,
+          description: shadow.description,
+          category: shadow.category,
+          contentRating: finalRating,
+          externalUrl: shadow.externalUrl,
+          connectClientId: shadow.connectClientId,
+          // Apply the revision's disclosed OAuth scopes + justifications onto the live
+          // parent (a scope change is material, so the shadow carries the reviewed set).
+          connectRequestedScopes: shadow.connectRequestedScopes,
+          connectScopeJustifications:
+            shadow.connectScopeJustifications === null
+              ? Prisma.DbNull
+              : (shadow.connectScopeJustifications as Prisma.InputJsonValue),
+          iconId: shadow.iconId,
+          coverId: shadow.coverId,
+        },
+      });
+    }
 
     // (4) Reparent screenshots BEFORE deleting the shadow (cascade-safe): drop the
     // parent's current rows, then move the shadow's rows onto the parent.
@@ -2122,10 +2509,13 @@ export async function rejectExternalRequest(opts: {
   if (!request) {
     throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
   }
-  if (request.kind !== 'offsite') {
+  // Accept onsite media revisions too. The reject path (`closeTerminalListing`) is
+  // already kind-agnostic — an onsite revision points at a `draft` shadow, so only the
+  // shadow is deleted; the live onsite parent is untouched (see REVIEWABLE_LISTING_KINDS).
+  if (!(REVIEWABLE_LISTING_KINDS as readonly string[]).includes(request.kind)) {
     throw new OffsiteRequestError(
       'NOT_FOUND',
-      `publish request ${publishRequestId} is not an off-site request`
+      `publish request ${publishRequestId} is not a reviewable listing request`
     );
   }
   if (request.status !== 'pending') {
@@ -2240,6 +2630,10 @@ export async function persistListingAssetImage(opts: {
 const submissionSelect = {
   id: true,
   appListingId: true,
+  // The request KIND ('onsite' | 'offsite') — surfaced so the unified /apps/review
+  // queue (PR-2) can badge onsite media revisions vs offsite submissions. Additive:
+  // pre-existing consumers ignore it.
+  kind: true,
   slug: true,
   status: true,
   submittedAt: true,
@@ -2278,6 +2672,41 @@ const submissionSelect = {
   },
 } as const;
 
+/**
+ * `submissionSelect` PLUS the advisory listing-completeness projection used ONLY
+ * by the author-facing `listMySubmissions` (NOT the mod queues — they don't render
+ * the warning). Adds the asset ids + key text fields + a screenshot COUNT (via
+ * `_count`, not the rows) so the pure `computeListingProblems` helper can flag a
+ * row. Purely additive; `category` is already in `submissionSelect`.
+ */
+const mySubmissionSelect = {
+  ...submissionSelect,
+  appListing: {
+    select: {
+      ...submissionSelect.appListing.select,
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      // Filtered COUNT — only screenshots whose Image is still live. A row whose
+      // Image was deleted (imageId → null via onDelete: SetNull) has no
+      // displayable asset, so it must not inflate the count, else the
+      // `no-screenshots` (advisory) warning is a false-negative. Matches the
+      // screenshot count query used elsewhere:
+      // `appListingScreenshot.count({ where: { imageId: { not: null } } })`.
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+      // Screenshot Image ids (imageId-bearing only) so the scan dimension of
+      // `computeListingProblems` can look up each asset's ingestion (Item 1). Ordered
+      // for a stable per-row problem list.
+      screenshots: {
+        where: { imageId: { not: null } },
+        select: { imageId: true },
+        orderBy: { order: 'asc' },
+      },
+    },
+  },
+} as const;
+
 const submitterChip = { select: { id: true, username: true, image: true } } as const;
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
@@ -2301,15 +2730,26 @@ export async function listMySubmissions(
   const rows = await dbRead.appListingPublishRequest.findMany({
     where: {
       submittedByUserId: opts.userId,
-      kind: 'offsite',
-      // Exclude requests targeting a SHADOW (revision) listing — surfaced as a
-      // flag on the parent, not as their own row. Keep requests with no listing.
-      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }],
+      kind: { in: [...REVIEWABLE_LISTING_KINDS] },
+      // OFFSITE: exclude requests targeting a SHADOW (revision) listing — those are
+      // surfaced as a `hasPendingRevision` flag on the PARENT's own submission row.
+      // Keep requests with no listing.
+      //
+      // ONSITE: an onsite listing is auto-created and has NO own publish request, so
+      // there is no parent row to badge — its ONLY representation IS the revision
+      // request (all onsite requests are shadow revisions, per the invariant). Include
+      // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
+      // appear on my-submissions (decision: yes).
+      OR: [
+        { appListingId: null },
+        { appListing: { revisionOfId: null } },
+        { kind: 'onsite' },
+      ],
     },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: submissionSelect,
+    select: mySubmissionSelect,
   });
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
@@ -2328,7 +2768,7 @@ export async function listMySubmissions(
       ? await dbRead.appListingPublishRequest.findMany({
           where: {
             status: 'pending',
-            kind: 'offsite',
+            kind: { in: [...REVIEWABLE_LISTING_KINDS] },
             appListing: { revisionOfId: { in: parentIds } },
           },
           select: { appListing: { select: { revisionOfId: true } } },
@@ -2374,6 +2814,52 @@ export async function listMySubmissions(
       .map((e) => [e.appListingId, e.action])
   );
 
+  // Scan dimension (Item 1): batch-read the ingestion of every attached asset image
+  // on the page so `computeListingProblems` can flag a still-scanning (advisory) or
+  // `Blocked` (blocking) asset. One findMany over the union of icon/cover/screenshot
+  // image ids — NOT per row.
+  const assetImageIds = [
+    ...new Set(
+      page.flatMap((r) => [
+        r.appListing?.iconId,
+        r.appListing?.coverId,
+        ...(r.appListing?.screenshots ?? []).map((s) => s.imageId),
+      ])
+    ),
+  ].filter((id): id is number => id != null);
+  const ingestionRows = assetImageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: assetImageIds } },
+        select: { id: true, ingestion: true },
+      })
+    : [];
+  const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
+  const scanStatusOf = (
+    ingestion: string | null | undefined
+  ): 'scanned' | 'pending' | 'blocked' =>
+    ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
+  const assetScansFor = (listing: {
+    iconId: number | null;
+    coverId: number | null;
+    screenshots?: { imageId: number | null }[] | null;
+  }): { kind: 'icon' | 'cover' | 'screenshot'; status: 'scanned' | 'pending' | 'blocked' }[] => {
+    const scans: {
+      kind: 'icon' | 'cover' | 'screenshot';
+      status: 'scanned' | 'pending' | 'blocked';
+    }[] = [];
+    if (listing.iconId != null)
+      scans.push({ kind: 'icon', status: scanStatusOf(ingestionByImageId.get(listing.iconId)) });
+    if (listing.coverId != null)
+      scans.push({ kind: 'cover', status: scanStatusOf(ingestionByImageId.get(listing.coverId)) });
+    for (const s of listing.screenshots ?? [])
+      if (s.imageId != null)
+        scans.push({
+          kind: 'screenshot',
+          status: scanStatusOf(ingestionByImageId.get(s.imageId)),
+        });
+    return scans;
+  };
+
   const items = page.map((r) => ({
     ...r,
     hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
@@ -2381,16 +2867,34 @@ export async function listMySubmissions(
     // when `appListing.status === 'removed'` to gate the Republish affordance.
     lastModerationAction:
       r.appListingId != null ? lastActionByListing.get(r.appListingId) ?? null : null,
+    // Advisory listing-completeness problems (missing assets + empty key fields).
+    // Empty when there's no backing listing (a rejected/withdrawn row whose listing
+    // was deleted) — nothing to flag.
+    problems: r.appListing
+      ? computeListingProblems({
+          iconId: r.appListing.iconId,
+          coverId: r.appListing.coverId,
+          screenshotCount: r.appListing._count.screenshots,
+          description: r.appListing.description,
+          tagline: r.appListing.tagline,
+          category: r.appListing.category,
+          assetScans: assetScansFor(r.appListing),
+        }).problems
+      : [],
   }));
 
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod queue: pending off-site requests, oldest-first (FIFO), keyset-paginated. */
+/**
+ * Mod queue: pending listing requests (offsite submissions + onsite media revisions),
+ * oldest-first (FIFO), keyset-paginated. Each row carries `kind` so the unified
+ * /apps/review queue (PR-2) can badge an onsite media revision vs an offsite submission.
+ */
 export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'pending', kind: 'offsite' },
+    where: { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2401,11 +2905,11 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod history: approved off-site requests, most-recently-reviewed first. */
+/** Mod history: approved listing requests (offsite + onsite media revisions), most-recently-reviewed first. */
 export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'approved', kind: 'offsite' },
+    where: { status: 'approved', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { reviewedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2420,11 +2924,11 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod history: rejected off-site requests, most-recently-reviewed first. */
+/** Mod history: rejected listing requests (offsite + onsite media revisions), most-recently-reviewed first. */
 export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'rejected', kind: 'offsite' },
+    where: { status: 'rejected', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { reviewedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

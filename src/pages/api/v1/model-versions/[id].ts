@@ -12,6 +12,8 @@ import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
+import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
@@ -71,8 +73,6 @@ export default MixedAuthEndpoint(async function handler(
         mv."trainingDetails",
         mv."baseModel",
         mv."baseModelType",
-        mv."earlyAccessEndsAt",
-        mv."earlyAccessConfig",
         mv.description,
         (SELECT rr."resourceId" FROM "RecommendedResource" rr
          WHERE rr."sourceId" = mv.id
@@ -170,7 +170,9 @@ export default MixedAuthEndpoint(async function handler(
 export async function prepareModelVersionResponse(
   modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
-  images?: AsyncReturnType<typeof getImagesForModelVersion>
+  images?: AsyncReturnType<typeof getImagesForModelVersion>,
+  // `null` means known-ungated; only `undefined` self-fetches.
+  paidAccess?: PublicPaidAccessDto | null
 ) {
   const { files, model, metrics, vaeId, ...version } = modelVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
@@ -186,6 +188,10 @@ export async function prepareModelVersionResponse(
     include: ['meta'],
     imagesPerVersion: 10,
   });
+  if (paidAccess === undefined)
+    paidAccess = toPublicPaidAccessDto(
+      (await getPaidAccess('ModelVersion', [version.id]))[version.id]
+    );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
 
@@ -222,6 +228,7 @@ export async function prepareModelVersionResponse(
     ...version,
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
     licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    paidAccess,
     air: stringifyAIR({
       baseModel: version.baseModel,
       type: model.type,

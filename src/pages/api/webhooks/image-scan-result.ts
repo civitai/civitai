@@ -63,6 +63,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
@@ -276,6 +277,13 @@ async function updateImage(
   try {
     await dbWrite.image.update({ where: { id }, data });
 
+    // Terminal outcome — drop the ImageScan JobQueue row so completed scans don't
+    // linger as stale entries the ingest-images cron has to prune. Non-terminal
+    // states (e.g. Error) stay queued for retry.
+    if (data.ingestion === 'Scanned' || data.ingestion === 'Blocked') {
+      await removeImageScanJobQueue([id]);
+    }
+
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
         await Promise.all([
@@ -341,11 +349,27 @@ async function updateImage(
     }
 
     if (data.ingestion && data.ingestion !== 'Blocked') {
-      await signalClient.send({
-        target: SignalMessages.ImageIngestionStatus,
-        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
-        userId: image.userId,
-      });
+      // The ingestion is already committed — a signals brownout must not 400 the webhook.
+      await signalClient
+        .send({
+          target: SignalMessages.ImageIngestionStatus,
+          data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+          userId: image.userId,
+        })
+        .catch((error) =>
+          logToAxiom(
+            {
+              name: 'image-scan-result',
+              type: 'warning',
+              message: `signal send failed: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              imageId: image.id,
+              source: 'webhook-legacy',
+            },
+            'webhooks'
+          ).catch(() => null)
+        );
     }
   } catch (e) {
     if (isDev) console.log({ error: e });

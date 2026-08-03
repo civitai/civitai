@@ -17,6 +17,7 @@ import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
 
@@ -105,6 +106,23 @@ export const upsertArticleInput = z.object({
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),
+});
+
+export type ResolveArticleImageScanInput = z.infer<typeof resolveArticleImageScanSchema>;
+export const resolveArticleImageScanSchema = z.object({
+  articleId: z.number(),
+  imageId: z.number(),
+  // Only real browsing levels (PG..XXX). Rejects Blocked (32) / 0 so a crafted
+  // request can't pair an inconsistent nsfwLevel with ingestion=Scanned.
+  nsfwLevel: z.number().refine((v) => (browsingLevels as readonly number[]).includes(v), {
+    message: 'Invalid browsing level',
+  }),
+});
+
+export type RescanArticleImageInput = z.infer<typeof rescanArticleImageSchema>;
+export const rescanArticleImageSchema = z.object({
+  articleId: z.number(),
+  imageId: z.number(),
 });
 
 export type ArticleMetadata = {

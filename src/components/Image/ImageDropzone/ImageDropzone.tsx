@@ -11,6 +11,7 @@ import { formatBytes } from '~/utils/number-helpers';
 import clsx from 'clsx';
 import { isOrchestratorUrl } from '~/server/common/constants';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import classes from './ImageDropzone.module.scss';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -75,15 +76,10 @@ export function ImageDropzone({
       <Dropzone
         {...props}
         accept={accept}
-        className={clsx({
-          ['bg-gray-0 dark:bg-dark-6 border-gray-2 dark:border-dark-5 cursor-not-allowed [&_*]:text-gray-5 [&_*]:dark:text-dark-3']:
-            disabled,
+        className={clsx('flex size-full items-center justify-center', classes.dropzone, {
+          [classes.error]: hasError || !!error,
+          'mb-1': hasError || !!error,
         })}
-        classNames={{
-          root: clsx('flex size-full items-center justify-center', {
-            ['border-red-6 mb-1']: hasError || !!error,
-          }),
-        }}
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}

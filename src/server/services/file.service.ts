@@ -5,6 +5,8 @@ import { componentFileTypes, constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
@@ -203,9 +205,6 @@ export const getFileForModelVersion = async ({
       },
       name: true,
       trainedWords: true,
-      earlyAccessEndsAt: true,
-      earlyAccessConfig: true,
-      earlyAccessPermanent: true,
       createdAt: true,
       requireAuth: true,
       usageControl: true,
@@ -226,9 +225,10 @@ export const getFileForModelVersion = async ({
     isModerator: user?.isModerator ?? undefined,
   });
 
-  const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
-  const inEarlyAccess =
-    !!modelVersion.earlyAccessPermanent || (deadline !== undefined && new Date() < deadline);
+  // Paid-access gate now sourced from PaidAccess (mirrors the old columns during Phase 1).
+  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersion.id]))[modelVersion.id];
+  const inEarlyAccess = !!paidAccess && isPaidAccessActive(paidAccess);
+  const deadline = paidAccess?.endsAt ?? undefined;
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
@@ -262,18 +262,23 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!(versionAccess?.hasAccess ?? true)) {
-    return { status: 'unauthorized' };
+  // The paid gate is checked BEFORE the generic access check so a gated version routes the user to
+  // the purchase flow; the other order collapses it into a bare denial and loses the reason.
+  // `permissions` only carries grant bits when there IS a grant — hasEntityAccess reports "no grant"
+  // as -1 (every bit set), so testing the bit alone reads a buyer-less user as already owning the
+  // download and skips the purchase route.
+  const boughtDownload =
+    !!versionAccess?.hasAccess &&
+    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0;
+  if (inEarlyAccess && !boughtDownload && !isMod && !isOwner) {
+    return { status: 'early-access', details: { deadline } };
   }
 
-  // Check the early access scenario:
-  if (
-    inEarlyAccess &&
-    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
-    !isMod &&
-    !isOwner
-  ) {
-    return { status: 'early-access', details: { deadline } };
+  // `unauthorized` means "no session" and callers answer it with a login redirect. A signed-in user
+  // who lacks a grant must NOT get that — they bounce off /login straight back to the page they came
+  // from, which reads as the download button doing nothing at all.
+  if (!(versionAccess?.hasAccess ?? true)) {
+    return { status: userId ? 'no-access' : 'unauthorized' };
   }
 
   // Get the correct file
@@ -442,6 +447,7 @@ type ModelVersionFileResult =
         | 'not-found'
         | 'resolve-failed'
         | 'unauthorized'
+        | 'no-access'
         | 'archived'
         | 'downloads-disabled'
         | 'error';

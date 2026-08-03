@@ -9,8 +9,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * `OnsiteReviewModal.tsx` (mirrors #3154) so it is importable WITHOUT the page's
  * `getServerSideProps` server graph — this suite is the coverage that extraction
  * unlocks. Asserts:
- *  - onsite-specific visibility (View full source link + the mod Review-preview panel +
- *    the structured manifest render);
+ *  - onsite-specific visibility (the in-app code-diff affordance + the mod
+ *    Review-preview panel + the structured manifest render), and that NO
+ *    raw-source deep-link is offered (retired in #3498 — in-review snapshots are
+ *    private, so such a link would 404 for the moderator who clicked it);
  *  - Approve FIRES `blocks.approveRequest` with the request id;
  *  - the reject reason gate (disabled < 3 chars) AND that Reject FIRES
  *    `blocks.rejectRequest` with `{ publishRequestId, rejectionReason }`;
@@ -165,14 +167,24 @@ beforeEach(() => {
 });
 
 describe('OnsiteReviewModal — onsite-specific contract', () => {
-  test('a pending selection renders the View full source link, the mod Review-preview panel, and the structured manifest', async () => {
+  test('a pending selection renders the in-app code diff, the mod Review-preview panel, and the structured manifest — and NO raw-source link', async () => {
     renderWithProviders(
       <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
-    // The on-site code-review affordance (off-site has no bundle/code).
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
-    // The old "View code in Forgejo" copy is gone.
+    // The on-site code-review affordance (off-site has no bundle/code) is the
+    // in-app diff, not an external link.
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    // 🔴 #3498 regression guard: the modal's own raw-source affordances are
+    // retired and may not come back. (The per-FILE fallback that used to sit
+    // inside an elided diff row is guarded where it actually renders —
+    // `src/tests/pages/apps/review-diff-panels.browser.test.tsx`. Asserting it
+    // here would prove nothing: the code-diff panel is collapsed by default, so
+    // no file row is mounted at this point.)
+    expect(page.getByText('View full source').elements()).toHaveLength(0);
     expect(page.getByText('View code in Forgejo').elements()).toHaveLength(0);
+    expect(
+      document.querySelectorAll(`a[href="${ONSITE_PENDING.reviewRepoUrl}"]`).length
+    ).toBe(0);
     // The mod Review-preview sandbox panel — on-site pending only.
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
@@ -237,6 +249,47 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // Neither disclosure control renders — no empty "Iframe" or "Other" accordion.
     expect(page.getByRole('button', { name: 'Iframe' }).elements()).toHaveLength(0);
     expect(page.getByText(/^Other manifest fields/).elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mod', () => {
+  // `tagline` + `category` are MANIFEST-GOVERNED and go live on the app's /apps
+  // listing the moment this request is approved. The mod is the ONLY gate on
+  // store-visible copy changing, so they must render beside name/description —
+  // not be buried in the collapsed "Other manifest fields" raw-JSON disclosure.
+  test('renders the manifest tagline + category in the identity card, not the raw-JSON fallback', async () => {
+    const withCopy = {
+      ...ONSITE_PENDING,
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        tagline: 'The fastest way to remix a model',
+        category: 'generation',
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: withCopy, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    // Both are visible WITHOUT expanding any disclosure.
+    await expect
+      .element(page.getByText('The fastest way to remix a model'))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('generation')).toBeInTheDocument();
+    // They are HANDLED keys, so the "Other manifest fields" count is unchanged
+    // (still just the one novel key from the base fixture) — i.e. they did not
+    // fall through to the raw-JSON dump.
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('omitting them renders no empty tagline/category chrome', async () => {
+    // The base fixture declares neither.
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
+    expect(page.getByText('The fastest way to remix a model').elements()).toHaveLength(0);
+    expect(page.getByText('generation').elements()).toHaveLength(0);
   });
 });
 
@@ -387,6 +440,22 @@ describe('OnsiteReviewModal — onsite approve fires the mutation', () => {
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
   });
+
+  // The page threads the tab's `resetPaging` in as `onActioned` so a decided item
+  // leaves the accumulated Load-more list (ghost-row fix) — assert the modal forwards
+  // it to the action bar and it fires on a successful approve.
+  test('a successful approve invokes the optional onActioned callback', async () => {
+    const onActioned = vi.fn();
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+        onActioned={onActioned}
+      />
+    );
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(onActioned).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('OnsiteReviewModal — onsite reject: reason gate + fired mutation', () => {
@@ -510,7 +579,7 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
       <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={onClose} />
     );
     // Modal is open (body rendered).
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
 
     // Close vector 1 — the modal's close (X) button (Mantine static class).
     const closeBtn = document.querySelector<HTMLButtonElement>('.mantine-Modal-close');
@@ -523,7 +592,7 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
     // The busy guard swallowed both — the parent onClose was never called and the
     // modal is still mounted.
     expect(onClose).not.toHaveBeenCalled();
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
   });
 });
 

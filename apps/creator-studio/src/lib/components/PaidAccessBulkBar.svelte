@@ -1,0 +1,248 @@
+<script lang="ts">
+  import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import type { SvelteSet } from 'svelte/reactivity';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogCancel,
+    AlertDialogAction,
+  } from '@civitai/ui/components/ui/alert-dialog/index.js';
+  import NumberInput from '$lib/components/NumberInput.svelte';
+  import { monetizationLimits } from '$lib/monetization/paid-access';
+  import type { CreatorCaps } from '$lib/server/membership';
+  import {
+    MIN_ACCESS_PRICE,
+    MIN_GENERATION_PRICE,
+    MAX_GENERATION_TRIAL_LIMIT,
+    DEFAULT_GENERATION_TRIAL_LIMIT,
+  } from '$lib/monetization/paid-access';
+
+  // Bulk permanent-paid-access bar, scoped to one usage type (the toggle drives a `usage` list filter in
+  // the parent so the price fields are unambiguous). Owns its own pricing state + confirm dialog; the
+  // caller owns the shared `selected` set, the usage filter, and the version list / checkboxes.
+  let {
+    caps,
+    matchingVersionIds,
+    selectableCount,
+    slotsConsumed,
+    usage,
+    selected,
+    onSetUsage,
+    onSelectAll,
+    cancelHref,
+  }: {
+    caps: CreatorCaps;
+    matchingVersionIds: number[];
+    // How many matching versions "Select all" would pick (already-permanent re-prices are free; see the parent).
+    selectableCount: number;
+    // New permanent slots the current selection consumes (already-permanent picks don't count).
+    slotsConsumed: number;
+    usage: string;
+    selected: SvelteSet<number>;
+    onSetUsage: (usage: 'download' | 'generation') => void;
+    onSelectAll: (ids: number[]) => void;
+    cancelHref: string;
+  } = $props();
+
+  const permanentCap = $derived(caps.permanentCap);
+  const permanentUsed = $derived(caps.permanentUsed);
+  // One price lands on a mixed selection, so the STRICTEST ceiling governs — no baseModel means image,
+  // which is the lower of the two. Mirrors strictestCapMediaType on the server.
+  const priceCap = $derived(monetizationLimits({ tier: caps.capTier }).access.maxPrice);
+
+  const bulkGenOnly = $derived(usage === 'generation');
+  // Permanent slots still available (null cap = unlimited) — "max minus current".
+  const remainingPermanentSlots = $derived(
+    permanentCap === null ? Infinity : Math.max(0, permanentCap - permanentUsed)
+  );
+
+  let bulkAccessPrice = $state<number | undefined>(MIN_ACCESS_PRICE);
+  let bulkGenerationPrice = $state<number | undefined>();
+  let bulkFreePreviews = $state<number | undefined>(DEFAULT_GENERATION_TRIAL_LIMIT);
+  let showConfirm = $state(false);
+  let form = $state<HTMLFormElement>();
+
+  const paidAccessEnhance =
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+      await event.update({ reset: false });
+      if (event.result.type === 'success') {
+        const n = Number(event.result.data?.updated ?? 0);
+        const failed = Number(event.result.data?.failed ?? 0);
+        toast.success(
+          `Permanent paid access set on ${n} version${n === 1 ? '' : 's'}${failed ? ` · ${failed} failed` : ''}`
+        );
+        selected.clear();
+        // Refresh so permanent-slot counts (and the row chips) reflect the change.
+        await invalidateAll();
+      } else if (event.result.type === 'failure') {
+        toast.error(String(event.result.data?.error ?? 'Failed'));
+      }
+    };
+</script>
+
+<div
+  class="sticky top-2 z-10 mb-4 flex flex-col gap-3 rounded-lg border border-[#9775fa]/40 bg-dark-6 p-3 shadow-lg"
+>
+  <div class="flex w-fit overflow-hidden rounded-md border border-dark-4 text-xs">
+    <button
+      type="button"
+      onclick={() => onSetUsage('download')}
+      class="px-2.5 py-1 font-medium {!bulkGenOnly
+        ? 'bg-[#9775fa]/20 text-white'
+        : 'text-dark-2 hover:text-white'}"
+    >
+      Downloadable
+    </button>
+    <button
+      type="button"
+      onclick={() => onSetUsage('generation')}
+      class="border-l border-dark-4 px-2.5 py-1 font-medium {bulkGenOnly
+        ? 'bg-[#9775fa]/20 text-white'
+        : 'text-dark-2 hover:text-white'}"
+    >
+      Generation-only
+    </button>
+  </div>
+  <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-col">
+      <span class="text-sm font-medium text-white">
+        {selected.size > 0
+          ? `${selected.size} selected`
+          : `Select ${bulkGenOnly ? 'generation-only' : 'downloadable'} versions`}
+      </span>
+      <span class="text-xs text-dark-2">
+        {#if permanentCap === null}
+          {permanentUsed} permanent · unlimited on your tier
+        {:else}
+          {slotsConsumed} of {remainingPermanentSlots} available slot{remainingPermanentSlots === 1
+            ? ''
+            : 's'} ({permanentUsed} of {permanentCap} used)
+        {/if}
+      </span>
+    </div>
+    {#if selectableCount > 0}
+      <Button
+        variant="outline"
+        size="sm"
+        onclick={() => onSelectAll(matchingVersionIds)}
+        title="Select every matching version you can price (re-pricing versions you already sell is always allowed)"
+      >
+        Select {selectableCount}
+      </Button>
+    {/if}
+    {#if selected.size > 0}
+      <Button variant="outline" size="sm" onclick={() => selected.clear()}>Clear</Button>
+    {/if}
+    <form
+      bind:this={form}
+      method="POST"
+      action="?/bulkSetPaidAccess"
+      use:enhance={paidAccessEnhance}
+      class="contents"
+    >
+      <input type="hidden" name="versionIds" value={[...selected].join(',')} />
+      <label
+        class="flex items-center gap-1.5 text-xs text-dark-1"
+        title={bulkGenOnly
+          ? 'Buzz a buyer pays to generate with this version on-site.'
+          : 'Buzz a buyer pays to unlock this version — download + generation.'}
+      >
+        {bulkGenOnly ? 'Generation fee' : 'Access fee'}
+        <span class="relative">
+          <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs"
+            >⚡</span
+          >
+          <NumberInput
+            name="accessPrice"
+            min={MIN_ACCESS_PRICE}
+            max={priceCap ?? undefined}
+            bind:value={bulkAccessPrice}
+            aria-label={bulkGenOnly ? 'Generation fee (Buzz)' : 'Access fee (Buzz)'}
+            class="h-7 w-24 pl-6"
+          />
+        </span>
+      </label>
+      {#if !bulkGenOnly}
+        <label
+          class="flex items-center gap-1.5 text-xs text-dark-1"
+          title="Optional cheaper Buzz price for generation-only access; defaults to the access fee if left blank."
+        >
+          Gen-only fee
+          <span class="relative">
+            <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs"
+              >⚡</span
+            >
+            <NumberInput
+              name="generationPrice"
+              min={MIN_GENERATION_PRICE}
+              max={priceCap == null
+                ? bulkAccessPrice
+                : Math.min(bulkAccessPrice ?? priceCap, priceCap)}
+              bind:value={bulkGenerationPrice}
+              aria-label="Gen-only fee (Buzz, optional)"
+              class="h-7 w-24 pl-6"
+            />
+          </span>
+        </label>
+      {/if}
+      <label
+        class="flex items-center gap-1.5 text-xs text-dark-1"
+        title="Free preview generations a buyer gets before purchase is required (0 = none)."
+      >
+        Free prev
+        <NumberInput
+          name="freePreviewGenerations"
+          min={0}
+          max={MAX_GENERATION_TRIAL_LIMIT}
+          bind:value={bulkFreePreviews}
+          aria-label="Free preview generations"
+          class="h-7 w-16"
+        />
+      </label>
+      <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
+        Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
+      </Button>
+      <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm"
+        >Cancel</Button
+      >
+      <span class="text-xs text-dark-1">
+        {bulkGenOnly
+          ? '⚡ Buyers pay to generate on-site.'
+          : '⚡ Access unlocks download + generation.'}
+      </span>
+    </form>
+  </div>
+</div>
+
+<AlertDialog bind:open={showConfirm}>
+  <AlertDialogContent>
+    <AlertDialogHeader>
+      <AlertDialogTitle>
+        Set permanent paid access on {selected.size} version{selected.size === 1 ? '' : 's'}?
+      </AlertDialogTitle>
+      <AlertDialogDescription>
+        These versions will require purchase indefinitely (no end date).
+        {bulkGenOnly
+          ? `Buyers pay ${bulkAccessPrice ?? 0} ⚡ to generate on-site.`
+          : `Buyers unlock download + generation for ${bulkAccessPrice ?? 0} ⚡.`}
+        This uses {slotsConsumed} of your permanent slots.
+      </AlertDialogDescription>
+    </AlertDialogHeader>
+    <AlertDialogFooter>
+      <AlertDialogCancel>Cancel</AlertDialogCancel>
+      <AlertDialogAction
+        onclick={() => {
+          showConfirm = false;
+          form?.requestSubmit();
+        }}>Apply</AlertDialogAction
+      >
+    </AlertDialogFooter>
+  </AlertDialogContent>
+</AlertDialog>

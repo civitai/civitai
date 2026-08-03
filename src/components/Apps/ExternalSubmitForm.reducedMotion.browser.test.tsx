@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
+// Type-only: gives the `importOriginal` spread below the real module's type
+// without an `import()` type annotation (banned by consistent-type-imports).
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 — the redesigned submit wizard must honour `prefers-reduced-motion`. With the
@@ -25,9 +28,16 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/utils/trpc', () => {
+// Only the `trpc` client itself is overridden — every other `~/utils/trpc` export
+// (trpcVanilla, queryClient, setTrpcBatchingEnabled, ...) is kept real via
+// importOriginal. A wholesale factory silently breaks this whole FILE (0 tests
+// collected, no failing assertion) the day the module gains an export some other
+// file in this test's graph imports. See local-rules/no-wholesale-module-mock.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
+    ...actual,
     trpc: {
       appListings: {
         submitExternalListing: {
@@ -36,14 +46,30 @@ vi.mock('~/utils/trpc', () => {
         fetchListingMetaFromUrl: { useQuery: () => mocks.meta },
         persistAssetImage: { useMutation: mutation },
         ingestAssetFromUrl: { useMutation: mutation },
+        ingestAssetFromDataUri: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
+        removeScreenshot: { useMutation: mutation },
       },
-      oauthClient: { getAll: { useQuery: () => mocks.clients } },
+      oauthClient: {
+        getAll: { useQuery: () => mocks.clients },
+        // The OAuth picker is role-aware and calls BOTH hooks unconditionally (rules of
+        // hooks) — the moderator global-search one too, even for a non-mod caller. Omitted
+        // from a wholesale trpc mock it reads `undefined.useQuery` and throws during
+        // render, so nothing mounts. Mirrors ExternalSubmitForm.browser.test.tsx.
+        searchForModerator: { useQuery: () => ({ data: { items: [] }, isFetching: false }) },
+      },
     },
   };
 });
+
+// `ExternalSubmitForm` reads `useCurrentUser` to pick which OAuth-client picker to render,
+// and that hook THROWS ("missing CivitaiSessionContext") because the harness mounts no
+// session context. Unmocked it takes the whole render down (empty <body>) and every
+// assertion below fails by burning its timeout. `null` = the non-moderator path, which is
+// the own-clients `apps-offsite-client-select` dropdown this test drives.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),

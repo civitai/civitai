@@ -99,14 +99,37 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
 
 /**
  * Route `appListing.findUnique` by `select` shape (owner check vs edit-view) and, for
- * the edit-view, by `where.id` so the shadow's view carries shadow row ids.
+ * the edit-view, by `where.id` so the shadow's view carries shadow row ids. Wired on
+ * BOTH pools: the edit-view read of a SHADOW goes to the PRIMARY (`dbWrite`) — see the
+ * replica-lag test below.
+ *
+ * `replicaLagsOn` makes the REPLICA miss on the given ids while the PRIMARY still
+ * serves them — real replication lag.
  */
-function wireFindUnique(owned: unknown, viewByListingId: Record<string, unknown>) {
-  mockRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+function wireFindUnique(
+  owned: unknown,
+  viewByListingId: Record<string, unknown>,
+  opts: { replicaLagsOn?: string[] } = {}
+) {
+  const impl = (isReplica: boolean) => async (args: unknown) => {
     const a = args as { select?: Record<string, unknown>; where?: { id?: string } };
-    if ('icon' in (a.select ?? {})) return viewByListingId[a.where?.id ?? ''] ?? null;
+    if ('icon' in (a.select ?? {})) {
+      const id = a.where?.id ?? '';
+      if (isReplica && (opts.replicaLagsOn ?? []).includes(id)) return null;
+      return viewByListingId[id] ?? null;
+    }
     return owned;
-  });
+  };
+  mockRead.appListing.findUnique.mockImplementation(impl(true));
+  mockWrite.appListing.findUnique.mockImplementation(impl(false));
+}
+
+/** The listing ids whose `loadListingEditView` read landed on a given pool. */
+function editViewReads(client: { appListing: { findUnique: { mock: { calls: unknown[][] } } } }) {
+  return client.appListing.findUnique.mock.calls
+    .map(([a]) => a as { select?: Record<string, unknown>; where?: { id?: string } })
+    .filter((a) => 'icon' in (a?.select ?? {}))
+    .map((a) => a.where?.id ?? '');
 }
 
 beforeEach(() => {
@@ -181,10 +204,10 @@ describe('getMyListingForEdit', () => {
     expect(res.hasPendingRevision).toBe(true);
     expect(res.scalars.name).toBe('Vitrine (edited)');
     // 🔴 the edit-view read targeted the SHADOW, and the screenshot rows are the shadow's.
-    const viewCall = mockRead.appListing.findUnique.mock.calls.find(
-      (c) => 'icon' in ((c[0] as { select?: object }).select ?? {})
-    );
-    expect((viewCall?.[0] as { where: { id: string } }).where.id).toBe('apl_shadow_existing');
+    // A shadow is read from the PRIMARY even on the reuse path (`created: false`) — it
+    // may have been minted microseconds ago by another caller. See the lag test below.
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow_existing']);
+    expect(editViewReads(mockRead)).toEqual([]);
     expect(res.assets.screenshots[0].id).toBe('ss_shadow');
     // slug stays the PUBLIC parent slug.
     expect(res.slug).toBe('vitrine');
@@ -214,11 +237,82 @@ describe('getMyListingForEdit', () => {
     expect(mockWrite.appListing.create).toHaveBeenCalled();
     // 🔴 the returned asset rows are the SHADOW's copies — a removal would target these,
     // never the live parent's row ids.
-    const viewCall = mockRead.appListing.findUnique.mock.calls.find(
-      (c) => 'icon' in ((c[0] as { select?: object }).select ?? {})
-    );
-    expect((viewCall?.[0] as { where: { id: string } }).where.id).toBe('apl_shadow_created');
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow_created']);
+    expect(editViewReads(mockRead)).toEqual([]);
     expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 READ-AFTER-WRITE (the `getMyListingForEdit` half of the same guard).
+  // The shadow is INSERTed on the PRIMARY; reading it back off the replica misses
+  // under replication lag → `loadListingEditView` throws NOT_FOUND → tRPC NOT_FOUND
+  // → the edit UI's query is `retry: false`, so the whole editor collapses. The
+  // routing predicate is "the target is a SHADOW", not "this call created it" —
+  // `created: false` only means someone ELSE minted it (the media editor's own
+  // client-side `beginListingRevision`, a second tab), which is just as likely to be
+  // microseconds old. Both branches are pinned below.
+  // -------------------------------------------------------------------------
+
+  it('🔴 a FRESHLY-CREATED shadow the replica lacks still resolves (reads the PRIMARY)', async () => {
+    wireFindUnique(
+      ownedRow({ status: 'approved' }),
+      {
+        apl_parent: editViewRow('ss_parent'),
+        apl_shadow_created: editViewRow('ss_shadow_new'),
+      },
+      // INSERTed on the primary this instant — the replica has not received it.
+      { replicaLagsOn: ['apl_shadow_created'] }
+    );
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'apl_shadow_created' });
+
+    // Routed to the replica this REJECTS with NOT_FOUND instead of resolving.
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+
+    expect(res.shadowId).toBe('apl_shadow_created');
+    expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow_created']);
+    expect(editViewReads(mockRead)).toEqual([]);
+  });
+
+  it('🔴 a REUSED shadow the replica lacks still resolves — `created: false` is not a visibility claim', async () => {
+    wireFindUnique(
+      ownedRow({ status: 'approved' }),
+      {
+        apl_parent: editViewRow('ss_parent'),
+        apl_shadow_existing: editViewRow('ss_shadow'),
+      },
+      // A concurrent request minted the shadow microseconds ago; it is on the primary
+      // but has not replicated. `beginListingRevision` reports created:FALSE.
+      { replicaLagsOn: ['apl_shadow_existing'] }
+    );
+    // The idempotency probe reads the replica and misses; the in-tx re-check on the
+    // primary finds the concurrent winner → no create, created:false.
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow_existing' });
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+
+    expect(res.shadowId).toBe('apl_shadow_existing');
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    // The shadow's own rows — never a silent fallback to the live parent's.
+    expect(res.assets.screenshots[0].id).toBe('ss_shadow');
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow_existing']);
+    expect(editViewReads(mockRead)).toEqual([]);
+  });
+
+  it('an IN-PLACE (non-shadow) target stays on the REPLICA — not a blanket primary redirect', async () => {
+    wireFindUnique(ownedRow({ status: 'draft' }), { apl_parent: editViewRow('ss_parent') });
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+
+    expect(res.shadowId).toBeNull();
+    // Nothing was written, so nothing needs the primary — the steady-state read load
+    // must stay on the replica pool.
+    expect(editViewReads(mockRead)).toEqual(['apl_parent']);
+    expect(editViewReads(mockWrite)).toEqual([]);
   });
 
   it('rejects a non-owner (NOT_OWNED)', async () => {
@@ -320,5 +414,50 @@ describe('updateRevisionDraft', () => {
     await expect(
       updateRevisionDraft({ shadowId: 'apl_shadow', userId: 7, patch: { name: 'x' } })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+  });
+
+  // #3399 completion: a MOD may edit scopes on a shadow whose linked OAuth client is
+  // owned by someone else (the client owner ≠ the listing/shadow owner). The owner
+  // re-assertion in deriveScopePatch is bypassed for mods only.
+  it('mod scope edit on a shadow linking a FOREIGN client → OK (derived, no FORBIDDEN)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      ownedRow({
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        connectClientId: 'oauth-1',
+      })
+    );
+    // Client owned by someone else (999); the shadow/listing is owned by the mod (7).
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      userId: 7,
+      isModerator: true,
+      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(13);
+  });
+
+  it('non-mod scope edit on a shadow linking a FOREIGN client → FORBIDDEN, no write', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      ownedRow({
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        connectClientId: 'oauth-1',
+      })
+    );
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: 7,
+        isModerator: false,
+        patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
   });
 });

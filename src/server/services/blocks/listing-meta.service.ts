@@ -4,6 +4,7 @@ import { LISTING_ASSET_MAX_DIMENSION_PX } from '~/server/schema/blocks/app-listi
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import type {
   FetchListingMetaInput,
+  IngestListingAssetFromDataUriInput,
   IngestListingAssetFromUrlInput,
 } from '~/server/schema/blocks/listing-meta.schema';
 import { extractListingMeta, type ListingMetaSuggestion } from '~/server/utils/og-metadata';
@@ -48,6 +49,36 @@ const FORMAT_TO_MIME: Record<string, string> = {
   png: 'image/png',
   webp: 'image/webp',
 };
+
+/**
+ * Inline-icon (data-URI) ingest bounds. A favicon is small; cap the DECODED bytes
+ * hard (independent of the schema's encoded-length gate — a highly-compressed blob
+ * can still decode large) before handing anything to sharp. Also bound the
+ * rasterized PNG's dimensions so an SVG with a huge intrinsic viewBox can't produce
+ * an enormous canvas.
+ */
+export const INLINE_ICON_MAX_DECODED_BYTES = 2 * 1024 * 1024;
+const INLINE_ICON_RASTER_MAX_PX = 1024;
+/**
+ * 🔴 EXPLICIT input-pixel cap for the inline-icon rasterizer — do NOT rely on
+ * librsvg's implicit default policy (a sharp/libvips/librsvg bump could silently
+ * change it). The output is always clamped to ≤{@link INLINE_ICON_RASTER_MAX_PX}px
+ * (~1MP), so 16MP (4096×4096) is ample headroom while bounding librsvg allocation:
+ * a VALID sub-268MP SVG with a huge intrinsic viewBox (e.g. 15000×15000 ≈ 225MP,
+ * which librsvg would render at ~900MB BEFORE the downscale clamps it) is instead
+ * rejected at decode with a clean BAD_REQUEST — nothing is allocated at full size
+ * and nothing is stored. Applies to the raster (png/jpeg/webp/gif) path too.
+ */
+const INLINE_ICON_MAX_INPUT_PIXELS = 16 * 1024 * 1024; // 16,777,216 px = 4096×4096
+/** MIME types accepted for an inline-icon data URI (mirrors the extractor allowlist). */
+const INLINE_ICON_ALLOWED_MIME = new Set([
+  'image/svg+xml',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/gif',
+]);
 
 /** Generic, non-leaky message for any safe-fetch-layer failure. */
 function friendlyFetchError(): TRPCError {
@@ -189,6 +220,147 @@ export async function ingestListingAssetFromUrl(opts: {
     metadata: {
       size: fetched.bytes.byteLength,
       source: 'app-listing-og-pull',
+      appListingAssetKind: input.kind,
+    },
+    userId,
+  });
+
+  return { imageId: image.id };
+}
+
+// ---------------------------------------------------------------------------
+// ingestListingAssetFromDataUri (author) — accepted INLINE icon → PNG → Image row.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a `data:[<mime>][;base64],<data>` URI into its declared MIME + decoded
+ * bytes. Returns `null` for anything that isn't a well-formed data URI. base64 and
+ * percent-encoded (URL-encoded) payloads are both supported (an SVG favicon is
+ * commonly URL-encoded). NEVER throws.
+ */
+function parseImageDataUri(dataUri: string): { mime: string; bytes: Buffer } | null {
+  const m = /^data:([^,;]*)?(;[^,]*)?,(.*)$/is.exec(dataUri.trim());
+  if (!m) return null;
+  const mime = (m[1] || 'text/plain').toLowerCase().trim();
+  const params = (m[2] || '').toLowerCase();
+  const payload = m[3] ?? '';
+  const isBase64 = /;base64/.test(params);
+  try {
+    const bytes = isBase64
+      ? Buffer.from(payload, 'base64')
+      : Buffer.from(decodeURIComponent(payload), 'utf8');
+    if (bytes.byteLength === 0) return null;
+    return { mime, bytes };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ingest an ACCEPTED inline `data:image/...` icon (e.g. a favicon declared as a data
+ * URI — radio.civitai.com) into a scannable `Image` row. This is a SEPARATE ingest
+ * path from the URL fetch: the bytes come from the data URI itself (no outbound
+ * fetch — never routed through safeFetch, which is https-only by design).
+ *
+ * 🔴 SECURITY — never store or serve raw SVG (SVG is an XSS vector). The flow:
+ *   1. decode the data URI; REJECT any non-image MIME (`data:text/html`,
+ *      `data:application/*`, scripts) — only `image/(svg+xml|png|jpeg|webp|gif)`;
+ *   2. cap the DECODED byte size (decompression-abuse bound);
+ *   3. RASTERIZE to PNG via sharp (SVG rasterizes through librsvg; a raster source
+ *      is normalised too), bounding the output dimensions — so the bytes that ever
+ *      reach the store are PNG, never SVG markup;
+ *   4. upload the PNG into the SAME scannable image store the URL path uses →
+ *      `createImage` through the STANDARD scan pipeline (no bypass) → `{ imageId }`.
+ * The client then attaches via `setIcon` (polling until Scanned), exactly like an
+ * author upload. Ownership is bound to the caller.
+ */
+export async function ingestListingAssetFromDataUri(opts: {
+  input: IngestListingAssetFromDataUriInput;
+  userId: number;
+}): Promise<{ imageId: number }> {
+  const { input, userId } = opts;
+
+  const parsed = parseImageDataUri(input.dataUri);
+  if (!parsed) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "That icon couldn't be read. Try uploading it manually.",
+    });
+  }
+  // Reject a non-image data URI (data:text/html / scripts / application/*). Only an
+  // image MIME is ever rasterized + ingested.
+  if (!INLINE_ICON_ALLOWED_MIME.has(parsed.mime)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Unsupported icon type — upload a PNG, JPEG or WebP manually.',
+    });
+  }
+  // Cap the DECODED size (the encoded-length schema gate is coarse; a compressed
+  // blob can still decode large). Bound before handing anything to sharp.
+  if (parsed.bytes.byteLength > INLINE_ICON_MAX_DECODED_BYTES) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'That icon is too large. Try uploading a smaller one manually.',
+    });
+  }
+
+  // Rasterize to PNG. This is the load-bearing security step: whatever the source
+  // (SVG markup or a raster image), the bytes we STORE are always PNG — raw SVG is
+  // never persisted or served. sharp reads an SVG via librsvg; `resize(...inside)`
+  // bounds the output canvas so a huge intrinsic viewBox can't bomb the pipeline.
+  const { default: sharp } = await import('sharp');
+  let png: Buffer;
+  let width: number | undefined;
+  let height: number | undefined;
+  try {
+    png = await sharp(parsed.bytes, {
+      density: 96,
+      // 🔴 Explicit input-pixel cap (see INLINE_ICON_MAX_INPUT_PIXELS) — reject an
+      // oversized SVG viewBox / raster canvas at DECODE with a clean BAD_REQUEST,
+      // rather than trusting librsvg's implicit default. Bounds allocation before the
+      // downscale.
+      limitInputPixels: INLINE_ICON_MAX_INPUT_PIXELS,
+    })
+      .resize({
+        width: INLINE_ICON_RASTER_MAX_PX,
+        height: INLINE_ICON_RASTER_MAX_PX,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .png()
+      .toBuffer();
+    const meta = await sharp(png).metadata();
+    width = meta.width;
+    height = meta.height;
+  } catch {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "That icon couldn't be read. Try uploading it manually.",
+    });
+  }
+  if (!width || !height || width <= 0 || height <= 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "That icon couldn't be read. Try uploading it manually.",
+    });
+  }
+
+  // Upload the RASTERIZED PNG into the SAME scannable store the URL path uses (B2
+  // image bucket + storage-resolver) — the edge URL + scanner resolve it.
+  const { uploadImageBufferToStore } = await import('~/utils/s3-utils');
+  const { key } = await uploadImageBufferToStore(png, { contentType: 'image/png' });
+
+  const { createImage } = await import('~/server/services/image.service');
+  const image = await createImage({
+    url: key,
+    name: `listing-${input.kind}`,
+    type: 'image',
+    width,
+    height,
+    mimeType: 'image/png',
+    metadata: {
+      size: png.byteLength,
+      source: 'app-listing-og-pull-datauri',
       appListingAssetKind: input.kind,
     },
     userId,

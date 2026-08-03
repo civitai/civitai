@@ -23,6 +23,8 @@ import {
   modAdjustCashBalance,
   updateCashWithdrawal,
 } from '~/server/services/creator-program.service';
+import { getModelChangeHistory } from '~/server/services/entity-change.service';
+import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import {
   getModelModerationDetail,
@@ -56,6 +58,9 @@ export const modRouter = router({
     getModerationDetail: moderatorProcedure
       .input(getByIdSchema)
       .query(({ input }) => getModelModerationDetail(input)),
+    getChangeHistory: moderatorProcedure
+      .input(getByIdSchema)
+      .query(({ input }) => getModelChangeHistory({ modelId: input.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure

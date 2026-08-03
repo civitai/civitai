@@ -44,6 +44,29 @@ describe('recordScopeInvocation — structured detail', () => {
     expect(data.detail).toEqual(detail);
   });
 
+  // The endpoint is now a bounded TEMPLATE (`workflow:submit`), so the workflow
+  // id lives in `detail` — it must survive the write verbatim or the Activity
+  // panel's Detail column has nothing to render.
+  it('round-trips detail.workflowId (the id the bounded endpoint no longer carries)', async () => {
+    mockDbWrite.blockScopeInvocation.create.mockResolvedValueOnce({});
+    const detail: BlockActionDetail = {
+      action: 'workflow.submit',
+      amount: -25,
+      outcome: 'ok',
+      workflowId: 'wf_1',
+    };
+    await recordScopeInvocation({
+      ...BASE,
+      scope: 'ai:write:budgeted',
+      endpoint: 'workflow:submit',
+      detail,
+    });
+    const data = mockDbWrite.blockScopeInvocation.create.mock.calls[0][0].data;
+    expect(data.endpoint).toBe('workflow:submit');
+    expect(data.detail).toEqual(detail);
+    expect(data.detail.workflowId).toBe('wf_1');
+  });
+
   it('omits detail (plain row) when none is passed', async () => {
     mockDbWrite.blockScopeInvocation.create.mockResolvedValueOnce({});
     await recordScopeInvocation({ ...BASE });
@@ -70,7 +93,7 @@ describe('recordScopeInvocation — structured detail', () => {
       ...BASE,
       appBlockId: 'ephemeral-my-app',
       scope: 'ai:write:budgeted',
-      endpoint: 'workflow:submit:wf_1',
+      endpoint: 'workflow:submit',
       dev: true,
       detail,
     });

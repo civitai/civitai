@@ -145,6 +145,9 @@ export const submitCreatorShopItemSchema = z.object({
   // price (0-70, out of the creator's 70% pool).
   sellableByOthers: z.boolean().default(false),
   sellerShare: z.number().int().min(0).max(70).default(0),
+  // Accept Blue Buzz from buyers (fully or partially); the creator is paid
+  // blue for the blue-paid portion.
+  acceptsBlueBuzz: z.boolean().default(false),
   // ProfileDecoration only — per-side fit adjustment (ignored for other types).
   offsets: cosmeticOffsetsSchema.nullish(),
 });
@@ -159,6 +162,8 @@ export const updateCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR).optional(),
   availableQuantity: z.number().int().positive().nullish(),
+  // Payment term like price/quantity — editable on published items, no re-review.
+  acceptsBlueBuzz: z.boolean().optional(),
   // ProfileDecoration only — null clears the adjustment; treated as a content
   // change (same rules as name/description/artwork).
   offsets: cosmeticOffsetsSchema.nullish(),
@@ -191,6 +196,15 @@ export const getPublicShopItemsSchema = z.object({
   cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
   // Matches the item title OR the owning creator's username.
   query: z.string().optional(),
+});
+
+// Site-wide community cosmetics hub on /shop — one feed of every published
+// creator cosmetic from public shops, filterable by type.
+export type GetCommunityCosmeticsInput = z.infer<typeof getCommunityCosmeticsSchema>;
+export const getCommunityCosmeticsSchema = z.object({
+  limit: z.number().min(1).max(100).default(40),
+  cursor: z.number().optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
 });
 
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;

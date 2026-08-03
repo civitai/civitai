@@ -83,7 +83,13 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     id: 'ab_1',
     block_id: 'cool-block',
     app_id: 'app_1',
+    // 🔴 The OAuth client's name. In prod this ALWAYS equals the app's own
+    // title, which is why rendering it as the author was a bug — the real owner
+    // is the joined User row below.
     app_name: 'Cool App',
+    owner_user_id: 42,
+    owner_username: 'zachlowdenzx',
+    owner_image: 'owner-avatar.png',
     status: 'approved',
     content_rating: 'PG',
     version: '1.2.3',
@@ -221,6 +227,9 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
         'installCount',
         'liveUrl',
         'manifest',
+        // The public owner chip ({id, username, image} only) — the real author,
+        // as opposed to `appName` (the OAuth client name == the app title).
+        'owner',
         'reviewCount',
         'scopes',
         'screenshots',
@@ -295,6 +304,112 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     const { BlockRegistry } = await import('../block-registry.service');
     const detail = await BlockRegistry.getAppDetail('ab_1');
     expect(detail!.screenshots).toHaveLength(0);
+  });
+
+  // ── Owner attribution (the `/apps/<appBlockId>` "by {appName}" bug) ─────────
+
+  it('projects the REAL owner as a public {id, username, image} chip', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.owner).toEqual({
+      id: 42,
+      username: 'zachlowdenzx',
+      image: 'owner-avatar.png',
+    });
+    // …and it is DISTINCT from appName (the OAuth client name == the app title).
+    expect(detail!.owner!.username).not.toBe(detail!.appName);
+  });
+
+  it('JOINs the owner via OauthClient.userId and selects ONLY the three chip columns', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.getAppDetail('ab_1');
+    const sql = capturedSql();
+    expect(sql).toMatch(/LEFT JOIN "User" u ON u\.id = oc\."userId"/);
+    expect(sql).toMatch(/u\.id AS owner_user_id/);
+    expect(sql).toMatch(/u\.username AS owner_username/);
+    expect(sql).toMatch(/u\.image AS owner_image/);
+    // 🔴 The SELECT list PROJECTS exactly this key set and nothing else.
+    //
+    // Assert on the PROJECTED KEYS (the `AS` alias, else the trailing column
+    // name), not on `u.`-prefixed source text. The alias-scoped version of this
+    // guard — collect every `u.<col>` in the SELECT list, expect
+    // ['id','image','username'] — reads like a widened-SELECT guard but is only
+    // a guard on ONE table alias: adding a second `"User"` join and selecting
+    // `usr.email AS owner_email` off it walks straight past, and so does any
+    // widening of `oc.`/`ab.`. The projection is what actually reaches the
+    // caller (it becomes a `Row` key, which `projectPublicOwner` then reads), so
+    // that is what gets pinned. A new column here is a deliberate act and must
+    // update this list.
+    const selectList = sql.slice(
+      sql.indexOf('SELECT') + 'SELECT'.length,
+      sql.indexOf('FROM app_blocks')
+    );
+    // Split on TOP-LEVEL commas only — `install_count` is an inline subquery.
+    const items: string[] = [];
+    let depth = 0;
+    let buf = '';
+    for (const ch of selectList) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        items.push(buf);
+        buf = '';
+      } else buf += ch;
+    }
+    items.push(buf);
+    const projected = items
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const alias = /\bAS\s+(?:"([^"]+)"|(\w+))\s*$/i.exec(item);
+        if (alias) return alias[1] ?? alias[2];
+        // No alias → the projected key is the bare/qualified column name.
+        const bare = /(?:"([^"]+)"|(\w+))\s*$/.exec(item);
+        return bare?.[1] ?? bare?.[2] ?? item;
+      });
+    expect([...projected].sort()).toEqual([
+      'app_id',
+      'app_name',
+      'approved_scopes',
+      'avg_rating',
+      'block_id',
+      'content_rating',
+      'current_version_deployed_at',
+      'external_url',
+      'id',
+      'install_count',
+      'manifest',
+      'owner_image',
+      'owner_user_id',
+      'owner_username',
+      'review_count',
+      'screenshots',
+      'status',
+      'version',
+    ]);
+    // No duplicate projected key (two sources colliding on one `Row` field).
+    expect(new Set(projected).size).toBe(projected.length);
+  });
+
+  it('an unresolvable owner yields owner:null (no crash, no fallback to appName)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({ owner_user_id: null, owner_username: null, owner_image: null }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.owner).toBeNull();
+  });
+
+  it('🔒 an extra user column present on the row does NOT reach the projection', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({ owner_email: 'owner@example.com', owner_settings: { apiKey: 'owner-secret' } }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain('owner@example.com');
+    expect(serialized).not.toContain('owner-secret');
+    expect(Object.keys(detail!.owner!).sort()).toEqual(['id', 'image', 'username']);
   });
 
   it('SELECTs the screenshots column (so getAppDetail can render the gallery)', async () => {

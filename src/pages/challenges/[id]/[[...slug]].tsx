@@ -39,6 +39,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -191,9 +192,17 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (challenge)
+        gating = {
+          contentNsfwLevel: challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0),
+          nsfw: challenge.source === ChallengeSource.User && challenge.buzzType === 'yellow',
+        };
 
       if (challenge) {
         const destination = getCanonicalSlugDestination({
@@ -207,7 +216,7 @@ export const getServerSideProps = createServerSideProps({
       }
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
 
@@ -437,10 +446,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
   // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
   const canDeleteOwn =
-    features.userChallenges &&
-    isOwner &&
-    !currentUser?.isModerator &&
-    (isScheduled || isCancelled);
+    features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
@@ -502,6 +508,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.title}
             </Title>
             <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ChallengeNotifyToggle challenge={{ id: challenge.id, status: challenge.status }} />
               <ShareButton url={router.asPath} title={challenge.title}>
                 <ActionIcon variant="light" size="lg" color="gray">
                   <IconShare3 size={20} />
@@ -926,15 +933,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Ends',
-      value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Max Entries',
@@ -1326,7 +1329,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Generate
                 </Button>
                 {challenge.collectionId && (
-                  <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                  <SubmitEntryButton
+                    isOwner={isOwner}
+                    onClick={handleOpenSubmitModal}
+                    label="Submit"
+                    fullWidth
+                  />
                 )}
               </Group>
             </div>
@@ -1349,7 +1357,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 Generate
               </Button>
               {challenge.collectionId && (
-                <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                <SubmitEntryButton
+                  isOwner={isOwner}
+                  onClick={handleOpenSubmitModal}
+                  label="Submit"
+                  fullWidth
+                />
               )}
             </>
           ) : challenge.status === ChallengeStatus.Completed ? (
@@ -1605,6 +1618,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                   isFirst={index === 1}
                   className={index === 1 ? 'z-10' : ''}
                   judgeInfo={judgeInfo}
+                  judgingCategories={challenge.judgingCategories}
                   buzzType={challenge.buzzType}
                 />
               ))}
@@ -1623,6 +1637,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     isFirst={winner.place === 1}
                     isMobile
                     judgeInfo={judgeInfo}
+                    judgingCategories={challenge.judgingCategories}
                     buzzType={challenge.buzzType}
                   />
                 ))}
@@ -1923,6 +1938,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 }}
                 disableStoreFilters
                 judgeInfo={judgeInfo}
+                judgingCategories={challenge.judgingCategories}
               />
             )}
           </Stack>

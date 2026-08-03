@@ -29,7 +29,7 @@ import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFormStorage } from '~/hooks/useFormStorage';
+import { persistedValueLostIdentity, useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputMultiFileUpload,
@@ -137,6 +137,12 @@ export function ArticleUpsertForm({ article }: Props) {
       tags,
       title,
     }),
+    // The cover upload widget emits `{ url, name }` with no `id`, so a persisted draft is a
+    // strictly less complete copy of the loaded cover. Restoring it verbatim makes the server
+    // treat an image it already has a row for as brand new. Keep the loaded value when the
+    // persisted one is the same object minus its id; a genuinely different url still wins.
+    shouldRestoreField: ({ name, storedValue, currentValue }) =>
+      name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue),
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
   useEffect(() => {

@@ -28,6 +28,10 @@ import {
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
+import {
   ChallengeReviewCostType,
   ChallengeSource,
   ChallengeStatus,
@@ -39,8 +43,6 @@ import type {
   DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
-  calculateWeightedScore,
-  SCORE_WEIGHTS,
   challengeToLegacyFormat,
   deriveChallengeNsfwLevel,
   endChallenge,
@@ -50,7 +52,10 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
+import {
+  calculateWeightedCategoryScore,
+  FIXED_JUDGING_CATEGORIES,
+} from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
@@ -64,6 +69,11 @@ import {
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  recordChallengeCompleted,
+  recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
+} from '~/server/prom/challenge.metrics';
+import {
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
   type ChallengeJudgingCategory,
@@ -74,6 +84,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
+import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import {
@@ -658,10 +669,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
-  // Any challenge that stores judgingCategories is judged by them; those without fall back to the
-  // default theme/wittiness/humor/aesthetic rubric (generateReview resolves DEFAULT_CATEGORY_ROWS
-  // from the DB). Parse defensively — a malformed value falls back to the fixed schema instead of
-  // failing the review.
+  // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
+  // review.
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
     challengeRecord?.judgingCategories
   );
@@ -1194,6 +1203,27 @@ async function logChallengeSpendMetric(challenge: ChallengeDetails) {
 }
 
 /**
+ * True while `metadata.completingClaimedAt` still matches the stamp this run claimed with — i.e.
+ * nobody has revoked and re-taken this completion since. TELEMETRY GATE ONLY: it guards the two
+ * counter emits below and nothing else, so it can never change what is written or paid.
+ *
+ * Deliberately FAILS OPEN (returns true) when the row carries no stamp: `metadata` here is read
+ * through the replica pool, where "no stamp yet" is indistinguishable from "the replica has not
+ * caught up with our own claim write". Only a stamp that is present AND different is treated as
+ * proof of a takeover. Consequence, stated plainly: this can only ever suppress a duplicate emit,
+ * never manufacture one — and it does not make the emit exactly-once (see the emit sites).
+ */
+function claimStillHeld(
+  metadata: Record<string, unknown> | null | undefined,
+  claimedAt: string | null
+): boolean {
+  if (!claimedAt) return false;
+  const current = metadata?.completingClaimedAt;
+  if (typeof current !== 'string' || current.length === 0) return true;
+  return current === claimedAt;
+}
+
+/**
  * Pick winners for a single challenge.
  *
  * Operation order (race-condition safe):
@@ -1212,9 +1242,11 @@ export async function pickWinnersForChallenge(
 ) {
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // 1. Atomic claim — prevent duplicate processing
-  const claimed = await claimChallengeForCompletion(currentChallenge.challengeId);
-  if (!claimed) {
+  // 1. Atomic claim — prevent duplicate processing. `claimedAt` is the stamp written to
+  // metadata.completingClaimedAt; a later read showing a different stamp means this run's claim was
+  // revoked (resetStuckCompletingChallenges) and re-taken. Used to gate telemetry only.
+  const claimedAt = await claimChallengeForCompletion(currentChallenge.challengeId);
+  if (!claimedAt) {
     log('Challenge already claimed for completion, skipping:', currentChallenge.challengeId);
     return;
   }
@@ -1259,11 +1291,14 @@ export async function pickWinnersForChallenge(
               eventId: number | null;
               source: ChallengeSource;
               judgingCategories: unknown;
+              // Carried purely so the zero-entries emit below can re-check the claim stamp without
+              // a second round-trip — an extra COLUMN on a query that already runs, not a new read.
+              metadata: Record<string, unknown> | null;
             }
           | undefined
         ]
       >`
-        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories" FROM "Challenge"
+        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories", "metadata" FROM "Challenge"
         WHERE id = ${currentChallenge.challengeId}
         LIMIT 1
       `;
@@ -1340,6 +1375,24 @@ export async function pickWinnersForChallenge(
         }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
+        // Telemetry: emit AFTER the Completed write, never before, and only while this run still
+        // holds the claim it took at the top of the function.
+        //
+        // What that actually guarantees — stated precisely, because the write it follows does NOT
+        // provide exactly-once on its own: `updateChallengeStatus` is an unconditional
+        // `UPDATE ... WHERE id = $1` with no status predicate, and `resetStuckCompletingChallenges`
+        // is purely time-based, so a slow-but-alive run can be reset to Active, re-claimed by a
+        // second run, and STILL execute its own Completed write. The stamp check is what keeps that
+        // run from emitting a second time. Making the write itself conditional would be a real
+        // behaviour change and is deliberately out of scope.
+        //
+        // Residual window on THIS path: the freshest read of the row before the emit is the judge-row
+        // SELECT above, taken right after the claim — so a takeover during judging/refund is not
+        // observed here and would still double-count. The winners path below re-reads the row much
+        // later and is correspondingly tighter. Both fail open on a missing stamp (see claimStillHeld).
+        // `source`/`metadata` reuse the already-fetched judge row — no extra (throwable) query.
+        if (claimStillHeld(challengeJudgeRow?.metadata, claimedAt))
+          recordChallengeCompleted({ source: challengeJudgeRow?.source });
         const freshChallenge = await getChallengeById(currentChallenge.challengeId);
         if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
         return;
@@ -1373,7 +1426,7 @@ export async function pickWinnersForChallenge(
         process = 'Deterministic award: fewer than 2 distinct entrants';
         outcome = 'Sole entrant awarded place 1 without LLM judging';
 
-        await createChallengeWinner({
+        const solePersisted = await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
           userId: soleEntry.userId,
           imageId: soleEntry.imageId,
@@ -1382,6 +1435,11 @@ export async function pickWinnersForChallenge(
           pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
           reason: soleWinnerReason,
         });
+        // Pay the placement that is PERSISTED, not the one just picked — see the reconcile note on
+        // the LLM path below.
+        winningEntries = winningEntries.map((entry) =>
+          reconcileWinnerToPersisted(entry, solePersisted)
+        );
         log('ChallengeWinner record created (deterministic sole-entrant award)');
       } else {
         log('Sending entries for final judgment');
@@ -1422,9 +1480,46 @@ export async function pickWinnersForChallenge(
           })
           .filter(isDefined);
 
-        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+        // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+        // winners" is prompt text, and `find()` happily matches the same entry twice — which would
+        // put one creator on two places. That creator has at most one `ChallengeWinner` row to be
+        // paid for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before
+        // the create loop, rather than at the payout: it keeps the duplicate from conflicting
+        // against the row its own twin just inserted, which would otherwise fire the
+        // place-divergence warning and counter for an anomaly that is not a re-pick at all.
+        const { winners: dedupedWinners, dropped: droppedWinners } =
+          dedupeWinnersForPayout(winningEntries);
+        if (droppedWinners.length) {
+          winningEntries = dedupedWinners;
+          await logToAxiom({
+            type: 'warning',
+            name: 'challenge-winner-duplicate-pick',
+            message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${currentChallenge.challengeId}`,
+            challengeId: currentChallenge.challengeId,
+            droppedUserIds: droppedWinners.map((entry) => entry.userId),
+            droppedPlaces: droppedWinners.map((entry) => entry.position),
+          }).catch(() => undefined);
+          recordChallengeWinnerDuplicatePick({
+            // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed
+            // `| undefined`, and letting it fall through to `unknown` would put a caller-side emit
+            // in a bucket that is meant to mean something else.
+            source: challengeJudgeRow?.source ?? ChallengeSource.System,
+            count: droppedWinners.length,
+            origin: 'caller',
+          });
+        }
+
+        // 4. Create ChallengeWinner records, then pay the placement that is PERSISTED rather than
+        // the one just picked. A user already recorded as a winner of this challenge cannot get a
+        // second row — (challengeId, userId) is unique, so the insert conflicts and the stored row
+        // keeps its original place. Paying the freshly-picked place would key the payout to a
+        // different externalTransactionId than the one already settled at the stored place and mint
+        // a second prize (this is the observed duplicate-payout mechanism, and re-picks tend to be
+        // permutations of the same users because the winner cooldown only excludes Completed
+        // challenges, leaving this challenge's own in-flight winners eligible).
+        const reconciledEntries: typeof winningEntries = [];
         for (const entry of winningEntries) {
-          await createChallengeWinner({
+          const persisted = await createChallengeWinner({
             challengeId: currentChallenge.challengeId,
             userId: entry.userId,
             imageId: entry.imageId!, // always non-null on fresh winner path
@@ -1433,7 +1528,9 @@ export async function pickWinnersForChallenge(
             pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
             reason: entry.reason ?? undefined,
           });
+          reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
         }
+        winningEntries = reconciledEntries;
         log('ChallengeWinner records created');
       }
     }
@@ -1442,16 +1539,17 @@ export async function pickWinnersForChallenge(
     // to the recorded ChallengeWinner.buzzAwarded) — indexing prizes[] by array position would
     // overpay when an unmatched LLM winner was filtered out above (place-2 entry at index 0
     // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId: currentChallenge.challengeId,
-          title: currentChallenge.title,
-          buzzType: winnerBuzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure. The output is deterministic so a rebuild would not move
+    // money, but the builder increments the duplicate-pick counter on its drop branch, and
+    // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
+    // dropped on exactly the flaky-payout run where the number matters most.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId: currentChallenge.challengeId,
+      title: currentChallenge.title,
+      buzzType: winnerBuzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // 6. Distribute entry participation prizes
@@ -1513,6 +1611,41 @@ export async function pickWinnersForChallenge(
       },
     });
     log('Challenge status updated to Completed');
+
+    // Telemetry: emitted AFTER the Completed write, deliberately NOT next to the payout above.
+    // The payout is retry-safe by deterministic externalTransactionId, so a run that pays prizes
+    // and then crashes before this write is reset Completing -> Active and re-enters via the
+    // `existingWinners` branch, which re-issues the same (already-settled) payout. An emit at the
+    // payout site would count that Buzz twice.
+    //
+    // Post-write placement alone is NOT exactly-once, and the code does not pretend otherwise: this
+    // Completed write is an unconditional `UPDATE ... WHERE id = $1` (no status predicate), and
+    // `resetStuckCompletingChallenges` revokes a Completing claim on elapsed time alone with no
+    // liveness check — so a slow-but-alive run can lose its claim to a second run and still run this
+    // write. The `claimStillHeld` gate is what stops that run from emitting a second time:
+    // `challengeRecord` was read at step 7, AFTER judging and both payout steps, so a takeover during
+    // the long part of the run is observed here. Residual window: a takeover between that read and
+    // this line is not covered — closing it would mean a conditional write, i.e. a real behaviour
+    // change, which is out of scope. The gate fails open on a missing stamp (see claimStillHeld), so
+    // it can only ever suppress a duplicate, never a first emit under normal operation.
+    //
+    // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
+    // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
+    // table — a partial-winner completion pays less and must report less. Note this is prize Buzz
+    // ATTEMPTED, not confirmed-settled: `createBuzzTransactionMany` silently drops any non-success,
+    // non-conflict result (e.g. insufficientFunds) from both of its result arrays, so a leg that did
+    // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
+    // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
+    // neither needs a new query.
+    if (claimStillHeld(challengeRecord?.metadata, claimedAt)) {
+      recordChallengeCompleted({ source: challengeRecord?.source });
+      recordChallengePrizePaidBuzz({
+        source: challengeRecord?.source,
+        buzzType: winnerBuzzType,
+        amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+      });
+    }
+
     if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
@@ -1529,6 +1662,16 @@ export async function pickWinnersForChallenge(
           position: entry.position,
           prize: entry.prize,
         },
+      });
+    }
+
+    if (currentChallenge.challengeId) {
+      await sendChallengeResultsNotification({
+        challengeId: currentChallenge.challengeId,
+        challengeTitle: currentChallenge.title,
+        excludeUserIds: [
+          ...new Set([...winningEntries.map((entry) => entry.userId), ...paidParticipants]),
+        ],
       });
     }
     log('Winners notified');
@@ -1686,59 +1829,26 @@ export async function getJudgedEntries(
   source: ChallengeSource = ChallengeSource.System,
   categories?: ChallengeJudgingCategory[]
 ) {
-  // Challenges scored against creator-defined category labels (any challenge that stored
-  // judgingCategories — see the callers) can't use the fixed
-  // theme/aesthetic/humor/wittiness SQL ordering below — rank those in JS instead (see the
-  // branch after the winner-cooldown filter). The caller already resolved whether categories
-  // apply (including the fixed-schema fallback for malformed values), so route on their
-  // presence alone rather than re-checking source here.
-  const useWeightedCategories = !!categories?.length;
+  // A challenge with no usable stored rubric (only a malformed value now that every challenge is
+  // seeded) is ranked by the same fixed split the judge scored it against.
+  const rubric = categories?.length ? categories : FIXED_JUDGING_CATEGORIES;
 
-  // Get each user's BEST entry only (by AI score), so users with many entries
-  // don't have an advantage over users with fewer entries
-  const userBestEntries = useWeightedCategories
-    ? await dbRead.$queryRaw<JudgedEntry[]>`
-        SELECT
-          ci."imageId",
-          i."userId",
-          u."username",
-          ci.note
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        JOIN "User" u ON u.id = i."userId"
-        WHERE ci."collectionId" = ${collectionId}
-        AND ci."tagId" = ${config.judgedTagId}
-        AND ci.note IS NOT NULL
-        AND ci.status = 'ACCEPTED'
-      `
-    : await dbRead.$queryRaw<JudgedEntry[]>`
-        WITH ranked AS (
-          SELECT
-            ci."imageId",
-            i."userId",
-            u."username",
-            ci.note,
-            ROW_NUMBER() OVER (
-              PARTITION BY i."userId"
-              ORDER BY (
-                (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
-                (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
-                (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
-                (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
-              ) DESC
-            ) as rn
-          FROM "CollectionItem" ci
-          JOIN "Image" i ON i.id = ci."imageId"
-          JOIN "User" u ON u.id = i."userId"
-          WHERE ci."collectionId" = ${collectionId}
-          AND ci."tagId" = ${config.judgedTagId}
-          AND ci.note IS NOT NULL
-          AND ci.status = 'ACCEPTED'
-        )
-        SELECT "imageId", "userId", username, note
-        FROM ranked
-        WHERE rn = 1
-      `;
+  // Every judged entry — the per-user best is picked below, after the theme gate has had a chance
+  // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
+  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      ci.note
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    AND ci.note IS NOT NULL
+    AND ci.status = 'ACCEPTED'
+  `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
     return [];
@@ -1802,43 +1912,27 @@ export async function getJudgedEntries(
     cooldown: cooldownSource,
   });
 
-  if (useWeightedCategories) {
-    // categories is non-empty here (useWeightedCategories guard above)
-    const cats = categories!;
-    const ranked = eligibleEntries
-      .map(({ note, ...entry }) => {
-        const { score, summary } = JSON.parse(note);
-        const weightedRating = calculateWeightedCategoryScore(score, cats);
-        return { ...entry, summary, score, weightedRating };
-      })
-      .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
-
-    // Best entry per user (entries aren't deduped in SQL for this path)
-    const bestPerUser = new Map<number, (typeof ranked)[number]>();
-    for (const entry of ranked) {
-      const current = bestPerUser.get(entry.userId);
-      if (!current || entry.weightedRating > current.weightedRating) {
-        bestPerUser.set(entry.userId, entry);
-      }
-    }
-
-    return [...bestPerUser.values()]
-      .sort((a, b) => b.weightedRating - a.weightedRating)
-      .slice(0, config.finalReviewAmount);
-  }
-
-  // Rank entries by weighted AI judge score with theme gate rules
-  const judgedEntries = eligibleEntries
+  const ranked = eligibleEntries
     .map(({ note, ...entry }) => {
       const { score, summary } = JSON.parse(note);
-      const weightedRating = calculateWeightedScore(score);
+      const weightedRating = calculateWeightedCategoryScore(score, rubric);
       return { ...entry, summary, score, weightedRating };
     })
     .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
-  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
 
-  // Take top entries for final judgment (already one per user from the query)
-  return judgedEntries.slice(0, config.finalReviewAmount);
+  const bestPerUser = new Map<number, (typeof ranked)[number]>();
+  for (const entry of ranked) {
+    const current = bestPerUser.get(entry.userId);
+    if (!current || entry.weightedRating > current.weightedRating) {
+      bestPerUser.set(entry.userId, entry);
+    }
+  }
+
+  // Ties are shuffled rather than resolved by query order — entries scored 0-10 on a handful of
+  // categories tie often, and the tied set is what gets cut at finalReviewAmount.
+  return [...bestPerUser.values()]
+    .sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5)
+    .slice(0, config.finalReviewAmount);
 }
 
 // Types

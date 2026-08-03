@@ -32,6 +32,7 @@ import {
   requestReviewHandler,
   restoreModelHandler,
   setModelCollectionShowcaseHandler,
+  setModelMinorHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -53,6 +54,7 @@ import {
   getDownloadSchema,
   getModelByIdSchema,
   getModelsWithCategoriesSchema,
+  getModelTemplateFieldsSchema,
   getModelVersionsSchema,
   getResourceSelectSchema,
   getMyTrainingModelsSchema,
@@ -67,6 +69,7 @@ import {
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
+  setModelMinorSchema,
   setModelOfficialSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
@@ -293,7 +296,7 @@ export const modelRouter = router({
     .mutation(getModelByHashesHandler),
   getTemplateFields: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getByIdSchema)
+    .input(getModelTemplateFieldsSchema)
     .query(getModelTemplateFieldsHandler),
   getModelTemplateFieldsFromBounty: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -354,4 +357,5 @@ export const modelRouter = router({
     .mutation(({ input, ctx }) =>
       setModelOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
+  setMinor: moderatorProcedure.input(setModelMinorSchema).mutation(setModelMinorHandler),
 });

@@ -66,6 +66,7 @@ const EDIT_IMG_IDS = [
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.MageFlow,
 ];
 
 /** Image ecosystems that support image:create */
@@ -107,6 +108,7 @@ const TXT2IMG_IDS = [
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.MageFlow,
 ];
 
 /** Video ecosystems that support video:create */
@@ -122,7 +124,7 @@ const TXT2VID_IDS = [
   ECO.Veo3,
   ECO.Sora2,
   ECO.Vidu,
-  // ECO.MiniMax,
+  ECO.MiniMax,
   ECO.Kling,
   // ECO.Haiper,
   // ECO.Lightricks,
@@ -290,7 +292,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'First/Last Frame',
     description: 'Generate video from start and end images',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23, ECO.WanVideo27],
+    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23, ECO.WanVideo27, ECO.MiniMax],
     excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
     variantOf: 'img2vid',
   },
@@ -299,7 +301,15 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27, ECO.HappyHorse],
+    ecosystemIds: [
+      ECO.Vidu,
+      ECO.Veo3,
+      ECO.Kling,
+      ECO.LTXV23,
+      ECO.WanVideo27,
+      ECO.HappyHorse,
+      ECO.MiniMax,
+    ],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 

@@ -9,6 +9,7 @@ import {
   IconCrystalBall,
   IconDotsVertical,
   IconFlag,
+  IconGift,
   IconInfoCircle,
   IconGraphOff,
   IconGraph,
@@ -366,6 +367,15 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 </>
               )}
             </>
+          )}
+          {features.giftMemberships && currentUser && (
+            <Menu.Item
+              leftSection={<IconGift size={14} stroke={1.5} />}
+              component={Link}
+              href={`/pricing/gift?userId=${user.id}`}
+            >
+              Gift a membership
+            </Menu.Item>
           )}
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (

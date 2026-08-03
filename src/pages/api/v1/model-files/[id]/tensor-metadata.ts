@@ -20,13 +20,14 @@ const schema = z.object({
   summaryOnly: z.preprocess((val) => val === 'true' || val === true, z.boolean().optional()),
 });
 const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
+const NO_STORE_CACHE_CONTROL = 'private, no-store';
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
 
   const result = schema.safeParse(req.query);
   if (!result.success)
@@ -105,8 +106,6 @@ export default MixedAuthEndpoint(async function handler(
         )
       );
 
-    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
-
     if (summaryOnly) {
       const summary = await fetchThroughCache(
         `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
@@ -117,12 +116,18 @@ export default MixedAuthEndpoint(async function handler(
         },
         { ttl: CacheTTL.month }
       );
+      res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
       return res.status(200).json(summary);
     }
 
     const analysis = await fetchFull();
+    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
     res.status(200).json(analysis);
   } catch (error) {
+    // The upstream byte-range fetch fails transiently. If this 422 ever inherits the immutable
+    // header, Cloudflare freezes the error for a year and the file's panel never recovers.
+    res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
+
     const err = error instanceof Error ? error : new Error(String(error));
     logToAxiom({
       name: 'model-file-tensor-metadata',
@@ -143,6 +148,7 @@ function getStatusCode(
 ) {
   switch (status) {
     case 'unauthorized':
+    case 'no-access':
     case 'downloads-disabled':
     case 'early-access':
       return 403;
@@ -162,6 +168,8 @@ function getErrorMessage(
   switch (status) {
     case 'unauthorized':
       return 'Unauthorized';
+    case 'no-access':
+      return 'You do not have access to this file';
     case 'downloads-disabled':
       return 'Downloads are disabled for this file';
     case 'early-access':

@@ -3,6 +3,8 @@ import {
   appRoleIdent,
   appSchemaIdent,
   isValidAppSlug,
+  normalizeReviewPreviewId,
+  reviewPreviewSchemaIdent,
   sanitizeAppSlug,
 } from '~/server/utils/apps-slug';
 
@@ -108,6 +110,40 @@ describe('apps-slug', () => {
       expect(() => appSchemaIdent('invalid-slug')).toThrow(/invalid app slug/);
       expect(() => appRoleIdent('')).toThrow(/invalid app slug/);
       expect(() => appSchemaIdent('1bad')).toThrow(/invalid app slug/);
+    });
+  });
+
+  describe('review preview schema ident (#2831)', () => {
+    it('normalises a pubreq_<ULID> id to a lowercase alnum component', () => {
+      expect(normalizeReviewPreviewId('pubreq_01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(
+        'pubreq01arz3ndektsv4rrffq69g5fav'
+      );
+    });
+
+    it('produces the quoted apprev_ schema for a publish request id', () => {
+      expect(reviewPreviewSchemaIdent('pubreq_01ARZ3NDEKTSV4RRFFQ69G5FAV')).toBe(
+        '"apprev_pubreq01arz3ndektsv4rrffq69g5fav"'
+      );
+    });
+
+    it('ISOLATION: the preview schema can NEVER alias a production app_<slug> schema', () => {
+      // Production schemas are `app_` + slug (index-3 char is `_`); preview schemas
+      // are `apprev_` + id (index-3 char is `r`) — so no slug can ever collide.
+      const preview = reviewPreviewSchemaIdent('pubreq_abc');
+      // Try to construct a matching production slug — impossible: `apprev_...`
+      // cannot equal `app_<slug>` for any valid slug.
+      expect(preview).toBe('"apprev_pubreqabc"');
+      expect(preview.startsWith('"app_')).toBe(false);
+      expect(preview.startsWith('"apprev_')).toBe(true);
+      // A different publish request → a different schema (per-app isolation).
+      expect(reviewPreviewSchemaIdent('pubreq_xyz')).not.toBe(preview);
+    });
+
+    it('throws (fail-shut) on an id that normalises to something unusable', () => {
+      expect(() => reviewPreviewSchemaIdent('!!')).toThrow(/invalid review preview id/);
+      expect(() => reviewPreviewSchemaIdent('')).toThrow(/invalid review preview id/);
+      expect(normalizeReviewPreviewId(null)).toBe(null);
+      expect(normalizeReviewPreviewId(42 as unknown as string)).toBe(null);
     });
   });
 });

@@ -3,10 +3,7 @@ import { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import type {
-  ModelVersionEarlyAccessConfig,
-  RecommendedSettingsSchema,
-} from '~/server/schema/model-version.schema';
+import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 
 export const resourceDataCache = createCachedArray({
@@ -32,7 +29,6 @@ export const resourceDataCache = createCachedArray({
         mv."status",
         mv."usageControl",
         mv."flags",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND (mv."earlyAccessEndsAt" >= NOW() OR mv."earlyAccessPermanent") THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         FALSE AS "hasAccess",
@@ -81,7 +77,6 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   aliasId: number | null;
   covered: boolean | null;
   status: ModelStatus;

@@ -39,7 +39,9 @@ import type {
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -85,6 +87,7 @@ import {
   HomeBlockType,
   ImageIngestionStatus,
   MetricTimeframe,
+  ModelStatus,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -1824,14 +1827,64 @@ export const getAvailableCollectionItemsFilterForUser = ({
   return { AND, rawAND };
 };
 
+export const COLLECTION_AI_REVIEW_KEY_PREFIX = 'collection-ai-review:';
+export const collectionAiReviewKey = (collectionId: number) =>
+  `${COLLECTION_AI_REVIEW_KEY_PREFIX}${collectionId}`;
+
+export const getCollectionAiReview = async (collectionId: number) => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: collectionAiReviewKey(collectionId) },
+    select: { value: true },
+  });
+  if (!row) return null;
+
+  const parsed = collectionAiReviewSchema.safeParse(row.value);
+  return parsed.success ? parsed.data : null;
+};
+
+export const setCollectionAiReview = async ({
+  collectionId,
+  aiReview,
+}: SetCollectionAiReviewInput) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  // updateCollectionItemsStatus only notifies on Contest collections, so anywhere else the job
+  // would reject people silently — and the beggars cron deletes rejected rows within the hour.
+  if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
+    throw throwBadRequestError(
+      'AI review can only be enabled on Contest collections; submitters would not be notified of a rejection.'
+    );
+
+  const key = collectionAiReviewKey(collectionId);
+  await dbWrite.keyValue.upsert({
+    where: { key },
+    create: { key, value: aiReview },
+    update: { value: aiReview },
+  });
+
+  return aiReview;
+};
+
 export const updateCollectionItemsStatus = async ({
   input,
   userId,
   isModerator,
+  isSystem,
+  reason,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  /**
+   * In-process callers (the AI review job) act as the system user, which holds no contributor row.
+   * Never accept this from a tRPC input.
+   */
+  isSystem?: boolean;
+  reason?: string;
 }) => {
   const { collectionId, collectionItemIds, status } = input;
 
@@ -1843,14 +1896,18 @@ export const updateCollectionItemsStatus = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  const { manage, isOwner } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
+  if (!isSystem) {
+    const { manage, isOwner } = await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    });
 
-  if (!manage && !isOwner)
-    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
+    if (!manage && !isOwner)
+      throw throwAuthorizationError(
+        'You do not have permissions to manage contributor item status.'
+      );
+  }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
 
@@ -1892,6 +1949,26 @@ export const updateCollectionItemsStatus = async ({
     }
   }
 
+  const isReviewOutcome =
+    status === CollectionItemStatus.ACCEPTED || status === CollectionItemStatus.REJECTED;
+
+  // Capture prior state before the status write so we only notify on real transitions.
+  const priorItems =
+    collection.mode === CollectionMode.Contest && isReviewOutcome && collectionItemIds.length > 0
+      ? await dbWrite.collectionItem.findMany({
+          where: { id: { in: collectionItemIds }, collectionId },
+          select: {
+            id: true,
+            addedById: true,
+            status: true,
+            imageId: true,
+            articleId: true,
+            modelId: true,
+            postId: true,
+          },
+        })
+      : [];
+
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem"
@@ -1903,24 +1980,25 @@ export const updateCollectionItemsStatus = async ({
     `;
   }
 
-  if (collection.mode === CollectionMode.Contest) {
-    const updatedItems = await dbWrite.collectionItem.findMany({
-      where: { id: { in: collectionItemIds }, collectionId },
-    });
+  if (priorItems.length > 0) {
+    const notificationType =
+      status === CollectionItemStatus.ACCEPTED
+        ? 'collection-item-accepted'
+        : 'collection-item-rejected';
 
     await Promise.all(
-      updatedItems.map(async (item) => {
-        if (!item.addedById) {
-          return;
-        }
+      priorItems.map(async (item) => {
+        // Skip missing submitter, self-review, and no-op status changes.
+        if (!item.addedById || item.addedById === userId || item.status === status) return;
 
         await createNotification({
-          type: 'contest-collection-item-status-change',
+          type: notificationType,
           userId: item.addedById,
           category: NotificationCategory.Update,
-          key: `contest-collection-item-status-change:${uuid()}`,
+          key: `${notificationType}:${item.id}:${uuid()}`,
           details: {
             status,
+            reason,
             collectionId: collection.id,
             collectionName: collection.name,
             imageId: item.imageId,
@@ -2179,6 +2257,54 @@ export const validateContestCollectionEntry = async ({
     }
   }
 
+  const allowedBaseModels = metadata.baseModels?.filter(Boolean) ?? [];
+  const submissionStartDate = metadata.submissionStartDate
+    ? new Date(metadata.submissionStartDate)
+    : undefined;
+
+  if (modelIds.length > 0 && (allowedBaseModels.length > 0 || submissionStartDate)) {
+    // Both contest rules must be met by ONE version, otherwise a stale SDXL model could qualify by
+    // pairing an old allowed-base-model version with a throwaway version pushed during the window.
+    // Keyed on the version's createdAt rather than publishedAt because publishedAt is reset by the
+    // private-model round trip, which would let an untouched old model back in.
+    const qualifyingVersion: Prisma.ModelVersionWhereInput = {
+      status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
+      ...(submissionStartDate ? { createdAt: { gte: submissionStartDate } } : {}),
+      ...(allowedBaseModels.length > 0 ? { baseModel: { in: allowedBaseModels } } : {}),
+    };
+
+    const invalidModels = await dbRead.model.findMany({
+      where: {
+        id: { in: modelIds },
+        // Without base-model gating the version requirement exists only to keep pre-window models
+        // out, so a model created during the window passes on the model row alone.
+        ...(allowedBaseModels.length === 0 && submissionStartDate
+          ? { createdAt: { lt: submissionStartDate } }
+          : {}),
+        modelVersions: { none: qualifyingVersion },
+      },
+      select: { id: true },
+    });
+
+    if (invalidModels.length > 0) {
+      if (allowedBaseModels.length > 0) {
+        throw throwBadRequestError(
+          submissionStartDate
+            ? `Some models have no version added during the submission period on an allowed base model. This contest accepts: ${allowedBaseModels.join(
+                ', '
+              )}.`
+            : `Some models have no version on an allowed base model. This contest accepts: ${allowedBaseModels.join(
+                ', '
+              )}.`
+        );
+      }
+
+      throw throwBadRequestError(
+        `Some models predate the submission start date and have no version added during the submission period. Add a new version to enter an existing model.`
+      );
+    }
+  }
+
   if (metadata.submissionStartDate) {
     // confirm items were created after the start date
     if (articleIds.length > 0) {
@@ -2192,21 +2318,6 @@ export const validateContestCollectionEntry = async ({
       if (articles.length > 0) {
         throw throwBadRequestError(
           `Some articles were created before the submission start date. Please only upload items that were created after the submission period started.`
-        );
-      }
-    }
-
-    if (modelIds.length > 0) {
-      const models = await dbRead.model.findMany({
-        where: {
-          id: { in: modelIds },
-          createdAt: { lt: new Date(metadata.submissionStartDate) },
-        },
-      });
-
-      if (models.length > 0) {
-        throw throwBadRequestError(
-          `Some models were created before the submission start date. Please only upload items that were created after the submission period started.`
         );
       }
     }

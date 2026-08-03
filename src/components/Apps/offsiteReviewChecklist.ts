@@ -1,4 +1,5 @@
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
@@ -37,6 +38,12 @@ export type ReviewChecklistItem = {
 /** The off-site listing facts the content checklist derives its auto-checks from. */
 export type OffsiteChecklistData = {
   name: string | null | undefined;
+  // An on-site listing-MEDIA revision (`kind: 'onsite'`) is reviewed by this same
+  // content checklist but has NO external URL by design — pass `kind: 'onsite'` so
+  // the `url-https` item is OMITTED (a URL-less onsite row must not show a false
+  // "URL is https" warn). Omitted / `'offsite'` keeps the item (a real off-site
+  // listing with a missing / http URL still warns — unchanged).
+  kind?: ReviewChecklistKind;
   externalUrl: string | null | undefined;
   hasIcon: boolean;
   hasCover: boolean;
@@ -71,13 +78,70 @@ export function unjustifiedSensitiveScopeKeys(data: {
     .map(({ key }) => key);
 }
 
+/** The manifest facts the ON-SITE (App Block) scopes checklist item derives from. */
+export type OnsiteChecklistData = {
+  /** The manifest's declared block scopes (`manifest.scopes`). */
+  scopes?: string[] | null;
+  /** The manifest's declared per-scope justifications (`manifest.scopeJustifications`). */
+  scopeJustifications?: Record<string, string> | null;
+};
+
+/**
+ * The declared BLOCK sensitive scopes (money / private data / cross-user writes)
+ * that have NO non-empty justification. Mirrors `unjustifiedSensitiveScopeKeys`
+ * but keyed on the App-Block sensitive set (`isSensitiveBlockScope`) + the
+ * manifest's `scopeJustifications` — NOT the connect token bitmask. Empty when
+ * no sensitive scope is declared or every one is justified. Since the manifest
+ * validator now ENFORCES a justification for these at submit time, an approved
+ * app returns `[]` here — a non-empty result flags a legacy/unenforced manifest.
+ */
+export function unjustifiedSensitiveBlockScopes(data: OnsiteChecklistData): string[] {
+  const scopes = data.scopes ?? [];
+  const justifications = data.scopeJustifications ?? {};
+  return [...new Set(scopes)]
+    .filter((scope) => isSensitiveBlockScope(scope))
+    .filter((scope) => {
+      const raw = justifications[scope];
+      return !(typeof raw === 'string' && raw.trim().length > 0);
+    });
+}
+
 /**
  * The deep ON-SITE (App Block) review checklist. These items are STATIC reminders
  * of the code/bundle review the mod performs in the existing modal panels — the
  * off-site content checklist deliberately OMITS every one of them (there is no
  * bundle / manifest / scopes / code to read for an external-link app).
  */
-export function getOnsiteReviewChecklist(): ReviewChecklistItem[] {
+export function getOnsiteReviewChecklist(data?: OnsiteChecklistData): ReviewChecklistItem[] {
+  // The `scopes` item AUTO-DERIVES from the manifest when scope data is supplied
+  // (mirroring the off-site connect variant, but keyed on the BLOCK sensitive set
+  // + the manifest's `scopeJustifications`). Submit now ENFORCES a justification
+  // for every sensitive scope, so an approved app shows `ok`; a legacy/unenforced
+  // manifest missing one surfaces as `warn`. With no data the item stays a `todo`
+  // reminder (unchanged) — and the hint still surfaces the justifications to the
+  // mod so they can confirm each stated rationale is truthful.
+  const declaredSensitive = data ? (data.scopes ?? []).filter(isSensitiveBlockScope) : [];
+  const unjustifiedSensitive = data ? unjustifiedSensitiveBlockScopes(data) : [];
+  const justifications = data?.scopeJustifications ?? {};
+  const scopesStatus: ReviewChecklistItemStatus = !data
+    ? 'todo'
+    : unjustifiedSensitive.length > 0
+    ? 'warn'
+    : 'ok';
+  const scopesHint = !data
+    ? 'Every requested scope is needed for the stated functionality.'
+    : unjustifiedSensitive.length > 0
+    ? `Missing a justification for sensitive scope(s): ${unjustifiedSensitive.join(
+        ', '
+      )} — submit should have blocked this; do not approve until justified.`
+    : declaredSensitive.length > 0
+    ? `Sensitive permissions justified — ${declaredSensitive
+        .map((scope) => {
+          const j = justifications[scope];
+          return typeof j === 'string' && j.trim().length > 0 ? `${scope}: "${j.trim()}"` : scope;
+        })
+        .join('; ')}. Confirm each rationale is truthful.`
+    : 'No sensitive permissions requested; confirm the remaining scopes are needed for the stated functionality.';
   return [
     {
       id: 'code-diff',
@@ -100,8 +164,8 @@ export function getOnsiteReviewChecklist(): ReviewChecklistItem[] {
     {
       id: 'scopes',
       label: 'Requested permissions justified',
-      hint: 'Every requested scope is needed for the stated functionality.',
-      status: 'todo',
+      hint: scopesHint,
+      status: scopesStatus,
     },
     {
       id: 'screenshots',
@@ -124,6 +188,11 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
   const screenshotOk = data.screenshotCount >= 1;
   const isConnect = data.connectClientId != null;
   const unjustifiedSensitive = isConnect ? unjustifiedSensitiveScopeKeys(data) : [];
+  // An on-site listing-media revision has no external URL by design — omit the
+  // `url-https` item entirely so the mod doesn't see a false red-X. Any off-site
+  // listing (kind omitted or 'offsite') keeps the item and still warns on a
+  // missing / non-https URL — behaviour unchanged.
+  const includeUrlItem = data.kind !== 'onsite';
   return [
     {
       id: 'name',
@@ -131,12 +200,16 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
       hint: 'The listing has a non-empty display name.',
       status: namePresent ? 'ok' : 'warn',
     },
-    {
-      id: 'url-https',
-      label: 'URL is https and opens externally',
-      hint: 'The target is a valid https:// URL rendered with target="_blank" rel="noopener".',
-      status: urlValid ? 'ok' : 'warn',
-    },
+    ...(includeUrlItem
+      ? [
+          {
+            id: 'url-https',
+            label: 'URL is https and opens externally',
+            hint: 'The target is a valid https:// URL rendered with target="_blank" rel="noopener".',
+            status: (urlValid ? 'ok' : 'warn') as ReviewChecklistItemStatus,
+          },
+        ]
+      : []),
     {
       id: 'icon',
       label: 'Icon present',

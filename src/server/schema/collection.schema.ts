@@ -8,6 +8,7 @@ import {
 } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -105,12 +106,49 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+// Declared here, not in the service, so the client can render the picker without pulling in
+// server-only AI deps.
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+
+export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
+// Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
+// metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
+export const collectionAiReviewSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  prompt: z.string().trim().min(1).max(20000),
+  // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
+  allowedNsfwLevels: z
+    .number()
+    .int()
+    .min(1)
+    .default(NsfwLevel.PG | NsfwLevel.PG13),
+  escalationAction: z.enum(['reject', 'leaveForHuman']).default('reject'),
+  reasonCopy: z.record(z.string(), z.string()).optional(),
+  dryRun: z.boolean().default(true),
+});
+
+export type SetCollectionAiReviewInput = z.infer<typeof setCollectionAiReviewInput>;
+export const setCollectionAiReviewInput = z.object({
+  collectionId: z.number(),
+  aiReview: collectionAiReviewSchema,
+});
+
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
 export const collectionMetadataSchema = z
   .object({
     endsAt: z.coerce.date().nullish(),
     challengeDate: z.coerce.date().nullish(),
     maxItemsPerUser: z.coerce.number().optional(),
+    // Empty/absent means every base model is allowed. Values must match ModelVersion.baseModel
+    // exactly — an unrecognized one matches no version and locks the contest to zero entries.
+    baseModels: z
+      .string()
+      .array()
+      .optional()
+      .refine((value) => !value || value.every((x) => (baseModels as string[]).includes(x)), {
+        error: 'Unrecognized base model',
+      }),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
     submissionsHiddenUntilEndDate: z.boolean().optional(),
