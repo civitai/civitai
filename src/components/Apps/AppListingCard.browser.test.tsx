@@ -94,11 +94,17 @@ function base(over: Partial<ListingCard>): ListingCard {
  * `width` is the OUTER box. `Card padding="md"` eats 2x16, so the content box —
  * the number the layout measurements below are about — is `width - 32`.
  *
- * 🔴 It was `width - 34` until S4 dropped `withBorder`: the border was 0.877px a
- * side (~1.75px total), so every content box below RECLAIMED ~2px and the exact
- * pins moved 280 -> 282 and 246 -> 248. That is the border removal being real and
- * measurable, not a tolerance drift — and the arithmetic is now exact rather than
- * fractional. If these numbers ever move back, the border came back.
+ * 🔴 It was `width - 34` until S4 dropped `withBorder`, so every content box below
+ * RECLAIMED 2px and the exact pins moved 280 -> 282 and 246 -> 248. That is the
+ * border removal being real and measurable, not a tolerance drift; if these
+ * numbers ever move back, the border came back. Proven by isolation: restoring
+ * ONLY `withBorder` reproduces 280/246 exactly, and reverting ONLY the title
+ * (`Text` -> `Title`) leaves both pins green.
+ *
+ * ⚠️ In THIS environment the border is exactly 1px a side (Mantine's
+ * `calc(0.0625rem * var(--mantine-scale))` with `scale` unset and a 16px root),
+ * so `width - 34` was exact arithmetic, not fractional. The 0.877px figure comes
+ * from PROD, where the scale differs — do not use it to reason about these pins.
  *
  * The two widths used below, both measured through the real
  * `AppsPageLayout` + `Grid` rather than assumed:
@@ -240,14 +246,21 @@ describe('AppListingCard', () => {
 
   // ── Card chrome, typography + CTA glyph (S4 / S5 / S6b) ────────────────────
   //
-  // Markers are Mantine's own DOM output, which is deterministic here:
-  // `withBorder` renders as a `data-with-border` ATTRIBUTE, and `shadow` / `size`
-  // / `fw` / `c` render as `--paper-shadow` / `--text-fz` / `--text-fw` /
-  // `--text-color` custom properties in the element's `style`.
+  // Markers are Mantine's own DOM output, verified against what it ACTUALLY emits
+  // rather than assumed:
+  //   withBorder -> a `data-with-border` ATTRIBUTE
+  //   shadow     -> a `--paper-shadow` custom property
+  //   size       -> a `--text-fz` custom property
+  //   fw / c     -> PLAIN `font-weight:` / `color:` declarations
+  // 🔴 `fw` and `c` are the trap: they do NOT become `--text-fw` / `--text-color`.
+  // Asserting those fails against a perfectly correct component, which is exactly
+  // how this suite burned a debugging cycle.
   //
-  // 🔴 Deliberately NOT asserting resolved `rgb()` values: the theme CSS is not
-  // loaded in this environment, so such an assertion either fails or passes for
-  // the wrong reason. The pixel values live in the PR's measurement table.
+  // 🔴 Not asserting resolved brand `rgb()` values: Mantine's stylesheets ARE
+  // loaded here (`assertLayoutIsReal` depends on them), but ThemeProvider's
+  // CSS-variable overrides are not — so `--mantine-color-white` resolves to
+  // rgb(255,255,255) here and #fefefe in the app. Geometry (px) is trustworthy;
+  // brand colours are not. The pixel/contrast values live in the PR's table.
 
   const cardRoot = () => document.querySelector('[class*="Card-root"]') as HTMLElement | null;
 
@@ -288,8 +301,19 @@ describe('AppListingCard', () => {
     expect(root!.hasAttribute('data-with-border')).toBe(false);
     // `shadow="sm"` is gone → no `--paper-shadow` is declared at all.
     expect(root!.getAttribute('style') ?? '').not.toContain('--paper-shadow');
-    // Radius comes from the shared Tailwind scale (6px), NOT Mantine's `md` (8px).
-    expect(root!.className).toContain('rounded-md');
+    // 🔴 Assert the COMPUTED radius, not the className the JSX just wrote back to
+    // us. `radius={0}` makes Mantine emit `--paper-radius: 0rem`, and Tailwind's
+    // `.rounded-md` only wins because Mantine's sheet is inside `@layer mantine`
+    // while Tailwind utilities are deliberately unlayered (`globals.css`). If that
+    // layer ordering ever regresses, the card renders SQUARE — and a className
+    // assertion would still be green.
+    // 🔴 No `className).toContain('rounded-md')` echo here on purpose: it asserts
+    // the string the JSX just wrote, it cannot detect the square-card failure
+    // above, and — being ordered first — it would SHADOW the computed assertion
+    // that can. An earlier check that always wins makes the later one untestable.
+    expect(getComputedStyle(root!).borderRadius).toBe('6px');
+    expect(getComputedStyle(root!).borderTopWidth).toBe('0px');
+    expect(getComputedStyle(root!).boxShadow).toBe('none');
   });
 
   test('🔴 S5: the title is xl/700/white — and is no longer a heading', async () => {
@@ -308,6 +332,12 @@ describe('AppListingCard', () => {
     expect(style).toContain('--text-fz: var(--mantine-font-size-xl)');
     expect(style).toContain('font-weight: 700');
     expect(style).toContain('color: var(--mantine-color-white)');
+    // 🔴 `lh={1.2}` is load-bearing and easy to delete by accident: without it the
+    // title inherits `--mantine-line-height-xl` (1.65), which at 20px is 33px vs
+    // 24px — a ~14px card-height swing across a 2-line clamp, and card height is
+    // exactly what the deferred S7 work is about.
+    expect(style).toContain('line-height: 1.2');
+    expect(getComputedStyle(title).lineHeight).toBe('24px');
     // Declared side effect: the card title is a <Text>, not an <h4>. This is
     // parity with `/models` (whose card title is a <p>), not an a11y regression —
     // asserted so the change is visible rather than discovered later.

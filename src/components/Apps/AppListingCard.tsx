@@ -347,11 +347,14 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                   body. Confirmed still true at 394px mobile.
 
                   ⚠️ SEMANTIC SIDE EFFECT, declared not hidden: dropping `<Title
-                  order={4}>` removes the `h4` from each card. `/apps` has no page
-                  heading today and its first heading IS this card title, so
-                  afterwards it has none — which is exactly what `/models` does (its
-                  card title is a `<p>`). Baseline parity, not an a11y regression;
-                  the broader heading-hierarchy finding (S13) stays out of scope. */}
+                  order={4}>` removes the `h4` from each card — parity with
+                  `/models`, whose card title is a `<p>`. Grepped: nothing depends
+                  on a heading inside the card (no `getByRole('heading')`, no
+                  snapshot). 🔴 It does NOT leave `/apps` heading-less, as an
+                  earlier draft of this comment claimed: `RecentlyOpenedApps`
+                  ("Recently opened") and `RelatedListings` both render their own
+                  `Title` on those surfaces. The broader heading-hierarchy finding
+                  (S13) stays out of scope. */}
               <Text size="xl" fw={700} lh={1.2} c="white" className="line-clamp-2">
                 {card.name}
               </Text>
