@@ -100,7 +100,14 @@ export function StickerPicker({
             <StickerTopUp
               sticker={topUp}
               onCancel={() => setTopUp(null)}
-              onPurchased={() => setTopUp(null)}
+              // They clicked the sticker to place it and hit the wall; having
+              // paid, they shouldn't have to find it again.
+              onPurchased={() => {
+                onSelect(topUp);
+                setTopUp(null);
+                setOpened(false);
+                setQuery('');
+              }}
             />
           </div>
         ) : (
