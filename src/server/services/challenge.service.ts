@@ -1432,19 +1432,31 @@ export async function upsertChallenge({
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           judgingCategories: effectiveJudgingCategories,
-          // 🔴 REMAINING WORK: this is still a stale full-column replace. `existingMetadata` comes
-          // from the REPLICA read above, so any SAME-status write that commits between that read
-          // and this one is silently dropped — notably the `reviewedAt` watermark, whose loss
-          // rewinds incremental review to the challenge start and re-judges the whole backlog at
-          // LLM cost. The status predicate on this updateMany does NOT cover that; only converting
-          // this to the jsonb `||` merge used by backfill-theme-elements.ts does.
+          // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
+          // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
+          // between that read and this one is dropped. The status predicate on this updateMany does
+          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
           //
-          // Two branches reach here, with very different windows — do not conflate them:
-          //   - themeElements supplied by the caller (the edit form pre-fills them, so this is the
-          //     common save): NO LLM call, window is replica lag plus the request itself.
-          //   - auto-generate (theme set, no stored elements): `tryGenerateThemeElements` puts a
-          //     multi-second LLM call in the window. Rarer, but far wider.
-          // See the long note in server/prom/challenge.metrics.ts.
+          // It is not worth the second raw-SQL write inside this transaction, because both the
+          // probability and the consequence are near zero:
+          //   - The only concurrent writer of this column is the `reviewedAt` watermark in
+          //     daily-challenge-processing.ts (`*/10 * * * *`, and only for the ONE current
+          //     challenge). To lose it, a save of that specific challenge must straddle a
+          //     600-second-cadence instantaneous UPDATE. On the common path (the edit form
+          //     pre-fills themeElements, so no LLM call runs) the window is replica lag plus the
+          //     request — sub-second. The auto-generate branch's multi-second LLM window is wider
+          //     but only fires when a theme is set and no elements are stored.
+          //   - Losing it costs a WIDER SCAN, not re-judging. 🔴 An earlier version of this note
+          //     claimed it "re-judges the whole backlog at LLM cost" — that is WRONG. The same
+          //     WHERE clause carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's comment
+          //     for that image), which excludes every already-scored entry regardless of the
+          //     watermark. The watermark is a scan optimisation, not the dedupe.
+          //   - The other fields are self-protecting: `reconciliation.paidUserIds` cannot cause a
+          //     double-pay (participation prizes use a deterministic
+          //     `challenge-entry-prize-{cid}-{uid}` id and the ledger dedupes), and
+          //     `completingClaimedAt` is the DIFFERENT-status case the predicate above already
+          //     closes.
+          // Revisit only with evidence of an actual loss. See server/prom/challenge.metrics.ts.
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),
