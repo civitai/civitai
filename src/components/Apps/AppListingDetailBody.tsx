@@ -99,7 +99,11 @@ import type {
  * To run an on-site app from this page the viewer takes the kind-aware primary
  * action (`getDetailPrimaryAction`): today that is `Open` → `/apps/run/<slug>`
  * for every viewer who can reach this page — see the flag note on
- * `appListingDetailView`. Structurally pinned in the node `unit` project
+ * `appListingDetailView`. The hero banner is a SECOND affordance for that same
+ * action and nothing more: a plain `<a href>` to the identical route (see
+ * `HeroCover`). It is not, and must not become, an embedded runtime.
+ *
+ * Structurally pinned in the node `unit` project
  * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"),
  * because CI does not run the browser `component` suite.
  *
@@ -128,22 +132,52 @@ function categoryIcon(category: string): Icon {
  * gradient (shared with the server-generated cover SVG — see
  * `~/shared/constants/app-listing-placeholder.constants`) when absent OR the
  * image 404s (a coverUrl derived from a first-screenshot fallback can dangle) —
- * never a broken `<img>`. Decorative (aria-hidden placeholder).
+ * never a broken `<img>`. The art itself is decorative (aria-hidden placeholder).
+ *
+ * CLICK-TO-LAUNCH (`launchHref`): when the caller supplies a launch target the
+ * WHOLE banner becomes a real anchor to it — the same destination as the primary
+ * `Open` CTA. It wraps BOTH branches: a listing with no cover art gets the
+ * affordance over its seeded-gradient placeholder exactly like one with a cover,
+ * because "has no art yet" is not a reason to lose the way in. The caller
+ * decides WHEN there is a target (see `heroLaunchHref` in the body) — this
+ * component only decides how it renders.
+ *
+ * 🔴 It is an `<a href>`, never a `<div onClick>`. The banner has to be
+ * tab-reachable, Enter-activatable and middle-/modifier-clickable like any other
+ * link, and it has to expose an accessible NAME — which neither branch can
+ * supply on its own: the cover `alt` describes the PICTURE ("<app> cover image")
+ * and the placeholder is `aria-hidden` with no text at all. Hence the explicit
+ * `aria-label`, worded to match the CTA it mirrors. Nothing inside the banner is
+ * interactive, so this nests no controls.
+ *
+ * 🔴 NO recents side effect here, DELIBERATELY — verified against the CTA rather
+ * than assumed. `/apps/run/<slug>` records the open itself, in a mount effect
+ * (`recordRecentlyOpenedApp` in the run page), which is exactly why the `open`
+ * branch of `PrimaryAction` carries no `onClick` either; only the off-site
+ * `visit` branch records, because following that link leaves the SPA and nothing
+ * downstream could. An `onClick` here would therefore write the entry TWICE per
+ * launch — once from the listing DTO, once from the run page — and silently
+ * diverge the banner from the button it is meant to mirror. Pinned, against a
+ * positive control, in `AppListingDetailBody.browser.test.tsx`.
  */
 function HeroCover({
   coverUrl,
   category,
   name,
   slug,
+  launchHref = null,
 }: {
   coverUrl: string | null;
   category: string | null;
   name: string;
   slug: string;
+  /** Internal launch target; `null` → the banner stays decorative + inert. */
+  launchHref?: string | null;
 }) {
   const [broken, setBroken] = useState(false);
-  if (coverUrl && !broken) {
-    return (
+  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  const art =
+    coverUrl && !broken ? (
       <Image
         src={coverUrl}
         alt={`${name} cover image`}
@@ -152,24 +186,44 @@ function HeroCover({
         radius="md"
         onError={() => setBroken(true)}
       />
+    ) : (
+      // Per-app SEEDED gradient — same seed/stops as the generated cover SVG and
+      // the store card, so one listing reads as one identity across every surface.
+      <Box
+        aria-hidden
+        h={260}
+        className="flex items-center justify-center"
+        data-listing-cover-placeholder=""
+        style={{
+          borderRadius: 'var(--mantine-radius-md)',
+          background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
+        }}
+      >
+        <PlaceholderIcon size={72} className="opacity-60" />
+      </Box>
     );
-  }
-  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
-  // Per-app SEEDED gradient — same seed/stops as the generated cover SVG and the
-  // store card, so one listing reads as one identity across every surface.
+
+  if (!launchHref) return art;
+
   return (
-    <Box
-      aria-hidden
-      h={260}
-      className="flex items-center justify-center"
-      data-listing-cover-placeholder=""
-      style={{
-        borderRadius: 'var(--mantine-radius-md)',
-        background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
-      }}
+    <Anchor
+      component={Link}
+      href={launchHref}
+      aria-label={`Open ${name}`}
+      data-testid="apps-listing-hero-launch"
+      underline="never"
+      // Minimal, card-idiom affordance: pointer + a small hover dim + the
+      // site's `focus-visible:ring` pattern, so the banner reads as pressable
+      // without becoming a redesign. `focus:outline-none` is paired with a ring
+      // (never bare), so keyboard focus stays VISIBLE.
+      className="block transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-5"
+      // 🔴 Mantine's `md` radius (8px), not Tailwind's `rounded-md` (6px) — the
+      // inner cover `<Image radius="md">` and the placeholder Box both use the
+      // Mantine token, and mixing the two `md`s leaves a visible corner seam.
+      style={{ display: 'block', borderRadius: 'var(--mantine-radius-md)', overflow: 'hidden' }}
     >
-      <PlaceholderIcon size={72} className="opacity-60" />
-    </Box>
+      {art}
+    </Anchor>
   );
 }
 
@@ -395,6 +449,29 @@ export function AppListingDetailBody({
   const editHref = getOwnerEditHref(detail.kindData, detail.id);
   const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
 
+  // Hero click-to-launch — the banner is an affordance for the SAME destination
+  // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
+  // than by re-deriving the kind matrix, so the two cannot drift apart.
+  //
+  // 🔴 ON-SITE `open` ONLY. Three deliberate exclusions, each a decision:
+  //   - `visit` — both the off-site listing AND the on-site raw-origin "Open
+  //     live" escape hatch. Silently shipping a viewer off-platform from what
+  //     reads as decorative art is a surprise; an off-site destination deserves
+  //     the labelled, new-tab "Visit ↗" button, so the banner stays inert. The
+  //     `!external` guard says the same thing structurally, in case a future
+  //     `open` ever carries `external: true`.
+  //   - no href (`info` model-slot / `connect` stub) — nothing to launch, and
+  //     `DetailPrimaryAction.href` is optional, so this is a real branch.
+  //   - `preview` — the moderator listing-media review renders this body
+  //     READ-ONLY and omits the entire action column. A clickable banner there
+  //     would put a live launch back onto an UNAPPROVED shadow listing, which is
+  //     precisely what that posture exists to prevent.
+  const primaryAction = getDetailPrimaryAction(detail, { canOpenPage });
+  const heroLaunchHref =
+    !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
+      ? primaryAction.href
+      : null;
+
   return (
     <Stack gap="lg">
       {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
@@ -412,6 +489,7 @@ export function AppListingDetailBody({
         category={detail.category}
         name={detail.name}
         slug={detail.slug}
+        launchHref={heroLaunchHref}
       />
 
       {/* Header: icon + name + tagline + creator + content-rating badge + action. */}
