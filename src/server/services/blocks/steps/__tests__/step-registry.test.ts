@@ -891,6 +891,162 @@ describe('block step registry — resolveStepVariant bounds the resolved variant
     const params = step.paramSchema.parse({ model: 'model-a' });
     expect(resolveStepVariant(step, params)).toBe('model-b');
   });
+
+  // 🔴 THE `NaN` HOLE IN A MEMBERSHIP CHECK. `Array.prototype.includes` uses
+  // SameValueZero, under which `NaN` matches `NaN` — so `[NaN].includes(NaN)` is
+  // `true` and a membership check ALONE would have admitted `NaN`, handing it to
+  // `priceForVariant` and reopening the identical `undefined` → `Math.ceil` →
+  // `NaN > budget === false` bypass. Latent, not live: TypeScript rejects the
+  // entry below without the casts, exactly like the fail-open itself.
+  it('REJECTS a non-string resolution that a membership check alone would ADMIT', () => {
+    // The control, pinned rather than asserted in prose: this is why `includes`
+    // is not sufficient on its own.
+    expect([NaN].includes(NaN)).toBe(true);
+
+    const step = makeModelVariantStep({
+      variants: [NaN as unknown as string],
+      resolveVariant: () => NaN as unknown as string,
+    } as Partial<AnyBlockStep>);
+    const params = step.paramSchema.parse({ model: 'model-a' });
+
+    let error: unknown;
+    try {
+      resolveStepVariant(step, params);
+    } catch (e) {
+      error = e;
+    }
+    // Pinned to the TYPE guard's own wording — not the membership guard's, which
+    // would not have fired at all, and not a neighbour's.
+    expect(String(error)).toContain('resolveVariant() returned a non-string (number: NaN)');
+    expect(String(error)).not.toContain('is not one of the declared variants');
+    expect(String(error)).not.toContain('has no money-path handler');
+
+    // And it is a THROW on the money path, not a `NaN` price.
+    expect(() => planStepSpend(step, params)).toThrow(/returned a non-string/);
+  });
+
+  // 🔴 THE NEGATIVE CONTROL FOR THE TYPE GUARD. Same fixture shape, same casts,
+  // only the resolved VALUE changes — a declared string sails through. So the
+  // rejection above is caused by the resolution's type and by nothing else about
+  // that fixture.
+  it('admits a declared STRING through the same fixture shape the non-string test uses', () => {
+    const step = makeModelVariantStep({
+      variants: ['model-a' as unknown as string],
+      resolveVariant: () => 'model-a' as unknown as string,
+    } as Partial<AnyBlockStep>);
+    const params = step.paramSchema.parse({ model: 'model-a' });
+    expect(resolveStepVariant(step, params)).toBe('model-a');
+    expect(planStepSpend(step, params).reserveBuzz).toBe(PRICES['model-a']);
+  });
+
+  // 🔴 THE ESTIMATE PATH IS BOUND BY THE SAME WRAPPER — the fix for an
+  // estimate/submit split. `estimateBuzz` never receives the variant (it is
+  // computed from params), so before the dispatcher resolved it this call
+  // returned `PRICES['model-not-declared']` = `undefined`, i.e. the router's
+  // estimate answered HTTP 200 with `cost: { total: undefined }` for input the
+  // submit rejected. Both throw now, with the same message.
+  it('fails IDENTICALLY on estimate and on submit for an out-of-set resolution', () => {
+    const step = makeModelVariantStep();
+    const rogue = step.paramSchema.parse({ model: 'model-not-declared' });
+
+    // The pre-fix estimate value, pinned so a regression is visible as a value
+    // and not only as a missing throw.
+    expect(step.estimateBuzz(rogue)).toBeUndefined();
+
+    expect(() => estimateStepBuzz(step, rogue)).toThrow(/is not one of the declared variants/);
+    expect(() => planStepSpend(step, rogue)).toThrow(/is not one of the declared variants/);
+    // And still agree, on a declared variant.
+    const ok = step.paramSchema.parse({ model: 'model-b' });
+    expect(estimateStepBuzz(step, ok)).toBe(PRICES['model-b']);
+    expect(planStepSpend(step, ok).reserveBuzz).toBe(PRICES['model-b']);
+  });
+
+  // 🔴 THE BOUND LIVES IN THE DISPATCHER, NOT IN A HANDLER — which is what stops
+  // a future mode from reopening the hole. A `tokenMetered` fixture has NO
+  // money-path handler at all, so if the resolution happened inside a handler
+  // this would die with "has no money-path handler". It dies with the VARIANT
+  // error instead: every mode passes through the bound before its handler is
+  // reached, including the modes nobody has written yet.
+  it('bounds the variant BEFORE billing-mode dispatch, for a mode with no handler', () => {
+    const step = makeModelVariantStep({
+      billingMode: 'tokenMetered',
+      maxBuzzForVariant: () => 500,
+    } as Partial<AnyBlockStep>);
+    const rogue = step.paramSchema.parse({ model: 'model-not-declared' });
+    let error: unknown;
+    try {
+      planStepSpend(step, rogue);
+    } catch (e) {
+      error = e;
+    }
+    expect(String(error)).toContain('is not one of the declared variants');
+    expect(String(error)).not.toContain('has no money-path handler');
+  });
+
+  // 🔴 THE THREADED DERIVATION IS THE ONE THAT PRICES. `submitStepWorkflow`
+  // resolves the variant ONCE and passes it down; this pins that the passed value
+  // is what `priceForVariant` receives, rather than the handler quietly
+  // re-resolving from params. The fixture is chosen so the two DISAGREE — params
+  // say `model-a` (3), the threaded variant says `model-b` (9) — so a
+  // re-resolution scores 3 and cannot pass.
+  it('prices off the THREADED variant, not a re-resolution from params', () => {
+    const step = makeModelVariantStep();
+    const params = step.paramSchema.parse({ model: 'model-a' });
+    const threaded = resolveStepVariant(
+      makeModelVariantStep({ resolveVariant: () => 'model-b' } as Partial<AnyBlockStep>),
+      params
+    );
+    expect(threaded).toBe('model-b');
+    expect(PRICES['model-a']).not.toBe(PRICES['model-b']);
+    expect(planStepSpend(step, params, threaded).reserveBuzz).toBe(PRICES['model-b']);
+    // Omitted → resolved from params, the default path the tests above exercise.
+    expect(planStepSpend(step, params).reserveBuzz).toBe(PRICES['model-a']);
+  });
+
+  // 🔴 BEHAVIOUR-NEUTRALITY FOR THE SHIPPED POPULATION, executed rather than
+  // argued. The bound and the hoist are a refactor on a live money path, so the
+  // question that matters is not "does the guard work" (above) but "does any
+  // REGISTERED entry now answer differently". The pre-change expressions are
+  // written out literally on the left and compared against what the current
+  // pipeline returns — for every registered entry and every declared variant, so
+  // an entry added tomorrow is covered by this test today.
+  //
+  // Scope, stated at what was measured: this is the REGISTRY level with each
+  // variant's canonical params. The REQUEST level — real, non-canonical params
+  // through `submitWorkflow` — is covered by the step suite in
+  // `blocks.router.workflow.test.ts`, which drives the same entry end to end.
+  it('is behaviour-NEUTRAL over the registered population: no value changes', () => {
+    const entries = listRegisteredSteps();
+    // Positive control for this loop: a population of zero would make every
+    // assertion below vacuously true and the test would still be green.
+    expect(entries.length).toBeGreaterThan(0);
+    let checked = 0;
+    for (const [id, step] of entries) {
+      for (const declared of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(declared));
+        // The exact expressions this change replaced.
+        const legacyVariant = step.resolveVariant(params);
+        const legacyEstimate = step.estimateBuzz(params);
+
+        expect(resolveStepVariant(step, params), `step '${id}' variant`).toBe(legacyVariant);
+        expect(estimateStepBuzz(step, params), `step '${id}' estimate`).toBe(legacyEstimate);
+
+        if (step.billingMode === 'prepaidFixed') {
+          const legacyReserve = step.priceForVariant(legacyVariant);
+          expect(planStepSpend(step, params).reserveBuzz, `step '${id}' reserve`).toBe(
+            legacyReserve
+          );
+          // And the THREADED call the router now makes is identical to the
+          // un-threaded one it used to make — the hoist's whole claim.
+          expect(planStepSpend(step, params, resolveStepVariant(step, params))).toEqual(
+            planStepSpend(step, params)
+          );
+        }
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
