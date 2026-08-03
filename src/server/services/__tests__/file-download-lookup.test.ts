@@ -76,6 +76,13 @@ vi.mock('~/server/services/bountyEntry.service', () => ({
   getBountyEntryFilteredFiles: vi.fn(),
 }));
 
+// getFileForModelVersion sources the EA gate from getPaidAccess. Defaults to no gate so the lookup
+// runs unblocked; the access-denial tests below drive an active gate through it.
+const getPaidAccessMock = vi.fn();
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: getPaidAccessMock,
+}));
+
 // Control whether the delivery URL resolves. A throw here is the
 // "genuinely unresolvable URL" case the fix must turn into a 404 (`not-found`),
 // NOT a 500 (`error`).
@@ -118,6 +125,16 @@ function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function unpublishedModelVersion(overrides: Record<string, unknown> = {}) {
+  const base = publishedModelVersion();
+  return {
+    ...base,
+    status: 'Unpublished',
+    model: { ...base.model, status: 'Unpublished', publishedAt: null },
+    ...overrides,
+  };
+}
+
 const aFile = {
   id: 55,
   url: 'https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors',
@@ -145,8 +162,10 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     recommendedResourceFindFirst.mockReset();
     hasEntityAccessMock.mockReset();
     resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
 
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
     modelFileFindMany.mockResolvedValue([aFile]);
   });
 
@@ -211,5 +230,143 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
     expect(result.status).toBe('success');
     if (result.status === 'success') expect(result.url).toBe('https://cdn.example.com/signed');
+  });
+
+  // --- Access denial must not masquerade as "you need to log in" ----------
+  // A signed-in user who lacks a grant used to get `unauthorized`, which the download endpoint
+  // answers with a redirect to /login. Already having a session, they were bounced straight back to
+  // the page they came from — the download button appeared to do nothing at all.
+  it('returns no-access (→403), NOT unauthorized (→/login), for a signed-in user without a grant', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('no-access');
+    expect(result.status).not.toBe('unauthorized');
+  });
+
+  it('still returns unauthorized (→/login) when there is no session at all', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
+
+    const result = await getFileForModelVersion({ modelVersionId: 1 });
+
+    // No session → a login redirect is the correct answer; the split must not swallow it.
+    expect(result.status).toBe('unauthorized');
+  });
+
+  it('routes an active paid gate to early-access (→purchase) rather than a bare denial', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    // Has an access record, but not the EarlyAccessDownload bit (e.g. paid for generation only).
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('early-access');
+    if (result.status === 'early-access') expect(result.details.deadline).toEqual(endsAt);
+  });
+
+  // The common case, and the one the bit-test read backwards: a user who has bought nothing carries
+  // the "no grant" sentinel `permissions: -1` (every bit set), so `permissions & EarlyAccessDownload`
+  // is non-zero and reads as "already holds the download grant". The purchase route was skipped and
+  // the user got a dead-end 403 instead of the buy CTA.
+  it('routes a user with no grant at all to early-access, not a bare denial', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('early-access');
+  });
+
+  it('lets an actual early-access buyer through the gate', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 2 }]);
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('success');
+  });
+
+  // --- Unpublished models: the review path ---------------------------------
+  // Moderators review unpublished models constantly (takedowns, TOS checks) and need the actual
+  // file to decide. The publish-state gate must keep answering them — and the owner — with the
+  // file while still hiding it from everyone else.
+  describe('unpublished models', () => {
+    beforeEach(() => {
+      modelVersionFindFirst.mockResolvedValue(unpublishedModelVersion());
+      resolveDownloadUrlMock.mockResolvedValue({
+        url: 'https://cdn.example.com/signed',
+        urlExpiryDate: new Date(),
+      });
+    });
+
+    it('serves the file to a moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 7, isModerator: true },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('serves the file to the owner', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('returns not-found for a signed-in user who is neither owner nor moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 1234, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('returns not-found for an anonymous request', async () => {
+      const result = await getFileForModelVersion({ modelVersionId: 1 });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('still hides a deleted model from its own owner', async () => {
+      modelVersionFindFirst.mockResolvedValue(
+        unpublishedModelVersion({
+          model: { ...publishedModelVersion().model, status: 'Deleted' },
+        })
+      );
+
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
   });
 });

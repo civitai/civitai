@@ -131,7 +131,7 @@ const TrainingImagesCaptionViewer = dynamic(
 );
 
 const AutoLabelModal = dynamic(
-  () => import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
+  () => import('~/components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
   { ssr: false }
 );
 

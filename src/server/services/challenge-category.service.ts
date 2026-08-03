@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
+import type {
+  ChallengeJudgingCategory,
+  UpsertChallengeCategoryInput,
+} from '~/server/schema/challenge.schema';
 import {
   CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
@@ -43,29 +46,54 @@ function presetFallbackRows(): ChallengeCategoryRow[] {
   }));
 }
 
+// Preset baseline unioned with DB rows: DB rows override/add by key, presets fill the rest, sorted
+// by (sortOrder, label). Keeps the mandatory presets (esp. `theme`) structurally present regardless
+// of table state — a partially-populated library can never orphan them — so persistence stays a
+// plain single-row upsert and the library has one, DB-authoritative-where-set, source of truth.
+export function mergeCategoryRows(
+  base: ChallengeCategoryRow[],
+  overrides: ChallengeCategoryRow[]
+): ChallengeCategoryRow[] {
+  const byKey = new Map(base.map((r) => [r.key, r]));
+  for (const r of overrides) byKey.set(r.key, r);
+  return [...byKey.values()].sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label)
+  );
+}
+
 // dbRead is imported lazily so unit tests can import this module (and its consumers, e.g.
 // generative-content.ts) without pulling the Prisma client + server env into the module graph.
 async function getChallengeCategoryRows(): Promise<ChallengeCategoryRow[]> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) return cache.rows;
-  let rows: ChallengeCategoryRow[] = [];
+  let dbRows: ChallengeCategoryRow[] = [];
   try {
     const { dbRead } = await import('~/server/db/client');
-    rows = await dbRead.challengeCategory.findMany({
+    dbRows = await dbRead.challengeCategory.findMany({
       orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
     });
   } catch {
     // Table may not exist in this env yet (migrations are applied manually), or the read failed
     // transiently. Serve the freshest data available WITHOUT caching, so a blip doesn't make
-    // resolveJudgingCategories reject DB-only category keys for a full TTL; an expired cache
+    // resolveJudgingCategories reject valid category keys for a full TTL; an expired cache
     // beats the preset fallback.
     return cache?.rows ?? presetFallbackRows();
   }
-  cache = { rows: rows.length ? rows : presetFallbackRows(), fetchedAt: Date.now() };
+  cache = { rows: mergeCategoryRows(presetFallbackRows(), dbRows), fetchedAt: Date.now() };
   return cache.rows;
 }
 
 export function clearChallengeCategoryCache() {
   cache = null;
+}
+
+// Every challenge's judgingCategories requires exactly one `theme` (judgingCategoryRefinements),
+// so the theme category must never be soft-hidden or removed — it would break create for all users.
+export function assertCategoryActiveAllowed(key: string, active: boolean) {
+  if (key === 'theme' && !active)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'The theme category cannot be deactivated.',
+    });
 }
 
 /** Category list for the picker — key/label/group/criteria only (prompt content stays server-side). */
@@ -123,4 +151,45 @@ export async function resolveRubricBlock(
   const rows = await getChallengeCategoryRows();
   const byKey = new Map(rows.map((r) => [r.key, r]));
   return categories.map((c) => pickCategoryRubric(byKey.get(c.key), c, opts)).join('\n\n');
+}
+
+const CATEGORY_ROW_SELECT = {
+  key: true,
+  label: true,
+  group: true,
+  criteria: true,
+  rubric: true,
+  rubricNsfw: true,
+  sortOrder: true,
+  active: true,
+} as const;
+
+/** Full category rows incl. server-only rubric text — MODERATOR ONLY. Reads fresh (bypasses the
+ *  public 5-min cache) so the playground always shows current state. */
+export async function getChallengeCategoriesFull(): Promise<ChallengeCategoryRow[]> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.challengeCategory.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+    select: CATEGORY_ROW_SELECT,
+  });
+}
+
+/** Create or update a category library row, then bust the in-process category cache. In-process
+ *  only — other instances refresh within the 5-min TTL (acceptable for a mod config surface). */
+export async function upsertChallengeCategory(
+  input: UpsertChallengeCategoryInput
+): Promise<ChallengeCategoryRow> {
+  assertCategoryActiveAllowed(input.key, input.active);
+  const { dbWrite } = await import('~/server/db/client');
+  const { key, ...data } = input;
+  // Plain single-row upsert — getChallengeCategoryRows unions the preset baseline over DB rows, so
+  // creating one row can never orphan the mandatory `theme`/presets (no pre-seed needed here).
+  const row = await dbWrite.challengeCategory.upsert({
+    where: { key },
+    create: { key, ...data },
+    update: data,
+    select: CATEGORY_ROW_SELECT,
+  });
+  clearChallengeCategoryCache();
+  return row;
 }

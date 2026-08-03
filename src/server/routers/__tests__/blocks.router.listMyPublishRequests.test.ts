@@ -136,7 +136,7 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       },
     ]);
     mockDbRead.appListing.findMany.mockResolvedValue([
-      { id: 'l-a', appBlockId: 'block-a', status: 'approved' },
+      { id: 'l-a', appBlockId: 'block-a', status: 'approved', _count: { screenshots: 3 } },
     ]);
 
     const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
@@ -191,8 +191,8 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       },
     ]);
     mockDbRead.appListing.findMany.mockResolvedValue([
-      { id: 'l-h', appBlockId: 'block-h', status: 'removed' },
-      { id: 'l-m', appBlockId: 'block-m', status: 'removed' },
+      { id: 'l-h', appBlockId: 'block-h', status: 'removed', _count: { screenshots: 3 } },
+      { id: 'l-m', appBlockId: 'block-m', status: 'removed', _count: { screenshots: 3 } },
     ]);
     mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([
       { appListingId: 'l-h', action: 'owner-unpublish' },
@@ -256,5 +256,85 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
     // No app-block ids on the page → no backing-listing / moderation queries at all.
     expect(mockDbRead.appListing.findMany).not.toHaveBeenCalled();
     expect(mockDbRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * OWNER-ONLY VISIBILITY — the security boundary for the build-failure excerpt.
+ *
+ * `deployDetail` now carries a sanitized slice of the app's BUILD LOG. That is
+ * the author's own material and must reach the author (and moderators, via the
+ * separate mod procs) and NOBODY ELSE. The guard is the `submittedByUserId`
+ * filter on this query — there is no post-filter and no per-row ownership check,
+ * so if that `where` clause were ever dropped or widened, every viewer would see
+ * every developer's build output.
+ *
+ * These tests pin the filter itself rather than the shape of the result, because
+ * the filter IS the guard.
+ */
+describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure excerpt)', () => {
+  const otherUser = { id: 999, isModerator: false, tier: 'free', username: 'someone-else' };
+
+  it('scopes the query to the CALLING user id — the only ownership guard there is', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    await caller.listMyPublishRequests();
+
+    const args = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(args.where).toEqual({ submittedByUserId: owner.id });
+  });
+
+  it('a DIFFERENT caller queries with THEIR id — never a shared/unscoped read', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const caller = blocksRouter.createCaller(fakeCtx(otherUser) as never);
+    await caller.listMyPublishRequests();
+
+    const args = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(args.where).toEqual({ submittedByUserId: otherUser.id });
+    expect(args.where.submittedByUserId).not.toBe(owner.id);
+  });
+
+  it('an ANONYMOUS caller gets nothing and NO query is issued at all', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.listMyPublishRequests()).rejects.toBeTruthy();
+    expect(mockDbRead.appBlockPublishRequest.findMany).not.toHaveBeenCalled();
+  });
+
+  it('selects the build-failure excerpt for the owner (deployDetail is returned)', async () => {
+    const EXCERPT = 'Build Failed\n\nERROR: no package-lock.json is committed';
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-f',
+        appBlockId: null,
+        slug: 'failed-app',
+        version: '1.0.0',
+        status: 'approved',
+        submittedAt: new Date('2026-01-01'),
+        reviewedAt: new Date('2026-01-02'),
+        rejectionReason: null,
+        approvalNotes: null,
+        deployState: 'failed',
+        deployDetail: EXCERPT,
+        deployUpdatedAt: new Date('2026-01-02'),
+        fileSummary: null,
+        manifestDiffSummary: null,
+        appBlock: null,
+      },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+    expect(rows[0]).toMatchObject({ deployState: 'failed', deployDetail: EXCERPT });
+
+    // And the select explicitly asks for it (pins the projection, not just the row).
+    const args = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      select: Record<string, unknown>;
+    };
+    expect(args.select.deployDetail).toBe(true);
+    expect(args.select.reviewedAt).toBe(true); // the STRANDED-detection anchor
   });
 });

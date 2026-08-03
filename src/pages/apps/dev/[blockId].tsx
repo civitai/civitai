@@ -4,6 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -138,6 +139,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
 export default function DevTunnelPage(props: DevTunnelProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, scopes, host } = props;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
@@ -182,8 +184,21 @@ export default function DevTunnelPage(props: DevTunnelProps) {
     [blockId, currentUser, theme]
   );
 
-  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
-    useBlockToken(install, context);
+  const {
+    token,
+    expiresAt,
+    needsConsent,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    error,
+    // `terminal` = the mint failed, nothing usable is left, AND the hook's
+    // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
+    // down a running page — a transient refresh blip sets it while recovery is
+    // still under way — so the mid-session escalation keys on this instead.
+    terminal,
+    refresh,
+  } = useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -206,6 +221,26 @@ export default function DevTunnelPage(props: DevTunnelProps) {
               the tunnel is bound to your account.
             </Alert>
           </Stack>
+        ) : error != null ? (
+          // DEV-ROUTE-SCOPED auth-failure copy. The dev tunnel mints a self-bound,
+          // forced-SFW token for the OWNER of an app at any status (approved,
+          // suspended, pending, deprecated). If the mint still fails here, the app
+          // isn't runnable in the tunnel — most likely it isn't yours or the tunnel
+          // dropped. This replaces the public host's generic "Couldn't authenticate
+          // this app" (which we deliberately do NOT change) with a message that
+          // makes sense for the dev route. Scoped to THIS route only.
+          <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
+            <Title order={3}>Can’t run this app in the dev tunnel</Title>
+            <Alert color="red" variant="light">
+              We couldn’t mint a dev token for <Code>{blockId}</Code>. This app isn’t runnable in
+              the dev tunnel — it may be suspended, pending review, or not owned by your account.
+              If you just started the tunnel, reload the page.
+            </Alert>
+            <Text size="sm">
+              Restart your tunnel and reload if the problem persists:
+            </Text>
+            <Code block>civitai app dev:tunnel</Code>
+          </Stack>
         ) : (
           <PageBlockHost
             appBlockId={appBlockId}
@@ -225,10 +260,22 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             domain={domain}
             maxBrowsingLevel={maxBrowsingLevel}
             tokenError={error != null}
+            tokenTerminal={terminal}
             viewer={viewer}
             theme={theme}
             onConsentGranted={refresh}
             onRetryToken={refresh}
+            // The chrome's "Recently run" menu links to `/apps/run/<blockId>`,
+            // which 404s unless the VIEWER has BOTH `appBlocks` and
+            // `appBlocksPages` — this route's own author/dev-tunnel gate says
+            // nothing about `appBlocksPages`, so read the target route's full
+            // predicate rather than assuming. Today the `appBlocks` half is
+            // redundant here (this page's own getServerSideProps already 404s
+            // without it, above), but writing the conjunction out keeps the menu
+            // gate self-contained instead of depending on a distant invariant in
+            // another function, and keeps all four mounters on ONE greppable
+            // shape.
+            canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
           />
         )}
       </Box>

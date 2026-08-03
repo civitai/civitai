@@ -1,17 +1,21 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   equipCosmeticSchema,
+  getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   grantCosmeticsToUsersSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
+  getStickerCosmetics,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   grantCosmeticsToUsers,
+  revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
-import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getStickerBalances } from '~/server/services/sticker.service';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const cosmeticRouter = router({
@@ -21,12 +25,26 @@ export const cosmeticRouter = router({
     .query(({ input }) => {
       return getCosmeticDetail(input);
     }),
+  getSticker: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getStickerCosmeticsSchema)
+    .query(({ input }) => {
+      return getStickerCosmetics(input);
+    }),
+  // Remaining uses per owned sticker, so the picker can show a balance instead
+  // of the user discovering it as a failed comment submit.
+  getStickerBalances: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => getStickerBalances(ctx.user.id)),
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
   grantToUsers: moderatorProcedure
     .input(grantCosmeticsToUsersSchema)
     .mutation(({ input }) => grantCosmeticsToUsers(input)),
+  revokeFromUsers: moderatorProcedure
+    .input(grantCosmeticsToUsersSchema)
+    .mutation(({ input }) => revokeCosmeticsFromUsers(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

@@ -9,6 +9,9 @@ import {
   PoolTrigger,
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
+// Type-only: gives the `importOriginal` spread below the real module's type
+// without an `import()` type annotation (banned by consistent-type-imports).
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * D6-seed — mod "Customize judging categories" toggle. `ChallengeUpsertForm.judging-categories
@@ -25,7 +28,7 @@ import {
 // transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
 // gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/utils/trpc')>();
+  const actual = await importOriginal<typeof TrpcModule>();
   const noopQuery = () => ({ data: undefined, isLoading: false });
   const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {

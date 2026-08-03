@@ -1,5 +1,6 @@
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { GateRule } from './gates';
+import type { ModelSubstitutionCollector } from './model-substitution';
 
 export type GenerationCtx = {
   /** User's generation limits based on their tier */
@@ -41,4 +42,15 @@ export type GenerationCtx = {
    * resolver drives hide/disable/upsell on both client and server.
    */
   gateRules?: GateRule[];
+  /**
+   * Per-REQUEST side channel recording silent checkpoint substitutions the
+   * `modelLocked` clamp performs (issue #3520). Purely observational — see
+   * `model-substitution.ts` for why the record cannot ride on the parsed value
+   * (the model node's output schema strips unknown keys) and why the collector
+   * must be attached to a freshly-built context object.
+   *
+   * ABSENT on the client: only the server's `buildGenerationContext` attaches
+   * one, so an in-form parse in the browser records nothing and pays nothing.
+   */
+  modelSubstitutions?: ModelSubstitutionCollector;
 };

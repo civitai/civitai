@@ -5,6 +5,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -87,6 +88,11 @@ const transformData = async ({
       if (!coverImage) return null;
       return {
         ...articleRecord,
+        // `content` is a searchable attribute and is stored as HTML, so tag and
+        // attribute names were indexed as prose — a query for `iframe` could
+        // match on markup. Regex-strip rather than a full HTML-to-text pass:
+        // this runs over every article on a reindex.
+        content: removeTags(articleRecord.content),
         nsfwLevel: parseBitwiseBrowsingLevel(articleRecord.nsfwLevel),
         stats: stats
           ? {

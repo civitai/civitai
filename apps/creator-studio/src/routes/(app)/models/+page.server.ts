@@ -1,0 +1,450 @@
+import { z } from 'zod';
+import { fail } from '@sveltejs/kit';
+import { raisesOverCap } from '@civitai/buzz';
+import type { PageServerLoad, Actions } from './$types';
+import {
+  getCreatorModels,
+  MODELS_PER_PAGE,
+  PAGE_SIZE_OPTIONS,
+  PAGE_SIZE_COOKIE,
+} from '$lib/server/models';
+import {
+  resolveMembership,
+  cappedTier,
+  displayTier,
+  TEST_MEMBERSHIP_COOKIE,
+} from '$lib/server/membership';
+import {
+  setLicensingFee,
+  bulkSetLicensingFee,
+  bulkSetLicensingFeeVaried,
+  previewLicensingFeeChanges,
+  licensingFeeRatioSchema,
+} from '$lib/server/monetization/licensing-fee';
+import { parseFeeCsv } from '$lib/server/monetization/fee-csv';
+import { bustVersionCache } from '$lib/server/monetization/bust-cache';
+import {
+  setPaidAccessConfig,
+  paidAccessFormSchema,
+  countPermanentAccessVersions,
+  countPermanentAccessVersionsExcluding,
+  countActiveEarlyAccessVersions,
+  isVersionPermanent,
+  currentAccessPrices,
+  strictestCapMediaType,
+  isCreatorUsageControl,
+  setUsageControl,
+  bulkSetPermanentAccess,
+} from '$lib/server/monetization/paid-access';
+import {
+  checkbox,
+  optionalBuzzField,
+  requiredBuzzField,
+  freePreviewsField,
+} from '$lib/server/monetization/form-fields';
+import { getModelsScore } from '$lib/server/creator-score';
+import {
+  earlyAccessDaysForScore,
+  earlyAccessQuantityForScore,
+  maxPermanentAccessModels,
+  maxPaidAccessPrice,
+  MIN_ACCESS_PRICE,
+  MIN_GENERATION_PRICE,
+} from '$lib/monetization/paid-access';
+
+// --- input schemas: every load/action input is zod-validated ---
+const versionIdSchema = z.coerce.number().int().positive();
+// Hidden field is a comma-joined id list ("1,2,3"). Keep valid positive ints; require at least one.
+const versionIdsSchema = z
+  .string()
+  .transform((s) =>
+    s
+      .split(',')
+      .map((x) => Number(x.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0)
+  )
+  .refine((ids) => ids.length > 0, 'Select at least one version.');
+const bulkPaidAccessSchema = z
+  .object({
+    accessPrice: requiredBuzzField(MIN_ACCESS_PRICE, 'Enter a price for access.'),
+    generationPrice: optionalBuzzField(MIN_GENERATION_PRICE),
+    freePreviewGenerations: freePreviewsField(),
+  })
+  .refine((v) => v.generationPrice == null || v.generationPrice <= v.accessPrice, {
+    message: 'Generation-only price cannot be greater than the access price.',
+  });
+const modelsQuerySchema = z.object({
+  q: z.string().optional(),
+  fee: z.enum(['set', 'off']).optional().catch(undefined),
+  bm: z.string().optional(),
+  mt: z.string().optional(),
+  status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
+  access: z.enum(['1']).optional().catch(undefined),
+  usage: z.enum(['download', 'generation']).optional().catch(undefined),
+  sort: z.enum(['recent', 'name']).catch('recent'),
+  page: z.coerce.number().int().min(1).catch(1),
+  // Page-size selector value (868ke493p); persisted to a cookie so it applies on later loads.
+  ps: z.coerce.number().int().optional().catch(undefined),
+});
+
+// A year — the page-size preference should stick.
+const PAGE_SIZE_MAX_AGE = 60 * 60 * 24 * 365;
+function resolvePageSize(psParam: number | undefined, cookieVal: string | undefined): number {
+  const opts = PAGE_SIZE_OPTIONS as readonly number[];
+  if (psParam && opts.includes(psParam)) return psParam;
+  const c = Number(cookieVal);
+  return opts.includes(c) ? c : MODELS_PER_PAGE;
+}
+
+const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
+
+export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
+  const { membership } = await parent();
+  const parsed = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
+  const q = parsed.q?.trim() || undefined;
+  const baseModel = parsed.bm?.trim() || undefined;
+  const type = parsed.mt?.trim() || undefined;
+  const access = parsed.access === '1';
+  const mode = url.searchParams.get('mode');
+  // Either bulk mode needs the full matching-version-id set for "select all".
+  const selectionMode = mode === 'bulk' || mode === 'paid-access';
+
+  // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
+  const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
+  if (parsed.ps && (PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed.ps)) {
+    cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
+  }
+
+  const [result, modelsScore, permanentUsed, earlyAccessUsed] = await Promise.all([
+    getCreatorModels({
+      userId: locals.user.id,
+      q,
+      fee: parsed.fee,
+      baseModel,
+      type,
+      status: parsed.status,
+      access,
+      usage: parsed.usage,
+      sort: parsed.sort,
+      page: parsed.page,
+      perPage,
+      withMatchingVersionIds: selectionMode,
+    }),
+    getModelsScore(locals.user.id),
+    countPermanentAccessVersions(locals.user.id),
+    countActiveEarlyAccessVersions(locals.user.id),
+  ]);
+  const permanentCap = maxPermanentAccessModels(cappedTier(membership));
+  return {
+    ...result,
+    perPage,
+    pageSizeOptions: PAGE_SIZE_OPTIONS,
+    // `tier` is the display label; `capTier` is what cap math must use — a lapsed membership keeps its
+    // tier string but is capped at free. null cap = unlimited (Infinity would not survive serialization).
+    caps: {
+      tier: displayTier(membership),
+      capTier: cappedTier(membership),
+      permanentUsed,
+      permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
+      // Score gates early access two ways: how long a window can run, and how many can run at once.
+      maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
+      earlyAccessUsed,
+      earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
+    },
+    query: {
+      q: q ?? '',
+      fee: parsed.fee ?? '',
+      bm: baseModel ?? '',
+      mt: type ?? '',
+      status: parsed.status ?? '',
+      access,
+      usage: parsed.usage ?? '',
+      sort: parsed.sort,
+    },
+  };
+};
+
+export const actions: Actions = {
+  setFee: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
+
+    const fee = licensingFeeRatioSchema.safeParse({
+      buzz: form.get('buzz'),
+      images: form.get('images'),
+    });
+    if (!fee.success) return fail(400, { versionId: versionId.data, error: firstError(fee.error) });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await setLicensingFee(locals.user.id, membership, versionId.data, fee.data);
+    if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
+    if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
+
+    return { versionId: versionId.data };
+  },
+
+  // CSV import — dry run (early-access 2.2). Parse + validate the re-uploaded sheet and return the before→after
+  // diff + skipped rows for a confirmation modal; nothing is written here. Bad rows are reported, not fatal.
+  previewFees: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0)
+      return fail(400, { preview: true, error: 'Choose a CSV file to upload.' });
+    if (file.size > 5_000_000)
+      return fail(400, { preview: true, error: 'That file is too large (max 5MB).' });
+
+    const parsed = parseFeeCsv(await file.text());
+    if (!parsed.ok) return fail(400, { preview: true, error: parsed.error });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await previewLicensingFeeChanges(locals.user.id, membership, parsed.rows);
+    if (!result.ok) return fail(result.status, { preview: true, error: result.error });
+
+    const skipped = [
+      ...parsed.errors,
+      ...result.skipped.map((s) => ({ row: s.row, reason: s.reason })),
+    ].sort((a, b) => (a.row ?? 0) - (b.row ?? 0));
+    return {
+      preview: true,
+      changes: result.changes,
+      unchanged: result.unchanged,
+      skipped,
+    };
+  },
+
+  // CSV import — apply the confirmed changes. Re-validates ownership/limits server-side regardless of the posted
+  // list (the preview is advisory, not trusted).
+  applyFees: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(String(form.get('changes') ?? ''));
+    } catch {
+      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
+    }
+    if (!Array.isArray(parsed))
+      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
+    const entries = parsed
+      .filter(
+        (e): e is { versionId: number; fee: number | null } =>
+          !!e &&
+          Number.isInteger((e as { versionId?: unknown }).versionId) &&
+          ((e as { fee?: unknown }).fee === null ||
+            typeof (e as { fee?: unknown }).fee === 'number')
+      )
+      .map((e) => ({ versionId: e.versionId, fee: e.fee }));
+    if (entries.length === 0) return fail(400, { apply: true, error: 'No changes to apply.' });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await bulkSetLicensingFeeVaried(locals.user.id, membership, entries);
+    if (result.ok)
+      await bustVersionCache(
+        request.headers.get('cookie') ?? '',
+        entries.map((e) => e.versionId)
+      );
+    if (!result.ok) return fail(result.status, { apply: true, error: result.error });
+    return { apply: true, updated: result.updated, skippedCount: result.skipped.length };
+  },
+
+  bulkSetFee: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
+
+    const fee = licensingFeeRatioSchema.safeParse({
+      buzz: form.get('buzz'),
+      images: form.get('images'),
+    });
+    if (!fee.success) return fail(400, { bulk: true, error: firstError(fee.error) });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, fee.data);
+    if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', versionIds.data);
+    if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
+
+    return { bulk: true, updated: result.updated };
+  },
+
+  // Apply the same permanent paid-access pricing to every selected version. Permanent is a Creator
+  // Program perk capped by tier; the selected versions replace their own slots, so the baseline excludes
+  // them. Each version is a separate main-app write (see bulkSetPermanentAccess).
+  bulkSetPaidAccess: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success)
+      return fail(400, { paidAccess: true, error: firstError(versionIds.error) });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+
+    const pricing = bulkPaidAccessSchema.safeParse({
+      accessPrice: form.get('accessPrice'),
+      generationPrice: form.get('generationPrice'),
+      freePreviewGenerations: form.get('freePreviewGenerations'),
+    });
+    if (!pricing.success) return fail(400, { paidAccess: true, error: firstError(pricing.error) });
+
+    if (!locals.user.isModerator) {
+      // Price cap first — it applies to every tier; the count cap only bites on free (CU 868kj4q4j).
+      const priceCap = maxPaidAccessPrice(
+        cappedTier(membership),
+        await strictestCapMediaType(versionIds.data)
+      );
+      const highest = Math.max(pricing.data.accessPrice, pricing.data.generationPrice ?? 0);
+      if (highest > priceCap)
+        return fail(403, {
+          paidAccess: true,
+          error: `Your membership allows a paid-access price of up to ${priceCap} buzz.`,
+        });
+
+      const cap = maxPermanentAccessModels(cappedTier(membership));
+      if (Number.isFinite(cap)) {
+        const baseline = await countPermanentAccessVersionsExcluding(
+          locals.user.id,
+          versionIds.data
+        );
+        if (baseline + versionIds.data.length > cap)
+          return fail(400, {
+            paidAccess: true,
+            error: `Your membership allows up to ${cap} permanent paid-access model${
+              cap === 1 ? '' : 's'
+            }. Deselect some and try again.`,
+          });
+      }
+    }
+
+    const cookie = request.headers.get('cookie') ?? '';
+    const result = await bulkSetPermanentAccess(cookie, versionIds.data, pricing.data);
+    if (!result.ok) return fail(result.status, { paidAccess: true, error: result.error });
+
+    return { paidAccess: true, updated: result.updated, failed: result.failed };
+  },
+
+  // Paid access is written through the main app (see monetization/paid-access.ts). Not member-gated;
+  // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
+  // Usage control is a property of the VERSION, not of its gate, so it saves on its own — a creator can
+  // flip a version to generation-only without also filling in pricing, and it stays reachable when paid
+  // access isn't available to them at all.
+  setUsageControl: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
+
+    const usageControl = form.get('usageControl');
+    if (!isCreatorUsageControl(usageControl))
+      return fail(400, { versionId: versionId.data, error: 'Invalid usage control.' });
+
+    // Mirrors the main app's rule: a version that isn't downloadable can't be charging for downloads.
+    // Writing directly means nothing else enforces it, so it has to be checked here.
+    if (usageControl === 'Generation') {
+      const prices = await currentAccessPrices(versionId.data);
+      if (prices.download > 0)
+        return fail(400, {
+          versionId: versionId.data,
+          error:
+            'This version charges for downloads. Clear the download price before switching to generation-only.',
+        });
+    }
+
+    const updated = await setUsageControl(locals.user.id, versionId.data, usageControl);
+    if (updated) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
+    if (!updated)
+      return fail(404, { versionId: versionId.data, error: 'Version not found or not yours.' });
+    return { versionId: versionId.data, usageControlSaved: true };
+  },
+
+  setPaidAccess: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const versionId = versionIdSchema.safeParse(form.get('versionId'));
+    if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
+
+    // Auth is enforced by the hook; the endpoint re-checks ownership. We forward the session cookie.
+    const cookie = request.headers.get('cookie') ?? '';
+
+    // A 0/empty duration turns early access off — except permanent access, which is intentionally duration-0.
+    const rawTimeframe = Number(form.get('timeframe'));
+    const permanent = ['on', 'true'].includes(String(form.get('permanent')));
+    const turnOff =
+      checkbox.parse(form.get('clear')) ||
+      (!permanent && (!Number.isFinite(rawTimeframe) || rawTimeframe <= 0));
+    if (turnOff) {
+      const usageOnly = form.get('usageControl');
+      if (isCreatorUsageControl(usageOnly))
+        await setUsageControl(locals.user.id, versionId.data, usageOnly);
+      const result = await setPaidAccessConfig(cookie, versionId.data, null);
+      if (!result.ok)
+        return fail(result.status, { versionId: versionId.data, error: result.error });
+      return { versionId: versionId.data, paidAccessCleared: true };
+    }
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+
+    // Paid access is open to every tier; only free carries a COUNT limit (CU 868kj4q4j). Still only NEW
+    // permanent grants are counted — re-saving an already-permanent version stays allowed even at capacity,
+    // so an edit can't strand a creator whose membership lapsed.
+    if (permanent && !locals.user.isModerator && !(await isVersionPermanent(versionId.data))) {
+      const cap = maxPermanentAccessModels(cappedTier(membership));
+      if (Number.isFinite(cap)) {
+        const current = await countPermanentAccessVersions(locals.user.id, versionId.data);
+        if (current >= cap)
+          return fail(400, {
+            versionId: versionId.data,
+            error: `Your membership allows up to ${cap} permanent paid-access model${
+              cap === 1 ? '' : 's'
+            }. Upgrade for more.`,
+          });
+      }
+    }
+
+    const config = paidAccessFormSchema.safeParse(Object.fromEntries(form));
+    if (!config.success)
+      return fail(400, { versionId: versionId.data, error: firstError(config.error) });
+
+    // Only downloadable / on-site-generation versions can be gated (the endpoint also enforces this).
+    const usageControl = config.data.usageControl;
+    if (usageControl && !isCreatorUsageControl(usageControl))
+      return fail(400, {
+        versionId: versionId.data,
+        error: "Paid access isn't available for this version's usage control.",
+      });
+    const genOnly = usageControl === 'Generation';
+    // Persisted BEFORE the gate write: the main-app endpoint validates the terms against the STORED
+    // usage control, so a gen-only save would otherwise be judged against the old Download value.
+    if (isCreatorUsageControl(usageControl))
+      await setUsageControl(locals.user.id, versionId.data, usageControl);
+
+    // Only an INCREASE is rejected: the editor resubmits the stored price on every save, so capping the
+    // submitted value outright would make an over-cap version uneditable after a lapse (the same class of
+    // bug that 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
+    // Permanent gates only: a timed early-access window has no price ceiling, because the version becomes
+    // free when the window closes. Mirrors assertPaidAccessCaps in the main app.
+    if (!locals.user.isModerator && permanent) {
+      const priceCap = maxPaidAccessPrice(
+        cappedTier(membership),
+        await strictestCapMediaType([versionId.data])
+      );
+      const prev = await currentAccessPrices(versionId.data);
+      // Compared per-component so a cheap generation tier can't be raised under an over-cap access price.
+      // For a gen-only version the access price IS the generation price, so it's checked against that side.
+      const next = genOnly
+        ? { download: 0, generation: config.data.accessPrice ?? 0 }
+        : {
+            download: config.data.accessPrice ?? 0,
+            generation: config.data.generationPrice ?? 0,
+          };
+      if (
+        raisesOverCap(next.download, prev.download, priceCap) ||
+        raisesOverCap(next.generation, prev.generation, priceCap)
+      )
+        return fail(403, {
+          versionId: versionId.data,
+          error: `Your membership allows a permanent paid-access price of up to ${priceCap} buzz. Lower the price, use a timed window, or upgrade your membership.`,
+        });
+    }
+
+    const result = await setPaidAccessConfig(cookie, versionId.data, config.data, genOnly);
+    if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
+
+    return { versionId: versionId.data, paidAccessSaved: true };
+  },
+};

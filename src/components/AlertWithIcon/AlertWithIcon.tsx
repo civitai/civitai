@@ -9,8 +9,44 @@ export const AlertWithIcon = ({
   title,
   size = 'xs',
   iconSize,
+  align = 'left',
   ...props
 }: AlertWithIconProps) => {
+  const message =
+    typeof children === 'string' ? (
+      <Text size={size} style={{ lineHeight: align === 'center' ? 1.3 : 1.15 }}>
+        {children}
+      </Text>
+    ) : (
+      children
+    );
+
+  // Centered variant: circular icon stacked above a centered title + message.
+  // Reusable for empty-state / callout styling where the standard left-aligned
+  // alert reads as too utilitarian.
+  if (align === 'center') {
+    return (
+      <Alert radius="sm" {...props}>
+        <Stack gap={8} align="center" style={{ textAlign: 'center' }}>
+          <ThemeIcon color={iconColor} size={iconSize ?? 48} variant="light" radius="xl">
+            {icon}
+          </ThemeIcon>
+          {title && (
+            <Text
+              size={titleSize[size]}
+              fw={600}
+              c={props.color ?? 'blue'}
+              style={{ lineHeight: 1.1 }}
+            >
+              {title}
+            </Text>
+          )}
+          {message}
+        </Stack>
+      </Alert>
+    );
+  }
+
   return (
     <Alert radius="sm" pl={10} {...props}>
       <Group gap="xs" wrap="nowrap">
@@ -28,13 +64,7 @@ export const AlertWithIcon = ({
               {title}
             </Text>
           )}
-          {typeof children === 'string' ? (
-            <Text size={size} style={{ lineHeight: 1.15 }}>
-              {children}
-            </Text>
-          ) : (
-            children
-          )}
+          {message}
         </Stack>
       </Group>
     </Alert>
@@ -46,6 +76,8 @@ type AlertWithIconProps = AlertProps & {
   iconColor?: MantineColor;
   size?: 'xs' | 'sm' | 'md' | 'lg';
   iconSize?: ThemeIconProps['size'];
+  /** `center` stacks a circular icon above centered title/text (callout style). */
+  align?: 'left' | 'center';
 };
 
 const titleSize: Record<NonNullable<AlertWithIconProps['size']>, MantineSize> = {

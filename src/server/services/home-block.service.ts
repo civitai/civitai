@@ -191,6 +191,12 @@ export type HomeBlockWithData = {
   pickedCollections?: PickedFeaturedCollection[];
 };
 
+const readThroughTypes: HomeBlockType[] = [
+  HomeBlockType.Leaderboard,
+  HomeBlockType.CosmeticShop,
+  HomeBlockType.FeaturedCollections,
+];
+
 export const getHomeBlockData = async ({
   user,
   input,
@@ -209,6 +215,19 @@ export const getHomeBlockData = async ({
   user?: SessionUser;
 }): Promise<HomeBlockWithData | null> => {
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
+
+  // System block is source of truth for content selection; cloned user blocks read through to
+  // source so mods only update the singleton and clones stay in sync. Only the types below drift
+  // in practice — upsertHomeBlock already propagates metadata to clones, so this covers system
+  // blocks edited out-of-band (direct SQL/Retool).
+  let sourceMetadata: HomeBlockMetaSchema | undefined;
+  if (homeBlock.sourceId && readThroughTypes.includes(homeBlock.type)) {
+    const source = await dbRead.homeBlock.findUnique({
+      where: { id: homeBlock.sourceId },
+      select: { metadata: true },
+    });
+    sourceMetadata = (source?.metadata || undefined) as HomeBlockMetaSchema | undefined;
+  }
 
   switch (homeBlock.type) {
     case HomeBlockType.Collection: {
@@ -247,11 +266,12 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.Leaderboard: {
-      if (!metadata.leaderboards) {
+      const leaderboards = sourceMetadata?.leaderboards ?? metadata.leaderboards;
+      if (!leaderboards) {
         return null;
       }
 
-      const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+      const leaderboardIds = leaderboards.map((leaderboard) => leaderboard.id);
 
       const leaderboardsWithResults = await getLeaderboardsWithResults({
         ids: leaderboardIds,
@@ -262,24 +282,24 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         leaderboards: leaderboardsWithResults.sort((a, b) => {
-          if (!metadata.leaderboards) {
-            return 0;
-          }
-
-          const aIndex = metadata.leaderboards.find((item) => item.id === a.id)?.index ?? 0;
-          const bIndex = metadata.leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+          const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+          const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
 
           return aIndex - bIndex;
         }),
       };
     }
     case HomeBlockType.CosmeticShop: {
-      if (!metadata.cosmeticShopSection) {
+      const cosmeticShopSectionMeta =
+        sourceMetadata?.cosmeticShopSection ?? metadata.cosmeticShopSection;
+      if (!cosmeticShopSectionMeta) {
         return null;
       }
 
+      // No feature flags in this context — creator-listed items stay excluded
+      // from homepage shop blocks until the creatorShop flag goes GA.
       const data = await getShopSectionsWithItems({
-        sectionId: metadata.cosmeticShopSection.id,
+        sectionId: cosmeticShopSectionMeta.id,
       });
 
       const [cosmeticShopSection] = data;
@@ -290,22 +310,14 @@ export const getHomeBlockData = async ({
 
       return {
         ...homeBlock,
-        metadata,
+        // Client slices by metadata.cosmeticShopSection.maxItems, so hand back the section we
+        // actually resolved rather than the clone's snapshot of a different section.
+        metadata: { ...metadata, cosmeticShopSection: cosmeticShopSectionMeta },
         cosmeticShopSection,
       };
     }
     case HomeBlockType.FeaturedCollections: {
-      // System block is source of truth for pool; cloned user blocks read through to source
-      // so mods only update the singleton and clones stay in sync.
-      let effectivePool = metadata.featuredCollections;
-      if (homeBlock.sourceId) {
-        const source = await dbRead.homeBlock.findUnique({
-          where: { id: homeBlock.sourceId },
-          select: { metadata: true },
-        });
-        const sourceMeta = (source?.metadata || {}) as HomeBlockMetaSchema;
-        effectivePool = sourceMeta.featuredCollections ?? effectivePool;
-      }
+      const effectivePool = sourceMetadata?.featuredCollections ?? metadata.featuredCollections;
       if (!effectivePool?.collectionIds?.length) return null;
 
       const state = await getFeaturedCollectionsState();
@@ -769,11 +781,7 @@ export async function deleteHomeBlockAdmin({ id }: { id: number }) {
   return { deleted: true };
 }
 
-export async function reorderHomeBlocksAdmin({
-  orderedIds,
-}: {
-  orderedIds: number[];
-}) {
+export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: number[] }) {
   const unique = new Set(orderedIds);
   if (unique.size !== orderedIds.length) {
     throw throwBadRequestError('orderedIds must not contain duplicates');
@@ -796,9 +804,7 @@ export async function reorderHomeBlocksAdmin({
   }
 
   await dbWrite.$transaction(
-    orderedIds.map((id, index) =>
-      dbWrite.homeBlock.update({ where: { id }, data: { index } })
-    )
+    orderedIds.map((id, index) => dbWrite.homeBlock.update({ where: { id }, data: { index } }))
   );
   return { count: orderedIds.length };
 }

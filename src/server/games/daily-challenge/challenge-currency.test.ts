@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import { nsfwBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
   deriveDomainCurrency,
   isNonSfwForGreen,
   isChallengeHiddenByDomainCurrency,
+  computeNsfwEscalation,
 } from './challenge-currency';
 
 describe('deriveDomainCurrency', () => {
@@ -58,5 +60,70 @@ describe('isChallengeHiddenByDomainCurrency', () => {
         99
       )
     ).toBe(false);
+  });
+});
+
+describe('computeNsfwEscalation', () => {
+  const PG_PG13 = NsfwLevel.PG | NsfwLevel.PG13; // 3, SFW mask
+
+  it('clean scan: nsfwLevel = derived base, no cancel', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.User,
+      isNsfw: false,
+    });
+    expect(r.allowedNsfwLevel).toBe(PG_PG13);
+    expect(r.nsfwLevel).toBe(NsfwLevel.PG13);
+    expect(r.cancel).toBe(false);
+  });
+
+  it('green user challenge + nsfw: cancel, level left unchanged', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.User,
+      isNsfw: true,
+    });
+    expect(r.cancel).toBe(true);
+    expect(r.allowedNsfwLevel).toBe(PG_PG13);
+    expect(r.nsfwLevel).toBe(NsfwLevel.PG13);
+  });
+
+  it('yellow user challenge + nsfw: raise to R, no cancel', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'yellow',
+      source: ChallengeSource.User,
+      isNsfw: true,
+    });
+    expect(r.cancel).toBe(false);
+    expect(r.allowedNsfwLevel).toBe(PG_PG13 | NsfwLevel.R);
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
+  });
+
+  it('non-user (System) green challenge + nsfw: raise to R, never cancel', () => {
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: PG_PG13,
+      buzzType: 'green',
+      source: ChallengeSource.System,
+      isNsfw: true,
+    });
+    expect(r.cancel).toBe(false);
+    expect(r.allowedNsfwLevel).toBe(PG_PG13 | NsfwLevel.R);
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
+  });
+
+  it('yellow challenge already at R + nsfw: idempotent, stays at R (no cancel)', () => {
+    const alreadyR = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R; // 7
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: alreadyR,
+      buzzType: 'yellow',
+      source: ChallengeSource.User,
+      isNsfw: true,
+    });
+    expect(r.cancel).toBe(false);
+    expect(r.allowedNsfwLevel).toBe(alreadyR);
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
   });
 });

@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
@@ -72,18 +73,18 @@ export default function SubmitAppPage() {
     <>
       <Meta title="Submit an app — Civitai" deIndex />
       <AppsPageLayout
-        size="sm"
+        size={APPS_PAGE_WIDTHS['/apps/submit']}
         title="Submit an app"
         subtitle={
           mode === null ? (
             <>
               Choose how you want to list your app. Author an on-platform{' '}
               <strong>App</strong> with the <Code>civitai</Code> CLI, or list an{' '}
-              <strong>External link</strong> that opens your off-site site. A moderator reviews
+              <strong>external app</strong> by connecting your OAuth app. A moderator reviews
               every submission before it appears.
             </>
           ) : (
-            <>Submitting {mode === 'external' ? 'an External link' : 'an App'}.</>
+            <>Submitting {mode === 'external' ? 'an external app' : 'an App'}.</>
           )
         }
       >

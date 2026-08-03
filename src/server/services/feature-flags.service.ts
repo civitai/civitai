@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -193,6 +194,7 @@ const featureFlags = createFeatureFlags({
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
   krea2Training: { availability: ['mod'], fliptKey: 'krea2-training' },
+  mageflowTraining: { availability: ['mod'], fliptKey: 'mageflow-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
@@ -246,6 +248,7 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
+  collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,
     default: true,
@@ -287,10 +290,51 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
+  // does NOT gate rendering — a sticker already in a comment or DM must render
+  // for everyone, or flipping this off orphans content that is already out there.
+  stickers: { availability: ['mod'], fliptKey: 'stickers' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
+  // Creator Controls account card (metric-privacy + donation-goal settings UI).
+  // `availability: []` = DARK by default and FAILS CLOSED (empty availability →
+  // static eval false when Flipt is absent/down), so the card does NOT render for
+  // anyone until the `creator-controls` Flipt flag is created + enabled. This gates
+  // ONLY the card render in the account page; the read-side metric-privacy gating
+  // (donation-goals-cache / model-metric-privacy resolvers / model.service etc.)
+  // stays active regardless so existing user settings keep applying even when the
+  // card is hidden. Instant kill-switch / widen lever = the Flipt flag. (Mirrors the
+  // `hiddenPrefsCompact` / `genTabDeferView` `availability: []` precedent.)
+  creatorControls: { availability: [], fliptKey: 'creator-controls' },
+  // Read-time gate for the Creator-Controls metric-privacy RESOLUTION (#3266): the
+  // per-request synchronous work that hides a CP member's model/version metrics —
+  // the batched `getValidCreatorMembershipMap` (a `subscriptionProductMetadataSchema`
+  // Zod parse per subscription), the owner-settings lookups, and the per-item
+  // `resolveModel/VersionHiddenMetrics`. Default ON: `availability: ['public']` keeps
+  // it enabled for everyone AND fails OPEN (ON) when Flipt is absent/down, so merging
+  // + releasing is a pure no-op — the privacy feature keeps working exactly as today.
+  // Flipt is authoritative when the `model-metric-privacy-readtime` flag exists:
+  // flipping it OFF makes every gated read path SKIP that work entirely and return the
+  // RAW (pre-#3266) metrics, for a controlled A/B of its request-path cost. OFF briefly
+  // re-exposes CP members' hidden metrics for the test window (accepted, keep it short).
+  // NOT `[]`: that would fail CLOSED and default the feature off. (Mirrors the
+  // `challengePlatform` / `animaControlnet` `['public']` + fliptKey fail-open precedent.)
+  modelMetricPrivacyReadtime: {
+    availability: ['public'],
+    fliptKey: 'model-metric-privacy-readtime',
+  },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
+  // Rewrite orchestrator blob URLs to the Cloudflare-fronted proxy for RU users
+  // (their ISPs DPI-block the bare orchestration origin). `availability: []` =
+  // DARK by default and FAILS CLOSED (empty availability → static eval false when
+  // Flipt is absent/down), so the rewrite stays OFF unless the `ru-orchestrator-proxy`
+  // Flipt flag is enabled — the flag is both the on-switch at rollout AND the
+  // instant kill-switch if the proxy misbehaves. The rewrite itself additionally
+  // gates on cf-ipcountry === 'RU', so non-RU users are never affected either way.
+  // See ClickUp 868kdkv93 / 868ke4d0f. (Mirrors the `creatorControls` /
+  // `hiddenPrefsCompact` `availability: []` fail-closed precedent.)
+  ruOrchestratorProxy: { availability: [], fliptKey: 'ru-orchestrator-proxy' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],
@@ -316,6 +360,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
+  giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
@@ -339,6 +384,7 @@ const featureFlags = createFeatureFlags({
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['public'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  buzzTransactionExport: { availability: ['public'], fliptKey: 'buzz-transaction-export' },
   userPaymentConfiguration: {
     availability: ['granted'],
     fliptKey: 'user-payment-configuration',
@@ -402,6 +448,32 @@ const featureFlags = createFeatureFlags({
   // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
   // AFTER this merges: absent → static mod-only, identical to today).
   appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
+  // App Blocks — AGENTIC MOD CODE-REVIEW panel (P2). CLIENT gate for the
+  // `AgentReviewPanel` in the on-site review modal. `availability: []` = DARK by
+  // default and FAILS CLOSED (empty availability → static eval false when Flipt
+  // is absent/down), so the panel does NOT render for ANYONE — mods included —
+  // until the Flipt `app-blocks-agentic-review` flag is created. This mirrors the
+  // server-side `isAppBlocksAgenticReviewEnabled` fail-closed gate on the
+  // `blocks.startAgentReview` / `getAgentReview` procs, so the whole feature is
+  // inert end-to-end on merge (NOT `['mod']`: that would render the panel for
+  // mods the moment this ships, before the flag exists). The Flipt key is the
+  // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
+  // `genTabDeferView` `availability: []` precedent.)
+  appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
+  // flag-gated, deep-linkable full page that re-hosts the existing on-site review
+  // body (today a modal on `/apps/review`) so mods can open, share, and refresh a
+  // single submission. `availability: ['mod']` (NOT `[]`): mods get the page the
+  // moment this ships — the page is a re-host of the already-live review UI (no
+  // new capability, no unapproved-code execution beyond what the modal already
+  // does), so dogfooding on merge is the intent. A non-mod still fails closed:
+  // 'mod' availability → static false for any non-mod segment AND the page's SSR
+  // gate additionally requires `isAppReviewer`. The Flipt `app-review-page` flag
+  // (created later) is the widen/kill lever; absent → this static mod-only default.
+  // Wired like `appBlocksAgenticReview` (client reads `features.appReviewPage`,
+  // the route SSR resolver reads the same resolved flag) but staged `['mod']`
+  // rather than `[]` because it's a re-host, not a brand-new dark capability.
+  appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -495,7 +567,7 @@ function checkRegionAccess(
 }
 
 // Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
-type FliptModule = typeof import('~/server/flipt/client');
+type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 

@@ -2,18 +2,26 @@ import { describe, expect, it } from 'vitest';
 
 import {
   actionRequiresReason,
+  effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
   listingModActions,
 } from '~/components/Apps/appListingModerationTableView';
 
+const pendingReq = {
+  id: 'alpr_1',
+  submittedAt: new Date('2026-07-24T00:00:00Z'),
+  changelog: null,
+  submittedBy: null,
+};
+
 /**
  * W13 post-approval mgmt (P2) — the mod management-table action view model. The
  * blocking correctness gate for the KIND-AWARE per-row action set (the browser
  * suite is report-only). Pins: which actions each status offers, and that the
- * off-site-only actions (reset-to-pending / claim / purge / review) NEVER appear
- * on an on-site row while the dual-kind ones (hide / relist) do.
+ * off-site-only actions (claim / purge / review) NEVER appear on an on-site row
+ * while the dual-kind ones (reset-to-pending / hide / relist) do.
  */
 
 describe('listingModActions — off-site rows', () => {
@@ -52,10 +60,10 @@ describe('listingModActions — off-site rows', () => {
 });
 
 describe('listingModActions — on-site rows hide the off-site-only actions', () => {
-  it('approved on-site → Hide ONLY (no reset-to-pending)', () => {
+  it('approved on-site → Reset to pending + Hide (reset is now dual-kind, #3165)', () => {
     expect(
       listingModActions({ status: 'approved', kind: 'onsite', hasPendingRequest: false })
-    ).toEqual(['hide']);
+    ).toEqual(['reset-to-pending', 'hide']);
   });
 
   it('removed on-site → Relist ONLY (no claim / purge)', () => {
@@ -98,5 +106,33 @@ describe('action metadata', () => {
   it('kind chip distinguishes external vs on-site', () => {
     expect(listingKindChip('offsite')).toEqual({ label: 'external', color: 'grape' });
     expect(listingKindChip('onsite')).toEqual({ label: 'on-site', color: 'blue' });
+  });
+});
+
+describe('effectiveModerationStatus', () => {
+  it('draft WITH a live pending request → pending (awaiting first review)', () => {
+    expect(effectiveModerationStatus({ status: 'draft', pendingRequest: pendingReq })).toBe(
+      'pending'
+    );
+  });
+
+  it('draft WITHOUT a pending request → draft (true orphan)', () => {
+    expect(effectiveModerationStatus({ status: 'draft', pendingRequest: null })).toBe('draft');
+  });
+
+  it('approved → approved (unchanged)', () => {
+    expect(effectiveModerationStatus({ status: 'approved', pendingRequest: null })).toBe('approved');
+  });
+
+  it('pending → pending (unchanged)', () => {
+    expect(effectiveModerationStatus({ status: 'pending', pendingRequest: pendingReq })).toBe(
+      'pending'
+    );
+  });
+
+  it('removed → removed (unchanged, even if a lingering pending request exists)', () => {
+    expect(effectiveModerationStatus({ status: 'removed', pendingRequest: pendingReq })).toBe(
+      'removed'
+    );
   });
 });

@@ -1,5 +1,7 @@
 import {
   isKnownBlockScope,
+  sensitiveScopeJustificationError,
+  unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -12,8 +14,32 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// Single source for the per-scope justification length bound — shared with the
+// OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
+import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
+
+/**
+ * Options controlling WHICH validation rules run. Defaults to full enforcement
+ * (every rule on); a caller passes this only to RELAX a rule for a specific
+ * context. Currently the sole knob exempts the sensitive-scope-justification
+ * enforcement on the moderator APPROVE re-validation.
+ */
+export type ManifestValidationOptions = {
+  /**
+   * Enforce that every declared SENSITIVE scope carries a non-empty
+   * justification. Default `true` (the genuine submit / new-version paths). The
+   * moderator APPROVE re-validation passes `false` so a LEGACY pending request —
+   * submitted before this rule shipped, with a sensitive scope and no
+   * justification — stays approvable (grandfathered). No bypass is created: a
+   * post-deploy submission already passed this gate at submit time, so
+   * re-checking it on approve is redundant, and nothing can reach the approve
+   * queue post-deploy without first passing the submit gate. ALL OTHER
+   * validation still runs on approve.
+   */
+  enforceSensitiveScopeJustification?: boolean;
+};
 
 interface RawManifest {
   blockId?: unknown;
@@ -31,6 +57,16 @@ interface RawManifest {
    * hasn't already curated one — see `approveRequest`). Absent is fine.
    */
   category?: unknown;
+  /**
+   * OPTIONAL one-line pitch shown under the app's name on its `/apps` store card
+   * + detail page. Manifest-governed (the onsite store listing has NO other
+   * author surface for it — see the "ONSITE = ASSETS-ONLY" invariant in
+   * `offsite-listing.service`), so it flows to the listing on approve and is
+   * re-synced on every subsequent approved version. When present it must be a
+   * string whose TRIMMED length is 1..{@link MANIFEST_TAGLINE_MAX_LENGTH}; absent
+   * is fine (the store simply shows no tagline).
+   */
+  tagline?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -39,6 +75,15 @@ interface RawManifest {
     sandbox?: unknown;
   };
   requiredContext?: unknown;
+  /**
+   * Manifest-driven settings declaration (the W3 `manifestSettingsSchema` shape,
+   * keyed by snake_case field name). Structurally validated at install/runtime by
+   * `manifestSettingsSchema` / `validateBlockSettings`; here the SUBMISSION gate
+   * (`validateSubmission`) additionally enforces that any string field's `pattern`
+   * is not ReDoS-vulnerable and that a patterned field bounds its input via
+   * `max_length`. Optional — most manifests declare no settings.
+   */
+  settings?: unknown;
   assetBundleUrl?: unknown;
   /**
    * H-3: publisher-controlled allowlist of `settings` keys that listForModel
@@ -82,6 +127,17 @@ interface RawManifest {
    */
   buildCommand?: unknown;
   outputDir?: unknown;
+  /**
+   * OPTIONAL per-scope justification — a map of scope-id → free-text rationale
+   * the developer supplies to explain WHY the app requests each scope. Surfaced
+   * to the moderator in review. Backward-compatible: absent ⇒ still valid, and
+   * `scopes` is unchanged. Every key MUST be a scope present in `scopes` (a
+   * justification for a scope the app doesn't request is REJECTED, so the mod
+   * never sees dangling rationale). Each value is a non-empty string bounded by
+   * SCOPE_JUSTIFICATION_MAX_LENGTH. This only CAPTURES the dev's stated claim —
+   * the platform does not verify it (verification is a deliberate follow-up).
+   */
+  scopeJustifications?: unknown;
   [key: string]: unknown;
 }
 
@@ -104,6 +160,21 @@ const BLOCK_ID_MAX_LENGTH = 40;
 // `-prerelease` suffix. Single-sourced with the published schema + the CLI.
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
+/**
+ * CANONICAL `tagline` length cap. Deliberately the SAME bound off-site listings
+ * use (`OFFSITE_TAGLINE_MAX` in `~/server/schema/blocks/offsite-listing.schema`)
+ * so the two store kinds render consistently in the same card/detail slots.
+ *
+ * It is re-declared here rather than imported because this module is
+ * CLIENT-BUNDLE-SAFE (see the `ssrf-hostname` note above — `ManifestEditForm.tsx`
+ * imports it), and `offsite-listing.schema` pulls in zod + the external-app
+ * schema graph. A drift-guard test
+ * (`manifest-tagline.schema-drift.test.ts`) asserts this const, the canonical
+ * published schema's `tagline.maxLength`, and `OFFSITE_TAGLINE_MAX` are all equal,
+ * so the duplication can never silently diverge.
+ */
+export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
+
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
 // keeps the command AUDITABLE + bounds it to a small, documented set of safe
@@ -117,13 +188,20 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 // Anything else — extra args, flags, shell metacharacters, multiple commands —
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
-const BUILD_COMMAND_MAX_LENGTH = 128;
-const BUILD_COMMAND_RE =
+export const BUILD_COMMAND_MAX_LENGTH = 128;
+export const BUILD_COMMAND_RE =
   /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
 const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
+
+// Max length of a single per-scope justification string (scopeJustifications
+// map value). Bounded so a malicious/careless manifest can't bloat the stored
+// blob or the mod-review render. LIFTED to @civitai/auth/token-scope (imported
+// above) so the App Blocks manifest path and the OAuth-connect scope-review
+// path share ONE literal; re-exported here to keep existing importers stable.
+export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
@@ -246,7 +324,11 @@ export class BlockManifestValidator {
   // Back-compat overload: the existing test suite passes a bitmask number.
   // Real callers pass the AppContext shape (with allowedOrigins) so the
   // H8 binding check actually runs.
-  static validate(manifest: unknown, app: AppContext | number): ValidationResult {
+  static validate(
+    manifest: unknown,
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
+  ): ValidationResult {
     const ctx: AppContext =
       typeof app === 'number'
         ? { allowedScopes: app, allowedOrigins: [] }
@@ -313,6 +395,25 @@ export class BlockManifestValidator {
       errors.push(`category must be one of ${MARKETPLACE_CATEGORIES.join(', ')}`);
     }
 
+    // Optional `tagline` (the one-line store pitch). Absent is fine. When
+    // present it must be a STRING whose TRIMMED length is 1..140 — trimmed so a
+    // whitespace-only value is rejected here rather than silently landing as a
+    // blank tagline on the store card, and so the cap can't be evaded with
+    // padding. The cap mirrors off-site listings (see
+    // MANIFEST_TAGLINE_MAX_LENGTH) so both store kinds render the same slot.
+    if (m.tagline !== undefined) {
+      if (typeof m.tagline !== 'string') {
+        errors.push('tagline must be a string');
+      } else {
+        const trimmed = m.tagline.trim();
+        if (trimmed.length === 0) {
+          errors.push('tagline must not be blank (omit it instead)');
+        } else if (trimmed.length > MANIFEST_TAGLINE_MAX_LENGTH) {
+          errors.push(`tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`);
+        }
+      }
+    }
+
     if (!Array.isArray(m.scopes)) {
       errors.push('scopes must be an array of strings');
     } else {
@@ -344,6 +445,73 @@ export class BlockManifestValidator {
         errors.push(
           `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
         );
+      }
+    }
+
+    // Optional per-scope justifications (scope-id → rationale). Backward-compatible:
+    // absent ⇒ nothing to check. When present it must be a plain object; every key
+    // must be a scope the manifest actually declares (a justification for a scope
+    // NOT in `scopes` is rejected, so no dangling rationale reaches the mod), and
+    // every value must be a non-empty string ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. The
+    // platform only CAPTURES the dev's stated rationale here — it does not verify it.
+    if (m.scopeJustifications !== undefined) {
+      if (
+        !m.scopeJustifications ||
+        typeof m.scopeJustifications !== 'object' ||
+        Array.isArray(m.scopeJustifications)
+      ) {
+        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+      } else {
+        const declaredScopes = new Set(
+          Array.isArray(m.scopes)
+            ? (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
+            : []
+        );
+        for (const [scope, justification] of Object.entries(
+          m.scopeJustifications as Record<string, unknown>
+        )) {
+          if (!declaredScopes.has(scope)) {
+            errors.push(
+              `scopeJustifications references scope "${scope}" which is not in the manifest's scopes`
+            );
+            continue;
+          }
+          if (typeof justification !== 'string' || justification.length === 0) {
+            errors.push(`scopeJustifications["${scope}"] must be a non-empty string`);
+          } else if (justification.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+            errors.push(
+              `scopeJustifications["${scope}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+            );
+          }
+        }
+      }
+    }
+
+    // ENFORCEMENT (was presentation-only): every declared SENSITIVE scope — the
+    // subset that can spend/read the viewer's Buzz, read their PRIVATE data, or
+    // write data other users see (see SENSITIVE_BLOCK_SCOPES) — MUST carry a
+    // non-empty justification. `scopeJustifications` used to be fully optional;
+    // for sensitive scopes it is now REQUIRED, so a moderator always sees WHY an
+    // elevated-risk permission was requested. An entirely-absent
+    // `scopeJustifications` (previously valid) now fails when any sensitive scope
+    // is declared. Reuses the single-sourced sensitive set (never re-hardcodes
+    // it), and runs for every SUBMIT path because both the CLI submit-version and
+    // the web `updateManifest` funnel through `validateSubmission` → this
+    // `validate`.
+    //
+    // SUBMIT-ONLY (default on): the moderator APPROVE re-validation passes
+    // `enforceSensitiveScopeJustification:false` so a LEGACY pending request
+    // (submitted before this shipped, no justification) stays approvable. Only
+    // THIS rule is exempted on approve — every other check above still runs.
+    if (opts?.enforceSensitiveScopeJustification !== false) {
+      // DRY: the rule (which sensitive scopes are unjustified + the message) is
+      // single-sourced in block-scope.constants so this validator and the
+      // submit-time gate in `submitVersion` can never drift. The `!== false`
+      // gate (approve exemption for legacy pending requests) stays HERE; the
+      // helper is the pure rule and always evaluates.
+      const unjustifiedSensitive = unjustifiedSensitiveScopes(m);
+      if (unjustifiedSensitive.length > 0) {
+        errors.push(sensitiveScopeJustificationError(unjustifiedSensitive));
       }
     }
 
@@ -583,6 +751,56 @@ export class BlockManifestValidator {
       ) {
         errors.push('outputDir must not contain path traversal ("..") or absolute/Windows paths');
       }
+    }
+
+    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+  }
+
+  /**
+   * SUBMISSION gate. Runs the synchronous shape/security `validate` above AND the
+   * accurate ReDoS + input-bound check on `settings` field patterns, merging the
+   * errors. This is the method every manifest SUBMISSION path must call (git-push
+   * webhook, developer manifest API, `blocks.updateManifest`, publish-request
+   * approve) — it makes "a stored/approved manifest ⇒ its setting patterns are
+   * non-exponential and input-bounded" an ENFORCED invariant, giving the
+   * developer real feedback at submit time instead of a silent fail-open later.
+   *
+   * `validate` stays synchronous (client-safe, used everywhere else). The ReDoS
+   * analysis lives in a SERVER-ONLY module reached via dynamic `import()` so
+   * `recheck` never enters the client bundle, and it is only loaded when the
+   * manifest actually declares a string pattern (the common no-pattern manifest
+   * pays nothing).
+   */
+  static async validateSubmission(
+    manifest: unknown,
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
+  ): Promise<ValidationResult> {
+    const base = this.validate(manifest, app, opts);
+    const errors: string[] = base.valid ? [] : [...base.errors];
+
+    const settings =
+      manifest && typeof manifest === 'object' && !Array.isArray(manifest)
+        ? (manifest as RawManifest).settings
+        : undefined;
+    // Only pay the recheck load when there's at least one string `pattern` to
+    // analyze — keeps the overwhelmingly-common no-pattern submission cheap.
+    const hasStringPattern =
+      !!settings &&
+      typeof settings === 'object' &&
+      !Array.isArray(settings) &&
+      Object.values(settings as Record<string, unknown>).some(
+        (def) =>
+          !!def &&
+          typeof def === 'object' &&
+          !Array.isArray(def) &&
+          typeof (def as { pattern?: unknown }).pattern === 'string'
+      );
+    if (hasStringPattern) {
+      const { collectSettingsPatternErrors } = await import(
+        '~/server/services/blocks/settings-pattern-guard'
+      );
+      errors.push(...(await collectSettingsPatternErrors(settings)));
     }
 
     return errors.length === 0 ? { valid: true } : { valid: false, errors };

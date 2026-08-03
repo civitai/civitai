@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Code,
+  Collapse,
   CopyButton,
   Divider,
   Group,
@@ -14,9 +15,11 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
   IconCheck,
+  IconChevronDown,
   IconClipboard,
   IconDatabase,
   IconPalette,
@@ -86,6 +89,8 @@ function CopyableCommand({ command }: { command: string }) {
 }
 
 export function GetStartedBody() {
+  const [opened, { toggle }] = useDisclosure(false);
+
   return (
     <Stack gap="xl">
       {/* Banner — 3:2 hero image (public asset, no layout shift) */}
@@ -110,25 +115,6 @@ export function GetStartedBody() {
           models and generate with Buzz. You focus on creating; we handle the rest.
         </Text>
       </Stack>
-
-      {/* Quickstart — the whole point: copy 3 lines, you're running */}
-      <Stack gap="sm">
-        <Title order={2}>Quickstart</Title>
-        <Text size="sm" c="dimmed">
-          Create a local Civitai app in 3 steps with the{' '}
-          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
-            Civitai CLI
-          </Anchor>
-        </Text>
-        <CopyableCommand command={CLI_INSTALL_BREW} />
-        <Text size="xs" c="dimmed">
-          or: <Code>{CLI_INSTALL_GO}</Code>
-        </Text>
-        <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
-        <CopyableCommand command={CLI_RUN_COMMAND} />
-      </Stack>
-
-      <Divider />
 
       {/* What you get — the platform leverage a dev gets, then the toolkit links */}
       <Stack gap="sm">
@@ -224,6 +210,48 @@ export function GetStartedBody() {
             @civitai/app-sdk
           </Button>
         </Group>
+      </Stack>
+
+      <Divider />
+
+      {/* Quickstart — copy 3 lines, you're running. Collapsed by default so the
+          "what you get" pitch leads; the commands are one click away. */}
+      <Stack gap="sm">
+        <Title order={2}>Quickstart</Title>
+        <Text size="sm" c="dimmed">
+          Create a local Civitai app in 3 steps with the{' '}
+          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
+            Civitai CLI
+          </Anchor>
+        </Text>
+        <Button
+          variant="subtle"
+          size="xs"
+          onClick={toggle}
+          aria-expanded={opened}
+          w="fit-content"
+          rightSection={
+            <IconChevronDown
+              size={16}
+              style={{
+                transform: opened ? 'rotate(180deg)' : undefined,
+                transition: 'transform 150ms ease',
+              }}
+            />
+          }
+        >
+          {opened ? 'Hide commands' : 'Show commands'}
+        </Button>
+        <Collapse in={opened} data-testid="quickstart-commands">
+          <Stack gap="sm">
+            <CopyableCommand command={CLI_INSTALL_BREW} />
+            <Text size="xs" c="dimmed">
+              or: <Code>{CLI_INSTALL_GO}</Code>
+            </Text>
+            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
+            <CopyableCommand command={CLI_RUN_COMMAND} />
+          </Stack>
+        </Collapse>
       </Stack>
     </Stack>
   );

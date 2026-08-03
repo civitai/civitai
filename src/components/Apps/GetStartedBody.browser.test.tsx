@@ -34,14 +34,44 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(page.getByRole('heading', { name: 'Publish' }).elements()).toHaveLength(0);
   });
 
-  test('shows the quickstart commands (brew install, scaffold, run)', async () => {
+  test('the Quickstart section renders BELOW the "What you get" content in DOM order', async () => {
     renderWithProviders(<GetStartedBody />);
-    // Copyable commands render prefixed with a shell prompt ("$ ").
+    const whatYouGet = page.getByRole('heading', { name: 'What you get' });
+    const quickstart = page.getByRole('heading', { name: 'Quickstart' });
+    await expect.element(whatYouGet).toBeInTheDocument();
+    await expect.element(quickstart).toBeInTheDocument();
+    // Quickstart moved to the bottom — its heading must FOLLOW the "What you get"
+    // heading in document order.
+    const position = whatYouGet.element().compareDocumentPosition(quickstart.element());
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('the quickstart commands are collapsed (not visible) by default', async () => {
+    renderWithProviders(<GetStartedBody />);
+    // The heading + subtitle lead; the commands sit inside a collapsed section
+    // fronted by a "Show commands" toggle.
+    await expect.element(page.getByRole('heading', { name: 'Quickstart' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Show commands' })).toBeInTheDocument();
+    // The commands live inside a Mantine <Collapse> which renders a height:0
+    // wrapper when closed — assert THAT region is not visible (the closed
+    // wrapper has a zero-height box). Asserting the inner <pre> directly is
+    // unreliable: the browser matcher ignores the wrapper's opacity:0 and the
+    // clipped child keeps its own bounding box.
+    await expect.element(page.getByTestId('quickstart-commands')).not.toBeVisible();
+  });
+
+  test('clicking "Show commands" reveals the quickstart commands (brew install, scaffold, run)', async () => {
+    renderWithProviders(<GetStartedBody />);
+    await page.getByRole('button', { name: 'Show commands' }).click();
+    // Toggle label flips once opened.
+    await expect.element(page.getByRole('button', { name: 'Hide commands' })).toBeInTheDocument();
+    await expect.element(page.getByTestId('quickstart-commands')).toBeVisible();
+    // Copyable commands render prefixed with a shell prompt ("$ "), now visible.
     for (const command of [CLI_INSTALL_BREW, CLI_CREATE_SAMPLE_COMMAND, CLI_RUN_COMMAND]) {
-      await expect.element(page.getByText(`$ ${command}`)).toBeInTheDocument();
+      await expect.element(page.getByText(`$ ${command}`)).toBeVisible();
     }
     // The Go install is shown inline (secondary option), not as a copyable block.
-    await expect.element(page.getByText(CLI_INSTALL_GO)).toBeInTheDocument();
+    await expect.element(page.getByText(CLI_INSTALL_GO)).toBeVisible();
   });
 
   test('the run command installs deps before dev:harness (the CLI does not auto-install)', () => {

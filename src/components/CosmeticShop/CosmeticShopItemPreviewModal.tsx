@@ -13,9 +13,14 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
+import { useState } from 'react';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import type { PayWithOption } from '~/components/CosmeticShop/PayWithSelector';
+import { PayWithSelector } from '~/components/CosmeticShop/PayWithSelector';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   useEquipProfileDecoration,
@@ -26,7 +31,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import type { CosmeticShopItemGetById } from '~/types/router';
-import { cosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CIVITAI_SHOP_ATTRIBUTION,
+  cosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -35,6 +43,10 @@ import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
+
+const { charged, free } = stickerSurfaceLabels();
+const stickerSurfaceCopy = [...charged, ...free].join(' and ');
 
 type Props = { shopItem: CosmeticShopItemGetById; viaShopUserId?: number };
 
@@ -50,7 +62,9 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
   const router = useRouter();
 
   const handleApplyDecoration = async () => {
-    if (cosmetic.type === CosmeticType.ContentDecoration && currentUser?.username) {
+    if (cosmetic.type === CosmeticType.Sticker) {
+      // Owned, not equipped — the button here just acknowledges the purchase.
+    } else if (cosmetic.type === CosmeticType.ContentDecoration && currentUser?.username) {
       router.push(`/user/${currentUser.username}`);
     } else {
       // Apply now...
@@ -79,6 +93,12 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
         </Box>
 
         <Stack gap={4}>
+          {cosmetic.type === CosmeticType.Sticker && (
+            <Text size="xs" c="dimmed" align="center">
+              Type <b>:{(cosmetic.data as { slug?: string } | null)?.slug}:</b> or pick it from the
+              sticker button in {stickerSurfaceCopy}.
+            </Text>
+          )}
           {cosmetic.type === CosmeticType.ContentDecoration && (
             <Text size="xs" c="dimmed" align="center">
               This decoration is now available to apply to your content. You can select which piece
@@ -86,7 +106,11 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
             </Text>
           )}
           <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
-            {cosmetic.type === CosmeticType.ContentDecoration ? 'Go to my profile' : 'Apply now'}
+            {cosmetic.type === CosmeticType.ContentDecoration
+              ? 'Go to my profile'
+              : cosmetic.type === CosmeticType.Sticker
+              ? 'Done'
+              : 'Apply now'}
           </Button>
           <NotificationToggle type="cosmetic-shop-item-added-to-section">
             {({ onToggle, isEnabled }) =>
@@ -127,7 +151,23 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // Resold items carry the seller share so the buyer sees who earns what.
   const parsedMeta = cosmeticShopItemMeta.safeParse(shopItem.meta);
   const resaleShare = parsedMeta.success ? parsedMeta.data.sellerShare : undefined;
-  const isResale = viaShopUserId != null && resaleShare != null;
+
+  // Blue-accepting items let the buyer choose how to pay: the domain color
+  // (default), or blue first with the rest in the domain color.
+  const acceptsBlue = parsedMeta.success && !!parsedMeta.data.acceptsBlueBuzz;
+  const [domainType] = useAvailableBuzz();
+  const [payWith, setPayWith] = useState<PayWithOption>('default');
+  const accountTypes: BuzzSpendType[] =
+    !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
+  // The split note only shows for cross-creator resale — not on the official
+  // Civitai shop, and not when buying the creator's own item on their own
+  // storefront (the creator keeps the full pool there).
+  const isOwnShopListing = viaShopUserId != null && viaShopUserId === shopItem.cosmetic.creator?.id;
+  const isResale =
+    viaShopUserId != null &&
+    viaShopUserId !== CIVITAI_SHOP_ATTRIBUTION &&
+    resaleShare != null &&
+    !isOwnShopListing;
   const { sellerAmount: resellerAmount, creatorAmount } = computeCreatorShopSplit(
     shopItem.unitAmount,
     resaleShare ?? 0
@@ -135,7 +175,11 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
 
   const handlePurchaseShopItem = async () => {
     try {
-      const userCosmetic = await purchaseShopItem({ shopItemId: shopItem.id, viaShopUserId });
+      const userCosmetic = await purchaseShopItem({
+        shopItemId: shopItem.id,
+        viaShopUserId,
+        payWith: acceptsBlue ? payWith : undefined,
+      });
 
       showSuccessNotification({
         message: 'Your purchase has been completed and your cosmetic is now available to equip',
@@ -212,14 +256,29 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
                   </Paper>
                 )}
                 {canPurchase ? (
-                  <BuzzTransactionButton
-                    disabled={purchasingShopItem || !isAvailable}
-                    loading={purchasingShopItem}
-                    buzzAmount={shopItem.unitAmount}
-                    radius="xl"
-                    onPerformTransaction={handlePurchaseShopItem}
-                    label="Purchase"
-                  />
+                  <Stack gap={6}>
+                    {acceptsBlue && isAvailable && (
+                      <PayWithSelector
+                        value={payWith}
+                        onChange={setPayWith}
+                        domainType={domainType}
+                      />
+                    )}
+                    <BuzzTransactionButton
+                      disabled={purchasingShopItem || !isAvailable}
+                      loading={purchasingShopItem}
+                      buzzAmount={shopItem.unitAmount}
+                      radius="xl"
+                      onPerformTransaction={handlePurchaseShopItem}
+                      label="Purchase"
+                      accountTypes={accountTypes}
+                      showTypePct={acceptsBlue && payWith === 'blue-first'}
+                    />
+                  </Stack>
+                ) : cosmetic.type === CosmeticType.Sticker ? (
+                  <Text size="sm" align="center" c="dimmed">
+                    You already own this sticker — it&apos;s in your sticker picker.
+                  </Text>
                 ) : (
                   <Stack gap={4}>
                     <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>

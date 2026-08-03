@@ -63,12 +63,18 @@ async function deleteJobQueueItems(
   );
 }
 
+// Bounds how much of a backlog one run pulls in. The job runs every minute and
+// deletes only what it processed, so the remainder drains across later runs.
+const UPDATE_NSFW_LEVEL_BATCH_SIZE = 10000;
+
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');
   // const now = new Date();
   try {
     const jobQueue = await dbRead.jobQueue.findMany({
       where: { type: JobQueueType.UpdateNsfwLevel, entityType: { not: EntityType.Collection } },
+      orderBy: { createdAt: 'asc' },
+      take: UPDATE_NSFW_LEVEL_BATCH_SIZE,
     });
 
     const jobQueueIds = reduceJobQueueToIds(jobQueue);
@@ -253,12 +259,20 @@ const handleJobQueueCleanIfEmpty = createJob(
     const cleanupPosts = () =>
       chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
         if (!ids.length) return;
-        // Delete posts that have no images
+        // Delete posts that have no images, but preserve the empty anchor post of a published
+        // version — deleting it cascades to auto-unpublishing the version (reason 'no-posts'),
+        // stranding the creator. Keeping the shell lets them re-add showcase images.
         await dbWrite.$executeRaw`
           DELETE FROM "Post" p
-          WHERE id IN (${Prisma.join(ids)}) AND NOT EXISTS (
-            SELECT 1 FROM "Image" WHERE "postId" = p.id
-          )
+          WHERE id IN (${Prisma.join(ids)})
+            AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = p."modelVersionId"
+                AND p."userId" = m."userId"
+                AND mv.status = 'Published'::"ModelStatus"
+            )
         `;
       });
 

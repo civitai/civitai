@@ -1,0 +1,9 @@
+{
+  "name": "redis-inspect-skill",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Redis inspection skill for Claude Code",
+  "dependencies": {
+    "redis": "^4.7.0"
+  }
+}

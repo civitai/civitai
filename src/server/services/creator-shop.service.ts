@@ -3,13 +3,19 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import {
+  buildCosmeticData,
+  creatorGrantRemaining,
+  patchCosmeticData,
+} from '~/server/services/creator-shop.data';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { createNotification } from '~/server/services/notification.service';
-import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { NotificationCategory } from '~/server/common/enums';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -44,6 +50,12 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
+  STICKER_DEFAULT_USES,
+  STICKER_MIN_BUZZ_PER_USE,
+  cosmeticPriceFloor,
+  MAX_ANIMATION_FPS,
+  MAX_ANIMATION_FRAMES,
+  MIN_ANIMATION_FRAME_DELAY_MS,
   PRICE_REVIEW_THRESHOLD,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
@@ -52,6 +64,8 @@ import {
 import type {
   AutoCheck,
   CosmeticImageMeta,
+  CosmeticOffsets,
+  GetCommunityCosmeticsInput,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
@@ -61,7 +75,13 @@ import type {
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import { type ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
+
+// Shop surfaces hide stickers until the flag is on. Rendering is never gated —
+// an owned sticker in a comment or DM shows for everyone regardless.
+const hideStickers = (stickersEnabled?: boolean) =>
+  stickersEnabled ? {} : { cosmetic: { type: { not: CosmeticType.Sticker } } };
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -73,6 +93,7 @@ const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()(
   availableFrom: true,
   availableTo: true,
   status: true,
+  listed: true,
   rejectionReason: true,
   reviewedAt: true,
   createdAt: true,
@@ -103,14 +124,6 @@ const withRemaining = (item: CreatorShopItemRow) => {
 };
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
-const buildCosmeticData = (type: CosmeticType, imageUrl: string, animated?: boolean) => {
-  if (type === CosmeticType.ProfileBackground)
-    return { url: imageUrl, type: MediaType.image, animated: !!animated };
-  if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
-    return { url: imageUrl, animated: !!animated };
-  return { url: imageUrl };
-};
-
 // Server-side artwork validation (source of truth). Fetches the original upload
 // and inspects it with sharp against the per-type requirements.
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
@@ -121,6 +134,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let format: string | undefined;
   let hasTransparency = false;
   let imageHash = '';
+  let frames = 1;
+  let minFrameDelay = Infinity;
   try {
     const res = await fetch(getEdgeUrl(imageUrl, { original: true }));
     if (!res.ok) throw new Error(`fetch ${res.status}`);
@@ -131,6 +146,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     height = meta.height ?? 0;
     format = meta.format;
     hasTransparency = !!meta.hasAlpha;
+    frames = meta.pages ?? 1;
+    if (meta.delay?.length) minFrameDelay = Math.min(...meta.delay);
   } catch {
     throw throwBadRequestError('Could not read the uploaded artwork for validation');
   }
@@ -151,6 +168,24 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   ];
   if (req.requireTransparency)
     checks.push({ key: 'transparency', label: 'Transparent background', passed: hasTransparency });
+  if (frames > 1) {
+    checks.push({
+      key: 'frameCount',
+      label: `At most ${MAX_ANIMATION_FRAMES} frames`,
+      passed: frames <= MAX_ANIMATION_FRAMES,
+      detail: `${frames} frames`,
+    });
+    checks.push({
+      key: 'frameRate',
+      label: `At most ${MAX_ANIMATION_FPS} fps`,
+      // A 0ms delay ("as fast as possible") also fails; missing delay info
+      // (Infinity) can't be judged so it passes.
+      passed: minFrameDelay >= MIN_ANIMATION_FRAME_DELAY_MS,
+      detail: Number.isFinite(minFrameDelay)
+        ? `~${Math.round(1000 / Math.max(1, minFrameDelay))} fps peak`
+        : undefined,
+    });
+  }
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
   return { checks, imageMeta, imageHash, allPassed: checks.every((c) => c.passed) };
@@ -176,25 +211,6 @@ const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
 
-// The shop is gated on Creator Program *membership* — i.e. the creator has
-// joined (OnboardingSteps.CreatorProgram), which requires a valid subscription,
-// the minimum creator score, and not being banned. A qualifying-but-not-joined
-// subscription is not enough.
-const assertCreatorProgramMember = async (userId: number) => {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { onboarding: true },
-  });
-  const joined = !!user && Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram);
-  if (!joined)
-    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
-  // Membership must still be active — a lapsed membership loses shop access.
-  if (!(await hasValidCreatorMembership(userId)))
-    throw throwAuthorizationError(
-      'An active Creator Program membership is required. Renew your membership to use your shop.'
-    );
-};
-
 export const submitCreatorShopItem = async ({
   userId,
   cosmeticType,
@@ -207,9 +223,26 @@ export const submitCreatorShopItem = async ({
   buzzType,
   sellableByOthers,
   sellerShare,
+  acceptsBlueBuzz,
+  offsets,
+  slug,
+  uses,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
-  // The Creator Shop is a Creator Program member benefit.
-  await assertCreatorProgramMember(userId);
+  // The zod floor is the cross-type minimum; this is the real, type-dependent one.
+  const priceFloor = cosmeticPriceFloor(cosmeticType);
+  if (price < priceFloor)
+    throw throwBadRequestError(`This cosmetic type must be listed for at least ${priceFloor} Buzz`);
+
+  // Stickers are consumable, so the price also has to clear a per-use floor —
+  // otherwise a cheap listing with a huge use count undercuts the economics.
+  const stickerUses =
+    cosmeticType === CosmeticType.Sticker ? uses ?? STICKER_DEFAULT_USES : undefined;
+  if (stickerUses && price < stickerUses * STICKER_MIN_BUZZ_PER_USE)
+    throw throwBadRequestError(
+      `${stickerUses} uses needs at least ${
+        stickerUses * STICKER_MIN_BUZZ_PER_USE
+      } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    );
 
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -220,6 +253,11 @@ export const submitCreatorShopItem = async ({
   if (await findDuplicateArtwork(imageHash))
     throw throwBadRequestError('This artwork has already been submitted to the shop.');
   checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
+
+  // Slug format + collision, also before charging: finding out your slug is
+  // taken after paying a non-refundable fee is the worst version of this.
+  const normalizedSlug = slug?.trim().toLowerCase();
+  await validateStickerCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
 
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const feeTx = await createBuzzTransaction({
@@ -243,7 +281,14 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(cosmeticType, imageUrl, animated) as Prisma.InputJsonValue,
+          data: buildCosmeticData(
+            cosmeticType,
+            imageUrl,
+            animated,
+            offsets,
+            normalizedSlug,
+            stickerUses
+          ) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
@@ -265,6 +310,7 @@ export const submitCreatorShopItem = async ({
             imageHash,
             sellableByOthers,
             sellerShare: sellableByOthers ? sellerShare : 0,
+            acceptsBlueBuzz,
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -287,7 +333,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, type: true } },
+      cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
   });
@@ -309,6 +355,10 @@ export const updateCreatorShopItem = async ({
   animated,
   price,
   availableQuantity,
+  acceptsBlueBuzz,
+  offsets,
+  slug,
+  uses,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Rejected is terminal; archived items must be restored before editing.
@@ -317,25 +367,96 @@ export const updateCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
+  // Fit offsets only apply to avatar decorations; undefined = keep, null = clear.
+  const isDecoration = existing.cosmetic.type === CosmeticType.ProfileDecoration;
+  const existingData = (existing.cosmetic.data ?? {}) as {
+    offsets?: CosmeticOffsets;
+  } & Record<string, unknown>;
+  const offsetsChange = isDecoration && offsets !== undefined;
+  const nextOffsets = !isDecoration
+    ? null
+    : offsets === undefined
+    ? existingData.offsets ?? null
+    : offsets;
+
+  // Slug rules are Sticker-only — the schema accepts `slug` on any type, so
+  // without this gate a crafted request would hit them on a Badge.
+  const isStickerItem = existing.cosmetic.type === CosmeticType.Sticker;
+  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
+  const requestedSlug = isStickerItem ? slug?.trim().toLowerCase() : undefined;
+  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
+  // owners' `:slug:` text depends on it — so carry the existing one forward.
+  const nextSlug = requestedSlug ?? existingSlug;
+  const slugChange = requestedSlug !== undefined && requestedSlug !== existingSlug;
+  // Same carry-forward reasoning as the slug: rebuilding `data` would drop the
+  // use count, and buyers' balances were sized by it.
+  const existingUses = (existing.cosmetic.data as { uses?: number } | null)?.uses;
+  const requestedUses = isStickerItem ? uses : undefined;
+  const nextUses = requestedUses ?? existingUses;
+  const usesChange = requestedUses !== undefined && requestedUses !== existingUses;
+
   // Cross-listings point at another creator's shared cosmetic — the seller may
-  // never touch its art/name/description, only price & quantity.
+  // never touch its art/name/description/payment terms, only price & quantity.
+  // The slug belongs to the original creator too: a reseller renaming it would
+  // break every owner's typed `:slug:` on someone else's cosmetic.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
-    (name !== undefined || description !== undefined || imageUrl !== undefined)
+    (name !== undefined ||
+      description !== undefined ||
+      imageUrl !== undefined ||
+      acceptsBlueBuzz !== undefined ||
+      offsetsChange ||
+      slugChange ||
+      usesChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
     );
 
+  if (price != null) {
+    const priceFloor = cosmeticPriceFloor(existing.cosmetic.type);
+    if (price < priceFloor)
+      throw throwBadRequestError(
+        `This cosmetic type must be listed for at least ${priceFloor} Buzz`
+      );
+  }
+  // Re-check the per-use floor whenever either side of it moves.
+  const effectivePrice = price ?? existing.unitAmount;
+  if (nextUses && effectivePrice < nextUses * STICKER_MIN_BUZZ_PER_USE)
+    throw throwBadRequestError(
+      `${nextUses} uses needs at least ${
+        nextUses * STICKER_MIN_BUZZ_PER_USE
+      } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    );
+
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
-  // A live item may already have buyers — only price & quantity may change.
-  if (isPublished && (name !== undefined || description !== undefined || artChanged))
+  // A live item may already have buyers — creators may only change price &
+  // quantity, but moderators can fix name/description/fit post-publish (the
+  // edit stays live; it does not re-enter review).
+  if (
+    isPublished &&
+    !isModerator &&
+    (name !== undefined || description !== undefined || artChanged || offsetsChange)
+  )
     throw throwBadRequestError('Published items can only change price and quantity');
+  // The slug is the token owners type, not metadata. Renaming it breaks every
+  // owner's muscle memory and their picker search, while already-sent messages
+  // keep working off the id — so the creator gets no signal they broke anything.
+  // Mods can still fix a genuine typo.
+  if (isPublished && !isModerator && slugChange)
+    throw throwBadRequestError('The sticker slug cannot be changed once published');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
+
+  if (slugChange)
+    await validateStickerCosmetic({
+      id: existing.cosmetic.id,
+      type: existing.cosmetic.type,
+      data: { slug: nextSlug },
+    });
 
   // Validate + build replaced artwork server-side.
   let artwork:
@@ -357,14 +478,31 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
-      data: buildCosmeticData(existing.cosmetic.type, imageUrl, animated) as Prisma.InputJsonValue,
+      // nextUses matters here: replacing artwork REBUILDS `data` rather than
+      // patching it (patchCosmeticData returns artworkData wholesale), so
+      // omitting uses silently turned a finite sticker into an unlimited one for
+      // every future buyer.
+      data: buildCosmeticData(
+        existing.cosmetic.type,
+        imageUrl,
+        animated,
+        nextOffsets,
+        nextSlug,
+        nextUses
+      ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
       imageHash,
     };
   }
 
-  const contentChanged = name !== undefined || description !== undefined || artChanged;
+  const contentChanged =
+    name !== undefined ||
+    description !== undefined ||
+    artChanged ||
+    offsetsChange ||
+    slugChange ||
+    usesChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -379,12 +517,22 @@ export const updateCreatorShopItem = async ({
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
   if (contentChanged) {
+    const patchedData = patchCosmeticData({
+      existingData,
+      artworkData: artwork?.data as Record<string, unknown> | undefined,
+      offsetsChange,
+      slugChange,
+      usesChange,
+      nextOffsets,
+      nextSlug,
+      nextUses,
+    }) as Prisma.InputJsonValue | undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(description !== undefined ? { description } : {}),
-        ...(artwork ? { data: artwork.data } : {}),
+        ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
   }
@@ -401,6 +549,7 @@ export const updateCreatorShopItem = async ({
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
       meta: {
         ...meta,
+        ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
         ...(artwork
           ? {
               autoChecks: artwork.checks,
@@ -427,7 +576,7 @@ export const archiveCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       status: CosmeticShopItemStatus.Archived,
@@ -437,6 +586,59 @@ export const archiveCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+
+  // An archived item can't be featured — free up its featured slot (owner must
+  // re-feature it after unarchiving).
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
+};
+
+/**
+ * Delisting withdraws an item from individual sale while leaving it Published,
+ * so other creators can still bundle it. Archiving removes it from both.
+ */
+export const setCreatorShopItemListed = async ({
+  userId,
+  isModerator,
+  id,
+  listed,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+  listed: boolean;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (existing.status === CosmeticShopItemStatus.Archived)
+    throw throwBadRequestError('Restore this item before changing its listing');
+
+  const updated = await dbWrite.cosmeticShopItem.update({
+    where: { id },
+    data: { listed },
+    select: creatorShopItemSelect,
+  });
+
+  // A delisted item can't sit in a featured slot, same as an archived one.
+  if (!listed && existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
 };
 
 export const unarchiveCreatorShopItem = async ({
@@ -465,6 +667,38 @@ export const unarchiveCreatorShopItem = async ({
   });
 };
 
+export const deleteCreatorShopItem = async ({
+  userId,
+  isModerator,
+  id,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+}) => {
+  // Deleting wipes purchase records — a moderator-only action; creators archive.
+  if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // Hard delete. FK cascades wipe the purchase records (sales totals) and any
+  // official-shop section links. Buyers keep what they bought: UserCosmetic is
+  // keyed by cosmeticId and the Cosmetic row is intentionally left in place.
+  await dbWrite.cosmeticShopItem.delete({ where: { id } });
+
+  // Free its featured slot. Stale ids in other creators' resoldItemIds
+  // self-heal — the lookups drop ids that no longer resolve to an item.
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return { id, purchases: existing._count.purchases };
+};
+
 // A creator's own items (any status) for the "Manage your shop" view. The router
 // only lets a moderator pass someone else's userId.
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
@@ -483,11 +717,13 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
 export const getCreatorShop = async ({
   userId,
   viewerId,
+  stickersEnabled,
   isModerator,
   preview,
 }: {
   userId: number;
   viewerId?: number;
+  stickersEnabled?: boolean;
   isModerator?: boolean;
   // Moderator-only design aid: ignore this creator's own inventory/config and
   // fill every section with real site-wide sample data (see the router — only
@@ -495,31 +731,34 @@ export const getCreatorShop = async ({
   preview?: boolean;
 }) => {
   const settings = await getCreatorShopSettings({ userId });
-  // A shop is only public if it's enabled AND the owner still has an active
-  // Creator Program membership. Query membership only for enabled shops (draft
-  // shops are hidden regardless).
-  const membershipActive =
-    settings.enabled !== true ? true : await hasValidCreatorMembership(userId);
-  // Enabled but hidden because the owner's membership lapsed — surfaced to the
-  // owner so they know to renew.
-  const membershipLapsed = !preview && settings.enabled === true && !membershipActive;
-
-  // Owners and moderators can always see the shop (to renew / moderate); a
-  // lapsed membership shutters it for everyone else.
-  if (
-    !preview &&
-    viewerId !== userId &&
-    !isModerator &&
-    (settings.enabled !== true || !membershipActive)
-  )
+  // Owners and moderators can always see the shop (to edit / moderate); a
+  // disabled shop is hidden from everyone else.
+  if (!preview && viewerId !== userId && !isModerator && settings.enabled !== true)
     throw throwNotFoundError('Shop not found');
+
+  // A block between viewer and shop owner (either direction) hides the whole
+  // shop — same NotFound as a private shop so the block isn't revealed.
+  const viewerPairIds =
+    !preview && !isModerator && viewerId && viewerId !== userId
+      ? await getBlockedPairIds(viewerId)
+      : [];
+  if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
 
   const now = new Date();
   const resoldIds = settings.resoldItemIds ?? [];
+  // Blocks remove a resold item from the storefront: owner↔item-creator (the
+  // block forbids the resale pairing; the owner still sees it in their manage
+  // list so they can remove it) and viewer↔item-creator (a creator who blocked
+  // the viewer shouldn't surface in any shop the viewer browses).
+  const blockedPairIds = preview
+    ? []
+    : [...new Set([...(await getBlockedPairIds(userId)), ...viewerPairIds])];
   const [items, resoldItems, earlyAccessModelCount] = await Promise.all([
     dbRead.cosmeticShopItem.findMany({
       where: {
         status: CosmeticShopItemStatus.Published,
+        listed: true,
+        ...hideStickers(stickersEnabled),
         // Preview draws cosmetics from every creator so the section is populated
         // regardless of whose (possibly empty) shop is being viewed.
         ...(preview ? {} : { addedById: userId }),
@@ -541,9 +780,14 @@ export const getCreatorShop = async ({
       where: {
         ...(preview ? {} : { id: { in: resoldIds } }),
         status: CosmeticShopItemStatus.Published,
+        // Delisted items stay Published (still bundlable) but are off sale, so
+        // no individual-sale surface may show them — resale included.
+        listed: true,
+        ...hideStickers(stickersEnabled),
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+        ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
       },
       select: creatorStorefrontItemSelect,
       ...(preview ? { take: 6, orderBy: { id: 'desc' } } : {}),
@@ -551,21 +795,26 @@ export const getCreatorShop = async ({
     // Drives the Models section visibility — the storefront only lists the
     // creator's currently-Early-Access models (paid tiers come later). Preview
     // counts site-wide so the Models section always renders.
-    dbRead.model.count({
-      where: {
-        ...(preview ? {} : { userId }),
-        status: ModelStatus.Published,
-        deletedAt: null,
-        earlyAccessDeadline: { gte: now },
-      },
-    }),
+    dbRead.$queryRaw<{ count: number }[]>`
+      SELECT COUNT(DISTINCT m.id)::int AS count
+      FROM "Model" m
+      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+      WHERE m.status = 'Published'::"ModelStatus" AND m."deletedAt" IS NULL
+        AND mv.status = 'Published'::"ModelStatus"
+        AND pa."endsAt" > NOW()
+        ${preview ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+    `.then((r) => r[0]?.count ?? 0),
   ]);
 
-  // Sanitize meta to only the purchase count the card needs — never the creator
+  // Sanitize meta to what the card/checkout needs — never the creator
   // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
-    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+    },
   });
   const cosmetics = items.map(sanitize);
   // Resold items keep the seller share so the buyer can see the split at checkout.
@@ -574,6 +823,7 @@ export const getCreatorShop = async ({
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
       sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
     },
   });
   const resold = preview
@@ -602,8 +852,72 @@ export const getCreatorShop = async ({
     resold,
     settings: effectiveSettings,
     earlyAccessModelCount,
-    membershipLapsed,
   };
+};
+
+// Site-wide hub feed of every published community cosmetic (creator-submitted
+// items from public shops), newest first. Powers the /shop marketplace section.
+export const getCommunityCosmetics = async ({
+  viewerId,
+  limit,
+  cursor,
+  cosmeticTypes,
+  stickersEnabled,
+}: GetCommunityCosmeticsInput & { viewerId?: number; stickersEnabled?: boolean }) => {
+  const now = new Date();
+  // A block between viewer and a cosmetic's creator (either direction) hides
+  // that creator's items from the feed.
+  const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  const raw = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      // Discovery surface that leads straight to checkout — a delisted item
+      // here would be a dead end.
+      listed: true,
+      // Creator-submitted only (official cosmetics have no creator). Blocks
+      // filter both the original creator and the lister — they can differ on
+      // cross-listed items.
+      cosmetic: {
+        createdById: {
+          not: null,
+          ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+        },
+        // Merged into one `type` filter: a second `type` key would silently
+        // overwrite the caller's requested types.
+        ...(cosmeticTypes?.length || !stickersEnabled
+          ? {
+              type: {
+                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+              },
+            }
+          : {}),
+      },
+      // Only items whose owner's shop is public.
+      addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+      AND: [
+        { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+        { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+      ],
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor } } : {}),
+    orderBy: { id: 'desc' },
+    // addedById lets the client attribute the purchase to the owner's shop.
+    select: { ...creatorStorefrontItemSelect, addedById: true },
+  });
+  let nextCursor: number | undefined;
+  if (raw.length > limit) nextCursor = raw.pop()?.id;
+  // Same meta sanitation as the storefront.
+  const items = raw.map((item) => ({
+    ...item,
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+    },
+  }));
+  return { items, nextCursor };
 };
 
 // Early Access download prices for the shop's Models section, keyed by model
@@ -611,13 +925,25 @@ export const getCreatorShop = async ({
 export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAccessPricesInput) => {
   const prices: Record<number, number> = {};
   if (!modelVersionIds.length) return prices;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: { id: true, earlyAccessConfig: true },
+  const paidAccess = await getPaidAccess('ModelVersion', modelVersionIds);
+  const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
+  if (!gatedIds.length) return prices;
+
+  // Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever owns
+  // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
+  const owners = await dbRead.modelVersion.findMany({
+    where: { id: { in: gatedIds } },
+    select: { id: true, baseModel: true, model: { select: { userId: true } } },
   });
-  for (const v of versions) {
-    const cfg = v.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-    if (cfg?.chargeForDownload && cfg.downloadPrice) prices[v.id] = cfg.downloadPrice;
+  const monetization = await getViewerMonetization({
+    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId, baseModel: v.baseModel })),
+    viewer: {},
+  });
+
+  for (const id of gatedIds) {
+    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
+    const price = terms?.download?.price ?? 0;
+    if (price > 0) prices[id] = price;
   }
   return prices;
 };
@@ -634,14 +960,20 @@ export const getPublicShopItemsForResale = async ({
   cursor,
   cosmeticTypes,
   query,
-}: GetPublicShopItemsInput & { userId: number }) => {
+  stickersEnabled,
+}: GetPublicShopItemsInput & { userId: number; stickersEnabled?: boolean }) => {
   const settings = await getCreatorShopSettings({ userId });
   const alreadyResold = settings.resoldItemIds ?? [];
+  // A block in either direction removes the pairing from the resale gallery.
+  const blockedPairIds = await getBlockedPairIds(userId);
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
       meta: { path: ['sellableByOthers'], equals: true },
-      addedById: { not: userId },
+      addedById: {
+        not: userId,
+        ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+      },
       // Only surface items from creators whose shop is public (enabled).
       addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
       ...(query
@@ -652,7 +984,16 @@ export const getPublicShopItemsForResale = async ({
             ],
           }
         : {}),
-      ...(cosmeticTypes?.length ? { cosmetic: { type: { in: cosmeticTypes } } } : {}),
+      ...(cosmeticTypes?.length || !stickersEnabled
+        ? {
+            cosmetic: {
+              type: {
+                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+              },
+            },
+          }
+        : {}),
     },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor } } : {}),
@@ -662,6 +1003,7 @@ export const getPublicShopItemsForResale = async ({
       unitAmount: true,
       availableQuantity: true,
       meta: true,
+      listed: true,
       cosmetic: { select: { id: true, name: true, type: true, data: true } },
       addedBy: { select: { id: true, username: true, image: true } },
     },
@@ -673,6 +1015,10 @@ export const getPublicShopItemsForResale = async ({
     sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
     // Already in this creator's shop — the picker shows it as added/removable.
     isResold: alreadyResold.includes(i.id),
+    // Delisted items stay in the picker, badged. Resale is by reference, so one
+    // that's temporarily off sale starts working again when its creator relists
+    // — hiding it would just make the reseller find it again later.
+    listed: i.listed,
   }));
   return { items, nextCursor };
 };
@@ -690,6 +1036,10 @@ const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
   if (item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be resold');
   if (item.addedById === userId) throw throwBadRequestError('This is already your own item');
+  // NotFound (not authorization) so the block itself isn't revealed, mirroring
+  // the read-side block enforcement.
+  if (item.addedById && (await getBlockedPairIds(userId)).includes(item.addedById))
+    throw throwNotFoundError('Shop item not found');
   return item;
 };
 
@@ -697,7 +1047,6 @@ export const addResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  await assertCreatorProgramMember(userId);
   await getResellableItemOrThrow(shopItemId, userId);
   const settings = await getCreatorShopSettings({ userId });
   const resoldItemIds = settings.resoldItemIds ?? [];
@@ -751,16 +1100,19 @@ export const getCreatorShopReviewQueue = async ({
   cursor,
   status,
   username,
+  userId,
+  cosmeticTypes,
 }: GetReviewQueueInput) => {
   const items = await dbRead.cosmeticShopItem.findMany({
     where: {
-      // A specific status filters to it; no status = every status except
-      // Archived (the "All" option in the review queue).
+      // A specific status filters to it (including Archived); no status = every
+      // status except Archived (the "All" option in the review queue).
       ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
       // Only creator-submitted items (exclude official/admin cosmetics).
       cosmetic: {
-        createdById: { not: null },
-        ...(username ? { creator: { username: { equals: username, mode: 'insensitive' } } } : {}),
+        createdById: userId ?? { not: null },
+        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
+        ...(username ? { creator: { username: { contains: username, mode: 'insensitive' } } } : {}),
       },
     },
     take: limit + 1,
@@ -804,12 +1156,23 @@ export const reviewCreatorShopItem = async ({
       status: true,
       meta: true,
       title: true,
-      cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
+      addedById: true,
+      cosmetic: {
+        // type + data feed creatorGrantRemaining below.
+        select: {
+          createdById: true,
+          type: true,
+          data: true,
+          creator: { select: { username: true } },
+        },
+      },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
+    throw throwBadRequestError('Only published items can be reverted to pending review');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
@@ -829,7 +1192,9 @@ export const reviewCreatorShopItem = async ({
           },
           select: creatorShopItemSelect,
         })
-      : // reject = terminal; request-changes = creator can edit & resubmit.
+      : // reject = terminal; request-changes = creator can edit & resubmit;
+        // revert = unpublish back into the review queue. The note is kept on
+        // rejectionReason so both the queue and the creator see why.
         await dbWrite.cosmeticShopItem.update({
           where: { id },
           data: {
@@ -837,6 +1202,8 @@ export const reviewCreatorShopItem = async ({
             status:
               action === 'reject'
                 ? CosmeticShopItemStatus.Rejected
+                : action === 'revert'
+                ? CosmeticShopItemStatus.PendingReview
                 : CosmeticShopItemStatus.RequestedChanges,
             rejectionReason: rejectionReason ?? null,
           },
@@ -851,10 +1218,23 @@ export const reviewCreatorShopItem = async ({
           userId: item.cosmetic.createdById,
           cosmeticId: item.cosmeticId,
           claimKey: 'creator-shop',
+          remaining: creatorGrantRemaining(item.cosmetic.type, item.cosmetic.data),
         },
       ],
       skipDuplicates: true,
     });
+    await refreshOwnedStickerCache([item.cosmetic.createdById]);
+  }
+
+  // An unpublished item can't stay featured — free up its slot.
+  if (action === 'revert' && item.addedById) {
+    const settings = await getCreatorShopSettings({ userId: item.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: item.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
   }
 
   // Let the creator know the review outcome (best-effort).
@@ -866,6 +1246,8 @@ export const reviewCreatorShopItem = async ({
         ? 'creator-shop-item-approved'
         : action === 'request-changes'
         ? 'creator-shop-item-changes-requested'
+        : action === 'revert'
+        ? 'creator-shop-item-reverted'
         : 'creator-shop-item-rejected';
     await createNotification({
       type,
@@ -903,11 +1285,6 @@ export const updateCreatorShopSettings = async ({
   // Read-merge-write the JSON blob so we only touch the creatorShop key.
   return dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
-      // Can't (re)open a shop without an active Creator Program membership.
-      if (!(await hasValidCreatorMembership(userId)))
-        throw throwBadRequestError(
-          'An active Creator Program membership is required to open your shop.'
-        );
       // Don't let a creator publish an empty shop — there'd be nothing to show.
       const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
       if (itemCount === 0)

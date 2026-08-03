@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { TRPCError } from '@trpc/server';
 
 // Verifies chargeEntryFees' two-leg (house + pool) charging and its NO-REFUND partial-failure
 // contract: the buzz ledger keeps a refunded externalTransactionId occupied and exposes no
@@ -14,6 +15,7 @@ const {
   mockRefundTransaction,
   mockChallengeUpdate,
   mockChallengeFindUnique,
+  mockCollectionItemCount,
   mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockCreateBuzzTransaction: vi.fn(),
@@ -23,11 +25,15 @@ const {
   mockRefundTransaction: vi.fn(),
   mockChallengeUpdate: vi.fn(),
   mockChallengeFindUnique: vi.fn(),
+  mockCollectionItemCount: vi.fn(),
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({
-  dbRead: { challenge: { findUnique: mockChallengeFindUnique } },
+  dbRead: {
+    challenge: { findUnique: mockChallengeFindUnique },
+    collectionItem: { count: mockCollectionItemCount },
+  },
   dbWrite: { challenge: { update: mockChallengeUpdate } },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
@@ -39,8 +45,13 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundTransaction: mockRefundTransaction,
 }));
 
-const { chargeEntryFees, chargeInitialPrize, refundUserChallengeFunds, buildWinnerPayoutTransactions } =
-  await import('./challenge-funding');
+const {
+  chargeEntryFees,
+  chargeInitialPrize,
+  refundUserChallengeFunds,
+  buildWinnerPayoutTransactions,
+  reportPoolFundingShortfall,
+} = await import('./challenge-funding');
 const { CHALLENGE_ENTRY_HOUSE_CUT, getEntryPoolContribution } = await import(
   '~/shared/constants/challenge.constants'
 );
@@ -251,6 +262,25 @@ describe('chargeInitialPrize fromAccountType', () => {
   });
 });
 
+describe('chargeInitialPrize externalTransactionId', () => {
+  beforeEach(() => {
+    mockCreateBuzzTransaction.mockReset();
+    mockCreateBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+  });
+
+  it('scopes the externalTransactionId by currency (green)', async () => {
+    await chargeInitialPrize({ challengeId: 42, userId: 7, amount: 100, fromAccountType: 'green' });
+    const [arg] = mockCreateBuzzTransaction.mock.calls[0];
+    expect(arg.externalTransactionId).toBe('challenge-initial-prize-42-creator-green');
+  });
+
+  it('scopes the externalTransactionId by currency (yellow)', async () => {
+    await chargeInitialPrize({ challengeId: 42, userId: 7, amount: 100, fromAccountType: 'yellow' });
+    const [arg] = mockCreateBuzzTransaction.mock.calls[0];
+    expect(arg.externalTransactionId).toBe('challenge-initial-prize-42-creator-yellow');
+  });
+});
+
 describe('chargeEntryFees fromAccountType', () => {
   it('forwards fromAccountType to both house and pool legs', async () => {
     mockCreateBuzzTransactionMany
@@ -299,6 +329,101 @@ describe('buildWinnerPayoutTransactions', () => {
     });
     expect(tx.toAccountType).toBe('yellow');
   });
+
+  // The choke point's own dedupe is a no-op while both callers dedupe first, so nothing else in the
+  // suite reaches it. Without these two it could be deleted with every test still green — and it
+  // guards a batch of duplicate transaction ids being handed to an external ledger whose
+  // within-batch behaviour we cannot observe.
+  it('never emits the same transaction id twice, even if a caller passes a duplicated creator', () => {
+    const txs = buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      // One creator named at two places — the shape an un-deduped caller would produce.
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 22, position: 3, prize: 1000 },
+      ],
+    });
+
+    const ids = txs.map((tx) => tx.externalTransactionId);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The better place survives: dropping the first would silently under-pay.
+    expect(ids).toEqual([
+      'challenge-winner-prize-7-11-place-1',
+      'challenge-winner-prize-7-22-place-3',
+    ]);
+  });
+
+  // `origin: chokepoint` rather than `source`: normSource folds enum drift AND a caller's own null
+  // source into `unknown`, so source alone cannot identify a choke-point drop.
+  const readChokepointDrops = async () => {
+    const client = (await import('prom-client')).default;
+    const metric = client.register.getSingleMetric(
+      'civitai_app_challenge_winner_duplicate_pick_total'
+    ) as unknown as {
+      get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
+    } | null;
+    if (!metric) return undefined;
+    const data = await metric.get();
+    return data.values.find((v) => v.labels.origin === 'chokepoint')?.value;
+  };
+
+  it('records the drop, so money vanishing here can never be silent', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+      ],
+    });
+
+    expect(await readChokepointDrops()).toBe(before + 1);
+  });
+
+  // The counter is documented as sitting flat at zero and is an alert trigger, so proving it fires
+  // is only half the contract — a version that increments on every payout would pass the test above
+  // and page continuously.
+  it('stays silent on a clean pick — the counter cannot drift up on normal payouts', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 22, position: 2, prize: 2500 },
+        { userId: 33, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect((await readChokepointDrops()) ?? 0).toBe(before);
+  });
+
+  // Records PLACEMENTS dropped, not "a duplicate happened". With a single-duplicate fixture only,
+  // a hardcoded 1 would pass — and this counter is the sole record of how much money vanished.
+  it('records how many placements were dropped, not merely that some were', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 11, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect(await readChokepointDrops()).toBe(before + 2);
+  });
 });
 
 describe('refundUserChallengeFunds — void refunds pool legs only', () => {
@@ -333,5 +458,112 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     const result = await refundUserChallengeFunds(CHALLENGE_ID);
     expect(result).toEqual({ refundedEntries: 0 });
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  // The buzz service returns 404 (→ TRPCError NOT_FOUND) when a prefix matches no transactions —
+  // e.g. an entryFee challenge cancelled with zero paid entries. Nothing to reverse must be a
+  // no-op, not an error that aborts the surrounding void/delete.
+  it('tolerates the buzz NOT_FOUND when a prefix matches no transactions', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 500,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Not found' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // A non-404 buzz failure is a real error and must still propagate.
+  it('rethrows non-NOT_FOUND buzz errors', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).rejects.toThrow('boom');
+  });
+});
+
+// The pool only grows through paid entry legs, so an entry that lands in the collection without
+// one (a fee-exempt submission, a rolled-back charge that left the row behind) silently shrinks
+// every winner's payout. Completion must flag that gap rather than pay out quietly.
+describe('reportPoolFundingShortfall', () => {
+  const COLLECTION_ID = 3030;
+
+  const wireChallenge = (overrides: Record<string, unknown> = {}) =>
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      entryFee: ENTRY_FEE,
+      basePrizePool: 0,
+      prizePool: 0,
+      ...overrides,
+    });
+
+  it('warns when the collected pool is below what the accepted entries imply', async () => {
+    wireChallenge();
+    mockCollectionItemCount.mockResolvedValue(2);
+
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: COLLECTION_ID });
+
+    const expectedPool = getEntryPoolContribution(ENTRY_FEE) * 2;
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        name: 'challenge-pool-funding-shortfall',
+        challengeId: CHALLENGE_ID,
+        entryCount: 2,
+        prizePool: 0,
+        expectedPool,
+        shortfall: expectedPool,
+      })
+    );
+  });
+
+  it('counts the escrowed initial prize as funding, not as a shortfall', async () => {
+    wireChallenge({ basePrizePool: 500, prizePool: 500 + getEntryPoolContribution(ENTRY_FEE) });
+    mockCollectionItemCount.mockResolvedValue(1);
+
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: COLLECTION_ID });
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  // Removed/rejected entries keep their (never-refunded) fee in the pool, so a pool above the
+  // accepted-entry total is expected — not a shortfall.
+  it('stays quiet when the pool exceeds the accepted-entry total', async () => {
+    wireChallenge({ prizePool: getEntryPoolContribution(ENTRY_FEE) * 5 });
+    mockCollectionItemCount.mockResolvedValue(1);
+
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: COLLECTION_ID });
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('ignores challenges that charge no entry fee, and non-user challenges', async () => {
+    mockCollectionItemCount.mockResolvedValue(3);
+
+    wireChallenge({ entryFee: 0 });
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: COLLECTION_ID });
+
+    wireChallenge({ source: ChallengeSource.System });
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: COLLECTION_ID });
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('no-ops for a challenge without a collection', async () => {
+    await reportPoolFundingShortfall({ challengeId: CHALLENGE_ID, collectionId: null });
+
+    expect(mockChallengeFindUnique).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });

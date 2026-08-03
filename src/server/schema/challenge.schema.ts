@@ -13,8 +13,12 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  CHALLENGE_MAX_DURATION_DAYS,
+  CHALLENGE_MAX_DURATION_MS,
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MIN_DURATION_HOURS,
+  CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
 import { infiniteQuerySchema } from './base.schema';
@@ -22,6 +26,10 @@ import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
+
+// Lives here rather than in the service util that derives it: the util and the client-side card
+// helpers both need it, and services depend on schema, never the reverse.
+export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
@@ -71,6 +79,7 @@ export type ChallengeListItem = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   nsfwLevel: number;
   allowedNsfwLevel: number;
   prizePool: number;
@@ -78,16 +87,23 @@ export type ChallengeListItem = {
   commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
+  judge: ChallengeJudgeInfo | null;
+};
+
+// The viewer's own challenges — entered or created — for the Challenges Center "Your Challenges" row.
+export const getMyChallengesSchema = z.object({
+  limit: z.number().min(1).max(20).default(6),
+});
+export type GetMyChallengesInput = z.infer<typeof getMyChallengesSchema>;
+
+export type MyChallengeItem = ChallengeListItem & {
+  myPlace: number | null;
+  myResult: MyChallengeResult;
+  isLive: boolean;
+  // Entry time for challenges you entered; creation time for ones you host.
+  myActivityAt: Date;
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked
@@ -99,6 +115,21 @@ const challengeCompletionSummarySchema = z.object({
 export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSummarySchema>;
 
 // Zod schema for Challenge.metadata (Json? column)
+//
+// Every key the column can hold must be declared here. `parseChallengeMetadata` uses this schema's
+// default strip behaviour, so an undeclared key is SILENTLY DROPPED — and several call sites parse
+// the metadata and then write the parsed object back wholesale, which deletes anything missing from
+// this list. Two fields written by raw SQL elsewhere were lost that way; see the notes below. When
+// adding a key to Challenge.metadata anywhere in the codebase, add it here in the same change.
+//
+// 🔴 DECLARING A KEY RAISES THE STAKES ON ITS TYPE. An undeclared key with a bad value is merely
+// stripped and its siblings survive; a DECLARED key with a bad value fails the whole `safeParse`,
+// and `parseChallengeMetadata` then returns `{}` — so the write-back sites above would wipe the
+// ENTIRE metadata column, including `reconciliation.paidUserIds`, which gates participation
+// back-pay. There is no live exposure today (every writer is type-safe by construction —
+// `Date.now()` for the numbers, `toISOString()` for the strings — and all production rows conform),
+// but a new key whose writer can emit a wrong type is a much bigger liability declared than
+// undeclared. Prefer a permissive type over an exact one when the writer is not provably narrow.
 export const challengeMetadataSchema = z.object({
   challengeType: z.string().optional(),
   resourceUserId: z.number().optional(),
@@ -106,6 +137,37 @@ export const challengeMetadataSchema = z.object({
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
+  // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
+  // daily-challenge-processing. TWO readers, and the second is the one that matters:
+  //
+  //   1. getActiveChallengesFromDb's `ORDER BY cast(metadata->>'reviewedAt' as bigint) NULLS FIRST`
+  //      round-robin. Only decides anything once the Active set exceeds CHALLENGE_JOB_BATCH_SIZE
+  //      (200 vs ~31 today), so on its own this reader would make the key look inconsequential.
+  //   2. The INCREMENTAL-REVIEW WATERMARK in the review job: `lastReviewedAt` defaults to the
+  //      challenge's start date and is overwritten by this key, then gates the candidate pool with
+  //      `AND ci."reviewedAt" >= ${lastReviewedAt}`. Losing the key rewinds that watermark to the
+  //      START OF THE CHALLENGE, so every entry since then re-enters the pool. This has nothing to
+  //      do with batch size and is not bounded by the Active count.
+  //
+  // Reader 2 is why this is not cosmetic: for PAID user challenges `judgeAllEntries` skips the
+  // sampling cap entirely, so a rewound watermark means the whole accumulated backlog is judged in
+  // a single run — re-judging work already paid for, at LLM cost. Do not reason about this key from
+  // the ordering alone.
+  reviewedAt: z.number().optional(),
+  // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
+  // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
+  // claim-ownership check that gates its telemetry. Both read the RAW jsonb, not a parsed object,
+  // so the strip never affected a read — what it cost was durability across a parse-then-write-back.
+  // The one concrete case: a slow run whose claim was reset would strip the stamp on its late write,
+  // so the run that re-claimed saw none, failed open, and both emitted. Declaring it makes that a
+  // single emit. NOTE this does NOT make a stampless Completing row impossible — that row is
+  // unrecoverable (the reset's comparison is NULL-propagating, so it is never selected), and it is
+  // still reachable via a stale full-column metadata replace that was never carrying the stamp to
+  // begin with. See the note on the completing-stuck gauge in challenge.metrics.ts.
+  completingClaimedAt: z.string().optional(),
+  // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
+  // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
+  migratedAt: z.string().optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
@@ -123,11 +185,28 @@ export function parseChallengeMetadata(raw: unknown): ChallengeMetadata {
   return result.success ? result.data : {};
 }
 
+// The author shown on a challenge card/detail. For User challenges this is the real creator; for
+// System/Mod challenges the client swaps in the judge (see getChallengeDisplayUser). `createdBy`
+// always carries the real creator regardless — the swap is display-only.
+export type ChallengeDisplayUser = {
+  id: number;
+  username: string | null;
+  image: string | null;
+  profilePicture?: ProfileImage | null;
+  cosmetics?: UserWithCosmetics['cosmetics'] | null;
+  deletedAt?: Date | null;
+};
+
+// `id` is the ChallengeJudge row id; `userId` + the User fields identify the account the judge posts
+// as, so the judge can render as an author avatar.
 export type ChallengeJudgeInfo = {
   id: number;
   userId: number;
   name: string;
   bio: string | null;
+  username: string | null;
+  image: string | null;
+  deletedAt: Date | null;
   profilePicture?: ProfileImage | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };
@@ -181,16 +260,8 @@ export type ChallengeDetail = {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt?: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
   judge: ChallengeJudgeInfo | null;
   winners: Array<{
     place: number;
@@ -255,6 +326,8 @@ export const ChallengeParticipation = {
   Entered: 'entered',
   NotEntered: 'not_entered',
   Won: 'won',
+  Created: 'created',
+  Tracking: 'tracking',
 } as const;
 export type ChallengeParticipation =
   (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
@@ -284,10 +357,13 @@ export const getInfiniteChallengesSchema = z.object({
       ChallengeParticipation.Entered,
       ChallengeParticipation.NotEntered,
       ChallengeParticipation.Won,
+      ChallengeParticipation.Created,
+      ChallengeParticipation.Tracking,
     ])
     .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
+  challengeEventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
@@ -306,6 +382,13 @@ export type GetUserEntryCountInput = z.infer<typeof getUserEntryCountSchema>;
 export const getUserEntryCountSchema = z.object({
   challengeId: z.number(),
 });
+
+// Toggle "notify me" tracking on a challenge
+export const toggleChallengeNotifySchema = z.object({
+  challengeId: z.number(),
+  setTo: z.boolean().optional(),
+});
+export type ToggleChallengeNotifyInput = z.infer<typeof toggleChallengeNotifySchema>;
 
 // Moderator: Get all challenges (including drafts and hidden)
 export type GetModeratorChallengesInput = z.infer<typeof getModeratorChallengesSchema>;
@@ -357,6 +440,25 @@ export const challengeJudgingCategoriesSchema = z
   .min(1)
   .max(4)
   .superRefine(judgingCategoryRefinements);
+
+// Moderator: create/update a ChallengeCategory library row (playground Categories tab).
+// `key` is the PK and the join key on stored Challenge.judgingCategories, so it is create-only.
+export type UpsertChallengeCategoryInput = z.infer<typeof upsertChallengeCategorySchema>;
+export const upsertChallengeCategorySchema = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .regex(/^[a-z0-9_-]+$/, 'Key must be lowercase letters, numbers, hyphens, or underscores'),
+  label: z.string().trim().min(1).max(100),
+  group: z.string().trim().min(1).max(50),
+  criteria: z.string().trim().min(1).max(500),
+  rubric: z.string().optional().nullable(),
+  rubricNsfw: z.string().optional().nullable(),
+  sortOrder: z.number().int().default(0),
+  active: z.boolean().default(true),
+});
 
 // Moderator: Create/Update challenge
 // Base schema is a ZodObject so the form can use .omit().extend()
@@ -433,10 +535,31 @@ export const userChallengeUpsertBaseSchema = z.object({
   endsAt: z.date(),
 });
 
-export const userChallengeUpsertSchema = userChallengeUpsertBaseSchema.refine(
-  (data) => data.endsAt > data.startsAt,
-  { message: 'End date must be after start date', path: ['endsAt'] }
-);
+export const userChallengeUpsertSchema = userChallengeUpsertBaseSchema
+  .refine((data) => data.endsAt > data.startsAt, {
+    message: 'End date must be after start date',
+    path: ['endsAt'],
+  })
+  // Duration bounds only apply once the dates are ordered — otherwise the reversed-date case
+  // would stack a spurious "must run for at least" issue on top of the ordering error above.
+  .refine(
+    (data) =>
+      data.endsAt <= data.startsAt ||
+      data.endsAt.getTime() - data.startsAt.getTime() >= CHALLENGE_MIN_DURATION_MS,
+    {
+      message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+      path: ['endsAt'],
+    }
+  )
+  .refine(
+    (data) =>
+      data.endsAt <= data.startsAt ||
+      data.endsAt.getTime() - data.startsAt.getTime() <= CHALLENGE_MAX_DURATION_MS,
+    {
+      message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+      path: ['endsAt'],
+    }
+  );
 export type UserChallengeUpsertInput = z.infer<typeof userChallengeUpsertSchema>;
 
 // Moderator: Delete challenge
@@ -524,6 +647,7 @@ export type ChallengeWinnerSummary = {
 export type ChallengeWithWinnersListItem = ChallengeListItem & {
   winners: ChallengeWinnerSummary[];
   completionSummary: ChallengeCompletionSummary | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Input schema for completed challenges with winners
@@ -536,6 +660,7 @@ export const getCompletedChallengesWithWinnersSchema = z.object({
   eventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   query: z.string().optional(),
+  source: z.enum(ChallengeSource).array().optional(),
 });
 
 // --- Winner Cooldown ---
@@ -560,6 +685,7 @@ export type ChallengeEventListItem = {
   title: string;
   description: string | null;
   titleColor: string | null;
+  coverImage: ChallengeCoverImage | null;
   startDate: Date;
   endDate: Date;
   challenges: ChallengeListItem[];
@@ -586,6 +712,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
+  coverImage: imageSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(
@@ -623,6 +750,7 @@ export const upsertJudgeSchema = z.object({
   reviewTemplate: z.string().optional().nullable(),
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
+  userSelectable: z.boolean().optional(),
 });
 
 // Playground: Generate content for a model version

@@ -29,6 +29,23 @@ const MAX_ENUM_OPTIONS = 64;
 const MAX_PATTERN_LEN = 256;
 
 /**
+ * Hard ceiling on the input a developer-authored `pattern` regex is ever run
+ * against, applied at the EVAL SITE by the runtime validator
+ * (`settings-validator.service.ts`) — before any `new RegExp(pattern).test(raw)`
+ * call — so a viewer can never feed an unbounded string into a stored pattern.
+ *
+ * Bounding the input fully tames *polynomial* backtracking. The *exponential*
+ * case (input length can't save you — ~40 chars already freezes `(a+)+$`) is
+ * caught at SUBMISSION time by the accurate ReDoS gate in
+ * `BlockManifestValidator.validateSubmission` (recheck), which rejects a
+ * super-linear `pattern` and requires every patterned field to declare a
+ * `max_length <= this value`. That gate makes "a stored manifest ⇒ its patterns
+ * are non-exponential" an enforced invariant, so this eval-site cap is pure
+ * belt-and-suspenders (covering any pattern stored before that gate existed).
+ */
+export const MAX_PATTERNED_INPUT_LEN = 1000;
+
+/**
  * Snake_case identifier used as the key in the settings record. Mirrors
  * the existing `blockId` / setting key convention; rejecting other casings
  * keeps JSON payloads predictable for downstream JSONB queries.
@@ -148,6 +165,16 @@ export const manifestSettingsSchema = recordSchema.superRefine(
           }
         }
         if (def.pattern !== undefined) {
+          // COMPILE-CHECK ONLY at this (install/display/subscription) layer. The
+          // ReDoS-vulnerability + `max_length`-required gate lives at SUBMISSION
+          // time in `BlockManifestValidator.validateSubmission` (recheck) — so a
+          // stored manifest is guaranteed to carry only non-exponential patterns,
+          // and this schema keeps its original permissive behavior. Pushing the
+          // gate here instead would fail-OPEN: this schema is consumed via
+          // `.safeParse()` on the install/save paths, and a `success:false` there
+          // SKIPS all field validation (`parsed.success ? validate(...) : rawInput`)
+          // — over-rejecting here silently disables type/enum/range checks for
+          // every previously-accepted manifest.
           try {
             new RegExp(def.pattern);
           } catch {

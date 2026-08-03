@@ -47,14 +47,15 @@ describe('voidChallenge', () => {
       where: { id: 1, status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] } },
       data: { status: ChallengeStatus.Cancelled },
     });
-    expect(mockRefund).toHaveBeenCalledWith(1);
+    expect(mockRefund).toHaveBeenCalledWith(1, 'void');
   });
 
   it('claim lost (completion cron or a concurrent void won): does NOT refund', async () => {
     mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Active));
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 0 });
     const res = await voidChallenge(1);
-    expect(res).toEqual({ success: true });
+    // `voided: false` is what lets callers avoid reporting a refund that never happened.
+    expect(res).toEqual({ success: true, voided: false });
     expect(mockRefund).not.toHaveBeenCalled();
   });
 
@@ -62,7 +63,7 @@ describe('voidChallenge', () => {
     mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Cancelled));
     await voidChallenge(1);
     expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
-    expect(mockRefund).toHaveBeenCalledWith(1);
+    expect(mockRefund).toHaveBeenCalledWith(1, 'void');
   });
 
   it('rejects a Completed/Completing challenge (pool already paid out)', async () => {

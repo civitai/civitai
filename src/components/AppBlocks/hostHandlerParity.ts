@@ -193,6 +193,53 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
+  // the viewer's generation queue: read (image results) + cancel one, both scoped
+  // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
+  // ownership+tag guard on cancel — the block never sees the user's personal
+  // gens). AHEAD of the published SDK dist union (the SDK bridge lands in a
+  // follow-up PR) — forward-looking coverage, allowed by the one-directional
+  // compile-time gate. PAGE-ONLY affordance today (a full-page generator app;
+  // model-slot apps are deferred + will get the page host too), so N/A for the
+  // model host — mirrors the buzz self-read / OPEN_RESOURCE_PICKER placement.
+  QUERY_APP_WORKFLOWS: {
+    request: true,
+    reply: 'APP_WORKFLOWS_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  CANCEL_APP_WORKFLOW: {
+    request: true,
+    reply: 'CANCEL_APP_WORKFLOW_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Model-Benchmarking shared grid — publish the app's OWN workflow outputs as
+  // bare, real-scanned public images (host-chrome consent confirm BEFORE the
+  // FAIL-CLOSED `blocks.publishGenerationOutputs` MUTATION). Page-only affordance
+  // today. Unhandled ⇒ the block hangs; PageBlockHost registers the handler.
+  PUBLISH_GENERATION_OUTPUTS: {
+    request: true,
+    reply: 'PUBLISH_RESULT',
+    IframeHost:
+      'shared-grid publish is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Model-Benchmarking shared grid — per-viewer gated read of the grid's image
+  // ids (the server applies the viewer's browsing-level clamp; above-ceiling /
+  // unscanned / flagged come back `hidden` with no url). Host-mediated via the
+  // `blocks.getImagesByIds` MUTATION. Page-only affordance today.
+  GET_IMAGES_BY_IDS: {
+    request: true,
+    reply: 'IMAGES_RESULT',
+    IframeHost:
+      'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Per-account (blue/green/yellow) balance read backing the SDK
   // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
   // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.
@@ -201,6 +248,21 @@ export const INVENTORY = {
     request: true,
     reply: 'BUZZ_BALANCE_RESULT',
     IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
+  // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
+  // successor to GET /blocks/me (which stays live until the hook publishes +
+  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // — forward-looking coverage, allowed by the one-directional compile-time
+  // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
+  // slot apps are deferred + will get page-host too), so N/A for the model host
+  // — mirrors the buzz self-read dashboard bridges.
+  GET_VIEWER: {
+    request: true,
+    reply: 'VIEWER_RESULT',
+    IframeHost: 'viewer self-read is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
@@ -263,6 +325,13 @@ export const INVENTORY = {
   // published SDK dist union (the SDK contract is external + a co-requisite) —
   // forward-looking coverage, allowed by the one-directional compile-time gate.
   // A page-only affordance today, so N/A for the model host.
+  //
+  // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
+  // separate PARENT→BLOCK push, `IMAGE_SCAN_RESOLVED`, which is NOT a
+  // BlockToParentMessage and so does NOT belong in this INVENTORY (it tracks only
+  // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
+  // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
+  // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
@@ -387,6 +456,47 @@ export const INVENTORY = {
     request: true,
     reply: 'SHARED_WITHDRAW_RESULT',
     IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Single-row fetch-by-key (Batch-D item 6) — the deep-link companion to
+  // SHARED_LIST's paged read. Same REQUEST-style hang class + same both-host
+  // placement as its SHARED_* siblings (the shared datastore is a per-APP surface
+  // a model-slot block can also read). Ahead of the published SDK dist union
+  // (forward-looking coverage, like the SHARED_* siblings were) — the one-
+  // directional compile-time gate allows the extra key.
+  SHARED_GET: {
+    request: true,
+    reply: 'SHARED_GET_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // User report of a posted shared row (Batch-D item 5) — the server procedure
+  // `apps.shared.report` already exists; this is the postMessage seam. Same both-
+  // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
+  // `{ ok, error? }`: the error path MUST carry `ok: false` or the SDK drops it →
+  // hang). Ahead of the published SDK dist union — forward-looking coverage.
+  SHARED_REPORT: {
+    request: true,
+    reply: 'SHARED_REPORT_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Host download bridge (Batch-D item 1) — the host fetches an image in its
+  // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
+  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
+  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // affordance today (the paid-output apps — gen-matrix / custom-generators /
+  // model-benchmarking — are all page apps), so N/A for the model host, mirroring
+  // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
+  // Ahead of the published SDK dist union — forward-looking coverage.
+  SAVE_IMAGE: {
+    request: true,
+    reply: 'SAVE_IMAGE_RESULT',
+    IframeHost:
+      'download bridge is a page-only affordance today; the paid-output apps are page apps, the model slot has no such surface',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

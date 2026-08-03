@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Build output (keep dist/ for NPM publishing)
+*.tsbuildinfo
+
+# Environment files
+.env*
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# ESLint cache
+.eslintcache

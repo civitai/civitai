@@ -1,52 +1,160 @@
-.label {
-  padding: 6px 10px;
-}
-
 .container {
   position: relative;
+  /* Vertical inset matches the primary subnav's py-1. Horizontal inset lives on
+     the scroll area (below) so scrolled items bleed to the physical edge instead
+     of being clipped short by container padding. */
+  padding-block: 4px;
 
   &:hover {
-    .scrollArea {
-      &::-webkit-scrollbar {
-        opacity: 1;
-      }
-
-      &::-webkit-scrollbar-thumb {
-        background-color: light-dark(
-          alpha(var(--mantine-color-black), 0.5),
-          alpha(var(--mantine-color-white), 0.5)
-        );
-      }
+    .root::-webkit-scrollbar-thumb {
+      background-color: light-dark(
+        alpha(var(--mantine-color-black), 0.5),
+        alpha(var(--mantine-color-white), 0.5)
+      );
     }
   }
 }
 
 .root {
-  overflow: auto;
-  scroll-snap-type: x mandatory;
-  background-color: transparent;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   max-width: 100%;
+  /* First/last pills rest inset from the edges, but scroll flush to them so
+     partially-scrolled pills bleed to the edge rather than looking truncated. */
+  padding-inline: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
 
   &::-webkit-scrollbar {
     background: transparent;
-    opacity: 0;
     height: 8px;
   }
 
   &::-webkit-scrollbar-thumb {
     border-radius: 4px;
+    background-color: transparent;
   }
 }
 
-.control {
-  border: none !important;
+.pill {
+  flex: none;
 }
 
-/* Mirrors the main content-nav's Shop tab highlight (HomeContentToggle.module.css). */
+/* Mantine wins the var battle here, so pin the badge font + padding hard. The
+   count would otherwise inherit the pill's `text-base`. min-width = height keeps
+   a single-digit count a circle; symmetric padding lets multi-digit grow. */
+.tabCount {
+  --badge-fz: 11px;
+  --badge-height: 18px;
+  min-width: 18px !important;
+  height: 18px !important;
+  padding-inline: 4px !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  /* Mantine's Badge forces `cursor: default`; let clicks + the link's pointer
+     cursor pass through to the pill instead. */
+  pointer-events: none;
+}
+
+.tabCount :global(.mantine-Badge-label) {
+  font-size: 11px !important;
+}
+
+/* Compact (density >= 2): floor each pill's width to its height (h-8 = 32px) so
+   an icon-only pill renders as a circle; icon + stat pills grow past it. */
+.container[data-density='2'] .pill,
+.container[data-density='3'] .pill {
+  min-width: 32px;
+}
+
+/* Keep a persistent chip background on non-active pills so the icon + stat read
+   as one grouped, clickable unit. At full size the row only chips on hover
+   (Mantine `default` variant), matching the primary subnav; shop keeps its own
+   highlight. */
+.container[data-density='2'] .pill:not([data-active]):not(.tabHighlight),
+.container[data-density='3'] .pill:not([data-active]):not(.tabHighlight) {
+  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+/* Level 2/3: collapse the label to zero width, reveal it on hover (or when
+   active) with the grid 0fr -> 1fr trick. It animates to the exact content
+   width — no guessed max-width, no jank — and the count slides right as it opens. */
+/* Compact spacing runs on animated margins (not flex gap) so a collapsed label
+   leaves no dead space and the lone icon stays perfectly centered. */
+.container[data-density='2'] .tabLabel,
+.container[data-density='3'] .tabLabel {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-inline-start: 0;
+  transition: grid-template-columns 160ms ease, margin 160ms ease;
+}
+
+.container[data-density='2'] .tabLabelInner,
+.container[data-density='3'] .tabLabelInner {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Padding gives descenders (the g in "Images") room inside the overflow clip;
+     the negative margin cancels the added height so vertical centering holds. */
+  padding-block: 2px;
+  margin-block: -2px;
+}
+
+/* Hover reveal — delayed so a quick pass-over doesn't twitch it open. */
+.container[data-density='2'] .pill:hover .tabLabel,
+.container[data-density='3'] .pill:hover .tabLabel {
+  grid-template-columns: 1fr;
+  margin-inline-start: 6px;
+  transition-delay: 500ms;
+}
+
+/* Active pill shows its label permanently; keyboard focus reveals it too (no
+   delay) so a tabbing user isn't left on an unlabeled icon. */
+.container[data-density='2'] .pill[data-active] .tabLabel,
+.container[data-density='3'] .pill[data-active] .tabLabel,
+.container[data-density='2'] .pill:focus-visible .tabLabel,
+.container[data-density='3'] .pill:focus-visible .tabLabel {
+  grid-template-columns: 1fr;
+  margin-inline-start: 6px;
+}
+
+/* Space the count off the icon/label when it's shown in compact. */
+.container[data-density='2'] .tabCount,
+.container[data-density='3'] .pill[data-active] .tabCount {
+  margin-inline-start: 4px;
+}
+
+/* Stat-less pills (Overview, Shop) have no trailing badge, so their label butts
+   up against the right edge — add a little breathing room after it. Scoped to
+   the revealed/full states so collapsed compact circles stay round. */
+.container[data-density='0'] .pill:not(:has(.tabCount)) .tabLabel,
+.container[data-density='1'] .pill:not(:has(.tabCount)) .tabLabel {
+  margin-inline-end: 3px;
+}
+
+.container[data-density='2'] .pill:not(:has(.tabCount)):hover .tabLabel,
+.container[data-density='3'] .pill:not(:has(.tabCount)):hover .tabLabel,
+.container[data-density='2'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
+.container[data-density='3'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
+.container[data-density='2'] .pill:not(:has(.tabCount)):focus-visible .tabLabel,
+.container[data-density='3'] .pill:not(:has(.tabCount)):focus-visible .tabLabel {
+  margin-inline-end: 4px;
+}
+
+/* Level 3: also drop counts, leaving icon-only. Active pill keeps its count. */
+.container[data-density='3'] .tabCount {
+  display: none;
+}
+
+.container[data-density='3'] .pill[data-active] .tabCount {
+  display: inline-flex;
+}
+
+/* Shop tab accent — mirrors HomeContentToggle.module.css `.tabHighlight`. Kept
+   in sync by hand: this bundler's CSS modules reject `composes` here, and a
+   global utility isn't worth the churn for one accent. */
 .tabHighlight {
-  padding: 4px 12px;
-  border-radius: var(--mantine-radius-xl);
   background-color: light-dark(
     alpha(var(--mantine-color-yellow-3), 0.3),
     alpha(var(--mantine-color-yellow-3), 0.1)
@@ -61,32 +169,7 @@
   background-position: -300% 50%;
   background-repeat: no-repeat;
   color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
-  /* `button-highlight` is a global keyframes (src/styles/globals.css); it stays
-     global because no local @keyframes of that name exists in this module. */
+  /* `button-highlight` is a global keyframes (src/styles/globals.css). */
   animation: button-highlight 5s linear infinite;
   will-change: background-position;
-
-  /* The label carries `text-black dark:text-white`, and the icon inherits the
-     control's color — force both to the yellow accent. */
-  :global(.text-black) {
-    color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
-  }
-
-  svg {
-    color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
-    /* The profile nav passes an explicit `color` to the icon, which tabler
-       renders as a `stroke="#fff"` attribute — override the stroke too. */
-    stroke: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3)) !important;
-  }
-
-  /* Collapse the 30px icon box to an inline glyph so the pill matches the main
-     nav's compact size + tight icon-to-label spacing. */
-  :global(.mantine-ThemeIcon-root) {
-    width: auto !important;
-    height: auto !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    background: transparent !important;
-  }
 }

@@ -44,7 +44,11 @@ export function LiveMetric({
 
   return (
     <Text {...textProps}>
-      <AnimatedCount value={liveValue} abbreviate={abbreviate} />
+      <AnimatedCount
+        value={liveValue}
+        abbreviate={abbreviate}
+        resetKey={`${entityType}:${entityId}:${metricType}`}
+      />
     </Text>
   );
 }

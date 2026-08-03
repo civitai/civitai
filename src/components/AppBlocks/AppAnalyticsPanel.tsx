@@ -36,6 +36,7 @@ type TimePoint = { bucket: string; value: number };
 type AnalyticsData = {
   range: { from: string | Date; to: string | Date; granularity: 'day' | 'week' };
   notOwned: boolean;
+  unavailable?: 'notEntitled' | 'notOwned';
   installs: { total: number; active: number; series: TimePoint[] };
   runs: { count: number; buzzSpent: number; series: TimePoint[] };
   buzzPurchased: { count: number; buzzAmount: number; grossCents: number };
@@ -184,6 +185,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
     appBlockId: appBlockId ?? undefined,
   });
   const analytics = analyticsRaw as AnalyticsData | undefined;
+  const unavailable = analytics?.unavailable;
 
   const appOptions = [
     { value: '', label: 'All my apps' },
@@ -207,7 +209,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             comboboxProps={{ withinPortal: true }}
           />
         )}
-        {analytics && (
+        {analytics && !unavailable && (
           <Text size="xs" c="dimmed">
             {dayjs(analytics.range.from).format('MMM D, YYYY')} –{' '}
             {dayjs(analytics.range.to).format('MMM D, YYYY')} ({analytics.range.granularity})
@@ -226,7 +228,22 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
         </Text>
       )}
 
-      {analytics && (
+      {unavailable && (
+        <Alert
+          variant="light"
+          color="yellow"
+          icon={<IconInfoCircle size={16} />}
+          title="Analytics unavailable"
+        >
+          <Text size="sm">
+            {unavailable === 'notEntitled'
+              ? 'Your account does not have access to app analytics yet. No metrics were measured for this app — this is not a report of zero activity.'
+              : 'You do not own this app, so its analytics are not available to you. No metrics were measured — this is not a report of zero activity.'}
+          </Text>
+        </Alert>
+      )}
+
+      {analytics && !unavailable && (
         <>
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
             <MetricCard

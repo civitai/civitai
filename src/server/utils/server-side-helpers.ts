@@ -3,8 +3,13 @@ import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } fr
 import type { Session } from '~/types/session';
 import { Tracker } from '~/server/clickhouse/client';
 import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
+import {
+  runWithSerializeCtxAlways,
+  ssrDehydrateSerializePath,
+} from '~/server/logging/trpc-serialize-log';
 
 import { appRouter } from '~/server/routers';
+import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -34,9 +39,14 @@ export const getServerProxySSGHelpers = async (
       apiKeyId: undefined,
       subject: undefined,
     },
-    // Phase 1 of the superjson → devalue migration: SSR dehydrate still WRITES
-    // superjson (wire unchanged); the union READ is carried by the client that
-    // hydrates. See src/shared/utils/trpc-union-transformer.ts.
+    // Phase 2 of the superjson → devalue migration: SSR runs server-side, so its
+    // dehydrate WRITE goes through the env-gated server writer (`unionTransformer`
+    // = `buildTransformer()` = `serverWriteSerialize`). It flips to devalue only
+    // when THIS pool's Deployment sets `TRPC_WRITE_DEVALUE=true`; otherwise it
+    // writes superjson exactly as in Phase 1. The client that hydrates decodes
+    // either format through the union READ. SSR HTML and the JS chunks it
+    // references are the same content-hashed deploy, so dehydrate/hydrate is
+    // inherently version-matched. See src/shared/utils/trpc-union-transformer.ts.
     transformer: unionTransformer,
   });
   return ssg;
@@ -95,20 +105,57 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
+    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
+    // policy center.
+    const adsGated =
+      !!result.suppressAds ||
+      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
+
     return {
       props: {
         ...(props ?? {}),
-        ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
+        adsGated,
+        // Success-only: an errored prefetch would put a TRPCError instance in the
+        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
+        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
+        // errored queries lets the client refetch instead.
+        //
+        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
+        // once-per-render SSR path, not the hot tRPC batch path) with the page
+        // route so a devalue-write fallback during dehydrate attributes to the
+        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
+        ...(ssg
+          ? {
+              trpcState: runWithSerializeCtxAlways(
+                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
+                () =>
+                  ssg.dehydrate({
+                    shouldDehydrateQuery: (query) => query.state.status === 'success',
+                  })
+              ),
+            }
+          : {}),
         session,
       } as NonNullable<P>,
     };
   };
 }
 
+/**
+ * Content rating declared by pages that render `<Gated>`. Consumed here — it never reaches
+ * Next.js — and becomes the `adsGated` prop `_app` hands to `AdsProvider`.
+ *
+ * Rating only, no owner/mod/crawler exemptions: the verdict must be identical for every
+ * request to a URL, since one auction is enough to put it in GAM's policy violation center.
+ */
+export type AdGatingDeclaration = { contentNsfwLevel: number; nsfw?: boolean };
+
 type GetPropsFnResult<P> = {
   props: P | Promise<P>;
   redirect: Redirect;
   notFound: true;
+  gating: AdGatingDeclaration;
+  suppressAds: boolean;
 };
 
 type CreateServerSidePropsProps<P> = {
@@ -118,9 +165,15 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
    *  redirects non-moderators before the resolver runs. */
   requireModerator?: boolean;
-  resolver?: (
-    context: CustomGetServerSidePropsContext
-  ) => Promise<GetServerSidePropsResult<P> | void>;
+  resolver?: (context: CustomGetServerSidePropsContext) => Promise<
+    | (GetServerSidePropsResult<P> & {
+        gating?: AdGatingDeclaration;
+        /** Suppress ads for a reason unrelated to content rating — e.g. an unpublished model,
+         *  visible only to its owner and moderators, so there is no audience to monetize. */
+        suppressAds?: boolean;
+      })
+    | void
+  >;
 };
 
 type CustomGetServerSidePropsContext = {

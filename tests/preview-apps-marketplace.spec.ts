@@ -5,7 +5,7 @@ import { trpcQuery } from './preview-trpc';
 /**
  * Preview-e2e (F-C): App Blocks MARKETPLACE discovery + per-app detail — the
  * anon-capable PUBLIC read path (`blocks.listAvailable` → `blocks.getAppDetail`)
- * plus the two host pages that render them (`/apps`, `/apps/<appBlockId>`).
+ * plus `/apps`, and the retirement of the legacy `/apps/<appBlockId>` route.
  * Otherwise untested by the preview suite; a PR that broke the marketplace
  * listing/detail projection or the `features.appBlocks` page gate passes every
  * other preview spec today.
@@ -43,10 +43,11 @@ import { trpcQuery } from './preview-trpc';
  *    / non-approved id (the router then throws NOT_FOUND — our helper would
  *    surface that as a thrown error). We assert the shape of a discovered,
  *    known-approved id, so a non-null detail is expected.
- *  - Detail page (`/apps/[appBlockId]/index.tsx`) renders the block name as
- *    `<Title order={2}>{name}</Title>` where
- *    `name = detail.manifest.name ?? detail.blockId ?? appBlockId` — so the
- *    visible host-rendered name == `manifest.name || blockId`.
+ *  - Legacy detail page (`/apps/[appBlockId]/index.tsx`) is RETIRED: its
+ *    `getServerSideProps` now resolves the app's approved `AppListing` and
+ *    redirects to `/apps/store-preview/<slug>` (or `notFound` when the app has no
+ *    approved listing). It no longer renders, so this spec asserts the REDIRECT
+ *    rather than a heading on it.
  *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar — its
  *    first tab is `{ href: '/apps', label: 'Marketplace' }` (AppsSubNav.tsx:55) —
  *    plus a search `TextInput` (placeholder "Search by name or block id"). It no
@@ -161,16 +162,73 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
       'detail.manifest.targets should be an array (slot badges)'
     ).toBe(true);
 
-    // The DETAIL PAGE renders that block's name (host-rendered <Title> text). This
-    // proves the page's getAppDetail query + SSR appBlocks gate work end-to-end,
-    // not just the bare tRPC call. domcontentloaded ONLY.
+    // The legacy per-app route `/apps/<appBlockId>` is RETIRED: it now redirects to
+    // the unified store detail. This leg used to assert that route rendered the
+    // block's name; that page no longer renders at all, so asserting a heading here
+    // would either test the store detail by accident or race its client-side query.
+    // Assert the RETIREMENT instead — the invariant this route now has.
+    //
+    // Deliberately asserts the destination PATH PREFIX, not `/apps/store-preview/
+    // <blockId>`: the redirect resolves the store slug from the listing row, and
+    // pinning blockId here would re-import the very assumption the redirect avoids.
+    //
+    // 🔴 A 404 here is a real signal, not flake: it means this approved app has no
+    // approved `AppListing` row. Auto-create-on-approve is best-effort (it logs and
+    // continues on failure) and apps approved before it shipped were backfilled by
+    // hand, so the gap is recoverable but does not self-heal. Fix the data (run the
+    // mod-only listing backfill), don't relax this assertion. domcontentloaded ONLY.
     const detailResp = await page.goto(`/apps/${encodeURIComponent(first.id)}`, {
       waitUntil: 'domcontentloaded',
     });
-    expect(detailResp?.status(), `GET /apps/${first.id} status`).toBeLessThan(400);
-    await expect(
-      page.getByRole('heading', { name: detailName }),
-      `the detail page should render the block name "${detailName}"`
-    ).toBeVisible();
+    expect(
+      detailResp?.status(),
+      `GET /apps/${first.id} should follow the retirement redirect to a served page (a 404 means this approved app has no approved AppListing row)`
+    ).toBeLessThan(400);
+
+    const landedOn = new URL(page.url()).pathname;
+    expect(
+      landedOn,
+      `the retired /apps/${first.id} should land on the unified store detail, not render itself`
+    ).toMatch(/^\/apps\/store-preview\/.+/);
+
+    // 🔴 The two assertions below replace an earlier `.not.toBe('/apps/<id>')`, which
+    // COULD NOT FAIL: given the `toMatch` above has passed, `landedOn` already starts
+    // `/apps/store-preview/`, and `/apps/<appBlockId>` never can — so the inequality
+    // held by construction. It wore the name of a guard while guarding nothing. Both
+    // replacements pin a property the `toMatch` genuinely leaves open.
+
+    // (a) The slug occupies EXACTLY ONE path segment. `/^\/apps\/store-preview\/.+/`
+    //     happily accepts `/apps/store-preview/a/b` — i.e. a destination that climbed
+    //     out of the detail route into some other page. This is the browser-level
+    //     twin of the containment property the unit test pins on the built string.
+    const slugSegment = landedOn.slice('/apps/store-preview/'.length);
+    expect(
+      slugSegment.split('/').filter(Boolean),
+      `the store slug must be one path segment, got "${slugSegment}"`
+    ).toHaveLength(1);
+
+    // (b) The retirement happened at the HTTP layer — a real server redirect out of
+    //     the legacy route — not a client-side bounce rendered by the page. Walk the
+    //     redirect chain of the response we landed on and require the legacy path in
+    //     it. This fails if anyone reimplements the retirement as a `router.replace`
+    //     in the component (which would reintroduce exactly the render-then-race this
+    //     leg was rewritten to avoid), and it fails if a future `/apps/*` middleware
+    //     or rewrite starts serving the store detail directly without the 302.
+    const redirectChain: string[] = [];
+    for (
+      let req = detailResp?.request().redirectedFrom();
+      req && redirectChain.length < 10;
+      req = req.redirectedFrom()
+    ) {
+      redirectChain.push(new URL(req.url()).pathname);
+    }
+    expect(
+      redirectChain.map((p) => decodeURIComponent(p)),
+      `GET /apps/${
+        first.id
+      } must reach the store detail via a SERVER redirect out of the legacy route (chain: ${
+        redirectChain.join(' -> ') || '<none>'
+      })`
+    ).toContain(`/apps/${first.id}`);
   });
 });

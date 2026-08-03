@@ -1,5 +1,6 @@
-import { Anchor, Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
+import { type ModelVersionTerms, generationPrice, generationTrialLimit } from '@civitai/buzz';
+import { IconAlertCircle, IconBrush } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -24,18 +25,17 @@ export const ModelVersionEarlyAccessPurchase = ({
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const features = useFeatureFlags();
-  const {
-    isLoadingAccess,
-    canDownload,
-    canGenerate,
-    earlyAccessConfig,
-    earlyAccessEndsAt,
-    modelVersion,
-  } = useModelVersionPermission({
-    modelVersionId,
-  });
+  const { isLoadingAccess, canDownload, generationRequiresPurchase, paidAccess, modelVersion } =
+    useModelVersionPermission({
+      modelVersionId,
+    });
   const { modelVersionEarlyAccessPurchase, purchasingModelVersionEarlyAccess } =
     useMutateModelVersion();
+
+  const paidAccessTerms = paidAccess?.terms as ModelVersionTerms | undefined;
+  const downloadPrice = paidAccessTerms?.download?.price;
+  const genPrice = paidAccessTerms ? generationPrice(paidAccessTerms) : undefined;
+  const genTrialLimit = paidAccessTerms ? generationTrialLimit(paidAccessTerms) : 0;
 
   const invalidateWhatIf = useInvalidateWhatIf();
 
@@ -61,12 +61,10 @@ export const ModelVersionEarlyAccessPurchase = ({
   };
 
   const supportsGeneration = features.imageGeneration && modelVersion?.canGenerate;
-  const supportsDownloadPurchase =
-    earlyAccessConfig?.chargeForDownload && earlyAccessConfig?.downloadPrice;
-  const supportsGenerationPurchase =
-    supportsGeneration &&
-    earlyAccessConfig?.chargeForGeneration &&
-    earlyAccessConfig?.generationPrice;
+  const supportsDownloadPurchase = !!downloadPrice;
+  const supportsGenerationPurchase = supportsGeneration && !!genPrice;
+  const supportsTrialGeneration =
+    supportsGeneration && genTrialLimit > 0 && generationRequiresPurchase;
 
   const userCanDoLabel = [
     supportsDownloadPurchase && 'download',
@@ -78,7 +76,7 @@ export const ModelVersionEarlyAccessPurchase = ({
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
-      {!earlyAccessConfig || isLoadingAccess ? (
+      {!paidAccess || isLoadingAccess ? (
         <Center my="md">
           <Loader />
         </Center>
@@ -101,7 +99,7 @@ export const ModelVersionEarlyAccessPurchase = ({
             {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
             period or just waiting until it becomes public. The remaining time for early access is{' '}
             <Text component="span" fw="bold">
-              <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
+              <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>
@@ -111,7 +109,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   type="submit"
                   label="Get Download Access"
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={earlyAccessConfig?.downloadPrice as number}
+                  buzzAmount={downloadPrice as number}
                   onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
                 />
@@ -127,29 +125,34 @@ export const ModelVersionEarlyAccessPurchase = ({
                   type="submit"
                   label="Get Generation Access"
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={earlyAccessConfig?.generationPrice as number}
+                  buzzAmount={genPrice as number}
                   onPerformTransaction={() => handlePurchase('generation')}
-                  disabled={canGenerate}
+                  disabled={!generationRequiresPurchase}
                 />
-                <Text size="xs" c="dimmed">
-                  The creator of the {resourceLabel} has enabled{' '}
-                  {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
-                  {resourceLabel}{' '}
-                  <GenerateButton
-                    versionId={modelVersionId}
-                    modelId={modelVersion?.model?.id}
-                    data-activity="create:version-stat"
-                    onClick={() => {
-                      dialog.onClose();
-                    }}
-                  >
-                    <Anchor>here</Anchor>
-                  </GenerateButton>
-                  .
-                </Text>
                 <Text size="xs" c="dimmed">
                   By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
+                </Text>
+              </Stack>
+            )}
+
+            {supportsTrialGeneration && (
+              <Stack gap="xs">
+                <Divider label="or try it first" labelPosition="center" />
+                <GenerateButton
+                  versionId={modelVersionId}
+                  modelId={modelVersion?.model?.id}
+                  data-activity="create:version-trial"
+                  onClick={handleClose}
+                >
+                  <Button variant="light" fullWidth leftSection={<IconBrush size={18} />}>
+                    Try it free
+                  </Button>
+                </GenerateButton>
+                <Text size="xs" c="dimmed">
+                  The creator of this {resourceLabel} has enabled up to{' '}
+                  {genTrialLimit.toLocaleString()} free trial generation
+                  {genTrialLimit === 1 ? '' : 's'} before purchase is required.
                 </Text>
               </Stack>
             )}

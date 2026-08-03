@@ -94,6 +94,9 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+    let suppressAds = false;
+
     // Redirect old ?imageId= URLs to the clean article URL
     if (ctx.query.imageId) {
       const slug = result.data.slug?.join('/');
@@ -106,6 +109,11 @@ export const getServerSideProps = createServerSideProps({
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
       const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (article) {
+        gating = { contentNsfwLevel: article.nsfwLevel };
+        suppressAds = !article.publishedAt;
+      }
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (article) {
@@ -138,7 +146,7 @@ export const getServerSideProps = createServerSideProps({
       await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating, suppressAds };
   },
 });
 
@@ -315,6 +323,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     <Gated
       contentNsfwLevel={article.nsfwLevel}
       bypassRating={isOwner}
+      suppressAds={!article.publishedAt}
       meta={{
         title: `${article.title} | Civitai`,
         description: truncate(articleBodyText, { length: 150 }),
@@ -532,6 +541,24 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               creator={article.user}
               attachments={article.attachments}
               articleId={article.id}
+              hiddenNotice={
+                isOwner &&
+                (article.ingestion === ArticleIngestionStatus.Error ||
+                  article.ingestion === ArticleIngestionStatus.Blocked) ? (
+                  <AlertWithIcon
+                    align="center"
+                    color="red"
+                    iconColor="red"
+                    icon={<IconAlertCircle size={28} />}
+                    title="This article isn't visible to the public"
+                    size="sm"
+                  >
+                    {article.ingestion === ArticleIngestionStatus.Blocked
+                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
+                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+                  </AlertWithIcon>
+                ) : null
+              }
             />
           </ContainerGrid2.Col>
         </ContainerGrid2>
@@ -593,10 +620,7 @@ function ArticleOwnerRatingControls({
   // pre-fill the dispute modal with an invalid level. Owner can still open
   // the dispute modal via the inline button in that case.
   const showStaleOverrideBanner =
-    derivedRatingDroppedBelowOverride &&
-    canResubmit &&
-    derivedLevel != null &&
-    derivedLevel >= 1;
+    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null && derivedLevel >= 1;
 
   const handleOpen = (initialSuggestedLevel?: number) => {
     openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });
@@ -624,9 +648,7 @@ function ArticleOwnerRatingControls({
       </Tooltip>
     );
   } else if (isResolved && !canResubmit) {
-    const resolvedDate = myReview!.resolvedAt
-      ? formatDate(new Date(myReview!.resolvedAt))
-      : '';
+    const resolvedDate = myReview!.resolvedAt ? formatDate(new Date(myReview!.resolvedAt)) : '';
     const statusLabel =
       myReview!.status === 'Actioned'
         ? 'approved'

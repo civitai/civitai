@@ -68,7 +68,11 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     // W13 owner controls: the batched last-moderation-event lookup (removed listings).
     appListingModerationEvent: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
     },
+    // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -103,6 +107,11 @@ function resetAll() {
     client.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    client.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
+    client.appListingModerationEvent.create
+      .mockReset()
+      .mockImplementation(async (a: { data: unknown }) => a.data);
+    client.$queryRaw.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.count.mockReset().mockResolvedValue(0);
     client.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
@@ -116,7 +125,15 @@ function resetAll() {
       .mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
-    client.image.findMany.mockReset().mockResolvedValue([]);
+    // Default: the go-live scan-clean gate + the listMySubmissions scan dimension both
+    // read image.findMany for `{ id, ingestion }` — echo every queried id as `Scanned`
+    // so a normal approve passes and my-submissions shows no scan problems. (The rating
+    // derive selects `{ nsfwLevel }`; tests needing a specific level override this.)
+    client.image.findMany
+      .mockReset()
+      .mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+      );
     client.appListingModerationEvent.findMany.mockReset().mockResolvedValue([]);
   }
   mockWrite.$transaction
@@ -527,12 +544,23 @@ describe('submitListingRevision', () => {
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
-  it('asset-incomplete shadow (no screenshot) → BAD_REQUEST, no request', async () => {
+  it('FLIPPED (partial-media): a shadow with icon+cover but NO screenshot now SUBMITS (screenshots optional)', async () => {
+    // Was blocked by the full-completeness gate; the floor gate (icon+cover) lets a
+    // screenshot-less revision submit. The shadow carries iconId+coverId.
     mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
     mockWrite.appListingScreenshot.count.mockResolvedValue(0); // no real screenshot
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER });
+    expect(res).toMatchObject({ shadowId: 'apl_shadow', slug: 'cool-app' });
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalled();
+  });
+
+  it('BELOW FLOOR: a shadow missing its cover → BAD_REQUEST, no request', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow({ coverId: null }));
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
     await expect(
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('screenshots') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
@@ -557,6 +585,33 @@ describe('submitListingRevision', () => {
     await expect(
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+  });
+
+  it('F1: a NO-URL (connect-only) shadow (externalUrl null) submits successfully — the URL gate is optional', async () => {
+    // Merged model: a no-homepage external app carries externalUrl: null. Gating the
+    // URL unconditionally made such a listing UN-REVISABLE (validateExternalUrl(null)
+    // returns {ok:false} → threw). The gate now runs only when a URL is present.
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow({ externalUrl: null }));
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+
+    const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER });
+    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.slug).toBe('cool-app');
+    // A pending request WAS created (the null-URL revision was NOT blocked).
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('F1: a shadow with a PRESENT-but-invalid stored URL still → BAD_REQUEST, no request', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      shadowRow({ externalUrl: 'http://insecure.example.com' })
+    );
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('externalUrl') });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 });
 
@@ -613,8 +668,14 @@ describe('approveExternalRequest (revision apply)', () => {
     mockWrite.appListingScreenshot.count.mockResolvedValue(2);
     // Backing-Image levels for the approve-time content-rating derive: an R asset →
     // the revision path stamps the DERIVED rating ('r'), not the shadow's declared value.
+    // Rows carry `id` + `ingestion: 'Scanned'` (for the scan-clean gate) alongside
+    // `nsfwLevel` (for the derive) — both reads go through this same image.findMany.
     mockWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 10 }]);
-    mockWrite.image.findMany.mockResolvedValue([{ nsfwLevel: 4 }]);
+    mockWrite.image.findMany.mockResolvedValue([
+      { id: 5, nsfwLevel: 1, ingestion: 'Scanned' },
+      { id: 6, nsfwLevel: 1, ingestion: 'Scanned' },
+      { id: 10, nsfwLevel: 4, ingestion: 'Scanned' },
+    ]);
   }
 
   it('copies shadow scalars onto the PARENT (id/slug preserved), deletes the shadow, approves + re-points the request', async () => {
@@ -677,12 +738,23 @@ describe('approveExternalRequest (revision apply)', () => {
     });
   });
 
-  it('revision approve is BLOCKED if the shadow is asset-incomplete (primary re-assert)', async () => {
+  it('FLIPPED (partial-media): revision approve with icon+cover but 0 screenshots now PUBLISHES (screenshots optional)', async () => {
+    // Was blocked by the full-completeness gate; the floor gate (icon+cover) applies
+    // a screenshot-less revision onto the live parent. The shadow has iconId+coverId.
     stageRevisionApprove();
     mockWrite.appListingScreenshot.count.mockResolvedValue(0); // no real screenshot on the shadow
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('screenshots') });
+    ).resolves.toMatchObject({ listingId: 'apl_parent' });
+    // The parent WAS copied (the apply proceeded).
+    expect(mockWrite.appListing.update).toHaveBeenCalled();
+  });
+
+  it('BELOW FLOOR: revision approve with a shadow missing its icon → BAD_REQUEST, no mutation (primary re-assert)', async () => {
+    stageRevisionApprove({ iconId: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('icon') });
     // Neither the request nor the parent were mutated.
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
@@ -793,7 +865,7 @@ describe('listMySubmissions (shadow handling)', () => {
     appListingId: 'apl_parent',
     slug: 'cool-app',
     status: 'approved',
-    appListing: { name: 'Cool App', revisionOfId: null },
+    appListing: { name: 'Cool App', revisionOfId: null, _count: { screenshots: 3 } },
   };
 
   it('excludes shadow-targeting requests from the main query and flags a parent with a PENDING revision request', async () => {
@@ -810,19 +882,30 @@ describe('listMySubmissions (shadow handling)', () => {
       string,
       unknown
     >;
-    expect(where).toMatchObject({ submittedByUserId: OWNER, kind: 'offsite' });
-    // Shadow-targeting requests are excluded (OR: appListingId null OR parent listing).
-    expect(where.OR).toEqual([{ appListingId: null }, { appListing: { revisionOfId: null } }]);
+    // Widened to include onsite media revisions (kind IN onsite|offsite).
+    expect(where).toMatchObject({
+      submittedByUserId: OWNER,
+      kind: { in: ['onsite', 'offsite'] },
+    });
+    // OFFSITE shadow-targeting requests are STILL excluded (surfaced as a parent
+    // badge): OR keeps `appListingId null` OR `parent listing`. ONSITE requests (which
+    // are always shadow revisions, and whose auto-created parent has no own request)
+    // are included directly via the `{ kind: 'onsite' }` branch.
+    expect(where.OR).toEqual([
+      { appListingId: null },
+      { appListing: { revisionOfId: null } },
+      { kind: 'onsite' },
+    ]);
 
     // The detection query filters on a PENDING request targeting a shadow — NOT on
-    // shadow existence (an abandoned shadow has no such request).
+    // shadow existence (an abandoned shadow has no such request). Widened to both kinds.
     const revWhere = mockRead.appListingPublishRequest.findMany.mock.calls[1][0].where as Record<
       string,
       unknown
     >;
     expect(revWhere).toMatchObject({
       status: 'pending',
-      kind: 'offsite',
+      kind: { in: ['onsite', 'offsite'] },
       appListing: { revisionOfId: { in: ['apl_parent'] } },
     });
 
@@ -861,35 +944,29 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     appListingId: 'apl_removed',
     slug: 'gone-app',
     status: 'approved',
-    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed' },
+    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed', _count: { screenshots: 3 } },
   };
   const liveRequestRow = {
     id: 'alpr_live',
     appListingId: 'apl_live',
     slug: 'live-app',
     status: 'approved',
-    appListing: { name: 'Live App', revisionOfId: null, status: 'approved' },
+    appListing: { name: 'Live App', revisionOfId: null, status: 'approved', _count: { screenshots: 3 } },
   };
 
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
       .mockResolvedValueOnce([]); // no pending revision
-    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
+    // Fix B4: the last-event batch is a raw `DISTINCT ON` query — one row per listing.
+    mockRead.$queryRaw.mockResolvedValueOnce([
       { appListingId: 'apl_removed', action: 'owner-unpublish' },
     ]);
 
     const res = await listMySubmissions({ userId: OWNER });
 
-    // The last-event query is scoped to the removed listing id, newest-first, distinct.
-    const eventArgs = mockRead.appListingModerationEvent.findMany.mock.calls[0][0] as Record<
-      string,
-      unknown
-    >;
-    expect(eventArgs).toMatchObject({
-      where: { appListingId: { in: ['apl_removed'] } },
-      distinct: ['appListingId'],
-    });
+    // The raw last-event query is issued exactly once for the removed listing set.
+    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
   });
 
@@ -897,9 +974,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
       .mockResolvedValueOnce([]);
-    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
-      { appListingId: 'apl_removed', action: 'delist' },
-    ]);
+    mockRead.$queryRaw.mockResolvedValueOnce([{ appListingId: 'apl_removed', action: 'delist' }]);
     const res = await listMySubmissions({ userId: OWNER });
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'delist' });
   });
@@ -909,7 +984,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
       .mockResolvedValueOnce([liveRequestRow])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    expect(mockRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 });

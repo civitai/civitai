@@ -12,7 +12,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { getStaticContent } from '~/server/services/content.service';
+import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
@@ -25,6 +25,7 @@ import type {
   DeleteUserInput,
   GetAllUsersInput,
   GetEngagedModelsByIdsInput,
+  GetBanContentPreviewInput,
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
@@ -49,15 +50,15 @@ import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
+  StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
-import {
-  getUserResourceReview,
-} from '~/server/services/resourceReview.service';
+import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
+import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
   createCustomer,
   deleteCustomerPaymentMethod,
@@ -76,6 +77,7 @@ import {
   equipCosmetic,
   getCreators,
   getUserBookmarkCollections,
+  getBanContentPreview,
   getUserById,
   getUserByUsername,
   getUserCosmetics,
@@ -341,19 +343,23 @@ export const completeOnboardingHandler = async ({
         // Store the accepted content hash alongside the date so a freshly-onboarded
         // user is hash-backed immediately and immune to stray `lastmod` bumps.
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
+        const tosHash = resolveTosHash(tos.hash);
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         await setUserSetting(
           id,
           domain === 'green'
-            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tos.hash }
-            : { tosLastSeenDate: now, tosAcceptedHash: tos.hash }
+            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tosHash }
+            : { tosLastSeenDate: now, tosAcceptedHash: tosHash }
         );
         break;
       }
       case OnboardingSteps.RedTOS: {
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosRedLastSeenDate: new Date(), tosRedAcceptedHash: tos.hash });
+        await setUserSetting(id, {
+          tosRedLastSeenDate: new Date(),
+          tosRedAcceptedHash: resolveTosHash(tos.hash),
+        });
         break;
       }
       case OnboardingSteps.Profile: {
@@ -1118,6 +1124,15 @@ export const toggleBanHandler = async ({
   return updatedUser;
 };
 
+export const getBanContentPreviewHandler = async ({
+  input,
+}: {
+  input: GetBanContentPreviewInput;
+  ctx: ProtectedContext;
+}) => {
+  return getBanContentPreview({ userId: input.userId });
+};
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1192,6 +1207,8 @@ export const getUserCosmeticsHandler = async ({
             ...sharedData,
             data: data as ProfileBackgroundCosmetic['data'],
           });
+        else if (type === CosmeticType.Sticker)
+          acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
 
         return acc;
       },
@@ -1201,6 +1218,7 @@ export const getUserCosmeticsHandler = async ({
         profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
         profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
         contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
+        sticker: [] as WithClaimKey<StickerCosmetic>[],
       }
     );
 
@@ -1419,6 +1437,13 @@ export const setUserSettingHandler = async ({
     };
 
     await setUserSetting(id, newSettings);
+
+    const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;
+    const metricPrivacyChanged = privacyKeys.some(
+      (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
+    );
+    if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+
     return newSettings;
   } catch (error) {
     throw throwDbError(error);

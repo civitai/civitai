@@ -39,6 +39,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // PageBlockHost wires the workflow + storage bridges too; stub trpc so it mounts
 // network-free (the resource picker itself makes NO tRPC call — it reuses the
 // native modal which talks to Meili in the parent context).
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
@@ -51,12 +55,17 @@ vi.mock('~/utils/trpc', () => ({
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {
@@ -65,6 +74,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -77,6 +87,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },
@@ -239,8 +250,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
       if (!r) throw new Error('no reply yet');
-      // EXACTLY the six-field allowlist — IDs + the public display names of the
-      // user-picked resource — nothing else.
+      // EXACTLY the projectSafeGenerationResource allowlist — IDs + public display
+      // names + the PUBLIC recommended generation settings (strength/min/max clamp,
+      // trainedWords, clipSkip; widened in PR-C so a block can seed a weight slider +
+      // trigger-word display). Defaults fill the unset settings on `fakeResource()`.
+      // Nothing outside the allowlist — no availability/access/early-access internals.
       expect(r.payload).toEqual({
         requestId: 'rq_pick',
         selected: {
@@ -250,25 +264,31 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
           versionName: 'v1.0',
           baseModel: 'Flux.1 D',
           modelType: 'Checkpoint',
+          strength: 1,
+          minStrength: -1,
+          maxStrength: 2,
+          trainedWords: [],
+          clipSkip: null,
         },
       });
     });
 
     // Adversarial leak check: the reply payload must NOT carry any of the
-    // sensitive fields present on the source GenerationResource. The two public
-    // display names (modelName/versionName) ARE allowed now — everything else
+    // sensitive fields present on the source GenerationResource. The public display
+    // names (modelName/versionName) and the PUBLIC recommended settings (strength/
+    // min/max clamp, trainedWords, clipSkip) ARE allowed — everything else
     // (availability/access/early-access/nsfw/poi/minor/cover-image/userId/the
-    // full model object) must STILL be dropped; the leak-prevention property
-    // holds, only the two name fields were added.
+    // full model object) must STILL be dropped; the leak-prevention property holds.
     const payload = replies.last('RESOURCE_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
     const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model'];
+      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'model'];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
     expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'modelId', 'modelName', 'modelType', 'versionId', 'versionName']
+      ['baseModel', 'clipSkip', 'maxStrength', 'minStrength', 'modelId', 'modelName',
+        'modelType', 'strength', 'trainedWords', 'versionId', 'versionName']
     );
     replies.stop();
   });

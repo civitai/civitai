@@ -159,3 +159,6 @@ mockups/
 # local-only SQL (never committed)
 *.local.sql
 *.local.md
+
+# superpowers skill scratch (specs/plans) — implementation detail, not shipped to main
+docs/superpowers/

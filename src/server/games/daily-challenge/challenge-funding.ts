@@ -28,8 +28,10 @@
  * refund over `challenge-initial-prize-${challengeId}-creator`. Both prefixes end in a
  * non-numeric token so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
  */
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
+import { dedupeWinnersForPayout } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import { logToAxiom } from '~/server/logging/client';
 import {
   createBuzzTransaction,
@@ -42,8 +44,14 @@ import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   getEntryPoolContribution,
 } from '~/shared/constants/challenge.constants';
-import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import {
+  recordChallengeEntryFeesBuzz,
+  recordChallengeRefundBuzz,
+  recordChallengeRefundFailure,
+  recordChallengeWinnerDuplicatePick,
+} from '~/server/prom/challenge.metrics';
 
 const log = createLogger('challenge-funding', 'yellow');
 
@@ -72,9 +80,12 @@ export async function chargeInitialPrize({
     type: TransactionType.Purchase,
     amount,
     description: 'Challenge initial prize pool',
-    // Trailing non-numeric token keeps the completion refund's startsWith prefix match unambiguous
-    // vs other challenge ids (challenge 5 would otherwise prefix-match 50, 51, ...).
-    externalTransactionId: `challenge-initial-prize-${challengeId}-creator`,
+    // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
+    // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
+    // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
+    // would be silently dropped (createBuzzTransaction dedups on externalTransactionId) — leaving an
+    // unfunded pool. `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
+    externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
   });
   log(`Escrowed ${amount} buzz initial prize for challenge ${challengeId}`);
@@ -205,6 +216,15 @@ export async function chargeEntryFees({
     }).catch(() => {});
   }
 
+  // Economy telemetry: Buzz newly charged this call (house + pool legs charged for the FIRST time —
+  // conflicts/retries already counted on the original charge, so this can't double-count). Entry
+  // fees only exist on source=User challenges.
+  recordChallengeEntryFeesBuzz({
+    source: ChallengeSource.User,
+    buzzType: fromAccountType,
+    amount: houseResult.transactions.length * houseAmount + newPoolCharges * poolAmount,
+  });
+
   return { paidImageIds, unpaidImageIds };
 }
 
@@ -234,7 +254,33 @@ async function filterChargedImageIds(
  * re-reverse an already-refunded transaction. No-op for non-User challenges, entryFee <= 0, and
  * challenges with no initial prize.
  */
-export async function refundUserChallengeFunds(challengeId: number) {
+/**
+ * Reverse one challenge-fund prefix, tolerating the buzz service's 404 (→ TRPCError NOT_FOUND)
+ * when the prefix matches no transactions. A prefix matches nothing for an entryFee challenge that
+ * never took a paid entry (e.g. a cancelled challenge with zero entries), or a prize that was never
+ * actually charged — there is nothing to reverse, so that is a zero-refund no-op, not a failure
+ * that should abort the surrounding void/delete. Returns the count of transactions reversed.
+ */
+async function refundChallengeFundsByPrefix(input: {
+  externalTransactionIdPrefix: string;
+  description: string;
+  details: { challengeId: number };
+}): Promise<{ count: number; amount: number }> {
+  try {
+    const { refundedTransactions, totalRefunded } = await refundMultiAccountTransaction(input);
+    return { count: refundedTransactions.length, amount: totalRefunded };
+  } catch (e) {
+    if (e instanceof TRPCError && e.code === 'NOT_FOUND') return { count: 0, amount: 0 };
+    throw e;
+  }
+}
+
+export async function refundUserChallengeFunds(
+  challengeId: number,
+  // Telemetry-only: what triggered the refund. Normalized to void|delete|other in the metric
+  // helper; does not affect refund behavior.
+  reason: 'void' | 'delete' | 'completion' | 'other' = 'other'
+) {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
     select: {
@@ -242,30 +288,48 @@ export async function refundUserChallengeFunds(challengeId: number) {
       basePrizePool: true,
       createdById: true,
       entryFee: true,
+      buzzType: true,
     },
   });
   if (!challenge || challenge.source !== ChallengeSource.User) return { refundedEntries: 0 };
 
   let refundedEntries = 0;
-  if (challenge.entryFee > 0) {
-    // The trailing `-` keeps this prefix from matching another challenge's fees (e.g. challenge 5's
-    // `challenge-entry-fee-5-` never matches challenge 50's `challenge-entry-fee-50-...`).
-    const { refundedTransactions } = await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: `challenge-entry-fee-${challengeId}-`,
-      description: 'Challenge cancelled — entry fee refund',
-      details: { challengeId },
-    });
-    refundedEntries = refundedTransactions.length;
-  }
+  try {
+    let refundedAmount = 0;
+    if (challenge.entryFee > 0) {
+      // The trailing `-` keeps this prefix from matching another challenge's fees (e.g. challenge 5's
+      // `challenge-entry-fee-5-` never matches challenge 50's `challenge-entry-fee-50-...`).
+      const res = await refundChallengeFundsByPrefix({
+        externalTransactionIdPrefix: `challenge-entry-fee-${challengeId}-`,
+        description: 'Challenge cancelled — entry fee refund',
+        details: { challengeId },
+      });
+      refundedEntries = res.count;
+      refundedAmount += res.amount;
+    }
 
-  if (challenge.basePrizePool > 0 && challenge.createdById != null) {
-    // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
-    // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
-      description: 'Challenge cancelled — initial prize refund',
-      details: { challengeId },
+    if (challenge.basePrizePool > 0 && challenge.createdById != null) {
+      // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
+      // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
+      const res = await refundChallengeFundsByPrefix({
+        externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
+        description: 'Challenge cancelled — initial prize refund',
+        details: { challengeId },
+      });
+      refundedAmount += res.amount;
+    }
+
+    recordChallengeRefundBuzz({
+      source: challenge.source,
+      buzzType: challenge.buzzType,
+      reason,
+      amount: refundedAmount,
     });
+  } catch (e) {
+    // A real refund failure (NOT_FOUND is already swallowed as a no-op inside the prefix helper);
+    // count it, then rethrow so the caller's void/delete recovery path is unchanged.
+    recordChallengeRefundFailure({ source: challenge.source, reason });
+    throw e;
   }
 
   log(
@@ -274,7 +338,67 @@ export async function refundUserChallengeFunds(challengeId: number) {
   return { refundedEntries };
 }
 
-/** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */
+/**
+ * Alert when a completing user challenge holds less Buzz than its accepted entries imply. An
+ * entry that reached the collection without a paid pool leg still competes for the prizes, so
+ * the shortfall silently shrinks every winner's payout (challenge 413 completed with 2 entries
+ * and a pool of 0, paying its winners nothing). Never throws — reporting only.
+ */
+export async function reportPoolFundingShortfall({
+  challengeId,
+  collectionId,
+}: {
+  challengeId: number;
+  collectionId: number | null;
+}) {
+  if (!collectionId) return;
+
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { source: true, entryFee: true, basePrizePool: true, prizePool: true },
+  });
+  if (!challenge || challenge.source !== ChallengeSource.User || challenge.entryFee <= 0) return;
+
+  const entryCount = await dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.ACCEPTED },
+  });
+  const expectedPool =
+    challenge.basePrizePool + getEntryPoolContribution(challenge.entryFee) * entryCount;
+  const shortfall = expectedPool - challenge.prizePool;
+  if (shortfall <= 0) return;
+
+  await logToAxiom({
+    type: 'warning',
+    name: 'challenge-pool-funding-shortfall',
+    message: 'Challenge completing with a prize pool below what its accepted entries imply',
+    challengeId,
+    entryCount,
+    entryFee: challenge.entryFee,
+    prizePool: challenge.prizePool,
+    expectedPool,
+    shortfall,
+  }).catch(() => {});
+}
+
+/**
+ * The idempotency key a winner-prize payout is settled under.
+ *
+ * Module-private on purpose. It has no consumer outside this file, and 15 test suites mock
+ * `challenge-funding` with an explicit export list — so an unused export here is a live tripwire:
+ * the first file to import it gets `undefined` under those mocks rather than a missing-export error.
+ * Tests that assert on payout keys spell the string out literally instead, deliberately, so that a
+ * change to the format fails them rather than being mirrored into the expectation.
+ */
+function winnerPayoutExternalId(challengeId: number, userId: number, position: number) {
+  return `challenge-winner-prize-${challengeId}-${userId}-place-${position}`;
+}
+
+/**
+ * Build the winner-prize transactions for a challenge, paid in its stored currency.
+ *
+ * Pure apart from one never-throwing counter increment on the duplicate-drop branch — see below for
+ * why a silent drop here would be the worst possible failure.
+ */
 export function buildWinnerPayoutTransactions({
   challengeId,
   title,
@@ -286,13 +410,28 @@ export function buildWinnerPayoutTransactions({
   buzzType: ChallengeBuzzType;
   winners: Array<{ userId: number; position: number; prize: number }>;
 }) {
-  return winners.map((entry) => ({
+  // Both callers dedupe before they get here (so they can report the anomaly with the challenge
+  // context they hold), which makes this a no-op on every current path. It is applied anyway
+  // because this function is the single choke point every winner payout passes through, and a
+  // duplicate id inside one batch is handed to an external Buzz service whose within-batch
+  // behaviour is not observable from this repo. Guaranteeing the invariant here costs one pass and
+  // removes the need to trust that a future caller remembers.
+  //
+  // If this branch ever fires, a caller reached the money path with duplicates and did NOT report
+  // it — the drop is real money not paid, and this counter is the only trace it leaves. It is
+  // tagged `origin: 'chokepoint'` rather than being distinguished by an absent `source`: the
+  // challenge's source genuinely isn't in scope here, but `normSource` also folds enum drift and a
+  // caller's own null source into `unknown`, so `source` alone cannot tell those three apart.
+  const { winners: payable, dropped } = dedupeWinnersForPayout(winners);
+  if (dropped.length)
+    recordChallengeWinnerDuplicatePick({ count: dropped.length, origin: 'chokepoint' });
+  return payable.map((entry) => ({
     type: TransactionType.Reward,
     toAccountId: entry.userId,
     fromAccountId: 0,
     amount: entry.prize,
     description: `Challenge Winner Prize #${entry.position}: ${title}`,
-    externalTransactionId: `challenge-winner-prize-${challengeId}-${entry.userId}-place-${entry.position}`,
+    externalTransactionId: winnerPayoutExternalId(challengeId, entry.userId, entry.position),
     toAccountType: buzzType,
   }));
 }

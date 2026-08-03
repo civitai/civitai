@@ -66,6 +66,18 @@ vi.mock('~/server/services/notification.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   grantCosmetics: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('~/server/services/creator-membership.service', () => ({
+  bustCreatorMembershipValidCache: vi.fn().mockResolvedValue(undefined),
+}));
+// redeemTokens now routes cache invalidation through the shared
+// `invalidateSubscriptionCaches` helper (#3324) — which itself busts the
+// creator-membership-validity cache alongside session/multiplier/vault/cap/civitai
+// caches, matching how stripe/paddle activation invalidates them. Mock it at that
+// seam (the function redeemTokens actually calls) so the assertion isn't coupled to
+// its transitive internals (and doesn't drag in its heavy real dep graph).
+vi.mock('~/server/utils/subscription.utils', () => ({
+  invalidateSubscriptionCaches: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { Prisma } from '@prisma/client';
 import {
@@ -75,8 +87,11 @@ import {
   revokeForChargeback,
   awardMilestones,
   advanceReferralSubscriptions,
+  redeemTokens,
 } from '../referral.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { bustCreatorMembershipValidCache } from '~/server/services/creator-membership.service';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
@@ -111,6 +126,10 @@ const resetAllMocks = () => {
   (mockDbWrite.$queryRaw as any).mockReset();
   (createBuzzTransaction as any).mockReset();
   (createBuzzTransaction as any).mockResolvedValue({ transactionId: 't1' });
+  (bustCreatorMembershipValidCache as any).mockClear();
+  (bustCreatorMembershipValidCache as any).mockResolvedValue(undefined);
+  (invalidateSubscriptionCaches as any).mockClear();
+  (invalidateSubscriptionCaches as any).mockResolvedValue(undefined);
 };
 
 beforeEach(resetAllMocks);
@@ -975,5 +994,72 @@ describe('computeLifetimeReferralPoints', () => {
         ReferralRewardStatus.Expired,
       ])
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// redeemTokens — busts the read-time creator-membership-validity cache (#3322)
+// so a referral-granted membership takes effect on the next read immediately,
+// instead of waiting out the cache's TTL backstop.
+// -----------------------------------------------------------------------------
+
+describe('redeemTokens — creator-membership cache invalidation', () => {
+  // Wire a successful redemption: enough settled tokens, no pre-existing referral
+  // sub (create path in grantReferralSubscription), and a grantable product for the
+  // offer's tier. offerIndex 0 = { cost: 1, tier: 'bronze', durationDays: 14 }.
+  const wireSuccessfulRedemption = () => {
+    // $queryRaw is called twice inside the tx: (1) redeemTokens' settled-token
+    // SELECT ... FOR UPDATE, then (2) grantReferralSubscription's row-lock SELECT
+    // (its result is ignored). One settled token of amount 1 covers the cost-1 offer.
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([{ id: 1, tokenAmount: 1 }])
+      .mockResolvedValueOnce([{ id: 'referral:42:1' }]);
+    // No existing referral subscription -> grantReferralSubscription create branch.
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+    mockDbWrite.customerSubscription.create.mockResolvedValue({});
+    // findReferralProductForTier reads dbRead.product.findMany.
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_bronze',
+        defaultPriceId: 'price_bronze',
+        metadata: { tier: 'bronze', referralGrantable: true },
+      },
+    ]);
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralRedemption.create.mockResolvedValue({
+      id: 99,
+      createdAt: new Date(),
+      tokensSpent: 1,
+      rewardType: 'MembershipPerks',
+      metadata: {},
+    });
+  };
+
+  it('busts the membership-validity cache once for the granted user after a successful redemption', async () => {
+    wireSuccessfulRedemption();
+
+    const result = await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(result.id).toBe(99);
+    // The grant committed (create ran); subscription caches (incl. the
+    // membership-validity cache) were invalidated for exactly the granted user,
+    // exactly once, after the tx commit.
+    expect(mockDbWrite.customerSubscription.create).toHaveBeenCalledTimes(1);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledTimes(1);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(42);
+  });
+
+  it('does not bust the cache when the redemption transaction fails', async () => {
+    wireSuccessfulRedemption();
+    // Not enough settled tokens for the cost-1 offer -> redeemTokens throws inside
+    // the tx (rolls back), so no grant committed and no cache bust should fire.
+    (mockDbWrite.$queryRaw as any).mockReset();
+    (mockDbWrite.$queryRaw as any).mockResolvedValueOnce([]);
+
+    await expect(redeemTokens({ userId: 42, offerIndex: 0 })).rejects.toThrow(
+      /Insufficient tokens/
+    );
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });

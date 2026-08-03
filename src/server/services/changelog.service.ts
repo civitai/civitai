@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   CreateChangelogInput,
@@ -7,6 +8,7 @@ import type {
   UpdateChangelogInput,
 } from '~/server/schema/changelog.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
+import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 
 export type Changelog = AsyncReturnType<typeof getChangelogs>['items'][number];
@@ -168,8 +170,22 @@ export const getAllTags = async (input?: { domain?: DomainColor }) => {
   return [...new Set(data.flatMap((x) => x.tags ?? []))];
 };
 
-export const getLatestChangelog = async (input?: { domain?: DomainColor }) => {
-  const { domain } = input ?? {};
+// Global-per-domain "latest changelog" timestamp — identical for every user of a
+// given domain color. Previously an uncached dbRead.findFirst on EVERY call; an
+// in-proc (per-pod), per-domain TTL memo collapses that to ~1 DB read / domain /
+// TTL / pod.
+//
+// Staleness: this in-proc TTL (CacheTTL.xs, 60s) STACKS on top of the existing
+// edgeCacheIt({ ttl: CacheTTL.xs }) 60s CDN cache (+ staleWhileRevalidate 30s) on
+// the resolver, so worst-case value age is ~2×TTL (~120s). And `new Date()` in
+// the where-clause below is frozen for the memo window, so a scheduled /
+// future-dated changelog can surface up to ~TTL (~60s) late. Immaterial for
+// minute-scale banner data. Fail-open: a DB error propagates uncached (see
+// createKeyedTtlMemo).
+const LATEST_CHANGELOG_INPROC_TTL_MS = CacheTTL.xs * 1000;
+
+const getLatestChangelogMemo = createKeyedTtlMemo<number>(async (domainKey) => {
+  const domain = domainKey ? (domainKey as DomainColor) : undefined;
 
   const cl = await dbRead.changelog.findFirst({
     select: { effectiveAt: true },
@@ -183,4 +199,8 @@ export const getLatestChangelog = async (input?: { domain?: DomainColor }) => {
   });
 
   return !cl ? 0 : cl.effectiveAt.getTime();
+}, LATEST_CHANGELOG_INPROC_TTL_MS);
+
+export const getLatestChangelog = async (input?: { domain?: DomainColor }) => {
+  return getLatestChangelogMemo(input?.domain ?? '');
 };

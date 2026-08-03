@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Badge,
   Box,
   Button,
   Center,
@@ -65,6 +66,11 @@ function PublicShopItemCard({
           <Text size="sm" fw={600} lineClamp={1}>
             {item.cosmetic.name}
           </Text>
+          {!item.listed && (
+            <Badge size="xs" variant="light" color="gray" w="fit-content">
+              Delisted — sells again if the creator relists
+            </Badge>
+          )}
           <Text size="xs" c="dimmed" lineClamp={1}>
             {getDisplayName(item.cosmetic.type)}
             {item.addedBy?.username ? ` · by @${item.addedBy.username}` : ''}
@@ -286,11 +292,15 @@ export function ListExistingModal() {
                 <Stack gap="xs">
                   {order.map((item) => (
                     <SortableItem key={item.id} id={item.id}>
-                      <ResoldListRow
-                        item={item}
-                        onRemove={() => handleRemove(item)}
-                        removing={busyId === item.id}
-                      />
+                      {/* SortableItem attaches the drag ref/listeners via cloneElement —
+                          its child must be a DOM element, not a function component. */}
+                      <div>
+                        <ResoldListRow
+                          item={item}
+                          onRemove={() => handleRemove(item)}
+                          removing={busyId === item.id}
+                        />
+                      </div>
                     </SortableItem>
                   ))}
                 </Stack>

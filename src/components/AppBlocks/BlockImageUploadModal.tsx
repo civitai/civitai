@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { nextPollDelay } from '~/components/Apps/assetPolling';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -23,6 +24,17 @@ import { trpc } from '~/utils/trpc';
  *   with the MINIMAL public projection and close; the host posts IMAGE_UPLOAD_RESULT.
  *   If the user closes without a successful upload, the host posts a bare
  *   (cancelled) result — see the OPEN_IMAGE_UPLOAD handler's `options.onClose`.
+ *
+ * ASYNC (non-blocking) mode — when the caller passes `onAccepted`: the modal
+ * resolves the INSTANT the image is PERSISTED (imageId known, scan still
+ * in-flight) and SKIPS the in-modal poll gate entirely. It hands back a pending
+ * handle `{ imageId, url }` (the author's OWN just-uploaded edge URL — an
+ * unguessable UUID key, author-preview-only) and closes. The scan verdict is
+ * then streamed to the block asynchronously by a HOST-mounted poller
+ * (`BlockImageScanPoller`) that survives this modal's unmount — see PageBlockHost's
+ * OPEN_IMAGE_UPLOAD handler. The authoritative server gate is UNCHANGED: the
+ * pending handle exposes only the author's own preview URL, and no cross-user
+ * surface persists the image until the async verdict is `scanned`.
  */
 
 export type BlockUploadedImageInfo = {
@@ -45,9 +57,17 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
 
 export default function BlockImageUploadModal({
   onResolved,
+  onAccepted,
 }: {
-  /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands. */
+  /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands.
+   *  BLOCKING mode only (ignored when `onAccepted` is provided). */
   onResolved: (result: BlockUploadedImageInfo) => void;
+  /** ASYNC (non-blocking) mode. When provided, the modal resolves EARLY — the
+   *  instant the image is persisted (imageId known) — with a pending handle and
+   *  closes, SKIPPING the in-modal poll gate. The scan verdict is streamed later
+   *  by a host-mounted poller. The `url` is the author's OWN just-uploaded edge
+   *  URL (unguessable UUID key), for author preview only. */
+  onAccepted?: (handle: { imageId: number; url: string }) => void;
 }) {
   const dialog = useDialogContext();
   const { uploadToCF } = useCFImageUpload();
@@ -141,6 +161,17 @@ export default function BlockImageUploadModal({
         sizeBytes: file.size,
       });
       if (epoch !== epochRef.current) return;
+      // ASYNC (non-blocking) mode: the caller wants the modal to resolve the
+      // instant the image is persisted (imageId known) and to stream the scan
+      // verdict itself via a host-mounted poller. Compute the author's preview
+      // URL with the SAME edge transform the server gate uses (uploaded.id is the
+      // CF key), hand back the pending handle, and close — SKIP the poll gate.
+      if (onAccepted) {
+        const url = getEdgeUrl(uploaded.id, { width: 1200 });
+        onAccepted({ imageId, url });
+        dialog.onClose();
+        return;
+      }
       await pollGate(imageId, 0, epoch);
     } catch (err) {
       if (epoch !== epochRef.current) return;

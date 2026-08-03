@@ -11,6 +11,7 @@ import {
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -31,6 +32,7 @@ import {
   ComicProjectStatus,
   ComicReferenceType,
   ImageIngestionStatus,
+  UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
@@ -139,8 +141,11 @@ async function getComicMetricRows(projectIds: number[]) {
 }
 
 const comicFlag = isFlagProtected('comicCreator');
-const comicProtectedProcedure = protectedProcedure.use(comicFlag);
-const comicPublicProcedure = publicProcedure.use(comicFlag);
+// Comic panel responses can surface raw orchestrator blob URLs (e.g.
+// `blurredPreviewUrl` on a blocked panel), which RU ISPs DPI-block. Rewrite them
+// to the Cloudflare-fronted proxy for RU requests. See ClickUp 868kdkv93.
+const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProxyMiddleware);
+const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
 // Comic panel generation runs on the shared preset image-gen service
@@ -1210,13 +1215,26 @@ export const comicsRouter = router({
         genre: z.nativeEnum(ComicGenre).optional(),
         period: z.enum(['Day', 'Week', 'Month', 'Year', 'AllTime']).optional(),
         sort: z.enum(['Newest', 'MostFollowed', 'MostChapters']).default('Newest'),
+        // Sitewide 'Followed' semantics: comics authored by creators the viewer follows.
         followed: z.boolean().optional(),
+        // Comics the viewer follows directly (per-comic Notify engagement).
+        followedComics: z.boolean().optional(),
         userId: z.number().optional(),
         browsingLevel: z.number().int().min(0).optional(),
       })
     )
     .query(async ({ input, ctx }) => {
-      const { limit, cursor, genre, period, sort, followed, userId, browsingLevel } = input;
+      const {
+        limit,
+        cursor,
+        genre,
+        period,
+        sort,
+        followed,
+        followedComics,
+        userId,
+        browsingLevel,
+      } = input;
 
       // Cursor handling: `Newest` carries the trailing id as a number,
       // `MostFollowed` / `MostChapters` carry a compound `<rank>:<id>`
@@ -1312,12 +1330,29 @@ export const comicsRouter = router({
         new Set([...hiddenUserIds, ...blockedByIds, ...blockedIds].map((u) => u.id))
       );
 
+      let followedUserIds: number[] | null = null;
+      if (followed && ctx.user) {
+        const follows = await dbRead.userEngagement.findMany({
+          where: { userId: ctx.user.id, type: UserEngagementType.Follow },
+          select: { targetUserId: true },
+        });
+        followedUserIds = follows
+          .map((f) => f.targetUserId)
+          .filter((id) => id !== -1 && !excludedUserIds.includes(id));
+      }
+
       if (userId) {
         // Explicit author filter: if the requested author is on the exclusion
         // list (e.g. a stale link to a blocker's profile) or is the system
         // user (-1), force a no-match userId so the query returns nothing.
-        const blocked = userId === -1 || excludedUserIds.includes(userId);
+        const blocked =
+          userId === -1 ||
+          excludedUserIds.includes(userId) ||
+          (followedUserIds !== null && !followedUserIds.includes(userId));
         where.userId = blocked ? { in: [] } : userId;
+      } else if (followedUserIds !== null) {
+        // An empty `in` list is correct here: following nobody means an empty feed.
+        where.userId = { in: followedUserIds };
       } else if (excludedUserIds.length) {
         where.userId = { notIn: [...excludedUserIds, -1] };
       }
@@ -1365,7 +1400,7 @@ export const comicsRouter = router({
         }
       }
 
-      if (followed && ctx.user) {
+      if (followedComics && ctx.user) {
         where.engagements = {
           some: { userId: ctx.user.id, type: ComicEngagementType.Notify },
         };
@@ -1403,6 +1438,26 @@ export const comicsRouter = router({
           ? Prisma.sql`AND (rank_value, cp.id) < (${compoundCursor.rank}::bigint, ${compoundCursor.id}::int)`
           : Prisma.empty;
 
+        // Mirror the followed filters in the raw ranking query. Unlike the
+        // panel-level visibility gates (rarely-rejecting, fine to post-filter),
+        // these are highly selective — post-filtering alone would page through
+        // mostly-rejected ids and cut the feed short after the first batch.
+        const followedFilter =
+          followedUserIds !== null
+            ? Prisma.sql`AND cp."userId" IN (${
+                followedUserIds.length > 0 ? Prisma.join(followedUserIds) : null
+              })`
+            : Prisma.empty;
+        const followedComicsFilter =
+          followedComics && ctx.user
+            ? Prisma.sql`AND EXISTS (
+                SELECT 1 FROM "ComicProjectEngagement" e
+                WHERE e."projectId" = cp.id
+                  AND e."userId" = ${ctx.user.id}
+                  AND e.type = 'Notify'::"ComicEngagementType"
+              )`
+            : Prisma.empty;
+
         // Each query returns one row per comic with a `rank_value` column
         // computed by a correlated scalar subquery — for every `cp` row,
         // the subquery is evaluated against THAT row's projectId. PG
@@ -1428,6 +1483,8 @@ export const comicsRouter = router({
                   AND cp."tosViolation" = false
                   AND cp."userId" != -1
                   AND u."bannedAt" IS NULL
+                  ${followedFilter}
+                  ${followedComicsFilter}
               )
               SELECT id, rank_value
               FROM ranked cp
@@ -1456,6 +1513,8 @@ export const comicsRouter = router({
                   AND cp."tosViolation" = false
                   AND cp."userId" != -1
                   AND u."bannedAt" IS NULL
+                  ${followedFilter}
+                  ${followedComicsFilter}
               )
               SELECT id, rank_value
               FROM ranked cp

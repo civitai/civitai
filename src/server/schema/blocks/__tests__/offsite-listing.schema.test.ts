@@ -9,19 +9,24 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
- * App Store Listings (W13 P3a) — off-site submission INPUT validation.
+ * App Store Listings (W13) — external-app submission INPUT validation (the MERGED
+ * external+connect model — every external app links its own OAuth client).
  *
- * Pins the submit-schema gates: https-only external URL (delegated to the shared
- * `validateExternalUrl`), slug shape, name/description bounds, taxonomy category,
- * author-declared contentRating (default SFW), optional changelog, and the
- * external ⟂ on-platform mutual-exclusivity (a page/targets/iframe field is
- * REJECTED, not silently dropped).
+ * Pins the submit-schema gates: REQUIRED `connectClientId`, OPTIONAL https external
+ * URL (delegated to the shared `validateExternalUrl` only when present), slug shape,
+ * name/description bounds, taxonomy category, author-declared contentRating (default
+ * SFW), optional changelog, and the external ⟂ on-platform mutual-exclusivity (a
+ * page/targets/iframe field is REJECTED, not silently dropped).
  */
 
 const base = {
   slug: 'cool-app',
   name: 'Cool App',
   externalUrl: 'https://cool.example.com/app',
+  // REQUIRED in the merged model — every external app links an OAuth client.
+  connectClientId: 'oauth-client-1',
+  requestedScopes: 0,
+  scopeJustifications: {},
 };
 
 describe('submitExternalListingSchema — happy path', () => {
@@ -30,6 +35,18 @@ describe('submitExternalListingSchema — happy path', () => {
     expect(parsed.success).toBe(true);
     // contentRating defaults to SFW when omitted.
     if (parsed.success) expect(parsed.data.contentRating).toBe('g');
+  });
+
+  it('REQUIRES connectClientId (missing → reject)', () => {
+    const { connectClientId, ...rest } = base;
+    expect(submitExternalListingSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts a submission WITHOUT externalUrl (optional homepage link)', () => {
+    const { externalUrl, ...rest } = base;
+    const parsed = submitExternalListingSchema.safeParse(rest);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.externalUrl).toBeUndefined();
   });
 
   it('accepts a full submission (tagline/description/category/changelog/rating)', () => {
@@ -185,7 +202,7 @@ describe('approveExternalRequestSchema', () => {
 });
 
 describe('rejectExternalRequestSchema', () => {
-  it('accepts a reason ≥10 chars', () => {
+  it('accepts a reason ≥ the shared min (OFFSITE_MOD_REASON_MIN=3)', () => {
     expect(
       rejectExternalRequestSchema.safeParse({
         publishRequestId: 'alpr_1',
@@ -194,9 +211,9 @@ describe('rejectExternalRequestSchema', () => {
     ).toBe(true);
   });
 
-  it('rejects a reason <10 chars', () => {
+  it('rejects a reason shorter than the shared min (OFFSITE_MOD_REASON_MIN=3)', () => {
     expect(
-      rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+      rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1', rejectionReason: 'no' })
         .success
     ).toBe(false);
   });
@@ -205,11 +222,20 @@ describe('rejectExternalRequestSchema', () => {
     expect(rejectExternalRequestSchema.safeParse({ publishRequestId: 'alpr_1' }).success).toBe(false);
   });
 
-  it('rejects an over-long reason (>2000)', () => {
+  it('accepts a reason at the unified mod-reason ceiling (OFFSITE_MOD_REASON_MAX=1000)', () => {
     expect(
       rejectExternalRequestSchema.safeParse({
         publishRequestId: 'alpr_1',
-        rejectionReason: 'x'.repeat(2001),
+        rejectionReason: 'x'.repeat(1000),
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects an over-long reason (>1000, the unified mod-reason ceiling)', () => {
+    expect(
+      rejectExternalRequestSchema.safeParse({
+        publishRequestId: 'alpr_1',
+        rejectionReason: 'x'.repeat(1001),
       }).success
     ).toBe(false);
   });

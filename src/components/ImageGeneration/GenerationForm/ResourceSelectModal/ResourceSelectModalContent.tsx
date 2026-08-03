@@ -1,77 +1,34 @@
-import { Box, Center, CloseButton, Loader, SegmentedControl, Text } from '@mantine/core';
-import { IconSettings } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
-import { Configure, useClearRefinements } from 'react-instantsearch';
+import { Box, CloseButton, SegmentedControl, Text, TextInput } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
+import { IconSearch, IconSettings } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
   ResourceSelectFiltersDropdown,
   ResourceSelectSort,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import {
+  resourceSelectTabs,
+  type Tabs,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
 import { ResourceHitList } from './ResourceHitList';
-import {
-  useResourceSelectQueries,
-  useResourceSelectMeiliFilters,
-  type Tabs,
-} from './useResourceSelectFilters';
-
-const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'official', 'mine'];
-const defaultTab: Tabs = 'all';
-const hitsPerPage = 20;
 
 export function ResourceSelectModalContent() {
-  const { title, onClose, selectSource } = useResourceSelectContext();
+  const { title, onClose, selectSource, tab, setTab } = useResourceSelectContext();
   const dialog = useDialogContext();
-  const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
-  // For modelVersion linking, always start on 'all' tab since 'recent' depends on
-  // recommended models which are often empty for new uploads
-  const useLocalStorage = selectSource !== 'modelVersion';
-  const [storedTab, setStoredTab] = useStorage<Tabs>({
-    type: 'localStorage',
-    key: 'resource-select-tab',
-    defaultValue: defaultTab,
-    getInitialValueInEffect: false,
-  });
-  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
-  const selectedTab = useLocalStorage ? storedTab : localTab;
-  const setSelectedTab = useLocalStorage ? setStoredTab : setLocalTab;
+  const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { refine } = useClearRefinements();
-
-  const {
-    likedModels,
-    featuredModels,
-    generationData,
-    trainingModels,
-    manuallyAdded,
-    recommendedModels,
-    auctionModels,
-    isLoadingExtra,
-  } = useResourceSelectQueries(selectedTab ?? defaultTab);
-
-  const totalFilters = useResourceSelectMeiliFilters({
-    selectedTab: selectedTab ?? defaultTab,
-    featuredModels,
-    generationData,
-    trainingModels,
-    manuallyAdded,
-    recommendedModels,
-    auctionModels,
-    likedModels,
-  });
-
-  let allowedTabs = tabs.filter((t) => {
+  let allowedTabs = resourceSelectTabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
   if (!features.auctions) {
@@ -83,6 +40,13 @@ export function ResourceSelectModalContent() {
     allowedTabs = allowedTabs.filter((t) => t !== 'official');
   }
 
+  // A persisted tab can become disallowed (e.g. 'mine' after logout, or 'featured'
+  // once auctions are off) — fall back to 'all' so we don't render a phantom tab
+  // whose server restriction silently drops.
+  useEffect(() => {
+    if (!allowedTabs.includes(tab)) setTab('all');
+  }, [allowedTabs, tab, setTab]);
+
   function handleClose() {
     dialog.onClose();
     onClose?.();
@@ -90,19 +54,14 @@ export function ResourceSelectModalContent() {
 
   return (
     <>
-      {totalFilters && !isLoadingExtra && (
-        <Configure
-          key={totalFilters}
-          hitsPerPage={selectedTab === 'featured' ? 1000 : hitsPerPage}
-          filters={totalFilters}
-        />
-      )}
-
       <div className="sticky top-0 z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
         <div className="flex flex-wrap items-center justify-between gap-4 @sm:gap-10">
           <Text>{title}</Text>
-          <CustomSearchBox
-            isMobile={isMobile as boolean}
+          <TextInput
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+            leftSection={<IconSearch size={18} />}
+            placeholder="Search models"
             className="order-last w-full grow @sm:order-none @sm:w-auto"
             autoFocus
           />
@@ -111,11 +70,8 @@ export function ResourceSelectModalContent() {
 
         <div className="flex flex-col gap-3 @sm:flex-row @sm:flex-nowrap @sm:items-center @sm:justify-between @sm:gap-10">
           <SegmentedControl
-            value={selectedTab}
-            onChange={(v) => {
-              setSelectedTab(v as Tabs);
-              refine();
-            }}
+            value={tab}
+            onChange={(v) => setTab(v as Tabs)}
             data={allowedTabs.map((v) => ({
               value: v,
               label: (
@@ -126,7 +82,7 @@ export function ResourceSelectModalContent() {
           />
           <CategoryTagFilters />
           <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-            {selectedTab !== 'featured' && <ResourceSelectSort />}
+            {tab !== 'featured' && <ResourceSelectSort />}
             <ResourceSelectFiltersDropdown />
             <GenerationSettingsPopover>
               <LegacyActionIcon>
@@ -137,15 +93,7 @@ export function ResourceSelectModalContent() {
         </div>
       </div>
 
-      {!totalFilters || isLoadingExtra ? (
-        <div className="p-3 py-5">
-          <Center mt="md">
-            <Loader />
-          </Center>
-        </div>
-      ) : (
-        <ResourceHitList key={selectedTab} featured={featuredModels} selectedTab={selectedTab} />
-      )}
+      <ResourceHitList key={tab} query={debouncedSearch} />
     </>
   );
 }

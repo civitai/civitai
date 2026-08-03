@@ -1,6 +1,8 @@
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { deriveChallengeNsfwLevel } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 export type ChallengeBuzzType = 'green' | 'yellow';
 
@@ -34,4 +36,37 @@ export function isChallengeHiddenByDomainCurrency(
   if (challenge.source !== ChallengeSource.User) return false;
   if (challenge.createdById != null && challenge.createdById === viewerId) return false;
   return challenge.buzzType !== deriveDomainCurrency(isGreen);
+}
+
+export type NsfwEscalation = {
+  allowedNsfwLevel: number;
+  nsfwLevel: number;
+  cancel: boolean;
+};
+
+// Decide how a scanned challenge escalates. A clean scan just recomputes the display level from the
+// (unchanged) allowed mask. An NSFW verdict on a green USER challenge cancels it (green must be SFW —
+// the caller voids + refunds). An NSFW verdict on a yellow/non-user challenge raises the rating to R so
+// it drops out of safe feeds while staying live.
+export function computeNsfwEscalation(input: {
+  allowedNsfwLevel: number;
+  buzzType: ChallengeBuzzType;
+  source: ChallengeSource;
+  isNsfw: boolean;
+}): NsfwEscalation {
+  const cancel =
+    input.isNsfw && input.source === ChallengeSource.User && input.buzzType === 'green';
+  if (!input.isNsfw || cancel) {
+    return {
+      allowedNsfwLevel: input.allowedNsfwLevel,
+      nsfwLevel: deriveChallengeNsfwLevel(input.allowedNsfwLevel),
+      cancel,
+    };
+  }
+  const allowedNsfwLevel = Flags.addFlag(input.allowedNsfwLevel, NsfwLevel.R);
+  return {
+    allowedNsfwLevel,
+    nsfwLevel: deriveChallengeNsfwLevel(allowedNsfwLevel),
+    cancel: false,
+  };
 }

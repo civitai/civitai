@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
@@ -143,5 +144,218 @@ export async function refundBlockTipSpend(
 ): Promise<void> {
   await sysRedis.decrBy(key, Math.ceil(amount)).catch(() => {
     /* best-effort — a lost refund over-counts (stricter cap) */
+  });
+}
+
+// ── Tip allowance READ (item 4) ──────────────────────────────────────────────
+
+/** The daily tip allowance for a user: cap, net-reserved-today, and remaining. */
+export type BlockTipAllowance = { cap: number; spent: number; remaining: number };
+
+/**
+ * Reads the viewer's CURRENT daily tip allowance from the SAME authoritative
+ * `tip-cap` counter the reserve/refund path mutates — so a block can show a
+ * genuinely-tracked remaining allowance instead of a dead client-side full-cap
+ * guess (the opaque-origin sandbox has no working `localStorage`).
+ *
+ * `spent` is the RESERVATION-based net total (INCRBY on reserve, DECRBY on
+ * refund), so it reflects net-committed-today and can briefly OVER-count between
+ * a reserve and its refund — the SAFE direction (under-reports `remaining`,
+ * never over-reports). `remaining` is clamped at 0 (a straddling over-cap
+ * reservation could push the raw counter above the cap for an instant).
+ *
+ * FAIL-CLOSED on a redis error (throws) — the caller surfaces a retryable 503,
+ * consistent with the reserve path. A read is not money-moving, but reporting a
+ * fabricated full allowance on a redis blip would invite a block to let the user
+ * tip past a ceiling the enforcing reserve would then reject; failing closed
+ * keeps the read honest.
+ */
+export async function readBlockTipAllowance(userId: number): Promise<BlockTipAllowance> {
+  const key = tipCapRedisKey(userId);
+  const raw = await sysRedis.get(key);
+  const parsed = raw == null ? 0 : Number.parseInt(raw, 10);
+  const spent = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  const remaining = Math.max(0, BLOCK_TIP_CAP_PER_DAY - spent);
+  return { cap: BLOCK_TIP_CAP_PER_DAY, spent, remaining };
+}
+
+// ── Tip IDEMPOTENCY (item 2, tip half) ────────────────────────────────────────
+//
+// A tip moves REAL Buzz to a third party and is IRREVERSIBLE. `requestId` on the
+// postMessage/HTTP layer is a fresh per-attempt correlation id, so a timeout /
+// lost-response retry that re-POSTs the same logical tip would reserve AND charge
+// twice. A CLIENT-generated `idempotencyKey` that is stable across the retry lets
+// the endpoint collapse the replay to the FIRST terminal result.
+//
+// PATTERN (money-safe, not merely "block the second call"):
+//   claim  — SET NX the idem key to an in-progress sentinel BEFORE reserve/charge.
+//            first caller wins → { state: 'acquired' }.
+//            key already holds a TERMINAL result → { state: 'replay', … } (the
+//            endpoint returns it VERBATIM — no second reserve, no second charge).
+//            key still in-progress (or a lost/garbage value) → { state: 'in_progress' }
+//            → the endpoint 409s so a still-running first attempt is never raced
+//            into a double charge.
+//   finalize — overwrite the sentinel with the TERMINAL {status, body} so a later
+//              lost-response retry replays it. Best-effort (never perturbs an
+//              already-shipped response).
+//   release  — delete the sentinel for a TRANSIENT outcome (429/503) so a genuine
+//              retry can actually execute (no money moved → safe to re-attempt).
+//
+// FAIL-CLOSED: `claim` THROWS on a redis error (the caller maps it to a 503),
+// mirroring the reserve path — a money endpoint must not run its dedupe blind.
+
+// Covers realistic lost-response / user-reload retry windows without pinning a
+// stuck in-progress marker for long if `finalize` is ever lost on a redis blip.
+const BLOCK_TIP_IDEM_TTL_SECONDS = 10 * 60;
+
+/**
+ * Per-(user, APP, key) redis key (audit 🟡-2).
+ *
+ * 🔴 `appBlockId` is load-bearing, not decoration. Without it the key is
+ * `<userId>:<key>`, and the REST endpoint accepts ANY `[A-Za-z0-9_-]{1,64}` value
+ * — so two apps the SAME user has installed that happen to pick the same literal
+ * key (an app hardcoding `"tip1"`) share ONE idempotency slot. App B would then
+ * REPLAY app A's cached response body verbatim, LEARNING A's tip recipient and
+ * amount, while B's own tip silently never happens. Mirrors the gen key shape in
+ * `block-gen-idempotency.ts`, which already carried the app segment.
+ *
+ * INJECTIVE on `:` because `userId` is numeric, `appBlockId` is an `apb_<ULID>` or
+ * a synthetic `ephemeral-` / `page_local_` / `pubreq_` id, and `idempotencyKey` is
+ * charset-restricted to `^[A-Za-z0-9_-]{1,64}$` at the endpoint — none can contain
+ * a colon, so no two distinct triples collide.
+ */
+function tipIdemRedisKey(
+  userId: number,
+  appBlockId: string,
+  idempotencyKey: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${number}:${string}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.TIP_IDEM}:${userId}:${appBlockId}:${idempotencyKey}`;
+}
+
+/**
+ * REQUEST FINGERPRINT (audit 🟡-1 residual). An idempotency key identifies ONE
+ * logical request; reusing it for a DIFFERENT payload is a client bug, and
+ * replaying the first result for it is actively misleading — the app is told "your
+ * tip of B Buzz to Y succeeded" when what actually happened was a tip of A Buzz to
+ * X. Stripe rejects that rather than replaying; so do we (the caller 422s).
+ *
+ * Covers exactly the fields that define the tip. `userId` + `appBlockId` are
+ * already pinned by the redis key, so they are deliberately not repeated here.
+ * Truncated to 32 hex chars — collision-irrelevant at this cardinality, and it
+ * keeps the stored record small.
+ */
+export function computeTipFingerprint(input: {
+  toUserId: number;
+  amount: number;
+  entityType?: string;
+  entityId?: number;
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        input.toUserId,
+        input.amount,
+        input.entityType ?? null,
+        input.entityId ?? null,
+      ])
+    )
+    .digest('hex')
+    .slice(0, 32);
+}
+
+export type BlockTipIdempotencyClaim =
+  | { state: 'acquired'; key: ReturnType<typeof tipIdemRedisKey> }
+  | { state: 'replay'; status: number; body: unknown }
+  | { state: 'in_progress' }
+  | { state: 'mismatch' };
+
+/**
+ * Atomically CLAIM the idempotency key for a tip attempt. Fail-CLOSED (throws) on
+ * a redis error so the caller returns a retryable 503 — a money endpoint must not
+ * dedupe blind. See the block comment above for the state machine.
+ *
+ * The stored record is ALWAYS JSON: `{ fp }` while in progress, `{ fp, status, body }`
+ * once terminal (a numeric `status` is what distinguishes them). A record whose `fp`
+ * differs from THIS request's → `mismatch` (the caller 422s): the same key is being
+ * reused for a different payload, so neither replaying the old result nor executing
+ * the new tip is correct.
+ */
+export async function claimTipIdempotency(
+  userId: number,
+  appBlockId: string,
+  idempotencyKey: string,
+  fingerprint: string
+): Promise<BlockTipIdempotencyClaim> {
+  const key = tipIdemRedisKey(userId, appBlockId, idempotencyKey);
+  // SET NX EX — first writer wins the in-progress sentinel. node-redis returns
+  // 'OK' on set, null when the key already exists.
+  const claimed = await sysRedis.set(key, JSON.stringify({ fp: fingerprint }), {
+    NX: true,
+    EX: BLOCK_TIP_IDEM_TTL_SECONDS,
+  });
+  if (claimed) return { state: 'acquired', key };
+
+  // Key already exists — read it to decide mismatch vs replay vs still-in-progress.
+  const existing = await sysRedis.get(key);
+  if (existing == null) {
+    // SET→GET race (the winner released or expired the key in between). Treat as
+    // in-progress: 409 rather than risk racing a live first attempt into a 2nd charge.
+    return { state: 'in_progress' };
+  }
+  let parsed: { fp?: unknown; status?: unknown; body?: unknown };
+  try {
+    parsed = JSON.parse(existing) as typeof parsed;
+  } catch {
+    // A malformed / partially-written record is treated as in-progress — never
+    // re-run a money path on a value we cannot read.
+    return { state: 'in_progress' };
+  }
+  if (parsed?.fp !== fingerprint) {
+    // Same key, DIFFERENT request. Never replay someone else's outcome, and never
+    // execute a second charge under a key that is already spoken for.
+    return { state: 'mismatch' };
+  }
+  if (typeof parsed.status === 'number') {
+    return { state: 'replay', status: parsed.status, body: parsed.body };
+  }
+  // Fingerprint matches but there is no terminal result yet — the first attempt is live.
+  return { state: 'in_progress' };
+}
+
+/**
+ * Persist the TERMINAL {status, body} of the FIRST attempt so a later
+ * lost-response retry replays it. Best-effort: if the record can't be written,
+ * the in-progress sentinel simply expires and a post-TTL retry may re-run
+ * (a redis-down edge) — it never throws into an already-successful response.
+ *
+ * Carries the `fingerprint` forward so the mismatch check still applies to the
+ * TERMINAL record (a replay under the same key with a DIFFERENT payload must 422,
+ * not receive the old body).
+ */
+export async function finalizeTipIdempotency(
+  key: ReturnType<typeof tipIdemRedisKey>,
+  status: number,
+  body: unknown,
+  fingerprint: string
+): Promise<void> {
+  try {
+    await sysRedis.set(key, JSON.stringify({ fp: fingerprint, status, body }), {
+      EX: BLOCK_TIP_IDEM_TTL_SECONDS,
+    });
+  } catch {
+    /* best-effort — see doc comment */
+  }
+}
+
+/**
+ * Release the idempotency claim for a TRANSIENT outcome (429/503) so a genuine
+ * retry with the same key can execute. Safe because a transient rejection means
+ * NO money moved and NO reservation stands. Best-effort; never throws.
+ */
+export async function releaseTipIdempotency(
+  key: ReturnType<typeof tipIdemRedisKey>
+): Promise<void> {
+  await sysRedis.del(key).catch(() => {
+    /* best-effort — a stuck sentinel just 409s a retry until its short TTL */
   });
 }

@@ -43,6 +43,10 @@ const {
   mockDbWrite: {
     challenge: {
       update: vi.fn().mockResolvedValue(undefined),
+      // voidChallenge claims the row Active/Scheduled -> Cancelled via updateMany and
+      // requires claimed.count === 1 to proceed to the refund + entrant-notification path;
+      // default to a successful single-row claim so the tests exercise that path.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       // Final-prize recompute (User source, endChallengeAndPickWinners only) — null distribution
       // skips it so the zero-winner tests exercise the notification branch unchanged.
       findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
@@ -91,6 +95,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
+  reportPoolFundingShortfall: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
@@ -191,7 +196,7 @@ describe('voidChallenge — entrant cancellation notification', () => {
     mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 3 });
     mockDbRead.$queryRaw.mockRejectedValue(new Error('transient DB error'));
 
-    await expect(voidChallenge(7)).resolves.toEqual({ success: true });
+    await expect(voidChallenge(7)).resolves.toEqual({ success: true, voided: true });
 
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
@@ -200,9 +205,12 @@ describe('voidChallenge — entrant cancellation notification', () => {
     expect(logCall.challengeId).toBe(7);
     expect(logCall.message).toBe('transient DB error');
     // The refund already happened, so money movement isn't blocked by the notification failure —
-    // the status update must still run.
-    expect(mockDbWrite.challenge.update).toHaveBeenCalledWith({
-      where: { id: 7 },
+    // the status claim (Active/Scheduled -> Cancelled) must still have run.
+    expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
+      },
       data: { status: ChallengeStatus.Cancelled },
     });
   });

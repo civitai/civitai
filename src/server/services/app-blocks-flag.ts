@@ -533,6 +533,48 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
 }
 
 /**
+ * Dedicated mod-segmented flag for the AGENTIC MOD CODE-REVIEW (App Blocks P1).
+ *
+ * When a moderator reviews a PENDING publish request they can dispatch an
+ * ephemeral, sandboxed review agent that pulls the reviewed bundle, produces a
+ * structured code-review / security-audit / scope-verdict report, and reports it
+ * back — decision-support for the mod, torn down on the approve/reject decision.
+ *
+ * This is a USER-VISIBILITY gate (the `startAgentReview` tRPC procedure — the
+ * modal button + report rendering + chat are later phases), so — exactly like
+ * `app-blocks-review-sandbox-enabled` — it is mod-segmented and MUST be evaluated
+ * WITH the moderator's context. Create it in Flipt as base `enabled: false` with
+ * the SAME `moderators` segment the user-facing flag uses (`isModerator ==
+ * "true"`), so it can be scoped to a subset of mods during early dogfood.
+ *
+ * The machine-to-machine half (the report callback) has NO user context and
+ * additionally gates on the existing GLOBAL `app-blocks-pipeline-enabled`
+ * kill-switch — the same fail-safe as the review-sandbox build path.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this
+ * merges) → `isFlipt` returns `false` → `startAgentReview` returns UNAUTHORIZED
+ * and no provisioning ever runs. So the as-merged behaviour is fully dark and
+ * cannot regress the gate open.
+ */
+export const APP_BLOCKS_AGENTIC_REVIEW_FLAG = 'app-blocks-agentic-review';
+
+/**
+ * Mod-segmented gate for the AGENTIC MOD CODE-REVIEW (App Blocks P1). Evaluated
+ * WITH the moderator's context (entityId = user id, context carries server-side
+ * `isModerator`) so the `moderators` segment can match — identical eval shape to
+ * `isAppBlocksReviewSandboxEnabled({ user })`. No user → preserves a global eval
+ * that can never match the segment (fail-closed), and an absent flag also
+ * evaluates false (fail-closed). See APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ */
+export async function isAppBlocksAgenticReviewEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
  * storage — the FIRST surface that opens the per-app datastore to PUBLIC
  * cross-user writes (previously mod + app-dev-tester only). Mirrors
@@ -563,4 +605,80 @@ export async function isAppBlocksSharedStorageEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated GLOBAL flag for the PUBLIC EXTERNAL App-store read GA — the mechanism
+ * that lets the store serve `kind='offsite'` (external app) listings to the
+ * ANONYMOUS public while `kind='onsite'` App Blocks stay gated to the existing
+ * mods + app-dev-testers cohort. This is a SEPARATE, ORTHOGONAL axis from the
+ * `app-listings` catalog-visibility flag: `app-listings` gates WHO sees the FULL
+ * catalog (all kinds); this flag opens ONLY the offsite subset to EVERYONE.
+ *
+ * ## Why a GLOBAL boolean (not segmented)
+ *
+ * The audience is the anonymous public — an anon viewer carries NO user context,
+ * so a segment could never match and the flag would silently stay dark. It is
+ * therefore evaluated globally (entityId='global', empty context), mirroring
+ * `isAppBlocksPipelineEnabled` / `isAppBlocksRuntimeEnabled` exactly, and MUST be
+ * created in Flipt as a PLAIN base-`enabled` boolean (NO segment).
+ *
+ * ## Fail-closed / dark posture
+ *
+ * The flag does NOT exist in Flipt at merge time (it is created in a LATER phase,
+ * base `enabled: false`, only when the offsite store is ready to go public) or if
+ * Flipt is unreachable → `isFlipt` returns `false` → `resolveStoreVisibilityScope`
+ * returns `none` for a non-privileged viewer and `full` for a mod/tester — i.e.
+ * BYTE-IDENTICAL to today. This flag NEVER upgrades a mod/tester away from `full`;
+ * it only ever moves a non-privileged viewer from `none` → `public-external`.
+ */
+export const APP_LISTINGS_PUBLIC_EXTERNAL_FLAG = 'app-listings-public-external';
+
+/**
+ * GLOBAL gate for the PUBLIC EXTERNAL App-store read GA. Evaluates the dedicated
+ * `app-listings-public-external` flag with no user context (entityId='global',
+ * empty context), mirroring `isAppBlocksPipelineEnabled`. Fail-closed: absent flag
+ * / Flipt-down → `false`. See APP_LISTINGS_PUBLIC_EXTERNAL_FLAG.
+ */
+export async function isExternalListingsPublicEnabled(): Promise<boolean> {
+  return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG);
+}
+
+/**
+ * The store read-path VISIBILITY SCOPE resolved once per request, then threaded
+ * into every store read proc + the data-layer kind predicate:
+ *   - `full`            — the caller sees ALL kinds (today's mod/tester gate).
+ *   - `public-external` — the caller sees ONLY `kind='offsite'` approved listings
+ *     (both `connect` and `external-link` sub-kinds); onsite is excluded.
+ *   - `none`            — the caller sees NOTHING (dark; today's public default).
+ */
+export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
+
+/**
+ * Resolve the {@link StoreVisibilityScope} for a store read request. The two flags
+ * are INDEPENDENT axes and are checked in priority order so the mod/tester path is
+ * NEVER narrowed by the public flag:
+ *   1. `isAppListingsEnabled({ user })` (mods + app-dev-testers, OR-falling-back to
+ *      `app-blocks-enabled`) → `full` — sees every kind, byte-identical to today.
+ *   2. else `isExternalListingsPublicEnabled()` (the global public flag) →
+ *      `public-external` — sees only offsite listings.
+ *   3. else → `none` — dark.
+ *
+ * 🔴 DARK-by-default invariant: with `app-listings-public-external` ABSENT in Flipt
+ * (its as-merged state), a mod/tester still resolves `full` and everyone else
+ * resolves `none` — ZERO observable change until the public flag is created +
+ * enabled in a later phase.
+ */
+export async function resolveStoreVisibilityScope(opts?: {
+  user?: SessionUser;
+}): Promise<StoreVisibilityScope> {
+  // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
+  // checked FIRST so a privileged viewer always gets `full`, never `public-external`
+  // (the public flag can only ever LIFT a non-privileged viewer, never narrow a mod).
+  if (await isAppListingsEnabled(opts)) return 'full';
+  // Axis 2 — the global public-external flag (anon + everyone). Global eval; a
+  // non-privileged viewer sees ONLY offsite listings.
+  if (await isExternalListingsPublicEnabled()) return 'public-external';
+  // Fail-closed: neither flag → dark.
+  return 'none';
 }

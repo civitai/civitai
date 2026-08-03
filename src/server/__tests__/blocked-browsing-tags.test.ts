@@ -6,6 +6,10 @@ import {
 } from '~/shared/constants/browsing-settings-addons';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
   enforceBlockedBrowsingTags,
   enforceBlockedBrowsingTagsForModels,
 } from '~/server/services/blocked-browsing-tags.service';
@@ -163,5 +167,47 @@ describe('enforceBlockedBrowsingTagsForModels', () => {
     const result = await enforceBlockedBrowsingTagsForModels(input, { id: 1 });
     expect(result.emptyResult).toBe(false);
     expect(input.excludedTagIds).toContain(5188);
+  });
+
+  // The exact two levels /api/v1/models derives from `?nsfw` (models/index.ts).
+  // /api/v1/models no longer passes disableMinor itself, so THIS is what decides
+  // whether the list hides minor models — assert the end state, not just that the
+  // endpoint forwards no opinion.
+  it('derives disableMinor from the browsing level the list endpoint passes', async () => {
+    const sfw = { browsingLevel: publicBrowsingLevelsFlag } as {
+      browsingLevel: number;
+      disableMinor?: boolean;
+    };
+    await enforceBlockedBrowsingTagsForModels(sfw, { id: 1 });
+    expect(sfw.disableMinor).toBe(false);
+
+    const nsfw = { browsingLevel: allBrowsingLevelsFlag } as {
+      browsingLevel: number;
+      disableMinor?: boolean;
+    };
+    await enforceBlockedBrowsingTagsForModels(nsfw, { id: 1 });
+    expect(nsfw.disableMinor).toBe(true);
+  });
+
+  it('ignoreBrowsingAddons drops the minor gate AND the tag union, but keeps disablePoi', async () => {
+    // Uniformity with /models/{id}: the site serves minor + child-tagged models
+    // at a direct id and 404s POI ones, so the by-id API must do the same.
+    const input = { browsingLevel: NsfwLevel.R } as {
+      browsingLevel: number;
+      disableMinor?: boolean;
+      disablePoi?: boolean;
+      excludedTagIds?: number[];
+    };
+    await enforceBlockedBrowsingTagsForModels(input, { id: 1 }, { ignoreBrowsingAddons: true });
+    expect(input.disableMinor).toBeUndefined();
+    expect(input.excludedTagIds).toBeUndefined();
+    expect(input.disablePoi).toBe(true);
+  });
+
+  it('ignoreBrowsingAddons never overrides caller-set values', async () => {
+    const input = { browsingLevel: NsfwLevel.PG, disableMinor: true, excludedTagIds: [42] };
+    await enforceBlockedBrowsingTagsForModels(input, { id: 1 }, { ignoreBrowsingAddons: true });
+    expect(input.disableMinor).toBe(true);
+    expect(input.excludedTagIds).toEqual([42]);
   });
 });

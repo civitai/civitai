@@ -9,6 +9,7 @@ import {
   Group,
   Indicator,
   Loader,
+  type MantineSize,
   Menu,
   Paper,
   type PaperProps,
@@ -20,11 +21,13 @@ import {
   Progress,
   ThemeIcon,
   Title,
+  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
+import type { MouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
@@ -36,6 +39,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -67,6 +71,7 @@ import {
   IconGift,
   IconPencil,
   IconPhoto,
+  IconRefresh,
   IconShare3,
   IconSparkles,
   IconLock,
@@ -77,13 +82,19 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useDeleteUserChallenge, useQueryChallenge } from '~/components/Challenge/challenge.utils';
+import {
+  getChallengeDisplayUser,
+  useDeleteUserChallenge,
+  useIsChallengeOwner,
+  useQueryChallenge,
+} from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
+import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -181,34 +192,65 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
 
-      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (challenge)
+        gating = {
+          contentNsfwLevel: challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0),
+          nsfw: challenge.source === ChallengeSource.User && challenge.buzzType === 'yellow',
+        };
+
       if (challenge) {
-        const correctSlug = slugit(challenge.title);
-        const currentSlug = result.data.slug?.join('/');
-        // Skip the redirect when the canonical slug is empty — slugit() strips
-        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
-        // dots-only titles slugify to ''. Redirecting to /challenges/<id>/ (empty
-        // slug) gets trailing-slash-normalized back to /challenges/<id>, which
-        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS).
-        if (correctSlug && currentSlug !== correctSlug) {
-          const queryString = buildPassthroughQuery(ctx.query);
-          return {
-            redirect: {
-              destination: `/challenges/${result.data.id}/${correctSlug}${queryString}`,
-              permanent: false,
-            },
-          };
-        }
+        const destination = getCanonicalSlugDestination({
+          basePath: '/challenges',
+          id: result.data.id,
+          title: challenge.title,
+          currentSlug: result.data.slug?.join('/'),
+          queryString: buildPassthroughQuery(ctx.query),
+        });
+        if (destination) return { redirect: { destination, permanent: false } };
       }
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
+
+// The hero, prize and judge panels above the target section keep resolving after the challenge
+// query does, so a single scroll lands short. Re-pin on a short interval to the first of `ids`
+// present in the DOM (winners → entries fallback, since a completed challenge that never picked
+// winners has no podium), and stop the moment the reader takes over. Returns an abort fn so the
+// caller can cancel on unmount; the AbortController's signal also tears down all three listeners
+// in one shot on any exit path.
+function scrollToHash(ids: string[]) {
+  const deadline = Date.now() + 1500;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const events = ['wheel', 'touchmove', 'keydown'] as const;
+  events.forEach((e) =>
+    window.addEventListener(e, () => controller.abort(), { passive: true, signal })
+  );
+
+  const pin = () => {
+    if (signal.aborted) return;
+    const target = ids.map((id) => document.getElementById(id)).find(Boolean);
+    target?.scrollIntoView();
+    if (Date.now() < deadline) setTimeout(pin, 250);
+    else controller.abort();
+  };
+  requestAnimationFrame(pin);
+  return () => controller.abort();
+}
+
+// Deep-link anchors → ordered scroll targets (first present wins).
+const DEEP_LINK_TARGETS: Record<string, string[]> = {
+  entries: ['entries'],
+  winners: ['winners', 'entries'],
+};
 
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
@@ -218,6 +260,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const queryUtils = trpc.useUtils();
   const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
   const deletingOwnRef = useRef(false);
+  const deepLinkHandledFor = useRef<number>();
+  const isOwner = useIsChallengeOwner(challenge);
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -237,6 +281,15 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onSuccess: () => {
       queryUtils.challenge.getById.invalidate({ id });
       showSuccessNotification({ message: 'Challenge cancelled' });
+    },
+    onError: handleMutationError,
+  });
+
+  const rescanMutation = trpc.challenge.rescan.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message: 'Rescan queued. The verdict will apply once the scan completes.',
+      });
     },
     onError: handleMutationError,
   });
@@ -296,6 +349,42 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
+  const handleRescan = () => {
+    if (!challenge) return;
+    // Only a live green user challenge is cancelled outright on an NSFW verdict
+    // (computeNsfwEscalation); everything else is just raised to R in place.
+    const warnOnNsfw =
+      challenge.status === ChallengeStatus.Active &&
+      challenge.source === ChallengeSource.User &&
+      challenge.buzzType === 'green';
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Rescan Content',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Re-run the content scan for <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+            </Text>
+            <Text size="sm" c="dimmed">
+              Resubmits the challenge text and re-queues the cover image, ignoring the previous
+              verdict. The challenge stays visible while the scan runs.
+            </Text>
+            {warnOnNsfw && (
+              <Text size="sm" c="yellow.6">
+                This challenge is live. If the rescan comes back NSFW, it will be cancelled and
+                hidden — entrants are refunded their prize-pool contribution and notified, and the
+                creator&apos;s escrowed prize is returned.
+              </Text>
+            )}
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Rescan' },
+        onConfirm: () => rescanMutation.mutateAsync({ id }),
+      },
+    });
+  };
+
   const handleDelete = () => {
     dialogStore.trigger({
       component: ConfirmDialog,
@@ -309,6 +398,39 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
+  // Deep links from the "Your Challenges" cards: `#entries`/`#winners` scroll to that section,
+  // `?submit=1` opens the submit modal. All wait on `challenge` — the target section mounts with
+  // the query, long after the browser would have tried its own hash scroll (and it scrolls an
+  // inner `.scroll-area` container, not the window). `submit` is stripped before the modal opens
+  // so a refresh or back-nav doesn't re-trigger it.
+  useEffect(() => {
+    // Scoped to the loaded challenge id, not a one-shot bool: Next reuses this component across
+    // detail→detail navigations, so a boolean guard would swallow a deep link on the second one.
+    if (!challenge || deepLinkHandledFor.current === challenge.id) return;
+    deepLinkHandledFor.current = challenge.id;
+
+    const wantsSubmit = !!router.query.submit;
+    if (wantsSubmit) {
+      const { submit, ...query } = router.query;
+      router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    }
+
+    const targets = DEEP_LINK_TARGETS[router.asPath.split('#')[1]];
+    const abortScroll = targets ? scrollToHash(targets) : undefined;
+
+    const canSubmit =
+      challenge.status === ChallengeStatus.Active &&
+      !!challenge.collectionId &&
+      !currentUser?.muted;
+    if (wantsSubmit && canSubmit && challenge.collectionId)
+      dialogStore.trigger({
+        component: ChallengeSubmitModal,
+        props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+      });
+
+    return abortScroll;
+  }, [challenge, router, currentUser?.muted]);
+
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
 
@@ -318,18 +440,21 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Only User-source challenges carry user-authored text worth reporting
   const canReport = !!currentUser && challenge.source === ChallengeSource.User;
 
-  const isOwner =
-    !!currentUser &&
-    currentUser.id === challenge.createdById &&
-    challenge.source === ChallengeSource.User;
+  const isCancelled = challenge.status === ChallengeStatus.Cancelled;
   const canManageOwn =
     features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
+  // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
+  // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
+  const canDeleteOwn =
+    features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
       title: 'Delete challenge',
-      children:
-        'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      // A Cancelled challenge was already refunded by the void, so don't promise another refund.
+      children: isCancelled
+        ? 'Delete this cancelled challenge? This cannot be undone.'
+        : 'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
       centered: true,
       closeOnConfirm: false,
       labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
@@ -356,6 +481,16 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
       // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      // Yellow user challenges live on civitai.red regardless of rating — the server returns
+      // them on green so this renders the redirect card instead of a 404 (inert on red).
+      // Owner/mods keep detail access on green for SFW yellow challenges, mirroring the
+      // server-side preview exemption; NSFW ones still redirect via contentNsfwLevel.
+      nsfw={
+        challenge.source === ChallengeSource.User &&
+        challenge.buzzType === 'yellow' &&
+        !isOwner &&
+        !currentUser?.isModerator
+      }
       bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
@@ -373,12 +508,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.title}
             </Title>
             <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ChallengeNotifyToggle challenge={{ id: challenge.id, status: challenge.status }} />
               <ShareButton url={router.asPath} title={challenge.title}>
                 <ActionIcon variant="light" size="lg" color="gray">
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {(currentUser?.isModerator || canReport || canManageOwn) && (
+              {(currentUser?.isModerator || canReport || canDeleteOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -392,7 +528,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         <Menu.Item
                           leftSection={<IconPencil size={14} stroke={1.5} />}
                           component={Link}
-                          href={`/moderator/challenges/${challenge.id}/edit`}
+                          // User challenges use the user form (entry fee / judging categories);
+                          // the moderator form's prize model doesn't apply to them.
+                          href={
+                            challenge.source === ChallengeSource.User
+                              ? `/challenges/${challenge.id}/edit`
+                              : `/moderator/challenges/${challenge.id}/edit`
+                          }
                         >
                           Edit Challenge
                         </Menu.Item>
@@ -414,6 +556,19 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                             </Menu.Item>
                           )}
                         </ToggleLockComments>
+                        <Menu.Item
+                          leftSection={
+                            rescanMutation.isPending ? (
+                              <Loader size={14} />
+                            ) : (
+                              <IconRefresh size={14} stroke={1.5} />
+                            )
+                          }
+                          onClick={handleRescan}
+                          disabled={rescanMutation.isPending}
+                        >
+                          Rescan Content
+                        </Menu.Item>
 
                         {isActive && (
                           <>
@@ -459,16 +614,18 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         </Menu.Item>
                       </>
                     )}
-                    {canManageOwn && (
+                    {canDeleteOwn && (
                       <>
                         <Menu.Label>Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconPencil size={14} stroke={1.5} />}
-                          component={Link}
-                          href={`/challenges/${challenge.id}/edit`}
-                        >
-                          Edit Challenge
-                        </Menu.Item>
+                        {canManageOwn && (
+                          <Menu.Item
+                            leftSection={<IconPencil size={14} stroke={1.5} />}
+                            component={Link}
+                            href={`/challenges/${challenge.id}/edit`}
+                          >
+                            Edit Challenge
+                          </Menu.Item>
+                        )}
                         <Menu.Item
                           leftSection={<IconTrash size={14} />}
                           color="red"
@@ -522,6 +679,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Badge size="lg" radius="sm" color="blue">
                 Upcoming
               </Badge>
+            ) : isCancelled ? (
+              <IconBadge size="lg" radius="sm" color="red" icon={<IconX size={16} />}>
+                Cancelled
+              </IconBadge>
             ) : null}
 
             {/* Countdown (active only) */}
@@ -557,9 +718,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap="md">
-              {/* Cover Image */}
+              {/* w-full is load-bearing: `mx-auto` cancels the parent Stack's cross-axis stretch,
+                  so without a definite width the box is fit-content — and the blurred branch's only
+                  content is MediaHash's absolutely-positioned canvas, collapsing the cover to 0x0. */}
               {challenge.coverImage && (
-                <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
+                <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg">
                   <ImageGuard2 image={challenge.coverImage}>
                     {(safe) => (
                       <>
@@ -607,7 +770,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
       {/* Discussion Section */}
       <Container size="xl" id="comments" py={32}>
-        <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
+        <ChallengeDiscussion
+          challengeId={challenge.id}
+          userId={getChallengeDisplayUser(challenge).id}
+        />
       </Container>
 
       {/* Entries Section */}
@@ -703,6 +869,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const isActive = challenge.status === ChallengeStatus.Active;
   const isDynamicPool = challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
+  const isOwner = useIsChallengeOwner(challenge);
+
+  const handleOpenSubmitModal = () => {
+    if (!challenge.collectionId) return;
+    dialogStore.trigger({
+      component: ChallengeSubmitModal,
+      props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+    });
+  };
 
   // Get user's entry count for this challenge
   const { data: userEntryData } = trpc.challenge.getUserEntryCount.useQuery(
@@ -758,15 +933,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Ends',
-      value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Max Entries',
@@ -832,7 +1003,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       </Group>
     ),
     value: (
-      <CurrencyBadge size="sm" currency={Currency.BUZZ} unitAmount={prize.buzz} />
+      <CurrencyBadge
+        size="sm"
+        currency={Currency.BUZZ}
+        type={challenge.buzzType}
+        unitAmount={prize.buzz}
+      />
     ),
   }));
 
@@ -939,7 +1115,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               </Group>
 
               <Group gap={6} justify="center" align="baseline">
-                <CurrencyIcon currency="BUZZ" size={28} />
+                <CurrencyIcon currency="BUZZ" type={challenge.buzzType} size={28} />
                 <Text
                   fw={900}
                   style={{
@@ -1153,25 +1329,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Generate
                 </Button>
                 {challenge.collectionId && (
-                  <LoginRedirect reason="submit-challenge">
-                    <Button
-                      onClick={() => {
-                        dialogStore.trigger({
-                          component: ChallengeSubmitModal,
-                          props: {
-                            challengeId: challenge.id,
-                            collectionId: challenge.collectionId!,
-                          },
-                        });
-                      }}
-                      leftSection={<IconPhoto size={16} />}
-                      variant="light"
-                      color="blue"
-                      fullWidth
-                    >
-                      Submit
-                    </Button>
-                  </LoginRedirect>
+                  <SubmitEntryButton
+                    isOwner={isOwner}
+                    onClick={handleOpenSubmitModal}
+                    label="Submit"
+                    fullWidth
+                  />
                 )}
               </Group>
             </div>
@@ -1194,22 +1357,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 Generate
               </Button>
               {challenge.collectionId && (
-                <LoginRedirect reason="submit-challenge">
-                  <Button
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: ChallengeSubmitModal,
-                        props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-                      });
-                    }}
-                    leftSection={<IconPhoto size={16} />}
-                    variant="light"
-                    color="blue"
-                    fullWidth
-                  >
-                    Submit
-                  </Button>
-                </LoginRedirect>
+                <SubmitEntryButton
+                  isOwner={isOwner}
+                  onClick={handleOpenSubmitModal}
+                  label="Submit"
+                  fullWidth
+                />
               )}
             </>
           ) : challenge.status === ChallengeStatus.Completed ? (
@@ -1390,12 +1543,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       </Accordion>
 
       <CreatorCardSimple
-        user={{
-          ...challenge.createdBy,
-          // Convert null to undefined for CreatorCardSimple compatibility
-          cosmetics: challenge.createdBy.cosmetics ?? undefined,
-          profilePicture: challenge.createdBy.profilePicture ?? undefined,
-        }}
+        user={(() => {
+          const author = getChallengeDisplayUser(challenge);
+          return {
+            ...author,
+            // Convert null to undefined for CreatorCardSimple compatibility
+            cosmetics: author.cosmetics ?? undefined,
+            profilePicture: author.profilePicture ?? undefined,
+          };
+        })()}
         statDisplayOverwrite={[]}
       />
     </Stack>
@@ -1427,6 +1583,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
 
   return (
     <div
+      id="winners"
       className="relative overflow-hidden py-12"
       style={{
         background: isDark
@@ -1461,6 +1618,8 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                   isFirst={index === 1}
                   className={index === 1 ? 'z-10' : ''}
                   judgeInfo={judgeInfo}
+                  judgingCategories={challenge.judgingCategories}
+                  buzzType={challenge.buzzType}
                 />
               ))}
             </div>
@@ -1478,6 +1637,8 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     isFirst={winner.place === 1}
                     isMobile
                     judgeInfo={judgeInfo}
+                    judgingCategories={challenge.judgingCategories}
+                    buzzType={challenge.buzzType}
                   />
                 ))}
             </Stack>
@@ -1565,14 +1726,18 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   // the domain rule, so the toggle would be a no-op for them.
   const showPG13Toggle = domainColor === 'green' && !!currentUser;
 
+  const router = useRouter();
+
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
-  const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  // Seeded from `?mine=1` so the Your Challenges "View entry" CTA lands on the user's own entries.
+  const [myEntriesOnly, setMyEntriesOnly] = useState(() => !!router.query.mine);
   const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
   const [includePG13, setIncludePG13] = useState(false);
   const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
+  const isOwner = useIsChallengeOwner(challenge);
 
   const filterCount =
     (judgeReviewedOnly ? 1 : 0) +
@@ -1710,6 +1875,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   return (
     <Container
       fluid
+      id="entries"
       my="md"
       style={{
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
@@ -1738,16 +1904,12 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     >
                       Generate Entries
                     </Button>
-                    <LoginRedirect reason="submit-challenge">
-                      <Button
-                        size="sm"
-                        variant="light"
-                        onClick={handleOpenSubmitModal}
-                        leftSection={<IconPhoto size={16} />}
-                      >
-                        Submit Entries
-                      </Button>
-                    </LoginRedirect>
+                    <SubmitEntryButton
+                      isOwner={isOwner}
+                      onClick={handleOpenSubmitModal}
+                      label="Submit Entries"
+                      size="sm"
+                    />
                   </>
                 )}
               </Group>
@@ -1776,6 +1938,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 }}
                 disableStoreFilters
                 judgeInfo={judgeInfo}
+                judgingCategories={challenge.judgingCategories}
               />
             )}
           </Stack>
@@ -1788,8 +1951,17 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
 function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const isActive = challenge.status === ChallengeStatus.Active;
+  const isOwner = useIsChallengeOwner(challenge);
 
   const isDynamicPool = challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
+
+  const handleOpenSubmitModal = () => {
+    if (!challenge.collectionId) return;
+    dialogStore.trigger({
+      component: ChallengeSubmitModal,
+      props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+    });
+  };
 
   if (!isActive || currentUser?.muted || isDynamicPool) return null;
 
@@ -1805,25 +1977,54 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
         Generate Entries
       </Button>
       {challenge.collectionId && (
-        <LoginRedirect reason="submit-challenge">
-          <Button
-            onClick={() => {
-              dialogStore.trigger({
-                component: ChallengeSubmitModal,
-                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-              });
-            }}
-            leftSection={<IconPhoto size={16} />}
-            variant="light"
-            color="blue"
-            fullWidth
-          >
-            Submit Entries
-          </Button>
-        </LoginRedirect>
+        <SubmitEntryButton
+          isOwner={isOwner}
+          onClick={handleOpenSubmitModal}
+          label="Submit Entries"
+          fullWidth
+        />
       )}
     </Stack>
   );
+}
+
+function SubmitEntryButton({
+  isOwner,
+  onClick,
+  label,
+  size,
+  fullWidth,
+}: {
+  isOwner: boolean;
+  onClick: () => void;
+  label: string;
+  size?: MantineSize;
+  fullWidth?: boolean;
+}) {
+  const button = (
+    <Button
+      // `data-disabled` instead of `disabled` so the tooltip still receives hover events.
+      data-disabled={isOwner || undefined}
+      aria-disabled={isOwner || undefined}
+      onClick={isOwner ? (e: MouseEvent) => e.preventDefault() : onClick}
+      leftSection={<IconPhoto size={16} />}
+      variant="light"
+      color="blue"
+      size={size}
+      fullWidth={fullWidth}
+    >
+      {label}
+    </Button>
+  );
+
+  if (isOwner)
+    return (
+      <Tooltip label="You can't submit entries to your own challenge" withArrow>
+        {button}
+      </Tooltip>
+    );
+
+  return <LoginRedirect reason="submit-challenge">{button}</LoginRedirect>;
 }
 
 function getPlaceLabel(place: number): string {

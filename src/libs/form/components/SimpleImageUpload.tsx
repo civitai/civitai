@@ -6,7 +6,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import type { DragEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import classes from './SimpleImageUpload.module.scss';
 
@@ -23,11 +23,23 @@ import { reportApplicationError } from '~/utils/application-error';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
+/**
+ * `idle`   — nothing in flight; the current value is settled.
+ * `uploading` — a drop is being processed/uploaded; the value has NOT changed yet.
+ * `error`  — the last upload attempt failed; the previous value is still intact.
+ */
+export type SimpleImageUploadState = 'idle' | 'uploading' | 'error';
+
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?:
     | string
     | { id?: number; nsfwLevel?: number; userId?: number; user?: { id: number }; url: string };
   onChange?: (value: DataFromFile | null) => void;
+  /**
+   * Opt-in upload-lifecycle signal for forms that must not submit mid-upload.
+   * Purely additive — consumers that don't pass it behave exactly as before.
+   */
+  onUploadStateChange?: (state: SimpleImageUploadState) => void;
   previewWidth?: number;
   maxSize?: number;
   aspectRatio?: number;
@@ -41,6 +53,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
 export function SimpleImageUpload({
   value,
   onChange,
+  onUploadStateChange,
   maxSize = constants.mediaUpload.maxImageFileSize,
   previewWidth = 450,
   aspectRatio,
@@ -57,24 +70,42 @@ export function SimpleImageUpload({
   const [image, setImage] = useState<{ url: string; objectUrl?: string } | undefined>();
 
   const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const hasLargeFile = droppedFiles.some((file) => file.size > maxSize);
     if (hasLargeFile) return setError(`Files should not exceed ${formatBytes(maxSize)}`);
 
-    handleRemove();
+    // 🔴 Deliberately does NOT call `handleRemove()` here.
+    //
+    // `handleRemove` fires `onChange(null)`, which cleared the parent form's value the
+    // instant a replacement was dropped — while `onChange` only fires again once the
+    // new upload reaches `status === 'success'`. A form saved mid-upload, or after a
+    // failed upload, therefore persisted "no image" and destroyed the previous one.
+    //
+    // Only `resetFiles()` is needed to free the tracked-file slot for the new upload;
+    // holding the old value until a replacement actually succeeds costs nothing and is
+    // strictly safer. This path is reachable with a value present wherever the dropzone
+    // stays mounted alongside one — `previewDisabled` consumers (e.g.
+    // PurchasableRewardUpsertForm) and the drag-from-generator `onDropCapture`.
+    resetFiles();
     setError('');
+    setUploading(true);
     const [file] = droppedFiles;
 
     try {
       await uploadToCF(file);
     } catch (e) {
       const reason = e instanceof Error && e.message ? e.message : '';
-      setError(reason ? `Image upload failed: ${reason}` : 'Image upload failed. Please try again.');
+      setError(
+        reason ? `Image upload failed: ${reason}` : 'Image upload failed. Please try again.'
+      );
       reportApplicationError(e, {
         name: 'SimpleImageUpload',
         message: `upload failed | file: ${file.name} (${file.type || 'unknown'}, ${file.size}b)`,
       });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -97,7 +128,10 @@ export function SimpleImageUpload({
     } catch (e) {
       console.error('Failed to load dropped image', e);
       setError("Couldn't load that image. Try saving it and uploading the file instead.");
-      reportApplicationError(e, { name: 'SimpleImageUpload', message: `drag-from-url failed | ${url}` });
+      reportApplicationError(e, {
+        name: 'SimpleImageUpload',
+        message: `drag-from-url failed | ${url}`,
+      });
     }
   };
 
@@ -125,8 +159,17 @@ export function SimpleImageUpload({
     // don't disable the eslint-disable
   }, [imageFile]); // eslint-disable-line
 
-  const [match] = imageFiles;
-  const showLoading = match && match.progress < 100;
+  // Driven by the drop lifecycle rather than upload progress: a failed upload leaves
+  // `progress` below 100 forever, which used to pin the overlay on permanently —
+  // no preview to remove and no dropzone to retry with.
+  const showLoading = uploading;
+
+  const uploadState: SimpleImageUploadState = uploading ? 'uploading' : error ? 'error' : 'idle';
+  const onUploadStateChangeRef = useRef(onUploadStateChange);
+  onUploadStateChangeRef.current = onUploadStateChange;
+  useEffect(() => {
+    onUploadStateChangeRef.current?.(uploadState);
+  }, [uploadState]);
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>

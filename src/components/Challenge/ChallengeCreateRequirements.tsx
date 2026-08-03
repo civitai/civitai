@@ -1,7 +1,9 @@
-import { Anchor, Divider, Paper, Stack, Text } from '@mantine/core';
-import { IconCircleCheck, IconCircleX } from '@tabler/icons-react';
+import { Anchor, Button, Divider, Modal, Stack, Text } from '@mantine/core';
+import { IconArrowLeft, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
-import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -16,10 +18,14 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
         content: (
           <Text size="sm" c="dimmed">
             Your current{' '}
-            <Anchor inherit onClick={() => openCreatorScoreModal()}>
+            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
               Creator Score
             </Anchor>{' '}
-            is {abbreviateNumber(req.current)}.
+            is{' '}
+            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
+              {abbreviateNumber(req.current)}
+            </Anchor>
+            .
           </Text>
         ),
       };
@@ -81,18 +87,29 @@ function RequirementRow({ req }: { req: Requirement }) {
 }
 
 export function ChallengeCreateRequirements({ eligibility }: { eligibility: Eligibility }) {
+  const router = useRouter();
+  const hasHistory = useHasClientHistory();
+
+  const handleGoBack = () => {
+    if (hasHistory) router.back();
+    else router.push('/challenges');
+  };
+
   return (
-    <Paper withBorder p="lg" radius="md">
+    <Modal
+      opened
+      onClose={handleGoBack}
+      withCloseButton={false}
+      closeOnClickOutside={false}
+      closeOnEscape={false}
+      title="Requirements to create a challenge"
+      centered
+    >
       <Stack gap="md">
-        <div>
-          <Text fw={700} size="lg">
-            Requirements to create a challenge
-          </Text>
-          <Text size="sm" c="dimmed">
-            You don&apos;t meet all the requirements to create a challenge yet. Once every item below
-            is met, you&apos;ll be able to create one.
-          </Text>
-        </div>
+        <Text size="sm" c="dimmed">
+          You don&apos;t meet all the requirements to create a challenge yet. Once every item below
+          is met, you&apos;ll be able to create one.
+        </Text>
         <Divider />
         <Stack gap="md">
           {eligibility.requirements
@@ -104,7 +121,10 @@ export function ChallengeCreateRequirements({ eligibility }: { eligibility: Elig
               <RequirementRow key={req.key} req={req} />
             ))}
         </Stack>
+        <Button onClick={handleGoBack} leftSection={<IconArrowLeft size={16} />} fullWidth>
+          Go back
+        </Button>
       </Stack>
-    </Paper>
+    </Modal>
   );
 }

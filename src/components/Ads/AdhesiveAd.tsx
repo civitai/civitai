@@ -41,7 +41,7 @@ function AdhesiveAdContent({
         className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9"
         style={{ minHeight: isMobile ? 50 : 90 }}
       >
-        <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout} />
+        <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout && !isMobile} />
         {canClose && onClose && (
           <button
             className="absolute inset-y-0 right-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"

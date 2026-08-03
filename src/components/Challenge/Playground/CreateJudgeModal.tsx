@@ -3,8 +3,9 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
-import { Form, InputJson, InputText, InputTextArea, useForm } from '~/libs/form';
+import { Form, InputJson, InputSwitch, InputText, InputTextArea, useForm } from '~/libs/form';
 import { upsertJudgeSchema } from '~/server/schema/challenge.schema';
+import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { usePlaygroundStore } from './playground.store';
@@ -26,6 +27,7 @@ const defaultValues: z.infer<typeof schema> = {
   reviewPrompt: null,
   reviewTemplate: null,
   winnerSelectionPrompt: null,
+  userSelectable: false,
 };
 
 export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
@@ -80,6 +82,7 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
       reviewPrompt: data.reviewPrompt,
       reviewTemplate: data.reviewTemplate,
       winnerSelectionPrompt: data.winnerSelectionPrompt,
+      userSelectable: data.userSelectable,
     });
   };
 
@@ -150,6 +153,11 @@ export function CreateJudgeModal({ opened, onClose }: { opened: boolean; onClose
             autosize
             minRows={3}
             maxRows={8}
+          />
+          <InputSwitch
+            name="userSelectable"
+            label={JUDGE_USER_SELECTABLE_FIELD.label}
+            description={JUDGE_USER_SELECTABLE_FIELD.description}
           />
           <Group justify="flex-end" mt="sm">
             <Button variant="default" onClick={resetAndClose}>

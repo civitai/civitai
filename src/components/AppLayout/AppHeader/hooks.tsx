@@ -7,6 +7,7 @@ import {
   IconBookmark,
   IconBookmarkEdit,
   IconBrush,
+  IconChartHistogram,
   IconCloudLock,
   IconCode,
   IconCube,
@@ -21,6 +22,7 @@ import {
   IconPlugConnected,
   IconProgressBolt,
   IconSword,
+  IconShoppingBag,
   IconThumbUp,
   IconTrophy,
   IconUpload,
@@ -36,6 +38,8 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
@@ -93,6 +97,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Your Profile',
         },
         {
+          href: `/user/${currentUser?.username as string}/shop`,
+          // Only Creator Program members qualify to run a shop.
+          visible:
+            features.creatorShop &&
+            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
+          icon: IconShoppingBag,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Shop',
+        },
+        {
           href: `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
@@ -131,7 +145,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Challenges',
+          label: 'Your Challenges',
           newUntil: new Date('2026-08-15'),
         },
         {
@@ -140,6 +154,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconProgressBolt,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Buzz Dashboard',
+        },
+        {
+          // The Creator Studio spoke (creator-studio.civitai.com) — earnings/analytics + per-version
+          // licensing-fee and paid-access management. Shared session, so a plain cross-subdomain link.
+          href: 'https://creator-studio.civitai.com',
+          visible: !!currentUser,
+          icon: IconChartHistogram,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Studio',
+          newUntil: new Date('2026-09-01'),
         },
         {
           href: '/user/vault',
@@ -173,13 +197,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
           // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
-          // (mod-only today). Relabeled "Apps Marketplace" so it reads distinctly
-          // from the public "Build apps" entry above.
+          // (mod-only today). Labeled "Apps" so it reads distinctly from the
+          // public "Build apps" entry above.
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Apps Marketplace',
+          label: 'Apps',
           newUntil: new Date('2026-07-01'),
         },
       ],

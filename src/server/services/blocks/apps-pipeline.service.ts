@@ -31,6 +31,8 @@
  */
 
 import { createHmac } from 'crypto';
+import * as nodeHttp from 'node:http';
+import * as nodeHttps from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { env } from '~/env/server';
 
@@ -175,6 +177,270 @@ export function reviewHostSha(sha: string): string {
  *  apply Job all derive the SAME host from the same sha. */
 export function reviewHost(sha: string, appsDomain: string): string {
   return `review-${reviewHostSha(sha)}.${appsDomain}`;
+}
+
+/**
+ * Origin-direct probe seam: make ONE request to `url` and resolve its HTTP
+ * status (or reject on a connection error / abort). Deliberately NOT `fetch`:
+ * the origin-direct probe must set an arbitrary `Host` header while dialing a
+ * raw IP, and global `fetch` (undici) SILENTLY DROPS a custom `Host` header (it
+ * is a forbidden header name) — which would send the wrong Host to Traefik and
+ * always route to its default 404. Node's core http(s) client has no such
+ * restriction, so the default impl below uses it. Injectable so tests never
+ * touch a real socket.
+ */
+export type OriginProbe = (
+  url: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    redirect: RequestRedirect;
+    signal?: AbortSignal;
+  }
+) => Promise<{ status: number }>;
+
+/** Default {@link OriginProbe}: a Node-core http(s) request that honours the
+ *  `Host` header while connecting to the URL's host (a raw origin IP). The
+ *  default probe uses http:// (the review IngressRoute serves Traefik's `web`
+ *  entrypoint too — `entryPoints: [web, websecure]`), so no TLS is involved. For
+ *  the https:// case, cert verification is disabled because the origin cert is
+ *  for *.civit.ai and can NEVER match the raw LB IP we dial. */
+function defaultOriginProbe(
+  url: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    redirect: RequestRedirect;
+    signal?: AbortSignal;
+  }
+): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const isHttps = u.protocol === 'https:';
+    const mod = isHttps ? nodeHttps : nodeHttp;
+    const req = mod.request(
+      {
+        host: u.hostname,
+        port: u.port ? Number(u.port) : isHttps ? 443 : 80,
+        method: init.method,
+        path: u.pathname || '/',
+        headers: init.headers,
+        ...(isHttps ? { rejectUnauthorized: false } : {}),
+      },
+      (res) => {
+        res.resume(); // drain so the socket is freed
+        resolve({ status: res.statusCode ?? 0 });
+      }
+    );
+    if (init.signal) {
+      const onAbort = () => req.destroy(new Error('aborted'));
+      if (init.signal.aborted) onAbort();
+      else init.signal.addEventListener('abort', onAbort, { once: true });
+    }
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** OPT-IN (default OFF): confirm the PUBLIC review host resolves via Cloudflare
+ *  DoH. Intended to hold "preview-live" until the public A record exists so the
+ *  mod's BROWSER can't click through to a fresh NXDOMAIN.
+ *
+ *  🔴 WHY DEFAULT-OFF: querying the 1.1.1.1 RECURSIVE resolver RE-CREATES this
+ *  PR's negative-cache bug, just relocated to Cloudflare. external-dns creates
+ *  the A record ~40s after apply; origin-direct passes within seconds, so the
+ *  FIRST DoH query races that window, gets NXDOMAIN, and Cloudflare's recursive
+ *  resolver caches the NXDOMAIN up to the civit.ai SOA minimum (1800s / 30min) —
+ *  so DoH stays blind for the rest of the 180s budget and the healthy preview is
+ *  marked preview-failed. Same one-shot failure, different cache. (Also: DoH via
+ *  1.1.1.1 doesn't prove the target property anyway — the mod's browser uses its
+ *  OWN resolver, not Cloudflare's.) Origin-direct alone is the sufficient signal.
+ *
+ *  FUTURE (follow-up, NOT implemented): an opt-in DoH that queries the zone's
+ *  AUTHORITATIVE nameserver (e.g. jill.ns.cloudflare.com) — which never
+ *  negative-caches its own zone — would be poison-immune, unlike 1.1.1.1.
+ *
+ *  Best-effort: any error, non-NOERROR status, or empty answer → "not yet". */
+async function reviewHostResolvesViaDoH(
+  host: string,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal
+): Promise<boolean> {
+  try {
+    const res = await fetchImpl(
+      `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`,
+      { method: 'GET', headers: { accept: 'application/dns-json' }, signal }
+    );
+    if (!res.ok) return false;
+    const body = (await res.json()) as { Status?: number; Answer?: unknown[] };
+    // Status 0 = NOERROR; require a non-empty Answer so NODATA / NXDOMAIN
+    // (Status 3) never counts as "resolved".
+    return body?.Status === 0 && Array.isArray(body.Answer) && body.Answer.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Poll until a freshly-deployed review preview is reachable, or give up after
+ * `timeoutMs`. The build-callback gates the `preview-live` flip on this so a mod
+ * never clicks through to a dead host.
+ *
+ * WHY ORIGIN-DIRECT — do NOT "simplify" this back to a public-DNS probe:
+ * ---------------------------------------------------------------------------
+ * The review host `review-<sha16>.civit.ai` gets its A/TXT record created by
+ * external-dns only AFTER the IngressRoute is applied — ~40s later. The old
+ * probe fetched the PUBLIC name (`https://<host>/`) inside that window, got
+ * NXDOMAIN, and — because the civit.ai SOA negative-cache MINIMUM is 1800s
+ * (30 min) — the resolver NEGATIVE-CACHED that NXDOMAIN and stayed blind to the
+ * real record for the rest of the budget. So an otherwise-healthy preview was
+ * spuriously marked `preview-failed` (permanently — the gate is one-shot).
+ * Bumping `timeoutMs` does NOT help: a 30-min negative cache outlasts any
+ * reasonable timeout. (Prod incident pubreq_01KYH22QFJQMCF51HEHRGFF8ZB.)
+ *
+ * The fix, mirroring the dev-tunnel readiness precedent (DoH to dodge the same
+ * civit.ai SOA-1800s poisoning): probe the Traefik origin IP DIRECTLY (raw IP +
+ * `Host: <host>` header), which NEVER touches public DNS, so it can't be
+ * poisoned. The workload + IngressRoute + mod-gate are healthy the whole time —
+ * an origin-direct request returns the mod-gate's 401 within seconds.
+ *
+ * REACHABILITY SEMANTICS differ from the public-name probe. Against the public
+ * name, ANY resolved response proved DNS + routing were up. Against the origin
+ * IP the TCP connection ALWAYS succeeds, so Traefik answers even before the
+ * IngressRoute is registered — with its DEFAULT 404. Hence:
+ *   reachable = a response whose status is NOT 404 (the Host rule matched → the
+ *               mod-gate/service answered, typically 401);
+ *   retry     = a 404 (route not registered yet) OR a connection error/timeout.
+ * Origin-direct alone is the sole DEFAULT signal. An OPT-IN DoH public-resolution
+ * check exists (dohEnabled) but defaults OFF — default-on DoH via 1.1.1.1 would
+ * relocate this very negative-cache bug to Cloudflare's recursive resolver (see
+ * reviewHostResolvesViaDoH).
+ *
+ * FALLBACK: when no origin IP is configured (local dev / preview envs without
+ * APPS_REVIEW_INGRESS_TARGET or APPS_DEV_TUNNEL_INGRESS_TARGET) we keep the
+ * legacy public-DNS probe (any resolved response = reachable) so nothing
+ * regresses where the origin IP isn't set.
+ *
+ * Pure + fully injectable (originIp / originProbe / fetchImpl / dohEnabled /
+ * dohFetchImpl / now / sleep / per-attempt signal) so it unit-tests without real
+ * network, DNS, TLS, or wall-clock waits.
+ */
+export async function waitForReviewHostReachable(
+  host: string,
+  opts: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    attemptTimeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    // Per-attempt abort signal factory; defaults to AbortSignal.timeout so one
+    // hung connection can't consume the whole budget. Overridable in tests to
+    // avoid scheduling real timers.
+    signalFactory?: (ms: number) => AbortSignal | undefined;
+    // Origin Traefik LB IP for the origin-direct probe. Default resolves from
+    // env: APPS_REVIEW_INGRESS_TARGET, else APPS_DEV_TUNNEL_INGRESS_TARGET (the
+    // same shared LB IP already set on dp-prod). `null`/'' → fall back to the
+    // legacy public-DNS probe. Injectable so tests don't depend on real env.
+    originIp?: string | null;
+    // Origin-direct probe impl (see OriginProbe). Injectable so tests never open
+    // a socket.
+    originProbe?: OriginProbe;
+    // OPT-IN (default OFF): also gate on a Cloudflare-DoH public-resolution
+    // check once origin-direct passes. Default-off because DoH via 1.1.1.1
+    // RE-CREATES this PR's negative-cache bug at Cloudflare's recursive resolver
+    // (see the DoH note below) — origin-direct alone is the sufficient default
+    // signal. Set true to opt in.
+    dohEnabled?: boolean;
+    // fetch impl for the DoH query; defaults to fetchImpl ?? fetch.
+    dohFetchImpl?: typeof fetch;
+  } = {}
+): Promise<boolean> {
+  // Generous default budget: the dominant lag is external-dns record creation
+  // (its sync loop runs on ~a 60s cycle), not the deploy. Env
+  // REVIEW_HOST_REACHABLE_TIMEOUT_MS (180s) — tunable without a code change.
+  const timeoutMs = opts.timeoutMs ?? env.REVIEW_HOST_REACHABLE_TIMEOUT_MS;
+  const intervalMs = opts.intervalMs ?? 4_000;
+  const attemptTimeoutMs = opts.attemptTimeoutMs ?? 10_000;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const now = opts.now ?? (() => Date.now());
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const signalFactory =
+    opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+
+  const originIp =
+    opts.originIp ??
+    env.APPS_REVIEW_INGRESS_TARGET ??
+    env.APPS_DEV_TUNNEL_INGRESS_TARGET ??
+    null;
+
+  const deadline = now() + timeoutMs;
+
+  // ---- FALLBACK: no origin IP configured → legacy public-DNS probe ----------
+  // Unchanged behaviour: any resolved response (any status) = reachable. Kept so
+  // local dev / preview envs (where the origin IP isn't set) don't regress.
+  if (!originIp) {
+    for (;;) {
+      try {
+        // HEAD + manual redirect: we only care that SOMETHING answered.
+        await doFetch(`https://${host}/`, {
+          method: 'HEAD',
+          redirect: 'manual',
+          signal: signalFactory(attemptTimeoutMs),
+        });
+        // Any resolved response → DNS + routing are up → reachable.
+        return true;
+      } catch {
+        // Not resolvable / not routing yet — wait and retry until budget runs out.
+      }
+      if (now() >= deadline) return false;
+      await sleep(intervalMs);
+      if (now() >= deadline) return false;
+    }
+  }
+
+  // ---- ORIGIN-DIRECT: dial the Traefik LB IP with a Host header -------------
+  const originProbe = opts.originProbe ?? defaultOriginProbe;
+  const originUrl = `http://${originIp}/`;
+  // DEFAULT OFF — see reviewHostResolvesViaDoH: default-on DoH via 1.1.1.1 would
+  // re-create this PR's exact negative-cache bug at Cloudflare's recursive
+  // resolver. Origin-direct alone is the sufficient default signal; DoH is opt-in.
+  const dohEnabled = opts.dohEnabled ?? false;
+  const dohFetch = opts.dohFetchImpl ?? doFetch;
+
+  for (;;) {
+    let originOk = false;
+    try {
+      const res = await originProbe(originUrl, {
+        method: 'HEAD',
+        // The Host header drives Traefik's Host(...) route match; the TCP target
+        // is the raw origin IP in originUrl, so public DNS is never consulted.
+        headers: { Host: host },
+        redirect: 'manual',
+        signal: signalFactory(attemptTimeoutMs),
+      });
+      // reachable = NOT 404. Traefik's default 404 means the IngressRoute isn't
+      // registered yet (or the Host rule didn't match) → not ready, retry.
+      originOk = res.status !== 404;
+    } catch {
+      // Connection error / abort / per-attempt timeout → not ready, retry.
+      originOk = false;
+    }
+
+    if (originOk) {
+      // Origin-direct proves the workload is healthy. Optionally also require the
+      // PUBLIC name to resolve (via DoH, immune to negative-cache) so the mod's
+      // browser won't click through to a fresh NXDOMAIN.
+      if (!dohEnabled) return true;
+      if (await reviewHostResolvesViaDoH(host, dohFetch, signalFactory(attemptTimeoutMs))) {
+        return true;
+      }
+    }
+
+    if (now() >= deadline) return false;
+    await sleep(intervalMs);
+    if (now() >= deadline) return false;
+  }
 }
 
 /** The review image for a (slug, sha). DISTINCT from the production image

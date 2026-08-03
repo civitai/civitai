@@ -1,9 +1,25 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
-import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
+import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
+import {
+  IconApps,
+  IconDots,
+  IconEyeOff,
+  IconLayoutGrid,
+  IconShieldCheck,
+  IconShieldLock,
+  IconUpload,
+} from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  getRecentlyOpenedApps,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
+import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
@@ -30,6 +46,7 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
@@ -71,6 +88,13 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 // A malicious or buggy block sending {height: 1e9} on RESIZE_IFRAME would
 // otherwise OOM the tab. 8000px is well above any legitimate block.
 const HARD_HEIGHT_CEILING = 8_000;
+
+// Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
+// Kept short so the compact menu doesn't grow unbounded (the store itself caps
+// at MAX_RECENTS PER KIND; this is the additional display cap after excluding
+// the current app). The per-kind store budget is what guarantees this menu is
+// never starved by off-site traffic it can't render.
+const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
@@ -136,12 +160,19 @@ function storageErrorMessage(err: unknown): string {
  */
 export function AppBlockChrome({
   blockInstanceId,
+  appBlockId,
   appName,
   modelId,
   modelName,
   slotId,
+  canOpenPage = false,
 }: {
   blockInstanceId: string;
+  /** The approved AppBlock id of the running app. When present, the ⋯ menu
+   *  gains a "Permissions & activity" item that opens a per-app transparency
+   *  drawer (granted scopes + action audit). Omitted → the item is not shown
+   *  (a caller that hasn't threaded the id gets the pre-existing chrome). */
+  appBlockId?: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
@@ -149,7 +180,87 @@ export function AppBlockChrome({
    *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
+  /** Mirrors the viewer's `appBlocksPages` flag: may this viewer actually open
+   *  `/apps/run/<blockId>`? Gates the "Recently run" section, whose ONLY link
+   *  shape is that route — it 404s fail-closed without the flag, and the writers
+   *  that feed the recents store record flag-blind.
+   *
+   *  🔴 THE PREDICATE IS UNIFORM ACROSS SURFACES — do not hardcode it per
+   *  mount. What gates the *surface* (`appBlocksPages` on `/apps/run`,
+   *  `appBlocksAuthor` on the dev tunnel, the reviewer gate on mod review) is a
+   *  different question from what gates the *link target*, and only the latter
+   *  matters here: the menu always points at `/apps/run/<blockId>`, whose
+   *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
+   *  viewer regardless of where they came from. So every mounter passes
+   *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
+   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
+   *
+   *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
+   *  prop hides the menu rather than offering guaranteed-404 links.
+   */
+  canOpenPage?: boolean;
 }) {
+  // Gate the platform-nav "Review" item with the SAME greppable predicate the
+  // /apps/review page + its server gate use (isAppReviewer), so the run-nav
+  // shortcut can't drift from the real reviewer gate — this stays moderator-only
+  // even after external-dev submission (W11) widens isAppDeveloper. useCurrentUser
+  // returns null for anon → not a reviewer.
+  const currentUser = useCurrentUser();
+  const isModerator = isAppReviewer(currentUser);
+  // Per-app "Permissions & activity" drawer open state (only reachable when
+  // appBlockId was threaded through).
+  const [permsOpen, setPermsOpen] = useState(false);
+
+  // The platform-nav ("Civitai Apps") Menu is CONTROLLED so we can close it when
+  // the user clicks INTO the cross-origin app iframe. Mantine's default
+  // outside-click close CAN'T detect that: the iframe swallows the mousedown, so
+  // the parent document never sees it and Mantine can't tell the click was
+  // "outside" the dropdown — the menu appears stuck open (the reported bug).
+  // The fix is iframe-aware: while the menu is open, listen for the window
+  // `blur` event, which DOES fire when focus/pointer moves into a cross-origin
+  // iframe, and close on it. Normal same-document outside-clicks + item-clicks
+  // still close via Mantine's untouched defaults (closeOnClickOutside /
+  // closeOnItemClick).
+  const [menuOpened, setMenuOpened] = useState(false);
+  useEffect(() => {
+    if (!menuOpened) return;
+    const onBlur = () => setMenuOpened(false);
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [menuOpened]);
+
+  // Recently-run apps (client-only personalisation from localStorage). Seeded
+  // empty so SSR + the first client render match (no hydration mismatch); the
+  // real list loads in an effect after mount AND is refreshed every time the
+  // menu opens (see handleMenuChange) so a within-session client-nav
+  // (app A → app B) shows the CURRENT list, not the list as of first mount.
+  // Excludes the app currently being viewed (matched by appBlockId — the store's
+  // stable id) and is capped to a short list for the compact dropdown.
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps());
+  }, []);
+  // Which of those entries this menu may offer. The rules (off-site exclusion,
+  // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
+  // `/apps/run/` links, self-exclusion, the cap) live in the pure
+  // `selectChromeRecentApps` so the node `unit` project covers them — the
+  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // off-site entries from evicting the on-site ones this menu needs.
+  const recentApps = selectChromeRecentApps(recents, {
+    canOpenPage,
+    currentAppBlockId: appBlockId,
+    limit: RECENTLY_RUN_LIMIT,
+  });
+
+  // Controlled-Menu change handler: mirror the open state AND re-read the recents
+  // store on the transition to open, so the "Recently run" list is fresh within
+  // an SPA session. Still SSR-safe — the read only happens on a user-driven open
+  // (never during render) and getRecentlyOpenedApps() self-guards `isClient`.
+  const handleMenuChange = useCallback((opened: boolean) => {
+    setMenuOpened(opened);
+    if (opened) setRecents(getRecentlyOpenedApps());
+  }, []);
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -181,6 +292,7 @@ export function AppBlockChrome({
   // avoiding an unlabeled SVG / a double-reading "App".
   const iconProvenance = hasName || !showBadgeName;
   return (
+    <>
     <Group
       justify="space-between"
       gap="xs"
@@ -196,18 +308,112 @@ export function AppBlockChrome({
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
           ⋯ menu out of the narrow sidebar layout. */}
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-        {/* Provenance signal for screen readers. role="img" is required for the
-            aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App"
-            Text carries provenance, so the icon is marked decorative. */}
-        <IconApps
-          size={14}
-          stroke={1.5}
-          role={iconProvenance ? 'img' : undefined}
-          aria-label={iconProvenance ? 'App' : undefined}
-          aria-hidden={iconProvenance ? undefined : true}
-          style={{ flexShrink: 0 }}
-        />
+        {/* The provenance app icon doubles as a quick-nav Menu of the Civitai
+            App PLATFORM's own pages (NOT the sandboxed app's internal routes —
+            apps self-route as SPAs inside the iframe; the host has no list of
+            those). The IconApps keeps its screen-reader provenance semantics
+            (role="img" + aria-label "App") — required so a bare tabler <svg>'s
+            label is announced; on the fallback the visible "App" Text carries
+            provenance instead, so the icon is marked decorative there. */}
+        <Menu
+          position="bottom-start"
+          shadow="md"
+          width={200}
+          opened={menuOpened}
+          onChange={handleMenuChange}
+        >
+          <Menu.Target>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Apps menu"
+              data-testid="app-platform-nav-trigger"
+              style={{ flexShrink: 0 }}
+            >
+              <IconApps
+                size={14}
+                stroke={1.5}
+                role={iconProvenance ? 'img' : undefined}
+                aria-label={iconProvenance ? 'App' : undefined}
+                aria-hidden={iconProvenance ? undefined : true}
+              />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>Civitai Apps</Menu.Label>
+            <Menu.Item
+              component={Link}
+              href="/apps"
+              leftSection={<IconLayoutGrid size={14} stroke={1.5} />}
+            >
+              Apps home
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/installed"
+              leftSection={<IconApps size={14} stroke={1.5} />}
+            >
+              Installed apps
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/my-submissions"
+              leftSection={<IconUpload size={14} stroke={1.5} />}
+            >
+              My submissions
+            </Menu.Item>
+            {isModerator && (
+              <Menu.Item
+                component={Link}
+                href="/apps/review"
+                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+              >
+                Review
+              </Menu.Item>
+            )}
+            {/* "Recently run" — a 1-click return to apps the viewer recently ran,
+                sourced from the client-only localStorage recents store (read
+                after mount so SSR + first client render match). Excludes the app
+                currently being viewed and the whole label+section is omitted when
+                there's nothing else to show (a first-time / single-app viewer).
+                Each item shows the app icon (persisted `iconUrl`, else a generic
+                app icon) + name, linking to the full-page run route. */}
+            {recentApps.length > 0 && (
+              <div data-testid="app-recently-run">
+                <Menu.Label>Recently run</Menu.Label>
+                {recentApps.map((r) => (
+                  <Menu.Item
+                    key={r.id}
+                    component={Link}
+                    // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
+                    href={`/apps/run/${r.blockId}`}
+                    data-testid="app-recently-run-item"
+                    leftSection={
+                      r.iconUrl ? (
+                        <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
+                      ) : (
+                        <IconApps size={14} stroke={1.5} />
+                      )
+                    }
+                  >
+                    {/* The persisted `name` is the SAME publisher-controlled string
+                        the trust label above laundered through localStorage — so
+                        route it through the identical sanitizer (strips bidi
+                        RLO/LRO overrides, zero-width/format + control chars, caps
+                        Zalgo combining runs, bounds length). `||` (not `??`) so an
+                        empty/whitespace sanitized result falls back to the blockId
+                        handle. `lineClamp={1}` keeps a pathologically long name
+                        from blowing out the width={200} dropdown. */}
+                    <Text size="sm" lineClamp={1}>
+                      {sanitizeAppChromeName(r.name) || r.blockId}
+                    </Text>
+                  </Menu.Item>
+                ))}
+              </div>
+            )}
+          </Menu.Dropdown>
+        </Menu>
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
             the menu off the row in the narrow model.sidebar_top slot. On the
@@ -282,6 +488,14 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
+          {appBlockId && (
+            <Menu.Item
+              leftSection={<IconShieldLock size={14} stroke={1.5} />}
+              onClick={() => setPermsOpen(true)}
+            >
+              Permissions & activity
+            </Menu.Item>
+          )}
           {showHide && (
             <Menu.Item
               leftSection={<IconEyeOff size={14} stroke={1.5} />}
@@ -301,6 +515,17 @@ export function AppBlockChrome({
         </Menu.Dropdown>
       </Menu>
     </Group>
+    {/* Per-app transparency drawer (Part B). Rendered only when the caller
+        threaded an appBlockId; the body's queries fire only once opened. */}
+    {appBlockId && (
+      <AppPermissionsActivityDrawer
+        appBlockId={appBlockId}
+        appName={sanitizedName ?? undefined}
+        opened={permsOpen}
+        onClose={() => setPermsOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -319,6 +544,12 @@ export function IframeHost({
   // the only producer in v1 (ModelVersionDetails); other surfaces use the
   // base SlotContext shape.
   const modelCtx = context as Partial<ModelSlotContext>;
+  // The chrome's "Recently run" menu links ONLY to `/apps/run/<blockId>`, and
+  // that route 404s unless the viewer has BOTH `appBlocks` AND `appBlocksPages`
+  // — on EVERY surface, because the gate is on the viewer, not on where the
+  // link was clicked from. So the predicate mirrors the route's own
+  // `getServerSideProps` conjunction, not just the pages flag.
+  const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [iframeHeight, setIframeHeight] = useState<number>(
@@ -339,15 +570,32 @@ export function IframeHost({
   // the controller started — the next tick picks up the new payload) without
   // re-creating the controller and resetting its timers.
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
-  // Analytics Phase 2: emit-once guard for the block-render beacon (see the
-  // BLOCK_READY effect). The 'loading' → 'ready' transition is the primary
-  // dedup; this ref makes the per-mount emit deterministic even if duplicate
-  // BLOCK_READY acks land before React commits the 'ready' state.
+  // Analytics Phase 2: emit-once guard for the block-render beacon, SHARED with
+  // the render-FAILURE beacon below so `ok` and `error` are mutually exclusive
+  // per mount. The committed-`status` effects are the primary dedup; this ref
+  // makes the per-mount emit deterministic even if duplicate BLOCK_READY acks
+  // land before React commits the 'ready' state.
   const blockRenderEmittedRef = useRef<boolean>(false);
+  // The height the block offered in its BLOCK_READY ack, stashed for the
+  // ready-transition effect to apply once React has COMMITTED 'ready'.
+  //
+  // 🔴 A ref, not state, and read ONLY from the `status === 'ready'` effect. That
+  // makes H-11 STRUCTURAL rather than a timing observation: a late ack that
+  // arrives after the host already landed on 'timeout' / 'fatal' / 'no_token'
+  // still writes here, but `status` can never become 'ready' again from a
+  // terminal state (BLOCK_READY only transitions FROM 'loading'), so the stashed
+  // value is simply never read and the height is never applied.
+  const pendingReadyHeightRef = useRef<unknown>(undefined);
+  // Run the loading→ready side effects (height + `ok` beacon) exactly once per
+  // mount. Without this, an identity change of the `applyHeight` callback (its
+  // deps are manifest min/max height) would re-run the effect while `status` is
+  // still 'ready' and re-apply the handshake height, clobbering a height the
+  // block had since negotiated via RESIZE_IFRAME.
+  const readyTransitionAppliedRef = useRef<boolean>(false);
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression,
-  // emitted exactly once per mount at the BLOCK_READY transition (see the
-  // BLOCK_READY effect below) via the lightweight /api/track/block-render beacon
+  // emitted exactly once per mount on the COMMITTED loading→ready transition
+  // (see the ready-transition effect below) via the /api/track/block-render beacon
   // (NOT a tRPC mutation — this fires per model-page-with-a-block view, so at GA
   // it must skip the full tRPC middleware chain; mirrors the #2680 addView ->
   // beacon move). The client passes only the three identifiers; `isAnon`/`userId`
@@ -641,48 +889,92 @@ export function IframeHost({
     const off = onMessage<unknown>('BLOCK_READY', (raw) => {
       // Validate the shape — payload comes from cross-origin iframe code and
       // is functionally untyped. Reject anything that isn't {height?:number}.
+      // (`applyHeight` is the value guard: it drops anything non-finite/≤0 and
+      // clamps to manifest min/max + HARD_HEIGHT_CEILING.)
       const payload =
         raw && typeof raw === 'object' && 'height' in raw ? (raw as { height?: unknown }) : {};
-      // H-11: only honor the height when the transition actually lands on
-      // 'ready'. setStatus's updater returns the *prior* status — we use
-      // the next status (which the updater computed) to gate the height
-      // application. Late BLOCK_READY arriving after timeout/fatal/no_token
-      // must not nudge the iframe height.
-      let appliedReady = false;
-      setStatus((current) => {
-        if (current === 'loading') {
-          appliedReady = true;
-          return 'ready';
-        }
-        return current;
-      });
-      if (appliedReady) {
-        // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
-        // timeout. One extra in-flight retry tick before this lands is fine
-        // (the block dedupes init), but we must not keep spamming.
-        controllerRef.current?.notifyReady();
-        applyHeight(payload.height);
-        // Analytics Phase 2: one render/impression per mount. `appliedReady`
-        // flips on the loading→ready transition; the emit-once ref makes it
-        // deterministic even if duplicate acks land before React commits 'ready'
-        // (so it fires exactly once per mount and never on re-render).
-        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
-        // until the `blockRenders` ClickHouse table exists; see PR body).
-        if (!blockRenderEmittedRef.current) {
-          blockRenderEmittedRef.current = true;
-          sendBlockRender({
-            appBlockId: install.appBlockId,
-            blockInstanceId: install.blockInstanceId,
-            slotId,
-          });
-        }
-      }
+      // Record the offered height for the ready-transition effect below to apply
+      // once React has COMMITTED 'ready'. NOT gated on the current status: H-11 is
+      // enforced by that effect's `status === 'ready'` guard, not here (see the
+      // ref's comment).
+      //
+      // When several acks land in one batch the LAST one that CARRIES a height
+      // wins — the block's most recent statement of its own handshake height. The
+      // `!== undefined` check matters: without it a `BLOCK_READY {height: 640}`
+      // followed in the same batch by a bare `BLOCK_READY {}` (or one whose height
+      // fails the shape guard) would reset the ref to `undefined` and LOSE a height
+      // the old code applied, turning this fix into a regression in that direction.
+      if (payload.height !== undefined) pendingReadyHeightRef.current = payload.height;
+      setStatus((current) => (current === 'loading' ? 'ready' : current));
+      // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
+      // timeout. Called UNCONDITIONALLY, not behind a "did this ack win the
+      // transition" flag, because that flag is exactly what could not be read
+      // reliably (see the effect below). Safe in every state:
+      //   - `notifyReady()` is documented-idempotent (→ `stop()`, a no-op once
+      //     stopped), so repeat/duplicate acks cost nothing;
+      //   - after 'timeout' the controller already stopped itself — no-op;
+      //   - after 'no_token' the controller was never created (`shouldStartInit`
+      //     requires a token) — the optional chain no-ops;
+      //   - after 'fatal' it cancels the retry interval and the readiness
+      //     timeout, which is what we WANT while terminal, and it cannot revive
+      //     `status`: the only writer here is the guarded updater above, and
+      //     `onReadyTimeout` is itself `current === 'loading'`-guarded.
+      // So this cannot weaken H-11: the observable content of "don't notify
+      // ready" (no height, no `ok` beacon, no status change) is still enforced,
+      // and is regression-tested per terminal state.
+      //
+      // NB this is the FAST path, not the only one: `status` is in the init
+      // effect's dep array, so the loading→ready commit re-runs that effect and
+      // its cleanup `dispose()`s the controller regardless. Calling notifyReady
+      // here just stops the retry loop one render earlier.
+      controllerRef.current?.notifyReady();
     });
     return off;
-  }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
+  }, [onMessage]);
+
+  // Analytics Phase 2 + the acked iframe height — the loading→ready COMMIT.
+  // Fires once per mount; the `ok` beacon is mutually exclusive with the
+  // render-FAILURE beacon below (shared `blockRenderEmittedRef`).
+  //
+  // 🔴 WHY THIS IS AN EFFECT AND NOT A SIDE EFFECT INSIDE THE BLOCK_READY
+  // HANDLER (a real bug this fixes, not a refactor): it used to live inside the
+  // handler behind an `appliedReady` flag that the `setStatus` UPDATER set —
+  //     let appliedReady = false;
+  //     setStatus((current) => { if (current === 'loading') { appliedReady = true; … } });
+  //     if (appliedReady) { …notifyReady + applyHeight + sendBlockRender… }
+  // — and the in-code comment claimed it could read the transition out of the
+  // updater. It cannot. That only works because React *eagerly* evaluates an
+  // updater when the fiber has no other pending update (the bail-out
+  // optimisation in `dispatchSetState`). As soon as ANY unrelated state update is
+  // already queued on THIS component when BLOCK_READY lands, React skips the
+  // eager path, the updater runs later during render, `appliedReady` is still
+  // false at the `if`, and the WHOLE branch is skipped: the acked height is never
+  // applied (the iframe stays pinned at `minHeight` → clipped content or a dead
+  // gap) and the impression beacon is silently dropped. This host has such
+  // updates in flight in the real world (the `getEffectiveCheckpoint` /
+  // `getShowcaseImages` react-query subscriptions resolving, `iframeHeight`
+  // itself). Keying off the COMMITTED `status` is immune to batching. Mirrors
+  // both the failure-beacon effect below and PR #3457's fix to the sibling
+  // PageBlockHost — one problem, one solution, in both hosts.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    if (readyTransitionAppliedRef.current) return;
+    readyTransitionAppliedRef.current = true;
+    applyHeight(pendingReadyHeightRef.current);
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op (and a harmless no-op until
+    // the `blockRenders` ClickHouse table exists).
+    sendBlockRender({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+      slotId,
+    });
+  }, [status, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
 
   // App Blocks runtime observability — render-FAILURE beacon. The success
-  // beacon fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here
+  // beacon fires from the loading→ready commit effect above (both guarded by the
+  // shared `blockRenderEmittedRef`). Here
   // we fire the mutually-exclusive `error` beacon when the host lands on a
   // terminal-failure state — the iframe never reached BLOCK_READY in time
   // ('timeout'), the block reported a fatal error ('fatal'), or its token never
@@ -793,16 +1085,26 @@ export function IframeHost({
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
 
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+    const off = onMessage<
+      { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
+    >(
       'SUBMIT_WORKFLOW',
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
+        // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
+        // lost-response retry collapses to one Buzz charge. Host-first: accept it
+        // defensively (only a non-empty string) — older SDKs never send it.
+        const idempotencyKey =
+          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+            ? raw.idempotencyKey
+            : undefined;
         try {
           const { snapshot } = await submitWorkflowMutation.mutateAsync({
             blockToken: token,
             // Schema-validated server-side; the host never trusts this shape.
             body: raw.body as never,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
           });
           send('WORKFLOW_SUBMITTED', { requestId, snapshot });
         } catch (err) {
@@ -1302,6 +1604,7 @@ export function IframeHost({
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+  const sharedReportMutation = trpc.apps.shared.report.useMutation();
 
   useEffect(() => {
     const off = onMessage<
@@ -1339,6 +1642,8 @@ export function IframeHost({
               it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
             updatedAt:
               it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+            // item 3: pass the per-viewer vote flag straight through (no logic).
+            viewerVoted: it.viewerVoted,
           })),
           nextCursor: result.nextCursor,
         });
@@ -1502,6 +1807,64 @@ export function IframeHost({
     return off;
   }, [onMessage, send, token, sharedWithdrawMutation]);
 
+  // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (single-row deep-link fetch).
+  // Mirrors SHARED_LIST's item mapping (createdAt/updatedAt → ISO; additive
+  // viewerVoted passes through); a missing/hidden row comes back `item: null`.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.get.fetch({ blockToken: token, key: raw.key });
+          const it = result.item;
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: it
+              ? {
+                  key: it.key,
+                  authorUserId: it.authorUserId,
+                  value: it.value,
+                  count: it.count,
+                  createdAt:
+                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                  updatedAt:
+                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                  viewerVoted: it.viewerVoted,
+                }
+              : null,
+          });
+        } catch (err) {
+          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT. User reports a
+  // posted row for mod review (server trust-gates + rate-limits + files it).
+  // Reply is SHARED_WITHDRAW-style `{ ok, error? }` — the error path MUST carry
+  // ok:false or the SDK drops it (→ hang).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
+      'SHARED_REPORT',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+        try {
+          await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          send('SHARED_REPORT_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedReportMutation]);
+
   useEffect(() => {
     if (status !== 'ready') return;
     const handler = () => {
@@ -1538,10 +1901,12 @@ export function IframeHost({
     >
       <AppBlockChrome
         blockInstanceId={install.blockInstanceId}
+        appBlockId={install.appBlockId}
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
       {children}
     </Box>

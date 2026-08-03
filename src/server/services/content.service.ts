@@ -127,6 +127,33 @@ export const tosBaselineHashMap = {
   blue: '33d6e2d123ef60d6f7a3eb1b0988879a957b13a6b6fffe63bd35f2a7f0b4748a', // default
 } as const;
 
+// Aliases a new body hash back to the hash users already accepted, for edits that
+// carry no legal meaning (typo/punctuation fixes). Keyed by the NEW hash, valued
+// with the OLD one, so `getTosMeta` advertises the old content identity and the
+// client's stored-vs-current comparison stays equal — no re-prompt. The next real
+// edit produces an unmapped hash and re-prompts as normal.
+//
+// Resolution is a single lookup, NOT transitive: a later cosmetic edit must map its
+// hash to the same original anchor, never to an intermediate key, or the alias
+// resolves to a hash nobody has stored and everyone is re-prompted.
+const tosHashOverrideMap: Record<string, string> = {
+  // 2026-07-20 §9.2 "unless a another license" -> "unless another license"
+  '9fd2f1de839bd54420c16ee18bd3a6be64e8de6e80b8ba98c1c6b034d2684996': // tos.md (blue/red)
+    'f25e3738258c4bc10f41131b9f695430e387cb17b6a081d16b6235a5bcd33ae4',
+  'fd2d6aab421c43e48513d67e233f17c7faa5216b50470324d31c2f5955f53ecc': // tos.green.md
+    '7777d54b7357eb7b1aea4f05c96f2c664d24d5311cb5db8b75ed92e172398d87',
+};
+
+/**
+ * The ToS content identity to compare against and persist on accept. Every writer
+ * of a `tos*AcceptedHash` MUST go through this — writing a raw `getStaticContent`
+ * hash while `getTosMeta` advertises an alias would leave the user permanently
+ * mismatched, and thus permanently prompted.
+ */
+export function resolveTosHash(hash: string) {
+  return tosHashOverrideMap[hash] ?? hash;
+}
+
 // The static, per-domain ToS metadata the client needs to decide whether to show
 // the ToS modal. It depends ONLY on the deployed content + frozen baseline, never
 // on the user — the per-user comparison happens client-side against the already-
@@ -158,7 +185,7 @@ export async function getTosMeta({
 }): Promise<TosMeta> {
   const tos = await getStaticContent({ slug: ['tos'], ctx: { domain: domainColor } as Context });
   return {
-    hash: tos.hash,
+    hash: resolveTosHash(tos.hash),
     baselineHash:
       tosBaselineHashMap[domainColor as keyof typeof tosBaselineHashMap] || tosBaselineHashMap.blue,
     fieldKey: tosFieldMap[domainColor as keyof typeof tosFieldMap] || 'tosLastSeenDate',

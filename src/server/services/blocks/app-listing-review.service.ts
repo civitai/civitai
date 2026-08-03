@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import {
   LISTING_REVIEW_DETAILS_MAX,
   type AppListingReviewListItem,
@@ -229,9 +230,16 @@ export async function getMyAppListingReview(
  * id) when more rows exist.
  */
 export async function listAppListingReviews(
-  input: ListAppListingReviewsInput
+  input: ListAppListingReviewsInput,
+  opts: { scope?: StoreVisibilityScope } = {}
 ): Promise<{ items: AppListingReviewListItem[]; nextCursor?: number }> {
   const take = Math.min(Math.max(input.limit ?? 20, 1), 50);
+  // Default `full` for callers that don't pass a scope (the router ALWAYS passes an
+  // explicit scope and NEVER calls this with `none` — it short-circuits an empty
+  // page at the proc). Under `public-external` the target listing must ITSELF be
+  // offsite, else the relation filter matches nothing → empty: a public viewer must
+  // not read the reviews of an onsite listing even by a crafted appListingId.
+  const scope = opts.scope ?? 'full';
   const rows = await dbRead.appListingReview.findMany({
     where: {
       appListingId: input.appListingId,
@@ -239,7 +247,11 @@ export async function listAppListingReviews(
       // approved, but a listing can later be removed/rejected — its reviews must not
       // stay publicly enumerable by id once the read flag widens to anon at the P2d
       // cutover. Filtering on the relation also makes a missing listing return empty.
-      appListing: { is: { status: 'approved' } },
+      // The STORE-SCOPE kind gate ANDs onto that relation filter under
+      // `public-external` (offsite-only), so an onsite listing's reviews are empty.
+      appListing: {
+        is: { status: 'approved', ...(scope === 'public-external' ? { kind: 'offsite' } : {}) },
+      },
       exclude: false,
       tosViolation: false,
       ...(input.cursor ? { id: { lt: input.cursor } } : {}),

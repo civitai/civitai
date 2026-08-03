@@ -33,6 +33,7 @@ import {
   InputDateTimePicker,
   InputSelect,
   InputNumber,
+  InputSimpleImageUpload,
   InputSwitch,
   InputText,
   InputTextArea,
@@ -77,6 +78,11 @@ const eventFormSchema = z.object({
   endDate: z.date({ error: 'End date is required' }),
   active: z.boolean().default(false),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
+  coverImage: z
+    .object({ id: z.number().optional(), url: z.string() })
+    .passthrough()
+    .nullable()
+    .optional(),
 });
 
 type ChallengeEventItem = {
@@ -88,6 +94,7 @@ type ChallengeEventItem = {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
+  coverImage: { id?: number; url: string } | null;
   _count: { challenges: number };
 };
 
@@ -116,6 +123,7 @@ function EventFormModal({
       endDate: event?.endDate ? toDisplayUTC(event.endDate) : defaultEndDate,
       active: event?.active ?? false,
       winnerCooldownDays: event?.winnerCooldownDays ?? null,
+      coverImage: event?.coverImage ?? null,
     },
   });
 
@@ -152,6 +160,7 @@ function EventFormModal({
       endDate,
       active: data.active,
       winnerCooldownDays: data.winnerCooldownDays ?? null,
+      coverImage: data.coverImage ?? null,
     });
   };
 
@@ -212,6 +221,12 @@ function EventFormModal({
             min={0}
             max={365}
             clearable
+          />
+          <InputSimpleImageUpload
+            name="coverImage"
+            label="Cover Image"
+            description="Wide banner shown on the challenges page. Suggested 1600x600."
+            withNsfwLevel={false}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>

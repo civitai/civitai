@@ -7,6 +7,7 @@ import {
 import {
   deleteAnnouncement,
   getAnnouncementsPaged,
+  getAnnouncementTargetUserIds,
   getCurrentAnnouncements,
   upsertAnnouncement,
 } from '~/server/services/announcement.service';
@@ -23,10 +24,13 @@ export const announcementRouter = router({
     .mutation(({ input }) => deleteAnnouncement(input.id)),
   getAnnouncements: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getCurrentAnnouncementsSchema.optional())
+    .input(getCurrentAnnouncementsSchema.default({}))
     .use(applyRequestDomainColor)
     .query(({ ctx, input }) => getCurrentAnnouncements({ ...input, userId: ctx.user?.id })),
   getAnnouncementsPaged: moderatorProcedure
     .input(getAnnouncementsPagedSchema)
     .query(({ input }) => getAnnouncementsPaged(input)),
+  getAnnouncementTargets: moderatorProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getAnnouncementTargetUserIds(input.id)),
 });

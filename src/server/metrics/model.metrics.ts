@@ -1,8 +1,10 @@
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
+import { env } from '~/env/server';
 import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
+import { shouldFlushMetricSearchIndex } from '~/server/metrics/model-metric-search-flush';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
@@ -135,12 +137,24 @@ export const modelMetrics = createMetricProcessor({
       );
     }
 
-    const FLUSH_INTERVAL_MS = 15 * 60 * 1000;
+    // Debounce window for draining the accumulated ids into the search-index
+    // queue. Widening it collapses more of a hot model's repeated metric
+    // changes into a single reindex, shrinking the burst the search backend
+    // has to drain at peak. Env-configurable, but the value is read once at
+    // module load, so a change requires a pod restart/rollout to take effect
+    // (no image rebuild needed — it is NOT reconfigurable live). A bad value
+    // fails soft to the 45m default (see server-schema.ts) rather than crashing
+    // boot (default 45m — 3× the previous fixed 15m). The only
+    // cost is metric-drift staleness on the search doc (download/generation
+    // counts and the popularity rank derived from them lag by up to the
+    // window); genuine mutations still reindex immediately via the untouched
+    // service-layer queueUpdate path.
+    const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
     const lastFlushStr = await sysRedis.get(
       REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
     );
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
-    const shouldFlush = Date.now() - lastFlush >= FLUSH_INTERVAL_MS;
+    const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 
     if (shouldFlush) {
       const pendingRaw = await sysRedis.sMembers(
@@ -500,10 +514,10 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
 async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version donations. These are the only way to "tip" a model version
-    SELECT DISTINCT "modelVersionId" as id
+    SELECT DISTINCT dg."entityId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
+    WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -513,14 +527,14 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       ctx,
       `-- get version tip metrics
       SELECT
-        dg."modelVersionId",
+        dg."entityId" AS "modelVersionId",
         COUNT(amount) AS "tippedCount",
         SUM(amount) AS "tippedAmountCount"
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-      WHERE dg."modelVersionId" = ANY($1::int[])
-        AND dg."modelVersionId" BETWEEN $2 AND $3
-      GROUP BY dg."modelVersionId"`,
+      WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" = ANY($1::int[])
+        AND dg."entityId" BETWEEN $2 AND $3
+      GROUP BY dg."entityId"`,
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getVersionBuzzTasks', i + 1, 'of', tasks.length, 'done');

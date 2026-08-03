@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@civitai/ui/theme.css';
+
+/* Tailwind v4 skips node_modules — point it at the shared component package so its classes aren't purged. */
+@source '../../../packages/civitai-ui/src/lib';
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  a {
+    @apply text-blue-4 no-underline;
+  }
+
+  /* Tailwind v4 preflight drops the default pointer cursor on buttons — restore it for anything clickable. */
+  button:not(:disabled),
+  [role='button']:not(:disabled),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .page-header {
+    @apply mb-7;
+  }
+  .page-header h1 {
+    @apply m-0 mb-1 text-2xl font-semibold text-white;
+  }
+  .page-header p {
+    @apply m-0 text-dark-2;
+  }
+
+  .placeholder {
+    @apply grid min-h-60 place-items-center rounded-xl border border-dashed border-dark-4 bg-dark-6 p-6 text-dark-2;
+  }
+
+  /* Canonical content-card surface — matches the dashboard <Card> (bg-card + subtle ring + rounded-xl) so panels
+     look the same across every page. Add padding (p-4 / p-3) at the call site. */
+  .cs-panel {
+    @apply rounded-xl bg-card text-card-foreground ring-1 ring-foreground/10;
+  }
+}

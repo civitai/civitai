@@ -127,11 +127,10 @@ const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
  * org matches; otherwise null. Pulled out as a pure function for unit
  * testing the M-WEBHOOK org gate without driving the full webhook handler.
  *
- * The shared FORGEJO_WEBHOOK_SECRET authenticates the Forgejo *instance*,
- * not a single repo/org — the same instance also serves the
- * `civitai-apps-review` org (anonymous in-review browsing) and could serve
- * others. Without this gate a signature-valid push to a same-slug repo in a
- * different org would drive a build + auto-approve of the canonical row.
+ * The shared FORGEJO_WEBHOOK_SECRET authenticates the Forgejo *instance*, not a
+ * single repo/org, and the instance hosts more than one org. Without this gate a
+ * signature-valid push to a same-slug repo in a different org would drive a
+ * build + auto-approve of the canonical row.
  */
 export function parseExpectedRepo(fullName: unknown, expectedOrg: string): { slug: string } | null {
   if (typeof fullName !== 'string' || !fullName.includes('/')) return null;
@@ -321,7 +320,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     allowedScopes: appBlock.app.allowedScopes ?? 0,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
-  const validation = BlockManifestValidator.validate(manifest, appContext);
+  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext);
   if (!validation.valid) {
     await setCommitStatusSafe({
       slug,

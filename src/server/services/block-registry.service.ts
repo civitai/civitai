@@ -22,15 +22,26 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type {
+  AppSpendCapConfig,
   AvailableBlock,
   ListAvailableInput,
   MarketplaceMeta,
   PublicAppDetail,
+  SetAppSpendCapConfigInput,
   SetMarketplaceMetaInput,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { projectPublicOwner } from '~/server/services/blocks/public-owner';
+import {
+  resolveLimitsFromRow,
+  type AppSpendTier,
+} from '~/server/services/blocks/app-cap-limits.constants';
+import {
+  invalidateAppCapLimits,
+  normalizeCapOverrideInput,
+} from '~/server/services/blocks/app-cap-limits.service';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { isMatureContentRating } from '~/server/utils/server-domain';
@@ -410,6 +421,34 @@ interface InstallOpts {
  */
 export interface PageBlockResolution {
   appBlock: ResolvedBlockInstance['appBlock'];
+}
+
+/**
+ * APP DEV TUNNEL — the shape resolved for an OWNED, NON-approved page app the
+ * author is dogfooding in their OWN dev tunnel (`resolveOwnedNonApprovedPageBlock`).
+ *
+ * This is the DEV-TUNNEL-ONLY companion to `resolvePageBlock` (which resolves ONLY
+ * `status:'approved'` apps for the PUBLIC run path). A previously-approved app that
+ * is now `suspended` / `pending` (re-submitted) / `deprecated` still owns a REAL
+ * `apb_` row + a moderator-reviewed `approvedScopes` snapshot, so its author can run
+ * it inside their own tunnel — but it stays NON-runnable publicly (`resolvePageBlock`
+ * still returns null for it). The mint sources scopes from `approvedScopes` (the
+ * pinned, mod-reviewed set — NEVER the raw manifest) and the per-gen budget from the
+ * manifest `page.buzzBudgetPerGen`.
+ */
+export interface OwnedNonApprovedPageBlockResolution {
+  /** The REAL AppBlock id (`apb_…`). */
+  appBlockId: string;
+  /** The app slug (== `block_id`), used to resolve the active dev tunnel. */
+  blockId: string;
+  /** The REAL OauthClient id (`appblk-…` / UUIDv4) — attribution resolves it. */
+  appId: string;
+  /** The app's current NON-approved status (suspended / pending / deprecated / …). */
+  status: string;
+  /** The moderator-reviewed approved-scope SNAPSHOT — the ONLY scope source. */
+  approvedScopes: string[];
+  /** The stored manifest — read for `page.buzzBudgetPerGen` only. */
+  manifest: Record<string, unknown>;
 }
 
 /**
@@ -1807,6 +1846,70 @@ export class BlockRegistry {
         app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
         currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
       },
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN, NON-approved page app by its REAL
+   * AppBlock id (`apb_…`), for the dev-tunnel block-token mint ONLY.
+   *
+   * WHY THIS EXISTS — `resolvePageBlock` requires `status:'approved'`, so a
+   * previously-approved page app that is now `suspended` / `pending` (re-submitted)
+   * / `deprecated` resolves to null there and the mint 404s ("Couldn't authenticate
+   * this app"), even though the SSR dev route (`resolveDevPageBlockForAuthor`)
+   * happily mounts it at ANY status. This closes that asymmetry for the DEV TUNNEL
+   * ONLY: the owner can dogfood their non-approved app in their OWN tunnel, while the
+   * PUBLIC run path (`resolvePageBlock`, `resolvePageBlockBySlug`) stays untouched —
+   * a suspended app remains NON-runnable publicly.
+   *
+   * CONTAINMENT (every gate here or at the caller, fail-closed):
+   *   - OWNERSHIP is enforced IN the query (`app.userId === userId`). A foreign or
+   *     missing app returns the SAME bare null (no ownership/existence oracle).
+   *   - status `!= 'approved'` is enforced in the query: an APPROVED app never
+   *     double-resolves through this branch (it mints via `resolvePageBlock`), and
+   *     this method is a NO-OP for the approved case.
+   *   - it MUST declare a page (`manifestDeclaresPage`) — a region/model-only app has
+   *     no full-page surface to mint for.
+   * The caller additionally gates on an ACTIVE dev tunnel + the author/dev-tunnel
+   * flags before it will sign anything (see `tryDevTunnelOwnedNonApprovedMint`).
+   *
+   * SCOPE SOURCE = `approvedScopes` (the moderator-reviewed snapshot pinned at the
+   * app's last approval) — NEVER the raw/re-published manifest, so a suspended app
+   * cannot widen its own scopes by editing its manifest. The caller clamps this
+   * through the SAME tunnel belt (`clampTunnelDeclaredScopes`) as the ephemeral path.
+   */
+  static async resolveOwnedNonApprovedPageBlock(
+    appBlockId: string,
+    userId: number,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<OwnedNonApprovedPageBlockResolution | null> {
+    if (!appBlockId || !userId) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped (app.userId === caller) AND non-approved only. A
+      // foreign/missing/approved row → null → the caller's bare 404 (no oracle).
+      where: { id: appBlockId, app: { userId }, status: { not: 'approved' } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    // A page app MUST declare a `page` block (mirrors resolvePageBlock) — otherwise
+    // there is no full-page surface to run.
+    if (!manifestDeclaresPage(manifest)) return null;
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      approvedScopes: ab.approvedScopes ?? [],
+      manifest,
     };
   }
 
@@ -3214,6 +3317,12 @@ export class BlockRegistry {
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
       screenshots: unknown;
+      // The app's real OWNER (OauthClient.userId → User). ONLY the three public
+      // chip columns are selected — never the rest of the user row. See
+      // `projectPublicOwner` for the allowlist rationale.
+      owner_user_id: number | null;
+      owner_username: string | null;
+      owner_image: string | null;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -3221,6 +3330,9 @@ export class BlockRegistry {
         ab.block_id,
         ab.app_id,
         oc.name AS app_name,
+        u.id AS owner_user_id,
+        u.username AS owner_username,
+        u.image AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,
@@ -3235,6 +3347,7 @@ export class BlockRegistry {
         ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      LEFT JOIN "User" u ON u.id = oc."userId"
       WHERE ab.id = ${appBlockId}::text
       LIMIT 1
     `) as Row[];
@@ -3266,6 +3379,12 @@ export class BlockRegistry {
       blockId: row.block_id,
       appId: row.app_id,
       appName: row.app_name ?? null,
+      // The app's REAL owner as the standard public chip ({id, username, image}
+      // ONLY — see projectPublicOwner). `appName` above is the OAuth client's
+      // name, which for every approved block equals the APP TITLE — so it must
+      // never be used as the author; that was the `/apps/<appBlockId>` "by
+      // {appName}" bug this field fixes.
+      owner: projectPublicOwner(row),
       // PUBLIC allowlist projection — identical to the listing path so the two
       // can't drift in what they expose.
       manifest: toPublicBlockManifest(row.manifest),
@@ -3506,6 +3625,115 @@ export class BlockRegistry {
       category: updated.category ?? null,
       featured: updated.featured,
       featuredOrder: updated.featuredOrder ?? null,
+    };
+  }
+
+  /**
+   * MOD-ONLY: read one app's generation-cap configuration — its SPEND tier, the
+   * raw override columns, and the RESOLVED ceilings the reserve path will
+   * actually enforce. Seeds the moderator form and lets an operator confirm the
+   * effective number after a write without re-deriving the tier table by hand
+   * (in particular, it shows when a deploy-time `BLOCK_APP_SPEND_*` clamp is
+   * binding below the value they set).
+   *
+   * 🔴 Reads `spendTier`, NOT `trustTier`. Spend and browser-isolation are
+   * separate axes — see `app-cap-limits.constants.ts`. Surfacing the trust tier
+   * on this screen would re-suggest the coupling this field exists to break.
+   *
+   * The router gates this with `moderatorProcedure`; this method does NO auth
+   * itself. Returns `null` for a missing app (router → NOT_FOUND).
+   *
+   * 🔴 Never wire this into an anon/publisher-facing procedure: the exact
+   * ceiling is deliberately withheld from apps so a hostile one can't probe it.
+   */
+  static async getAppSpendCapConfig(appBlockId: string): Promise<AppSpendCapConfig | null> {
+    const row = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        id: true,
+        spendTier: true,
+        spendCapBuzzPerDay: true,
+        spendVelocityMaxGens: true,
+      },
+    });
+    if (!row) return null;
+    return {
+      appBlockId: row.id,
+      spendTier: row.spendTier,
+      spendCapBuzzPerDay: row.spendCapBuzzPerDay ?? null,
+      spendVelocityMaxGens: row.spendVelocityMaxGens ?? null,
+      effective: resolveLimitsFromRow(row),
+    };
+  }
+
+  /**
+   * MOD-ONLY: set the app's SPEND TIER and/or the per-app override on the
+   * generation spend / velocity ceilings. The router gates this with
+   * `moderatorProcedure` + the `isModerator` belt; this method does NO auth
+   * itself.
+   *
+   * 🔴 This is the ONLY write path for these three columns. They are never
+   * sourced from the app manifest and appear in no publisher-facing input — a
+   * developer must not be able to raise their own abuse ceiling.
+   *
+   * 🔴 It writes `spendTier` and NEVER `trustTier`. Promoting an app's spend
+   * class must not touch its iframe-sandbox / renderMode privileges, and
+   * promoting its trust tier (a different mod surface) must not move its money
+   * ceiling. That independence is the whole point of the separate column.
+   *
+   * Semantics (identical to `setMarketplaceMeta`): an OMITTED field is left
+   * unchanged; an explicit `null` clears an override so the app falls back to
+   * its tier's limit. Override values are re-normalised through
+   * `normalizeCapOverrideInput` — the same floor/positive/hard-bound rules the
+   * READER applies — so a value can never be stored that the reader would then
+   * silently ignore or clamp differently.
+   *
+   * Invalidates the resolver's in-process cache so the change is immediate on
+   * this pod; other pods converge within the resolver's TTL.
+   *
+   * Throws NOT_FOUND for a missing app. Returns the resulting config, including
+   * the newly-effective ceilings.
+   */
+  static async setAppSpendCapConfig(input: SetAppSpendCapConfigInput): Promise<AppSpendCapConfig> {
+    const { appBlockId, spendTier, spendCapBuzzPerDay, spendVelocityMaxGens } = input;
+
+    const existing = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { id: true },
+    });
+    if (!existing) throwNotFoundError('App block not found');
+
+    // Build the patch from ONLY the provided fields. Override values are
+    // normalised with the exact read-side rules (positive int, floored,
+    // hard-bounded; anything that fails those rules becomes an explicit NULL =
+    // "no override" rather than a stored value the reader would ignore). The
+    // tier is already narrowed to the real enum by the zod input schema.
+    const data: {
+      spendTier?: AppSpendTier;
+      spendCapBuzzPerDay?: number | null;
+      spendVelocityMaxGens?: number | null;
+    } = normalizeCapOverrideInput({ spendCapBuzzPerDay, spendVelocityMaxGens });
+    if (spendTier !== undefined) data.spendTier = spendTier;
+
+    const updated = await dbWrite.appBlock.update({
+      where: { id: appBlockId },
+      data,
+      select: {
+        id: true,
+        spendTier: true,
+        spendCapBuzzPerDay: true,
+        spendVelocityMaxGens: true,
+      },
+    });
+
+    invalidateAppCapLimits(appBlockId);
+
+    return {
+      appBlockId: updated.id,
+      spendTier: updated.spendTier,
+      spendCapBuzzPerDay: updated.spendCapBuzzPerDay ?? null,
+      spendVelocityMaxGens: updated.spendVelocityMaxGens ?? null,
+      effective: resolveLimitsFromRow(updated),
     };
   }
 }

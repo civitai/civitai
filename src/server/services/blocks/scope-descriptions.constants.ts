@@ -20,12 +20,9 @@
 export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'user:read:self': "Read the viewer's username and account status",
   'models:read:self': 'Read the model on the page where the block is mounted',
-  'media:read:owned': "Read the viewer's own uploaded media",
   'buzz:read:self': "Read the viewer's Buzz balance",
   'ai:write:budgeted': 'Submit generations with a per-call Buzz cap',
   'social:tip:self': 'Post tips on behalf of the viewer',
-  'block:settings:read': "Read this block's per-install settings",
-  'block:settings:write': "Update this block's per-install settings",
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",
   'apps:storage:shared:read': "Read this app's shared, community-wide data (e.g. everyone's posts + vote counts)",

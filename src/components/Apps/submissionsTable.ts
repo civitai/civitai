@@ -12,6 +12,93 @@
  * concrete `Submission` / `OffsiteSubmission` types.
  */
 
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+
+// ── layout ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The horizontal floor (px) for BOTH /apps/my-submissions tables, handed to
+ * Mantine's `Table.ScrollContainer` as `minWidth`.
+ *
+ * Why it exists: both lists render `<Table>` inside `<Card withBorder p={0}>`, and
+ * Mantine's `.mantine-Card-root` sets `overflow: hidden`. The onsite row's action
+ * cell is a `<Group wrap="nowrap">` of up to six buttons (Open live · Unpublish /
+ * Republish · Edit · Listing images · Revenue · History), so the row has a hard
+ * min-content width that the card SILENTLY CLIPPED — measured at 1497 px viewport:
+ * card `clientWidth 1286` vs `scrollWidth 1424`, i.e. 138 px of row actions cut off
+ * with no scrollbar and no other affordance. Wrapping the table in a scroll
+ * container converts that silent clip into a real horizontal scroll.
+ *
+ * The value is seeded from that measurement: 1424 px is the onsite table's measured
+ * natural width with the full action set, so the table scrolls exactly when the
+ * card is narrower than 1424 and not otherwise.
+ *
+ * 🔴 THE FLOOR ALONE WAS NOT ENOUGH — see {@link MY_SUBMISSIONS_CONTAINER_SIZE}.
+ * The page's container was `AppsPageLayout`'s default `'xl'`, i.e. Mantine's 1320 px
+ * token, which is a MAX-width: at every viewport >= 1320 px the card computed a
+ * constant 1320 − 32 (Container padding) − 2 (Card border) = 1286 px. 1286 < 1424,
+ * so a scroll container on its own left a permanent ~138 px scroll region on EVERY
+ * desktop viewport — the clip became a scrollbar rather than going away. The page
+ * therefore also widens its container past this floor.
+ *
+ * 🔴 The wrapper clips on BOTH axes. Mantine's `Table.ScrollContainer` sets only
+ * `overflow-x`; per the CSS overflow spec a non-`visible` value on one axis computes
+ * the other to `auto`, so `overflow-y` is `auto` too (browser-confirmed). That is
+ * safe today only because the two in-cell overlays these rows render explicitly pass
+ * `withinPortal` (`AppAnalyticsInline`'s `Tooltip` and `ListingProblemsIndicator`'s
+ * `HoverCard`) — and the repo theme sets `Popover: { defaultProps: { withinPortal: false } }`
+ * GLOBALLY, so any future non-portaled `Popover`/`HoverCard`/`Menu` rendered inside
+ * a cell WILL be clipped by this wrapper. Portal it, or it will be cut off.
+ *
+ * 🔴 SHARED BY BOTH LISTS ON PURPOSE. The offsite table (6 columns) is narrower
+ * today and would not need this large a floor on its own, but:
+ *   - the two tables are stacked sections of the SAME page, and a shared floor keeps
+ *     them the same width instead of stepping against each other;
+ *   - the offsite action cell is converging on the onsite one (Edit · Unpublish /
+ *     Republish · Withdraw · History · problems indicator · revision badge), so a
+ *     shared floor stops it silently re-acquiring the same clip as it grows;
+ *   - any separate offsite number would be invented — nobody has measured that
+ *     table's natural width.
+ * Accepted cost: on the offsite table this introduces horizontal scrolling at
+ * container widths between its own natural width and 1424 where there is none today.
+ * If someone measures the offsite table and wants its own floor, split this into two
+ * constants HERE — do not hardcode a literal at a call site.
+ */
+export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
+
+/**
+ * Chrome (px) that `AppsPageLayout` + the submissions `Card` take out of the
+ * container width before the table sees it: Mantine `Container` pads `2 x 16`, and
+ * `<Card withBorder>` draws a `1 px` border on each side.
+ */
+export const SUBMISSIONS_CONTAINER_CHROME = 34;
+
+/**
+ * The `AppsPageLayout` container width (raw px) for /apps/my-submissions.
+ *
+ * `AppsPageLayout` defaults to `size='xl'` = Mantine's 1320 px token, and that is a
+ * MAX-width — so the card computed a CONSTANT 1286 px at every viewport >= 1320 px,
+ * permanently below {@link SUBMISSIONS_TABLE_MIN_WIDTH}. Left at `'xl'`, the scroll
+ * container would simply have converted the silent clip into a scrollbar that is
+ * always there on desktop. Widening the container past the floor is what actually
+ * removes the overflow at desktop widths; the scroll container remains the safety
+ * net below that (narrow desktop, tablet, mobile) and for future column growth.
+ *
+ * `Container` accepts a raw number — the store index already widens this way. The
+ * value is not viewport-clamped by us: `Container` is max-width, so a narrower
+ * viewport just yields a narrower container and the table scrolls, as intended.
+ *
+ * 🔴 NO LONGER A LOCAL LITERAL. The full-width pass moved every `/apps/*` width
+ * into one module (`appsPageWidths.ts`), so this now READS THROUGH to the shared
+ * `/apps/my-submissions` entry (1920) instead of carrying its own 1500. Keeping
+ * the alias means the page and the guards below keep referring to the constant
+ * whose name states WHY the width matters for THIS page; the invariant
+ * `MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME >=
+ * SUBMISSIONS_TABLE_MIN_WIDTH` is asserted in `__tests__/submissionsTable.test.ts`
+ * and would fail if someone ever narrowed the shared width below the table floor.
+ */
+export const MY_SUBMISSIONS_CONTAINER_SIZE: number = APPS_PAGE_WIDTHS['/apps/my-submissions'];
+
 /** Sortable columns shared by both tables. */
 export type SortColumn = 'app' | 'status' | 'submitted' | 'reviewed';
 export type SortDirection = 'asc' | 'desc';
@@ -218,7 +305,7 @@ export function ariaSortFor(
 // ── status sections (UX pass) ──────────────────────────────────────────────────
 
 /**
- * The four status SECTIONS the /apps/my-submissions lists render, in display order.
+ * The status SECTIONS the /apps/my-submissions lists render, in display order.
  * A group is bucketed by its `latest` submission's status:
  *   - `approved` → **Live** (the row badge still distinguishes the onsite deploy
  *     sub-state building/deploying/live/failed — we DON'T split approved by it),
@@ -227,8 +314,15 @@ export function ariaSortFor(
  *   - `withdrawn` → **Withdrawn** (default-collapsed),
  *   - any other/unknown status → **Withdrawn** (a safe closed default so a future
  *     status degrades gracefully rather than vanishing).
+ *
+ * `mod-removed` is NOT derived from a submission status — it is an OVERRIDE bucket
+ * for a listing a moderator took down (backing `AppListing.status='removed'` whose
+ * last moderation event is a mod action, not the owner's own `owner-unpublish`).
+ * The caller supplies it via {@link bucketGroupsByStatus}'s `overrideBucketOf`; it
+ * takes precedence over the any-approved→Live rule so a once-live-now-removed app
+ * lands in its own default-collapsed section instead of masquerading as Live.
  */
-export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn';
+export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn' | 'mod-removed';
 
 /**
  * The MOD-view status buckets (Live / Pending / Rejected / **Removed** / Draft).
@@ -244,12 +338,18 @@ export type ModStatusBucket = 'live' | 'pending' | 'rejected' | 'removed' | 'dra
 /** Every bucket ANY consumer can render (owner ∪ mod) — the section-META key set. */
 export type AnyStatusBucket = StatusBucket | ModStatusBucket;
 
-/** The OWNER section render order (Live → Pending → Rejected → Withdrawn). */
+/**
+ * The OWNER section render order (Live → Pending → Rejected → Withdrawn →
+ * Removed-by-a-moderator). The moderator-takedown section sits LAST — it's the most
+ * terminal state (the owner can't self-republish), so it trails the other
+ * default-collapsed sections.
+ */
 export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
   'live',
   'pending',
   'rejected',
   'withdrawn',
+  'mod-removed',
 ];
 
 /**
@@ -332,10 +432,7 @@ export const MOD_STATUS_BUCKETS: StatusBucketConfig<ModStatusBucket> = {
  * key `B` so the owner view yields exactly `{live,pending,rejected,withdrawn}` and
  * the mod view yields its own set.
  */
-export type BucketedGroups<T, B extends string = StatusBucket> = Record<
-  B,
-  SubmissionGroup<T>[]
->;
+export type BucketedGroups<T, B extends string = StatusBucket> = Record<B, SubmissionGroup<T>[]>;
 
 /**
  * Partition already-grouped submissions into a consumer's status sections
@@ -352,15 +449,30 @@ export type BucketedGroups<T, B extends string = StatusBucket> = Record<
  * approved bucket by their `latest` submission's status (see the config's `bucketOf`).
  * (For the mod table each row is a single listing — one "version" — so the
  * any-approved→live rule reduces to "an `approved` listing is Live".)
+ *
+ * `overrideBucketOf` (optional) gets FIRST refusal on each group: when it returns a
+ * bucket, that wins over BOTH the any-approved→Live rule and the latest-status
+ * bucketing. The owner lists use it to route a moderator-removed listing (its backing
+ * `AppListing.status='removed'` + a non-owner last moderation event) into the
+ * `mod-removed` section even though the group still has an approved version — the fix
+ * for a taken-down-but-once-live app misfiling under Live. A bucket the config doesn't
+ * declare is ignored (defensively falls through to the default logic) so a stray
+ * override can never crash on an uninitialised key.
  */
 export function bucketGroupsByStatus<T, B extends string = StatusBucket>(
   groups: readonly SubmissionGroup<T>[],
   statusOf: (row: T) => string,
-  config: StatusBucketConfig<B> = OWNER_STATUS_BUCKETS as unknown as StatusBucketConfig<B>
+  config: StatusBucketConfig<B> = OWNER_STATUS_BUCKETS as unknown as StatusBucketConfig<B>,
+  overrideBucketOf?: (group: SubmissionGroup<T>) => B | null
 ): BucketedGroups<T, B> {
   const result = {} as BucketedGroups<T, B>;
   for (const b of config.buckets) result[b] = [];
   for (const group of groups) {
+    const override = overrideBucketOf?.(group) ?? null;
+    if (override !== null && result[override] !== undefined) {
+      result[override].push(group);
+      continue;
+    }
     const hasPublishedVersion = [group.latest, ...group.older].some(
       (v) => statusOf(v) === 'approved'
     );

@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 
-export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
+export type EdgeImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
   src: string;
   fadeIn?: boolean;
   options: Omit<EdgeUrlProps, 'src'>;
@@ -14,7 +14,10 @@ export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
 };
 
 export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
-  ({ className, fadeIn, src, options, style, onLoad, onError, imageId, ...props }, forwardedRef) => {
+  (
+    { className, fadeIn, src, options, style, onLoad, onError, imageId, ...props },
+    forwardedRef
+  ) => {
     // const ref = useRef<HTMLImageElement>(null);
     // TODO - determine how we can animate cosmetics
     const { anim, ...rest } = options ?? {};

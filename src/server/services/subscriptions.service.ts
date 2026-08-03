@@ -268,19 +268,29 @@ export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscript
  * @param userId - The user ID
  * @returns The subscription with the highest tier, or null if no subscriptions found
  */
-export const getHighestTierSubscription = async (userId: number) => {
-  const subscriptions = await getAllUserSubscriptions(userId);
+// A tier missing from the hierarchy sorts lowest (indexOf -1 < any valid index).
+const pickHighestTier = <T extends { tier: string }>(subscriptions: T[]): T | null =>
+  subscriptions.reduce<T | null>(
+    (highest, current) =>
+      !highest ||
+      constants.memberships.tierOrder.indexOf(current.tier as any) >
+        constants.memberships.tierOrder.indexOf(highest.tier as any)
+        ? current
+        : highest,
+    null
+  );
 
-  if (subscriptions.length === 0) return null;
+export const getHighestTierSubscription = async (userId: number) =>
+  pickHighestTier(await getAllUserSubscriptions(userId));
 
-  // Find the subscription with the highest tier using the tier hierarchy from constants
-  return subscriptions.reduce((highest, current) => {
-    const highestTierIndex = constants.memberships.tierOrder.indexOf(highest.tier as any);
-    const currentTierIndex = constants.memberships.tierOrder.indexOf(current.tier as any);
-
-    // If tier not found in hierarchy, treat as lowest (-1 < any valid index)
-    return currentTierIndex > highestTierIndex ? current : highest;
-  });
+/**
+ * The tier monetization CAPS resolve against — null when there's no good-standing subscription, which the
+ * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
+ * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
+ */
+export const getCapTier = async (userId: number): Promise<string | null> => {
+  const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
+  return pickHighestTier(subscriptions)?.tier ?? null;
 };
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
@@ -308,21 +318,24 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
 /**
  * Delivers monthly cosmetics to users with active Civitai subscriptions.
  * TODO: This should be updated to do any provider not only Civitai.Not needed right now, but in the future
+ *
+ * Deliberately NOT limited to the subscription's monthly anniversary day: the insert is
+ * idempotent (ON CONFLICT DO NOTHING) and the daily cron re-attempts every active sub for
+ * as long as the badge's availability window is open. A single-shot day match permanently
+ * dropped the badge whenever anything wasn't in place at that exact moment — badge cosmetics
+ * authored after the cron already ran, codes redeemed after the day passed, or subs
+ * cancelled/reinstated across their anniversary.
  * @param { userIds = [], tx }: { userIds?: number[]; tx?: Prisma.TransactionClient }
  * @returns {Promise<void>}
  */
 export const deliverMonthlyCosmetics = async ({
   userIds = [],
-  dateOverride,
   tx,
 }: {
   userIds?: number[];
-  dateOverride?: Date;
   tx?: Prisma.TransactionClient;
 }) => {
   const client = tx ?? dbWrite;
-  const date = dateOverride ?? new Date();
-  const currentDay = date.getDate();
 
   await client.$executeRaw`
       with users_affected AS (
@@ -342,18 +355,7 @@ export const deliverMonthlyCosmetics = async ({
         WHERE ${
           userIds.length > 0
             ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`
-            : Prisma.sql`
-          (
-          -- Exact day match (normal case)
-          EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
-          OR
-          -- Handle month-end edge cases (e.g., Jan 30th -> Feb 28th, Jan 31st -> Apr 30th)
-          (
-            EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-            AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-          )
-        )
-        `
+            : Prisma.sql`TRUE`
         }
         AND status = 'active'
         AND "currentPeriodEnd" > NOW()
@@ -378,6 +380,11 @@ export const deliverMonthlyCosmetics = async ({
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
+
+  // No owned-sticker cache bust here on purpose: this delivers membership badges
+  // (joined on Cosmetic.productId), importing ~/server/redis/caches pulls the
+  // redis client into this module's whole dependency tree, and the cache's
+  // 5-minute TTL covers the case anyway.
 };
 
 /**

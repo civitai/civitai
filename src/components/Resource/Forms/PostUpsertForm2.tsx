@@ -34,11 +34,15 @@ export function PostUpsertForm2({
     withFiles: true,
   });
 
-  // Prefer the post that already exists for this version (freshest source) so
+  // Prefer the creator's own post for this version (freshest source) so
   // navigating back to the upload step and forward again doesn't spin up a
   // duplicate post. The locally-created id covers the gap within a single mount
-  // before the modelVersion query refetches.
-  const existingPostId = modelVersion?.posts?.[0]?.id ?? 0;
+  // before the modelVersion query refetches. Must filter by the model owner:
+  // `posts` also contains other users' community gallery posts, and grabbing a
+  // foreign post here makes post.getEdit throw (auth) and 404s the wizard when
+  // the creator has no post of their own (e.g. after deleting all showcase images).
+  const ownerId = modelVersion?.model.user.id;
+  const existingPostId = modelVersion?.posts?.find((post) => post.userId === ownerId)?.id ?? 0;
   const postId = createdPostId || existingPostId;
 
   const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
@@ -75,8 +79,7 @@ export function PostUpsertForm2({
   const isUploading = uploading > 0;
   // ExternalGeneration versions are intentionally file-less (routed via external engines),
   // so the no-files publish warning doesn't apply to them.
-  const isExternalGeneration =
-    modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
+  const isExternalGeneration = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
   const hasFiles = !!modelVersion?.files?.length || isExternalGeneration;
   // Publishing without files is allowed (the model is just not downloadable until
   // files are added) — warn rather than block.

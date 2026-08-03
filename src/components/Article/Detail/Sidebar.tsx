@@ -7,6 +7,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconList, IconPaperclip } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
@@ -15,7 +16,7 @@ import { useHeadingsData } from '~/hooks/useHeadingsData';
 import type { ArticleGetById } from '~/server/services/article.service';
 import utilClasses from '~/libs/helpers.module.scss';
 
-export function Sidebar({ articleId, attachments, creator }: Props) {
+export function Sidebar({ articleId, attachments, creator, hiddenNotice }: Props) {
   const { nestedHeadings } = useHeadingsData();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -36,6 +37,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
       }}
     >
       <Stack>
+        {hiddenNotice}
         {(hasAttachments || hasHeadings) && (
           <Accordion
             variant="separated"
@@ -92,4 +94,5 @@ type Props = {
   articleId: number;
   attachments: ArticleGetById['attachments'];
   creator: ArticleGetById['user'];
+  hiddenNotice?: ReactNode;
 };

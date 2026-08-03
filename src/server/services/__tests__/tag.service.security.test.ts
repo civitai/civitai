@@ -19,7 +19,13 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { SYSTEM: { TAG_RULES: 't', CATEGORIES: 'c' } },
   REDIS_SYS_KEYS: { SYSTEM: {} },
 }));
-vi.mock('~/server/redis/caches', () => ({ imageTagsCache: { bust: vi.fn() } }));
+vi.mock('~/server/redis/caches', () => ({
+  imageTagsCache: { bust: vi.fn() },
+  // tag.service now reads/busts the votable-tags cache (#3223) from add/remove/delete
+  // vote paths under test — provide fetch + bust so those paths don't hit an
+  // undefined cache export.
+  modelVotableTagsCache: { fetch: vi.fn().mockResolvedValue([]), bust: vi.fn() },
+}));
 vi.mock('~/server/services/system-cache', () => ({
   getCategoryTags: vi.fn(),
   getReplacedTagIds: vi.fn(),
@@ -31,7 +37,15 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenModels: { refreshCache: vi.fn() },
   ImplicitHiddenImages: { refreshCache: vi.fn() },
 }));
-vi.mock('~/server/utils/cache-helpers', () => ({ fetchThroughCache: vi.fn() }));
+vi.mock('~/server/utils/cache-helpers', () => ({
+  fetchThroughCache: vi.fn(),
+  // tag.service now builds a module-scope read-through cache at import time via
+  // `queryCache(dbRead, 'getTags', 'v1')` (#3239) — queryCache returns the cached
+  // query runner, so the mock returns a callable. bustCacheTag is used by the
+  // getTags cache-busting helper.
+  queryCache: vi.fn(() => vi.fn()),
+  bustCacheTag: vi.fn(),
+}));
 
 import { addTagVotes, removeTagVotes, deleteTags } from '../tag.service';
 

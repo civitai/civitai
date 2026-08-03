@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -251,24 +252,23 @@ export function RequiredComponentsSection({
                     </ThemeIcon>
                     <Box>
                       <Group gap={6}>
-                        <Text
+                        <Anchor
                           component={Link}
-                          href={getModelUrl({ modelId: lc.modelId, modelName: lc.modelName })}
+                          href={getModelUrl({
+                            modelId: lc.modelId,
+                            modelName: lc.modelName,
+                            modelVersionId: lc.versionId,
+                          })}
                           size="sm"
                           fw={500}
-                          td="underline"
-                          style={{ textDecorationStyle: 'dotted' }}
                         >
-                          {lc.modelName}
-                        </Text>
+                          <Group gap={4} wrap="nowrap">
+                            {lc.modelName}
+                            <IconExternalLink size={12} />
+                          </Group>
+                        </Anchor>
                         <Badge size="xs" variant="light" color="gray">
                           {config?.name ?? lc.componentType}
-                        </Badge>
-                        <Badge size="xs" variant="outline" color="blue">
-                          <Group gap={4}>
-                            <IconExternalLink size={10} />
-                            External
-                          </Group>
                         </Badge>
                       </Group>
                       <Text size="xs" c="dimmed">

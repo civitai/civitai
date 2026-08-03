@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 
 import {
   addListingScreenshotSchema,
+  assetScanStatusesSchema,
   backfillListingAssetsSchema,
   listingAssetsQuerySchema,
   removeListingScreenshotSchema,
@@ -23,6 +24,7 @@ import {
 import {
   approveExternalRequestSchema,
   beginListingRevisionSchema,
+  getMyListingForAppSchema,
   getMyListingForEditSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
@@ -36,6 +38,7 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
   fetchListingMetaSchema,
+  ingestListingAssetFromDataUriSchema,
   ingestListingAssetFromUrlSchema,
 } from '~/server/schema/blocks/listing-meta.schema';
 import {
@@ -54,10 +57,13 @@ import {
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   isAppListingsEnabled,
+  resolveStoreVisibilityScope,
+  type StoreVisibilityScope,
 } from '~/server/services/app-blocks-flag';
 import {
   appDeveloperProcedure,
@@ -111,23 +117,62 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
+ * Token-scope gate for the listing-media authoring procs the civitai CLI drives
+ * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
+ * civitai/cli#186).
+ *
+ * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
+ * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
+ * `enforceTokenScope` (`server/services/oauth/enforce-token-scope.ts`) treats an
+ * UN-annotated proc as implicitly requiring `TokenScope.Full`; the CLI token is not
+ * Full and lacks bits 0..24, so every un-annotated proc here 403s it today (the same
+ * trap `startDevTunnel` faced). Annotating with `AppBlocksSubmit` (bit 25 — a bit the
+ * CLI token already carries) makes them reachable by that token.
+ *
+ * 🔴 No regression to the Full-personal-key path: `enforceTokenScope` EARLY-RETURNS the
+ * scope check for `ctx.tokenScope === TokenScope.Full`, so a Full personal API key (and
+ * cookie session) STILL passes regardless of this meta — `Flags.hasFlag(Full,
+ * AppBlocksSubmit)` (which is false, since `Full` deliberately excludes bit 25) is never
+ * evaluated for a Full credential. So this meta only ADMITS the scoped CLI token; it
+ * never gates a credential that works today.
+ *
+ * ADDITIVE, never loosening: each proc keeps its `appDeveloperProcedure` /
+ * `protectedProcedure + enforceAppBlocksAuthorFlag` author-cohort gate and the
+ * service-layer owner checks (`assertOwnerAssetEditable`, owner-bound `userId`). This is
+ * one more gate the token must clear, applied only to the owner-scoped listing-media
+ * authoring procs — no mod-only or cross-user proc is annotated. Mirrors
+ * `blocks.router` `startDevTunnel`/`stopDevTunnel` (`AppBlocksDevTunnel`).
+ */
+const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
+
+/**
  * Flag gate for the P2a PUBLIC READ procs (unified store). Anon-CAPABLE but DARK
- * until launch: for a real anon / non-mod viewer the flag never matches → mark
- * `_appBlocksDisabled` so the query returns an EMPTY page / NOT_FOUND (never an
+ * until launch: it resolves a STORE VISIBILITY SCOPE onto ctx (`_storeScope`) that
+ * the 3 read procs branch on — `none` returns an EMPTY page / NOT_FOUND (never an
  * error, mirroring `blocks.router`'s read gate) rather than throwing.
  *
- * W13 (PR-W1a / D8): repointed onto the DEDICATED store-visibility flag
- * `isAppListingsEnabled` — which itself OR-falls-back to `isAppBlocksEnabled`, so
- * the currently-visible cohort (mods + app-dev-testers via `app-blocks-enabled`)
- * is UNCHANGED today while the `app-listings` flag does not yet exist. A future
- * true-public flip widens ONLY `app-listings` (this store read path) WITHOUT
- * touching the held block-runtime gate. The AUTHOR gate
- * (`enforceAppBlocksAuthorFlag`) + the mod-only backfill (`enforceAppBlocksFlag`)
- * intentionally stay on their existing flags.
+ * ## External-before-onsite GA (Phase 1) — the kind-aware scope
+ *
+ * `resolveStoreVisibilityScope(ctx.user)` returns:
+ *   - `full`            — mods + app-dev-testers (`isAppListingsEnabled`, itself
+ *     OR-falling-back to `isAppBlocksEnabled`): sees ALL kinds, byte-identical to
+ *     today.
+ *   - `public-external` — the NEW global `app-listings-public-external` flag is on:
+ *     an anon/non-privileged viewer sees ONLY `kind='offsite'` listings (both
+ *     sub-kinds). Onsite App Blocks stay hidden. Threaded into the data-layer kind
+ *     predicate + the detail/reviews kind gate — the load-bearing boundary.
+ *   - `none`            — neither flag → dark (today's public default).
+ *
+ * 🔴 DARK / INERT as-merged: `app-listings-public-external` does NOT exist in Flipt
+ * yet, so a mod/tester still resolves `full` and everyone else `none` — ZERO change
+ * until that flag is created + enabled in a later phase. The AUTHOR gate
+ * (`enforceAppBlocksAuthorFlag`) + the mod-only backfill (`enforceAppBlocksFlag`) +
+ * the review WRITE gate (`enforceAppListingsWriteFlag`) intentionally stay on their
+ * existing flags — the public-external axis is READ-only.
  */
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
-  if (await isAppListingsEnabled({ user: ctx.user })) return next();
-  return next({ ctx: { _appBlocksDisabled: true } });
+  const _storeScope = await resolveStoreVisibilityScope({ user: ctx.user });
+  return next({ ctx: { _storeScope } });
 });
 
 /**
@@ -211,60 +256,154 @@ export const appListingsRouter = router({
       return getListingAssets({ listingId: input.listingId }, ctx.user);
     }),
 
+  /**
+   * MOD-ONLY: project a SHADOW / pending listing (by its `appListingId` — carried on
+   * the review row) into the SAME `ListingCard` + `ListingDetail` store shapes the
+   * public `getAppDetail` serves, so the moderator review surface can render the app's
+   * REAL media (icon / cover / screenshots) + scalars in store layout BEFORE approval.
+   * Read-only, `moderatorProcedure`-gated (the whole review surface is mod-only), NOT
+   * status-filtered (unlike the public approved-only read). Returns `null` for an
+   * unknown id → the client falls back to a placeholder-art layout preview.
+   */
+  getListingPreviewForReview: moderatorProcedure
+    .input(listingAssetsQuerySchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Listing review preview is restricted to civitai team');
+      }
+      const { getListingPreviewForReview } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingPreviewForReview({ listingId: input.listingId });
+    }),
+
+  /**
+   * Poll the scan status of freshly-attached asset images. The listing-media step
+   * attaches an in-flight image IMMEDIATELY (the server stores the pending id), then
+   * polls THIS to flip a per-asset "Scanning…" badge to "Scanned" / "Blocked". Owner-
+   * scoped in the service (mods read any; a not-owned id is silently omitted).
+   */
+  getAssetScanStatuses: protectedProcedure
+    .meta(listingMediaCliScope)
+    .use(enforceAppBlocksAuthorFlag)
+    .input(assetScanStatusesSchema)
+    .query(async ({ ctx, input }) => {
+      const { getAssetScanStatuses } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      return getAssetScanStatuses(input.imageIds, ctx.user);
+    }),
+
+  // -------------------------------------------------------------------------
+  // OWNER ASSET MUTATIONS.
+  //
+  // 🔴 ALL SIX MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
+  // of these calls `resolveOwnerAssetEditTarget` → `beginListingRevision`, which
+  // throws a typed `OffsiteRequestError` (a plain `Error` subclass, NOT a
+  // `TRPCError`) — e.g. `INVALID_REVISION` when a moderator delists the listing
+  // between the client's read and this write, or the 'failed to open a revision
+  // draft' race. Unwrapped, those surfaced as an opaque 500 with a generic message
+  // instead of the typed, actionable one; the escape only exists because the mint
+  // moved onto this path. `TRPCError`s the service already shaped (the asset
+  // validators, the fail-closed row-id re-map) pass straight through.
+  // -------------------------------------------------------------------------
+
   setIcon: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingIconSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingIcon } = await import('~/server/services/blocks/app-listing-assets.service');
-      return setListingIcon(input, ctx.user);
+      try {
+        return await setListingIcon(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   setCover: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingCoverSchema)
     .mutation(async ({ ctx, input }) => {
       const { setListingCover } = await import('~/server/services/blocks/app-listing-assets.service');
-      return setListingCover(input, ctx.user);
+      try {
+        return await setListingCover(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   addScreenshot: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(addListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
       const { addListingScreenshot } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return addListingScreenshot(input, ctx.user);
+      try {
+        return await addListingScreenshot(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   reorderScreenshots: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(reorderListingScreenshotsSchema)
     .mutation(async ({ ctx, input }) => {
       const { reorderListingScreenshots } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return reorderListingScreenshots(input, ctx.user);
+      try {
+        return await reorderListingScreenshots(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
+  /**
+   * 🔴 Returns `{ id }` = the row that was WRITTEN, which differs from the
+   * `screenshotId` passed in when this call minted the shadow revision (the parent row
+   * id is re-keyed onto the clone). Treat it as the new id, not an echo. Input schema
+   * unchanged — released `civitai` CLI versions calling this under `AppBlocksSubmit`
+   * keep working.
+   */
   updateScreenshotCaption: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(updateListingScreenshotCaptionSchema)
     .mutation(async ({ ctx, input }) => {
       const { updateListingScreenshotCaption } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return updateListingScreenshotCaption(input, ctx.user);
+      try {
+        return await updateListingScreenshotCaption(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
+  /**
+   * 🔴 Returns `{ removed }` = the row actually DELETED, which differs from the
+   * `screenshotId` passed in when this call minted the shadow revision (the clone is
+   * deleted, never the live parent's row). Treat it as the new id, not an echo.
+   */
   removeScreenshot: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(removeListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
       const { removeListingScreenshot } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return removeListingScreenshot(input, ctx.user);
+      try {
+        return await removeListingScreenshot(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
     }),
 
   /**
@@ -296,10 +435,14 @@ export const appListingsRouter = router({
   // -------------------------------------------------------------------------
 
   /**
-   * AUTHOR: submit a pure external-link off-site app. Creates a DRAFT
-   * `AppListing` + a `pending` `AppListingPublishRequest` (B1); the author then
+   * AUTHOR: submit an external-app off-site listing (the MERGED external+connect
+   * model — every external app links its own OAuth client). REQUIRES the caller's
+   * OAuth `connectClientId` (owned, not an App-Block client) + the disclosed
+   * requested-scope subset (⊆ the client's `allowedScopes`) + per-scope
+   * justifications; `externalUrl` is an OPTIONAL homepage / Visit link. Creates a
+   * DRAFT `AppListing` + a `pending` `AppListingPublishRequest` (B1); the author then
    * attaches assets via the (author-gated) asset-CRUD procs above before a mod
-   * approves it (PR-b). Owner-bound to the caller (no user-supplied owner).
+   * approves it. Owner-bound to the caller (no user-supplied owner).
    */
   submitExternalListing: appDeveloperProcedure
     .use(
@@ -319,7 +462,14 @@ export const appListingsRouter = router({
       const { submitExternalListing } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
-      return submitExternalListing({ input, userId: ctx.user.id });
+      // `isModerator` lets a mod link ANY (non-App-Block) OAuth client on submit —
+      // mirroring the mod-only global client search (`oauthClient.searchForModerator`).
+      // A non-mod stays restricted to their own clients (default `false`).
+      return submitExternalListing({
+        input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
 
   /**
@@ -371,6 +521,9 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search: a mod editing a listing that links a
+          // foreign OAuth client isn't blocked by the owner re-assertion.
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -386,6 +539,7 @@ export const appListingsRouter = router({
    * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
    */
   getMyListingForEdit: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .input(getMyListingForEditSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -425,6 +579,39 @@ export const appListingsRouter = router({
           shadowId: input.shadowId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search (same rationale as `updateListing`).
+          isModerator: ctx.user.isModerator,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` — the entry
+   * read for the owner-facing on-site listing-media page (`/apps/<appBlockId>/listing`).
+   * Returns the `AppListing.id` the page passes to `beginListingRevision` + the asset
+   * procs, plus the listing status / content rating / whether a revision is already
+   * under review, AND the EDITABLE target's current assets (`assets` + `shadowId`) so
+   * the media editor can prefill the icon/cover/screenshots it is about to edit and
+   * evaluate its publish floor. Owner-bound in the service (the assets are the
+   * CALLER'S OWN listing only — nothing here is exposed to a public listing DTO);
+   * typed failures map via `mapOffsiteError` (NOT_OWNED→FORBIDDEN, NOT_FOUND when no
+   * listing row exists for the app).
+   */
+  getMyListingForApp: appDeveloperProcedure
+    .meta(listingMediaCliScope)
+    .input(getMyListingForAppSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { getMyListingForApp } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await getMyListingForApp({
+          appBlockId: input.appBlockId,
+          slug: input.slug,
+          userId: ctx.user.id,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -439,6 +626,7 @@ export const appListingsRouter = router({
    * (passing the shadow id) and calls `submitListingRevision`.
    */
   beginListingRevision: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .input(beginListingRevisionSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -460,6 +648,7 @@ export const appListingsRouter = router({
    * `mapOffsiteError`.
    */
   submitListingRevision: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 20,
@@ -492,6 +681,7 @@ export const appListingsRouter = router({
    * per-kind-image validation still bounds where/whether it can be used.
    */
   persistAssetImage: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 60,
@@ -559,6 +749,33 @@ export const appListingsRouter = router({
       return ingestListingAssetFromUrl({ input, userId: ctx.user.id });
     }),
 
+  /**
+   * AUTHOR: ingest an ACCEPTED inline `data:image/...` icon (a favicon declared as a
+   * data URI — the https-only URL path drops these) into a scannable `Image` row.
+   * The bytes come from the data URI itself (no outbound fetch); the server decodes,
+   * REJECTS any non-image MIME, caps the decoded size, and RASTERIZES to PNG (raw SVG
+   * is never stored/served — XSS vector) before running the STANDARD scan pipeline.
+   * Returns the numeric `imageId` the client then attaches via `setIcon`. Same auth +
+   * rate-limit shape as the URL accept.
+   */
+  ingestAssetFromDataUri: appDeveloperProcedure
+    .meta(listingMediaCliScope)
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many image imports — slow down.',
+      })
+    )
+    .input(ingestListingAssetFromDataUriSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { ingestListingAssetFromDataUri } = await import(
+        '~/server/services/blocks/listing-meta.service'
+      );
+      return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
+    }),
+
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
   listMySubmissions: appDeveloperProcedure
     .input(listMySubmissionsSchema)
@@ -602,8 +819,8 @@ export const appListingsRouter = router({
 
   /**
    * MOD: approve a pending off-site request (PR-b). Loads the request + its draft
-   * listing, enforces `assertListingAssetsComplete` (THE P3 activation — approve
-   * FAILS unless icon+cover+≥1 screenshot) + re-validates the stored externalUrl,
+   * listing, enforces `assertListingMeetsFloor` (approve FAILS unless icon+cover;
+   * screenshots are OPTIONAL — partial-media relaxation) + re-validates the stored externalUrl,
    * then flips the listing draft→approved + the request→approved (status-guarded)
    * and supersedes sibling pendings. v1 ALLOWS mod self-approve (reviewer ==
    * submitter — trusted, enables single-mod dogfood; a reviewer≠submitter
@@ -634,7 +851,8 @@ export const appListingsRouter = router({
     }),
 
   /**
-   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason` ≥10
+   * MOD: reject a pending off-site request (PR-b). Requires `rejectionReason`
+   * ≥`OFFSITE_REJECTION_REASON_MIN` (the shared `OFFSITE_MOD_REASON_MIN`, 3)
    * chars; in ONE tx flips the request→rejected + sets `reviewedBy*` and DELETES
    * the draft listing (status-guarded — releases the slug, never removes an
    * approved listing). Failure modes are mapped by `mapOffsiteError` (typed
@@ -894,6 +1112,34 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD reset an approved ON-SITE (hosted app-block) listing back into the block
+   * review queue (approved → pending) — the W13-deferred onsite reset, now built.
+   * Suspends the backing block (the real runtime stop), clones the latest approved
+   * `AppBlockPublishRequest` into a fresh pending one (assets/version KEPT, NO owner
+   * resubmit) so it re-enters `listPendingRequests`, writes a `reset-to-pending` audit
+   * event, and notifies the owner; a mod re-approves it through the existing block
+   * review flow (which restores the listing + un-suspends the block). DARK backend
+   * capability — no UI wiring yet (the mgmt-table Reset button is a downstream PR).
+   * Same input shape + posture as the offsite reset; typed failures map via
+   * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST).
+   */
+  resetOnsiteListingToPending: moderatorProcedure
+    .input(resetListingToPendingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Resetting on-site listings is restricted to civitai team');
+      }
+      const { resetOnsiteListingToPending } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await resetOnsiteListingToPending({ input, reviewerUserId: ctx.user.id });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
    * OWNER unpublish their OWN approved off-site listing (approved → removed) — a
    * self-service visibility toggle (no re-review). Owner-bound in the service
    * (NOT_OWNED→FORBIDDEN); NOT_TRANSITIONABLE when not approved. Typed failures map
@@ -1015,13 +1261,14 @@ export const appListingsRouter = router({
     )
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
       const { listAvailableListings } = await import(
         '~/server/services/blocks/app-listing.service'
       );
-      return listAvailableListings(input, { redCapable: isRedCapableRequest(ctx) });
+      return listAvailableListings(input, { redCapable: isRedCapableRequest(ctx), scope });
     }),
 
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
@@ -1036,11 +1283,12 @@ export const appListingsRouter = router({
     )
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      if (scope === 'none') {
         throw throwNotFoundError('Listing not found');
       }
       const { getListingDetail } = await import('~/server/services/blocks/app-listing.service');
-      const detail = await getListingDetail(input, { redCapable: isRedCapableRequest(ctx) });
+      const detail = await getListingDetail(input, { redCapable: isRedCapableRequest(ctx), scope });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
     }),
@@ -1119,12 +1367,13 @@ export const appListingsRouter = router({
     )
     .input(listAppListingReviewsSchema)
     .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
       const { listAppListingReviews } = await import(
         '~/server/services/blocks/app-listing-review.service'
       );
-      return listAppListingReviews(input);
+      return listAppListingReviews(input, { scope });
     }),
 });

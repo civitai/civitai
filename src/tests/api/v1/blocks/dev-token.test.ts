@@ -637,6 +637,69 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
   });
 
+  // Fix 2 (dogfood follow-up): the dev-token default budget now comes from the
+  // resolved app manifest's `page.buzzBudgetPerGen`, so a recipe/app whose budget
+  // exceeds the flat 50 default is dev-testable WITHOUT a manual buzzBudget.
+  it('DEFAULTS the budget to the APPROVED manifest page.buzzBudgetPerGen when no explicit request', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: 180 } } })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' }); // NO buzzBudget
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(180);
+  });
+
+  it('clamps an over-cap manifest budget to the dev cap (manifest 5000 → 250)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: 5000 } } })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
+  });
+
+  it('an EXPLICIT requested budget still wins over the manifest default', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: 180 } } })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc', buzzBudget: 30 });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(30);
+  });
+
+  it('falls back to the flat default (50) when the approved manifest omits buzzBudgetPerGen', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    // Default pageApp() manifest has no buzzBudgetPerGen.
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(50);
+  });
+
+  it('DEFAULTS the budget to the PENDING manifest page.buzzBudgetPerGen (local-manifest mode)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION); // personal key w/ AIServicesWrite
+    // No approved row → pending path; pending manifest declares a >50 budget.
+    mockAppBlockFindUnique.mockResolvedValueOnce(null);
+    mockPublishRequestFindFirst.mockResolvedValueOnce(
+      pendingRequest({
+        manifest: {
+          page: { title: 'X', buzzBudgetPerGen: 200 },
+          scopes: ['ai:write:budgeted', 'user:read:self'],
+        },
+      })
+    );
+    const { req, res } = authPost({ slug: 'my-pending-app' }); // NO buzzBudget
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(200);
+  });
+
   it('omits buzzBudget when ai:write:budgeted is not granted', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(
@@ -799,9 +862,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
             page: { title: 'evil' },
             scopes: [
               'models:read:self', // legit → kept
-              'social:tip:self', // dev-excluded + page-forbidden → stripped
+              'social:tip:self', // dev-excluded (money OUT) → stripped
               'block:settings:write', // dev-excluded → stripped
-              'buzz:read:self', // page-forbidden → stripped
+              'buzz:read:self', // own-ledger read, in dev allowlist → kept
               'totally:unknown:scope', // not a known block scope → stripped
             ],
           },
@@ -812,12 +875,13 @@ describe('POST /api/v1/blocks/dev-token', () => {
 
       expect(res._getStatusCode()).toBe(200);
       const arg = mockSign.mock.calls[0][0];
-      // Only the legit scope + the force-granted user:read:self survive — proving
-      // the un-reviewed manifest cannot escalate past the dev belt.
-      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      // The legit reads (incl. self-bound buzz:read:self) + the force-granted
+      // user:read:self survive; the ESCALATED money/write/unknown scopes are
+      // stripped — proving the un-reviewed manifest cannot escalate past the belt.
+      expect(arg.scopes).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
       expect(arg.scopes).not.toContain('social:tip:self');
       expect(arg.scopes).not.toContain('block:settings:write');
-      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).toContain('buzz:read:self');
       expect(arg.scopes).not.toContain('totally:unknown:scope');
     });
 
@@ -1153,9 +1217,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
         slug: 'brand-new-app',
         scopes: [
           'models:read:self', // legit → kept
-          'social:tip:self', // dev-excluded + page-forbidden → stripped
+          'social:tip:self', // dev-excluded (money OUT) → stripped
           'block:settings:write', // dev-excluded → stripped
-          'buzz:read:self', // page-forbidden → stripped
+          'buzz:read:self', // own-ledger read, in dev allowlist → kept
           'totally:unknown', // not a known block scope → stripped
         ],
       });
@@ -1163,12 +1227,13 @@ describe('POST /api/v1/blocks/dev-token', () => {
 
       expect(res._getStatusCode()).toBe(200);
       const arg = mockSign.mock.calls[0][0];
-      // Only the legit scope + force-granted user:read:self survive — proving the
-      // un-reviewed CLIENT manifest cannot escalate past the dev belt.
-      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      // The legit reads (incl. self-bound buzz:read:self) + force-granted
+      // user:read:self survive; the ESCALATED money/write/unknown scopes are
+      // stripped — proving the un-reviewed CLIENT manifest cannot escalate.
+      expect(arg.scopes).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
       expect(arg.scopes).not.toContain('social:tip:self');
       expect(arg.scopes).not.toContain('block:settings:write');
-      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).toContain('buzz:read:self');
       expect(arg.scopes).not.toContain('totally:unknown');
     });
 

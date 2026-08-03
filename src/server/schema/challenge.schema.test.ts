@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MAX_DURATION_MS,
+  CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
 } from '~/shared/constants/challenge.constants';
 import {
@@ -149,5 +151,52 @@ describe('upsertChallengeSchema judgingCategories', () => {
       ],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('userChallengeUpsertSchema duration limits', () => {
+  const startsAt = new Date('2026-08-01T00:00:00Z');
+  const valid = {
+    title: 'A valid challenge title',
+    description: 'A valid challenge description.',
+    theme: 'Neon',
+    coverImage: { url: '123e4567-e89b-12d3-a456-426614174000' },
+    judgeId: 1,
+    judgingCategories: [{ key: 'theme', label: 'Theme', criteria: 'Fits the theme.', weight: 100 }],
+    entryFee: CHALLENGE_MIN_ENTRY_FEE,
+    initialPrizeBuzz: 0,
+    prizeDistribution: [50, 30, 20],
+    maxEntriesPerUser: 5,
+    startsAt,
+  };
+  const endingAfter = (ms: number) => ({ ...valid, endsAt: new Date(startsAt.getTime() + ms) });
+
+  it('accepts a duration exactly at the minimum', () => {
+    expect(userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MIN_DURATION_MS)).success).toBe(true);
+  });
+
+  it('rejects a duration just under the minimum', () => {
+    const result = userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MIN_DURATION_MS - 1));
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a duration exactly at the maximum', () => {
+    expect(userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MAX_DURATION_MS)).success).toBe(true);
+  });
+
+  it('rejects a duration just over the maximum', () => {
+    const result = userChallengeUpsertSchema.safeParse(endingAfter(CHALLENGE_MAX_DURATION_MS + 1));
+    expect(result.success).toBe(false);
+  });
+
+  it('emits only the ordering error (no spurious duration issue) when endsAt <= startsAt', () => {
+    const result = userChallengeUpsertSchema.safeParse(endingAfter(-3600 * 1000));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message);
+      expect(messages).toContain('End date must be after start date');
+      expect(messages.some((m) => m.includes('must run for at least'))).toBe(false);
+      expect(messages.some((m) => m.includes('cannot run longer than'))).toBe(false);
+    }
   });
 });

@@ -129,13 +129,20 @@ export function applyResources(
       };
     }
 
-    // If it's an embedding, replace trigger word with embedding reference
+    // If it's an embedding, replace trigger word with embedding reference.
+    // triggerWord is a LITERAL token (creator-supplied), not a pattern — it MUST
+    // be regex-escaped before interpolation. Unescaped, an attacker-chosen trigger
+    // like "(x+x+)+y" is (a) a regex injection and (b) catastrophic-backtracking
+    // ReDoS: measured ~14s of event-loop freeze on a ~35-char crafted prompt run,
+    // and no prompt-length cap helps (it's exponential). The `.includes` gate
+    // below still uses the raw literal (a substring check, correct).
     if (parsedAir.type === 'embedding' && resource.triggerWord) {
+      const tw = resource.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       for (const node of Object.values(workflow)) {
         for (const [key, value] of Object.entries(node.inputs)) {
           if (typeof value === 'string' && value.includes(resource.triggerWord)) {
-            const negRegex = new RegExp(`\\b${resource.triggerWord}-neg\\b`, 'gi');
-            const regex = new RegExp(`\\b${resource.triggerWord}\\b`, 'gi');
+            const negRegex = new RegExp(`\\b${tw}-neg\\b`, 'gi');
+            const regex = new RegExp(`\\b${tw}\\b`, 'gi');
             node.inputs[key] = value
               .replace(negRegex, '')
               .replace(regex, `embedding:${resource.air}`);

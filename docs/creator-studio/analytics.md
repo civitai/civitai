@@ -86,9 +86,11 @@ point to [join.md](./join.md). Nav item is not `memberOnly`.
 
 ## Open questions
 
-- **What counts as "basic" for v1?** Lock the metric/chart list (generations-over-time, downloads-over-time, top-models
-  table + a few stat tiles?) to guard against scope-balloon — richer analytics (cohorts, per-model funnels) is
-  **post-v1** ([plan §8](../creator-studio-plan.md#8-phasing)).
+- ~~**What counts as "basic" for v1?**~~ **Decided 2026-07-09 (B4):** two sections — a **Model** section (the
+  proposed metrics + weekly granularity, generations split by buzz color, earnings WoW, per-model last 1–2 wk,
+  cost-to-generate reference) and a **NEW Content/Creator** section (reactions, followers, images/posts
+  published, profile views, top-content table, all-time stat tiles). See
+  [pre-implementation-decisions.md B4](pre-implementation-decisions.md). Richer analytics (cohorts, funnels) is post-v1.
 - **Per-model breakdown table** depends on the **owner-keyed rollup**
   ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) — is it **v1** (needs the MV
   from backend) or **fast-follow** (v1 ships headline usage only)?

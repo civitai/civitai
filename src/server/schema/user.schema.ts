@@ -282,6 +282,18 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
+  // the feed mounts hundreds of cards and each one costs an embla engine.
+  swipeGalleryCards: z.boolean().optional(),
+  // Creator opt-out: when true, the public donation-goal display (progress + collected
+  // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
+  hideDonationGoals: z.boolean().optional(),
+  // Creator Controls defaults: baseline metric-privacy for all of this user's
+  // models. Effective only while the user holds a valid Creator Program
+  // membership (see server/utils/model-metric-privacy.ts).
+  hideModelBuzz: z.boolean().optional(),
+  hideModelDownloads: z.boolean().optional(),
+  hideModelGenerations: z.boolean().optional(),
   hideDownloadsSince: z.number().optional(),
   gallerySettings: (
     z.object({
@@ -337,6 +349,11 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  swipeGalleryCards: z.boolean().optional(),
+  hideDonationGoals: z.boolean().optional(),
+  hideModelBuzz: z.boolean().optional(),
+  hideModelDownloads: z.boolean().optional(),
+  hideModelGenerations: z.boolean().optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
@@ -440,6 +457,13 @@ export const toggleBanUserSchema = z.object({
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
+  removeMedia: z.boolean().optional(),
+  removeModels: z.boolean().optional(),
+});
+
+export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;
+export const getBanContentPreviewSchema = z.object({
+  userId: z.number(),
 });
 
 // Email verification schemas

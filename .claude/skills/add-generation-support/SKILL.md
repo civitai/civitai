@@ -269,6 +269,47 @@ If a dev server is running (check via the `dev-server` skill), ask the user to:
 - Verify controls render correctly
 - Verify the whatIf query returns without errors
 
+## Post-onboarding: generation coverage & auction featurability (manual DB steps)
+
+Two DB tables are keyed off the constants **by string** but are **not derived from them** — nothing reconciles them, so they must be hand-seeded. Miss one and the feature silently half-works (the generation form still lights up from the constants, so it *looks* done). This bit us with Anima and Krea 2. Neither table is written by app code today; both need a raw SQL INSERT run against each environment (preview → prod) per our manual-migration rule.
+
+See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-auction-ecosystem-sync.md) for the full rationale and architecture; the essentials:
+
+### 1. `GenerationBaseModel` — makes resources GENERATABLE (do this for every generatable ecosystem)
+
+The `GenerationCoverage` SQL view gates whether a resource is generatable. One of its inputs is a plain list of base-model strings in `GenerationBaseModel`. A new base model that isn't in this list is **not generatable** even with full form support (this is what silently broke Krea 2).
+
+- **`baseModel` must equal the base model *display name*** (`ModelVersion.baseModel`), e.g. `'Krea 2'`, `'Anima'` — **not** the ecosystem key.
+
+```sql
+INSERT INTO "GenerationBaseModel" ("baseModel") VALUES ('Krea 2') ON CONFLICT DO NOTHING;
+```
+
+### 2. `AuctionBase` — makes an ecosystem FEATURABLE in auctions (only if it should be a paid featured surface)
+
+`AuctionBase` is the FK anchor for `Auction`/`Bid`/`BidRecurring` (Buzz money + history) and holds runtime economics. **There is no `createAuctionBase` mutation** — a new ecosystem's auction can only be created by raw SQL INSERT today. This is a **deliberate, product-gated step, not automatic**: *generatable ≠ should be featured*. Skip it for video / `modelLocked` / experimental ecosystems unless product wants a paid featured auction for them. Admins tune `active`/`minPrice`/`quantity` afterward via `updateAuctionBase` at [moderator/auctions.tsx](src/pages/moderator/auctions.tsx) (no deploy).
+
+- **`ecosystem` must equal the ecosystem *key*** (`'Anima'`, `'Krea2'`, `'ZImageTurbo'`) — what `getBaseModelGroup(baseModel)` returns and what the feature button matches against. **Not** the display name.
+- **Don't touch the two sentinel rows:** `ecosystem = NULL` (Featured Checkpoints) and `ecosystem = 'Misc'` are hand-managed, not per-ecosystem.
+- Conventions from existing rows: `type = 'Model'`, default economics `quantity 40, minPrice 100, runForDays 1, validForDays 1, active true`; `name = 'Featured Resources - <displayName>'`; `slug = 'featured-resources-<keylowercased>'` (e.g. key `Krea2` → slug `featured-resources-krea2`).
+
+```sql
+INSERT INTO "AuctionBase" (type, ecosystem, name, quantity, "minPrice", active, slug, "runForDays", "validForDays")
+VALUES ('Model', 'Krea2', 'Featured Resources - Krea 2', 40, 100, true, 'featured-resources-krea2', 1, 1);
+```
+
+**Operational gotcha — new rows don't appear until an `Auction` instance exists.** The `/auctions` sidebar lists currently-running `Auction` instances, not `AuctionBase` rows. New instances are only spawned by the daily `createNewAuctions` step in `handle-auctions.ts` (`startAt <= now < endAt`). So a fresh `AuctionBase` is invisible for **up to 24h**. To surface it immediately, also insert a live `Auction` mirroring the current window (same `startAt`/`endAt` as today's other auctions):
+
+```sql
+INSERT INTO "Auction" ("startAt","endAt","quantity","minPrice","auctionBaseId","validFrom","validTo","finalized")
+SELECT date_trunc('day', now()), date_trunc('day', now()) + interval '1 day', ab.quantity, ab."minPrice", ab.id,
+       date_trunc('day', now()) + interval '1 day', date_trunc('day', now()) + interval '2 day', false
+FROM "AuctionBase" ab
+WHERE ab.ecosystem = 'Krea2';
+```
+
+Surface both INSERTs to the user as SQL that needs to be applied manually to each environment — do not assume they auto-run.
+
 ## Cross-ecosystem compatibility
 
 Cross-ecosystem compatibility (e.g. "Pony LoRAs work on Illustrious checkpoints") is driven **entirely by explicit entries in `crossEcosystemRules`** in [basemodel.constants.ts](src/shared/constants/basemodel.constants.ts). The `parentEcosystemId` relationship does **not** infer compatibility — it exists solely for identity (AIR URN ecosystem, classification) and for support/defaults inheritance.

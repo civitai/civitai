@@ -1,7 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
-import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -13,8 +12,15 @@ import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/serve
 import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { instrumentSerialize } from '~/server/logging/trpc-serialize-log';
-import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
+import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
+import {
+  buildTransformer,
+  onDevalueWriteFallback,
+  serverWriteSerialize,
+  WRITE_DEVALUE,
+} from '~/shared/utils/trpc-union-transformer';
+import { logToAxiom } from '~/server/logging/client';
+import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -25,9 +31,38 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
+
+// Attribute + ship each devalue-write fallback (a non-POJO response payload that
+// fell back to superjson — see writeSerializeWithFallback). Path comes from the
+// serialize ALS ctx because tRPC doesn't thread the procedure into the
+// transformer (and onError never fires — the response still succeeds).
+//
+// The ctx path is the RAW, client-controlled, comma-joined batch string
+// (`req.query.trpc`), so we normalize it to the individual offending
+// procedure(s) (fallbackDedupKeys) before deduping — otherwise a client could
+// re-frame one offender across many batches to defeat the window — and dedup
+// through a SIZE-BOUNDED windowed map so a long-lived module can't grow it
+// unboundedly. Each distinct procedure logs at most once per window; a
+// multi-procedure batch (~1% of traffic) over-attributes to its co-batched
+// procedures, which is an acceptable, bounded cost for the offender list.
+const fallbackDedup = createFallbackDedup({ windowMs: 30_000, maxSize: 1000 });
+onDevalueWriteFallback((error) => {
+  const rawPath = currentSerializeCtx()?.path ?? 'unknown';
+  const now = Date.now();
+  const message = error instanceof Error ? error.message : String(error);
+  for (const path of fallbackDedupKeys(rawPath)) {
+    if (!fallbackDedup.shouldLog(path, now)) continue;
+    void logToAxiom({
+      name: 'devalue-write-fallback',
+      type: 'warning',
+      path,
+      message,
+    }).catch(() => undefined);
+  }
+});
 
 export interface TRPCMeta {
   /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
@@ -46,31 +81,30 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
-    // Phase 1 of the superjson → devalue transformer migration (additive, wire
-    // unchanged). Split into a CombinedDataTransformer so READ and WRITE flip
-    // independently in later phases. WRITE (serialize) stays 100% superjson;
-    // READ (deserialize) becomes the format-sniffing UNION so the server can
-    // decode either format before any writer ever emits devalue. `input` is the
-    // request-read path (the only one exercised server-side); `output` is filled
-    // for a complete transformer.
-    transformer: {
-      input: {
-        serialize: (data: any) => superjson.serialize(data),
-        deserialize: unionDeserialize,
-      },
-      output: {
-        // instrumentSerialize times the serialize (the exact frame that pegs the
-        // loop on an oversized response — see trpc-serialize-log.ts) and, only
-        // above a cheap duration floor, logs the offending procedure + byte size.
-        // Disarmed by default: a single boolean branch, then the original
-        // withSpan+superjson. Kept EXACTLY as before — the write stays superjson.
-        serialize: (data: any) =>
-          instrumentSerialize(() =>
-            withSpan('trpc:serialize:superjson', () => superjson.serialize(data))
-          ),
-        deserialize: unionDeserialize,
-      },
-    },
+    // Phase 2 of the superjson → devalue transformer migration: the response
+    // WRITE is env-gated PER POOL (`TRPC_WRITE_DEVALUE`, resolved once at module
+    // load into `serverWriteSerialize`) while READ stays the format-sniffing
+    // UNION (so a peer that still writes superjson is decoded fine, and rollback
+    // is unsetting the env + a pod restart). Default (flag unset) =
+    // `superjson.serialize` = byte-for-byte the Phase-1 wire, so this is safe to
+    // merge; setting the env `true` on ONE pool makes only that pool write
+    // devalue responses. The shared `buildTransformer` fills the request-read /
+    // response-read (union) and request-write (superjson, never exercised
+    // server-side) slots; the ONLY server-specific difference is the instrumented
+    // response-serialize below, whose inner call is still `serverWriteSerialize`.
+    transformer: buildTransformer((data: any) =>
+      // instrumentSerialize times the serialize (the exact frame that pegs the
+      // loop on an oversized response — see trpc-serialize-log.ts) and, only
+      // above a cheap duration floor, logs the offending procedure + byte size.
+      // The span label is derived from the live gate so the freeze-instrumentation
+      // frame name matches what is ACTUALLY written (superjson vs devalue).
+      // The wrappers are pass-through — they return serverWriteSerialize's result.
+      instrumentSerialize(() =>
+        withSpan(`trpc:serialize:${WRITE_DEVALUE ? 'devalue' : 'superjson'}`, () =>
+          serverWriteSerialize(data)
+        )
+      )
+    ),
     errorFormatter({ shape }) {
       return shape;
     },
@@ -213,33 +247,12 @@ const applyDomainFeature = t.middleware(async (options) => {
  *   request regardless of scope. Used for buzz-spending operations that the
  *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
  */
-const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
-  // blockApiKeys: deny any token-based request, regardless of scope. Session
-  // auth (apiKeyId === null) is unaffected.
-  if (meta?.blockApiKeys && ctx.apiKeyId != null) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'This action cannot be performed via API key or OAuth token.',
-    });
-  }
-
-  // Session auth (cookies) and full-access API keys pass through scope check
-  if (ctx.tokenScope === TokenScope.Full) {
-    return next();
-  }
-
-  // Default unannotated endpoints to requiring Full scope
-  const requiredScope = meta?.requiredScope ?? TokenScope.Full;
-
-  if (!Flags.hasFlag(ctx.tokenScope, requiredScope)) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Your API key does not have the required scope for this action',
-    });
-  }
-
-  return next();
-});
+// `enforceTokenScope`'s body lives in a light standalone module so the OAuth
+// scope-verification + unified scope-usage audit wiring is unit-testable without
+// booting this heavy module. tRPC just wraps it.
+const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
+  runEnforceTokenScope({ ctx, meta, path, next })
+);
 
 // Time every procedure by path (full chain + resolver) so heavy-pool isolation
 // candidates can be ranked by P99 x rate — the criterion behind the image-feed

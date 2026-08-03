@@ -32,6 +32,18 @@ const defaultBenefits = [
     ),
   },
   {
+    tiers: ['bronze', 'silver', 'gold'],
+    content: (
+      <Text>
+        Higher{' '}
+        <Text td="underline" component="a" href="/creator-program" target="_blank">
+          licensing-fee &amp; paid-access price caps
+        </Text>{' '}
+        at higher tiers
+      </Text>
+    ),
+  },
+  {
     content: 'Unrestricted generation with Blue Buzz',
     tiers: ['bronze', 'silver', 'gold'],
     subType: 'yellow',

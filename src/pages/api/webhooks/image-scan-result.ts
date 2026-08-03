@@ -36,6 +36,7 @@ import {
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { imageScanWebhookCounter } from '~/server/prom/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
@@ -62,6 +63,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
@@ -131,6 +133,7 @@ export default WebhookEndpoint(async (req, res) => {
       // ACK with 200 so the orchestrator drops the workflow instead of retrying
       // a result for a row that no longer exists.
       if (e instanceof Error && e.message.startsWith('image not found')) {
+        imageScanWebhookCounter.inc({ result: 'deleted_skip' });
         return res.status(200).json({ ok: true, skipped: 'deleted' });
       }
       if (e instanceof Error) {
@@ -142,8 +145,10 @@ export default WebhookEndpoint(async (req, res) => {
           cause: e?.cause,
         });
       }
+      imageScanWebhookCounter.inc({ result: 'error' });
       return res.status(400).send({ error: e.message });
     }
+    imageScanWebhookCounter.inc({ result: 'success' });
     return res.status(200).json({ ok: true });
   }
 
@@ -156,6 +161,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
+  let webhookResult: 'success' | 'not_found' | 'unscannable';
   try {
     switch (bodyResults.data.status) {
       case Status.NotFound:
@@ -163,6 +169,7 @@ export default WebhookEndpoint(async (req, res) => {
           where: { id: data.id, ingestion: { in: pendingStates } },
           data: { ingestion: ImageIngestionStatus.NotFound },
         });
+        webhookResult = 'not_found';
         break;
       case Status.Unscannable:
         await updateImageScanJobs({
@@ -171,9 +178,22 @@ export default WebhookEndpoint(async (req, res) => {
           incrementRetryCount: true,
           whereIngestionIn: pendingStates,
         });
+        webhookResult = 'unscannable';
+        logToAxiom(
+          {
+            name: 'image-scan-result',
+            type: 'warning',
+            message: 'legacy scanner returned Unscannable',
+            source: 'webhook-legacy',
+            failureType: 'unscannable',
+            imageId: data.id,
+          },
+          'webhooks'
+        ).catch(() => null);
         break;
       case Status.Success:
         await handleSuccess(data, req);
+        webhookResult = 'success';
         break;
       default: {
         await logScanResultError({ id: data.id, message: 'unhandled data type' });
@@ -196,13 +216,17 @@ export default WebhookEndpoint(async (req, res) => {
       });
     }
 
+    imageScanWebhookCounter.inc({ result: webhookResult });
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     // Image was deleted between scan submit and callback — there's nothing to
     // update. ACK with 200 so the scanner drops the job instead of re-delivering
     // the result for a row that no longer exists.
-    if (e.message === 'Image not found')
+    if (e.message === 'Image not found') {
+      imageScanWebhookCounter.inc({ result: 'deleted_skip' });
       return res.status(200).json({ ok: true, skipped: 'deleted' });
+    }
+    imageScanWebhookCounter.inc({ result: 'error' });
     return res.status(400).send({ error: e.message });
   }
 });
@@ -252,6 +276,13 @@ async function updateImage(
   const { id } = image;
   try {
     await dbWrite.image.update({ where: { id }, data });
+
+    // Terminal outcome — drop the ImageScan JobQueue row so completed scans don't
+    // linger as stale entries the ingest-images cron has to prune. Non-terminal
+    // states (e.g. Error) stay queued for retry.
+    if (data.ingestion === 'Scanned' || data.ingestion === 'Blocked') {
+      await removeImageScanJobQueue([id]);
+    }
 
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
@@ -318,11 +349,27 @@ async function updateImage(
     }
 
     if (data.ingestion && data.ingestion !== 'Blocked') {
-      await signalClient.send({
-        target: SignalMessages.ImageIngestionStatus,
-        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
-        userId: image.userId,
-      });
+      // The ingestion is already committed — a signals brownout must not 400 the webhook.
+      await signalClient
+        .send({
+          target: SignalMessages.ImageIngestionStatus,
+          data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+          userId: image.userId,
+        })
+        .catch((error) =>
+          logToAxiom(
+            {
+              name: 'image-scan-result',
+              type: 'warning',
+              message: `signal send failed: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              imageId: image.id,
+              source: 'webhook-legacy',
+            },
+            'webhooks'
+          ).catch(() => null)
+        );
     }
   } catch (e) {
     if (isDev) console.log({ error: e });

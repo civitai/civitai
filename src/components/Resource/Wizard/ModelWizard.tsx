@@ -1,7 +1,17 @@
-import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, TextInput, Title } from '@mantine/core';
+import {
+  Button,
+  Group,
+  LoadingOverlay,
+  Popover,
+  Stack,
+  Stepper,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -14,6 +24,8 @@ import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { TemplateOmittableField } from '~/server/schema/model.schema';
+import { templateOmittableFields } from '~/server/schema/model.schema';
 import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
@@ -23,6 +35,7 @@ import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
@@ -33,10 +46,22 @@ export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
 const querySchema = z.object({
   id: z.coerce.number().optional(),
   templateId: z.coerce.number().optional(),
+  templateOmit: z.string().optional().catch(undefined),
   bountyId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().optional(),
   src: z.coerce.string().optional(),
 });
+
+// The URL carries the omit list as a comma-delimited string; unknown entries are dropped
+// so a garbage value degrades to a full-copy template instead of erroring.
+function parseTemplateOmit(value?: string): TemplateOmittableField[] | undefined {
+  const fields = value
+    ?.split(',')
+    .filter((field): field is TemplateOmittableField =>
+      templateOmittableFields.includes(field as TemplateOmittableField)
+    );
+  return fields?.length ? fields : undefined;
+}
 
 const CreateSteps = ({
   step,
@@ -75,12 +100,16 @@ const CreateSteps = ({
 
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
+  const templateOmit = result.success ? result.data.templateOmit : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
 
   const { data: templateFields, isInitialLoading: isTemplateLoading } =
-    trpc.model.getTemplateFields.useQuery({ id: templateId as number }, { enabled: !!templateId });
+    trpc.model.getTemplateFields.useQuery(
+      { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
+      { enabled: !!templateId }
+    );
   const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
       { id: bountyId as number },
@@ -93,14 +122,22 @@ const CreateSteps = ({
 
   // Form key ensures remount when template source or loading state changes
   // See: https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
-  const formKey = `form-${templateId ?? bountyId ?? 'new'}-${
+  const formKey = `form-${templateId ?? bountyId ?? 'new'}-${templateOmit ?? 'full'}-${
     isLoadingTemplateData ? 'loading' : 'ready'
   }`;
 
   const navigateToStep = (urlStep: number) =>
     router
       .replace(
-        getWizardUrl({ id: modelId, step: urlStep, templateId, bountyId, modelVersionId, src }),
+        getWizardUrl({
+          id: modelId,
+          step: urlStep,
+          templateId,
+          templateOmit,
+          bountyId,
+          modelVersionId,
+          src,
+        }),
         undefined,
         { shallow: true }
       )
@@ -130,7 +167,9 @@ const CreateSteps = ({
             model={modelData}
             onSubmit={withSavedNav(({ id }) => {
               if (editing) return goNext();
-              router.replace(getWizardUrl({ id, step: 2, templateId, bountyId })).then();
+              router
+                .replace(getWizardUrl({ id, step: 2, templateId, templateOmit, bountyId }))
+                .then();
             })}
           >
             {({ loading }) => (
@@ -157,7 +196,7 @@ const CreateSteps = ({
               if (result?.usageControl === ModelUsageControl.ExternalGeneration) {
                 router
                   .replace(
-                    getWizardUrl({ id: modelId, step: 4, templateId, bountyId }),
+                    getWizardUrl({ id: modelId, step: 4, templateId, templateOmit, bountyId }),
                     undefined,
                     { shallow: true }
                   )
@@ -172,7 +211,12 @@ const CreateSteps = ({
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
+                <Button
+                  type="submit"
+                  loading={loading}
+                  disabled={!canSave}
+                  onClick={clearPendingStep}
+                >
                   Next
                 </Button>
               </Group>
@@ -253,6 +297,7 @@ const TrainSteps = ({
 }) => {
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
+  const templateOmit = result.success ? result.data.templateOmit : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
   const src = result.success ? result.data.src : undefined;
 
@@ -263,6 +308,7 @@ const TrainSteps = ({
           id: modelId,
           step: urlStep,
           templateId,
+          templateOmit,
           bountyId,
           modelVersionId: modelVersion.id,
           src,
@@ -408,6 +454,7 @@ function getWizardUrl({
   id,
   step,
   templateId,
+  templateOmit,
   bountyId,
   modelVersionId,
   src,
@@ -415,12 +462,13 @@ function getWizardUrl({
   step: number;
   id?: number;
   templateId?: number;
+  templateOmit?: string;
   bountyId?: number;
   modelVersionId?: number;
   src?: string;
 }) {
   if (!id) return '';
-  const query = QS.stringify({ templateId, bountyId, modelVersionId, step, src });
+  const query = QS.stringify({ templateId, templateOmit, bountyId, modelVersionId, step, src });
   return `/models/${id}/wizard?${query}`;
 }
 
@@ -433,6 +481,7 @@ export function ModelWizard() {
   const result = querySchema.safeParse(router.query);
   const id = result.success ? result.data.id : undefined;
   const templateId = result.success ? result.data.templateId : undefined;
+  const templateOmit = result.success ? result.data.templateOmit : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
@@ -463,7 +512,15 @@ export function ModelWizard() {
     if (step < MAX_STEPS) {
       router
         .replace(
-          getWizardUrl({ id, step: step + 1, templateId, bountyId, modelVersionId, src }),
+          getWizardUrl({
+            id,
+            step: step + 1,
+            templateId,
+            templateOmit,
+            bountyId,
+            modelVersionId,
+            src,
+          }),
           undefined,
           {
             shallow: !isNew,
@@ -477,7 +534,15 @@ export function ModelWizard() {
     if (step > 1) {
       router
         .replace(
-          getWizardUrl({ id, step: step - 1, templateId, bountyId, modelVersionId, src }),
+          getWizardUrl({
+            id,
+            step: step - 1,
+            templateId,
+            templateOmit,
+            bountyId,
+            modelVersionId,
+            src,
+          }),
           undefined,
           {
             shallow: !isNew,
@@ -488,49 +553,29 @@ export function ModelWizard() {
   };
 
   // File-less ExternalGeneration versions don't need the upload step. Hoisted so the
-  // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
+  // CreateSteps stepper and the auto-resume hook agree on the same step layout.
   const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
-  // Only auto-resume to the furthest valid step ONCE, when the model first loads.
-  // Without this guard the effect re-runs on every `model` refetch — e.g. when a
-  // file upload completes and invalidates the model query — yanking the user
-  // forward to the next step. Forward navigation is now user-driven (Next button
-  // or clicking a reachable step indicator).
-  const autoResumedRef = useRef(false);
+  useWizardAutoResume({
+    ready: !isNew && !isTraining && !!model,
+    resolveStep: () => {
+      const hasVersions = !!model && model.modelVersions.length > 0;
+      const hasFiles = !!model && model.modelVersions.some((version) => version.files.length > 0);
 
-  useEffect(() => {
-    // redirect to correct step if missing values
-    if (!isNew) {
-      // don't redirect for trained type or if model is not loaded
-      if (isTraining || !model) return;
-      // resume only once per mount — never push the user forward mid-session
-      if (autoResumedRef.current) return;
-      autoResumedRef.current = true;
-
-      const hasVersions = model.modelVersions.length > 0;
-      const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
-
-      if (!hasVersions)
-        router
-          .replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-      else if (!hasFiles && !skipFiles)
-        router
-          .replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-      else
-        router
-          .replace(getWizardUrl({ id, step: 4, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isNew, model, modelVersion, templateId, bountyId, src]);
+      if (!hasVersions) return 2;
+      if (!hasFiles && !skipFiles) return 3;
+      return 4;
+    },
+    onResume: (targetStep) => {
+      router
+        .replace(
+          getWizardUrl({ id, step: targetStep, templateId, templateOmit, bountyId, src }),
+          undefined,
+          { shallow: true }
+        )
+        .then();
+    },
+  });
 
   const postId = modelVersion?.posts[0]?.id;
 

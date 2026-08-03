@@ -80,7 +80,6 @@ export function WebhookEndpoint(
 }
 
 const PUBLIC_CACHE_MAX_AGE = 300;
-const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = PUBLIC_CACHE_MAX_AGE / 2;
 
 const allowedOrigins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS, ...getAllServerHosts()]
   .filter(isDefined)
@@ -110,20 +109,29 @@ export const addCorsHeaders = (
   }
 };
 
-const addPublicCacheHeaders = (req: NextApiRequest, res: NextApiResponse) => {
+const addPublicCacheHeaders = (
+  req: NextApiRequest,
+  res: NextApiResponse,
+  maxAge: number = PUBLIC_CACHE_MAX_AGE
+) => {
+  const staleWhileRevalidate = Math.floor(maxAge / 2);
   res.setHeader(
     'Cache-Control',
-    `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`
+    `public, s-maxage=${maxAge}, stale-while-revalidate=${staleWhileRevalidate}`
   );
 };
 
 export function PublicEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  // Optional per-endpoint edge cache max-age (seconds). Defaults to PUBLIC_CACHE_MAX_AGE
+  // so every existing caller is unchanged. Endpoints whose results are near-immutable
+  // (e.g. by-hash model-version lookups) can opt into a longer TTL.
+  { maxAge }: { maxAge?: number } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
-    addPublicCacheHeaders(req, res);
+    addPublicCacheHeaders(req, res, maxAge);
     if (shouldStop) return;
     await handler(req, res);
   });

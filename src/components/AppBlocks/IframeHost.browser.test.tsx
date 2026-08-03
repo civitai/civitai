@@ -18,6 +18,24 @@ const mocks = vi.hoisted(() => ({
 //   - getEffectiveCheckpoint must report `isLoading: false` so `shouldStartInit`
 //     fires (the controller posts BLOCK_INIT and arms the readiness timeout).
 //   - getShowcaseImages returns no data (carousel is irrelevant here).
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
+// predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
+// shortcuts; the real hook THROWS without a FeatureFlagsProvider (which this
+// scaffold does not mount). Dark flags = the production default, and these
+// suites assert host lifecycle, not the menu.
+// Deliberately a WHOLE-module factory, not an `importOriginal` spread: the real
+// module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
+// wholesale trpc factory below does not provide, so spreading the original makes
+// the file fail to LOAD ("does not provide an export named
+// setTrpcBatchingEnabled") — verified by removing this mock.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+}));
+
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
@@ -44,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -56,6 +75,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },
@@ -260,8 +280,10 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
 
     // A second/third BLOCK_READY (block re-ack, or a re-render re-running
-    // listeners) finds status === 'ready', so `appliedReady` stays false AND
-    // the emit-once ref is already set → no re-emit.
+    // listeners) can't re-emit: the beacon now fires from the COMMITTED
+    // loading→ready effect, which is already past its once-per-mount guard, and
+    // the shared emit-once ref is set. (See IframeHostReadyTransition.browser
+    // .test.tsx for the batching-immunity + H-11 coverage of that effect.)
     postFromBlock('BLOCK_READY', {});
     postFromBlock('BLOCK_READY', {});
     await new Promise((r) => setTimeout(r, 150));

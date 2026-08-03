@@ -2,6 +2,7 @@ import { Group, Text } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import { DesignStandardsRow } from '~/components/CreatorShop/Submit/DesignStandards';
 import { requirementRows } from '~/components/CreatorShop/Submit/submit.util';
 import type { AutoCheck } from '~/server/schema/creator-shop.schema';
 import type { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -35,6 +36,7 @@ export function ChecksPanel({
           emphasizeFail
         />
       ))}
+      <DesignStandardsRow type={type} />
       {hasResults && !allPassed && (
         <Group px="md" py={9} style={{ borderTop: CREATOR_SHOP_BORDER }}>
           <Text size="xs" c="red">

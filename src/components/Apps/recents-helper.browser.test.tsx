@@ -76,4 +76,127 @@ describe('recentlyOpenedApps helper', () => {
     );
     expect(getRecentlyOpenedApps()).toEqual([{ id: 'ok', blockId: 'b-ok' }]);
   });
+
+  // Display-enrichment fields (name/iconUrl) — round-trip + backward-compat.
+  test('name + iconUrl are persisted and round-tripped', () => {
+    recordRecentlyOpenedApp({
+      id: 'rich',
+      blockId: 'block-rich',
+      name: 'Background Remover',
+      iconUrl: 'https://cdn.example/icon.png',
+    });
+    expect(getRecentlyOpenedApps()).toEqual([
+      {
+        id: 'rich',
+        blockId: 'block-rich',
+        name: 'Background Remover',
+        iconUrl: 'https://cdn.example/icon.png',
+      },
+    ]);
+  });
+
+  test('a legacy {id,blockId}-only stored entry still parses (backward-compat)', () => {
+    // Simulate an entry written BEFORE name/iconUrl existed — it must survive a
+    // read unchanged (no name/iconUrl keys invented), proving the widened type
+    // is backward-compatible with already-persisted data.
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'legacy', blockId: 'block-legacy' }])
+    );
+    const list = getRecentlyOpenedApps();
+    expect(list).toEqual([{ id: 'legacy', blockId: 'block-legacy' }]);
+    expect(list[0]).not.toHaveProperty('name');
+    expect(list[0]).not.toHaveProperty('iconUrl');
+  });
+
+  test('wrong-typed name/iconUrl are dropped, id/blockId still parse (fail-soft)', () => {
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'x', blockId: 'b-x', name: 42, iconUrl: { bad: true } }])
+    );
+    expect(getRecentlyOpenedApps()).toEqual([{ id: 'x', blockId: 'b-x' }]);
+  });
+
+  test('re-recording upgrades a legacy entry to the richer shape (dedup keeps newest)', () => {
+    recordRecentlyOpenedApp({ id: 'up', blockId: 'block-up' });
+    recordRecentlyOpenedApp({ id: 'up', blockId: 'block-up', name: 'Upgraded', iconUrl: 'i.png' });
+    const list = getRecentlyOpenedApps();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toEqual({ id: 'up', blockId: 'block-up', name: 'Upgraded', iconUrl: 'i.png' });
+  });
+
+  // ── v3 shape: slug / kind / hasPage / externalUrl ───────────────────────────
+  // The store widened so a recents entry can link to the unified store detail
+  // (`/apps/store-preview/<slug>`) and so an OFF-SITE listing — which has no
+  // AppBlock and therefore NO blockId at all — is representable.
+
+  test('an OFF-SITE entry (slug, no blockId) round-trips', () => {
+    recordRecentlyOpenedApp({
+      id: 'lst_1',
+      slug: 'ext-app',
+      kind: 'offsite',
+      externalUrl: 'https://ext.example/app',
+      name: 'Ext App',
+    });
+    expect(getRecentlyOpenedApps()).toEqual([
+      {
+        id: 'lst_1',
+        slug: 'ext-app',
+        kind: 'offsite',
+        externalUrl: 'https://ext.example/app',
+        name: 'Ext App',
+      },
+    ]);
+  });
+
+  test('an ON-SITE entry round-trips slug + kind + hasPage', () => {
+    recordRecentlyOpenedApp({
+      id: 'ab_1',
+      blockId: 'gen-matrix',
+      slug: 'gen-matrix',
+      kind: 'onsite',
+      hasPage: true,
+      name: 'Gen Matrix',
+    });
+    expect(getRecentlyOpenedApps()[0]).toEqual({
+      id: 'ab_1',
+      blockId: 'gen-matrix',
+      slug: 'gen-matrix',
+      kind: 'onsite',
+      hasPage: true,
+      name: 'Gen Matrix',
+    });
+  });
+
+  test('an entry with NO navigable handle (no blockId, no slug) is dropped on read', () => {
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'handleless', name: 'Nowhere' }, { id: 'ok', slug: 'somewhere' }])
+    );
+    expect(getRecentlyOpenedApps()).toEqual([{ id: 'ok', slug: 'somewhere' }]);
+  });
+
+  test('the WRITE path applies the same gate — a handleless entry is not persisted', () => {
+    recordRecentlyOpenedApp({ id: 'ok', slug: 'somewhere' });
+    // A caller that forgot the handle — type-legal (every field but `id` is
+    // optional), so only this runtime gate stops it becoming an unreadable row.
+    recordRecentlyOpenedApp({ id: 'handleless', name: 'Nowhere' });
+    expect(getRecentlyOpenedApps().map((r) => r.id)).toEqual(['ok']);
+  });
+
+  test('a wrong-typed / unknown kind degrades to "no kind" (never flows on as a discriminant)', () => {
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'x', slug: 's', kind: 'martian', hasPage: 'yes' }])
+    );
+    expect(getRecentlyOpenedApps()).toEqual([{ id: 'x', slug: 's' }]);
+  });
+
+  test('empty-string handles do not count as handles', () => {
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify([{ id: 'x', blockId: '', slug: '' }])
+    );
+    expect(getRecentlyOpenedApps()).toEqual([]);
+  });
 });

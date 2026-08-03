@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { QuestionSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetQuestionsInput = z.infer<typeof getQuestionsSchema>;
 export const getQuestionsSchema = getAllQuerySchema.extend({
@@ -18,7 +19,7 @@ export type UpsertQuestionInput = z.infer<typeof upsertQuestionSchema>;
 export const upsertQuestionSchema = z.object({
   id: z.number().optional(),
   title: z.string(),
-  content: z.string(),
+  content: getSanitizedStringSchema(),
   tags: z.array(tagSchema).nullish(),
 });
 

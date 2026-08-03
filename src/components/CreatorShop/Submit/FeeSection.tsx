@@ -10,13 +10,15 @@ export function FeeSection({
   onBuzzTypeChange,
   yellowBalance,
   greenBalance,
+  blueBalance,
   feeAccountBalance,
   canAffordFee,
 }: {
-  buzzType: 'yellow' | 'green';
-  onBuzzTypeChange: (value: 'yellow' | 'green') => void;
+  buzzType: 'yellow' | 'green' | 'blue';
+  onBuzzTypeChange: (value: 'yellow' | 'green' | 'blue') => void;
   yellowBalance: number;
   greenBalance: number;
+  blueBalance: number;
   feeAccountBalance: number;
   canAffordFee: boolean;
 }) {
@@ -27,10 +29,11 @@ export function FeeSection({
         <SegmentedControl
           size="xs"
           value={buzzType}
-          onChange={(v) => onBuzzTypeChange(v as 'yellow' | 'green')}
+          onChange={(v) => onBuzzTypeChange(v as 'yellow' | 'green' | 'blue')}
           data={[
             { value: 'yellow', label: `Yellow · ${numberWithCommas(yellowBalance)}` },
             { value: 'green', label: `Green · ${numberWithCommas(greenBalance)}` },
+            { value: 'blue', label: `Blue · ${numberWithCommas(blueBalance)}` },
           ]}
         />
       </Group>
@@ -39,11 +42,11 @@ export function FeeSection({
           {numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz submission fee
         </Text>
         <Text size="xs" c="dimmed">
-          Charged when you submit for review.{' '}
+          Charged when you submit for review. If we ask for changes, you can revise and resubmit at{' '}
           <Text span fw={700} c="dimmed">
-            Non-refundable
+            no extra cost
           </Text>
-          , even if the item isn&apos;t approved.
+          . The fee only applies once your item is accepted or rejected for a policy violation.
         </Text>
         {!canAffordFee && (
           <Text size="xs" c="red" fw={600} mt={4}>

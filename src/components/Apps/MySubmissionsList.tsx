@@ -13,17 +13,23 @@ import {
   IconHistory,
   IconMessage,
   IconPencil,
+  IconPhoto,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
+import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
-import { isStaleDeploy } from '~/components/Apps/deploy-status';
+import { isStaleDeploy, isStrandedDeploy } from '~/components/Apps/deploy-status';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
+  isModRemovedListing,
   ownerListingState,
   ownerStateChip,
   type OwnerListingState,
@@ -37,7 +43,9 @@ import {
   currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
+  OWNER_STATUS_BUCKETS,
   sortGroups,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SubmissionAccessors,
   type SubmissionGroup,
@@ -102,6 +110,9 @@ export type Submission = {
   /** Whether the backing block's manifest declares a launchable page — drives the
    *  Open-live → `/apps/run/<slug>` vs standalone-origin vs model-slot branching. */
   hasPage?: boolean | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Owner-control handlers threaded from the list down to each latest row. */
@@ -128,8 +139,16 @@ export function formatSubmissionDate(d: string | Date): string {
   return formatDate(d, 'MMMM D, YYYY');
 }
 
+/** Copy for the STRANDED state, shared by the badge tooltip and the row alert so
+ *  the two can never drift. The author cannot fix this themselves — the approval
+ *  is durable and only a moderator can re-fire the build — so the guidance is to
+ *  ask, NOT to resubmit at a new version. */
+export const STRANDED_DEPLOY_MESSAGE =
+  'This version was approved but its build never started, so the code was never deployed. ' +
+  'This is not something you can fix by editing your app — contact a moderator to re-run the build.';
+
 export function statusBadge(
-  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>,
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt' | 'reviewedAt'>,
   /** The "live" green badge is reserved for the CURRENTLY-PUBLISHED version (the
    *  newest approved one). A previous approved version — even one whose deploy is
    *  still marked 'live' — shows a plain "approved" badge instead. */
@@ -139,6 +158,23 @@ export function statusBadge(
   // For an approved request, show the real build/deploy lifecycle rather than a
   // flat "approved" — the dev cares whether their code is actually live.
   if (status === 'approved') {
+    // STRANDED — approved long ago, but the build never started so `deployState`
+    // was never written. Checked BEFORE the switch, whose `default` branch would
+    // otherwise render a healthy green "approved" for exactly this case.
+    // `isStrandedDeploy` only fires past DEPLOY_STALE_AFTER_MS with no recorded
+    // transition, so a freshly-approved row (and every pre-feature legacy row
+    // that ever transitioned) is untouched.
+    if (isStrandedDeploy(submission)) {
+      return (
+        <Badge
+          color="orange"
+          leftSection={<IconAlertTriangle size={12} />}
+          title={STRANDED_DEPLOY_MESSAGE}
+        >
+          build never started
+        </Badge>
+      );
+    }
     if (isStaleDeploy(submission)) {
       return (
         <Badge
@@ -284,7 +320,10 @@ function StatusCell({
   );
   return (
     <Stack gap={6} align="flex-start">
-      {chip}
+      <Group gap={6} wrap="nowrap">
+        {chip}
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );
@@ -408,15 +447,89 @@ function OnsiteRow({
               icon={<IconAlertTriangle size={16} />}
               title="Build / deploy failed"
             >
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                {s.deployDetail ??
-                  'The build or deploy failed. Fix the issue and resubmit a new version.'}
-              </Text>
+              <DeployFailureDetail detail={s.deployDetail} slug={s.slug} />
+            </Alert>
+          </Table.Td>
+        </Table.Tr>
+      )}
+      {s.status === 'approved' && isStrandedDeploy(s) && (
+        <Table.Tr>
+          <Table.Td colSpan={8} p={0}>
+            <Alert
+              color="orange"
+              variant="light"
+              radius={0}
+              icon={<IconAlertTriangle size={16} />}
+              title="Approved, but the build never started"
+              data-testid={`apps-submissions-stranded-${s.slug}`}
+            >
+              <Text size="sm">{STRANDED_DEPLOY_MESSAGE}</Text>
             </Alert>
           </Table.Td>
         </Table.Tr>
       )}
     </>
+  );
+}
+
+/**
+ * The build/deploy failure body shown to the APP AUTHOR.
+ *
+ * `deployDetail` is now `"Build <status>"` plus, when the pipeline sent one, a
+ * blank line and a sanitized excerpt of the real build log — the line that
+ * actually tells the author what to fix ("no package-lock.json is committed…").
+ * Before this, that line existed only in a build log they cannot read.
+ *
+ * RENDERING SAFETY — the excerpt originates from tenant-influenced build output.
+ * It is sanitized server-side to printable text + newlines
+ * (`sanitizeBuildFailureReason`) AND rendered here through ordinary React text
+ * interpolation, which escapes. There is deliberately no `dangerouslySetInnerHTML`
+ * anywhere on this path, so even a hostile excerpt renders as literal characters.
+ *
+ * LAYOUT — the excerpt is capped at ~14rem of scrollable height and scrolls on
+ * BOTH axes inside its own box, so a multi-KB stack trace or a very long line can
+ * never blow out the table row or push the page into horizontal scroll.
+ */
+function DeployFailureDetail({ detail, slug }: { detail: string | null; slug: string }) {
+  const fallback = 'The build or deploy failed. Fix the issue and resubmit a new version.';
+  if (!detail) {
+    return <Text size="sm">{fallback}</Text>;
+  }
+  // Split the "Build <status>" headline from the log excerpt (the server joins
+  // them with a blank line). No excerpt → the headline is the whole message and
+  // renders exactly as it did before this feature.
+  const separator = detail.indexOf('\n\n');
+  const headline = separator === -1 ? detail : detail.slice(0, separator);
+  const excerpt = separator === -1 ? null : detail.slice(separator + 2);
+  return (
+    <Stack gap={6}>
+      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+        {headline}
+      </Text>
+      {excerpt && (
+        // A plain <pre> rather than Mantine's <Code block>: the excerpt needs
+        // `pre-wrap` + a hard height cap, and owning the styles outright keeps
+        // that guarantee independent of the component library's own CSS.
+        <pre
+          data-testid={`apps-submissions-failure-detail-${slug}`}
+          style={{
+            margin: 0,
+            padding: '0.5rem 0.65rem',
+            borderRadius: 4,
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            fontFamily: 'var(--mantine-font-family-monospace, monospace)',
+            background: 'var(--mantine-color-default, rgba(0,0,0,0.06))',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            maxHeight: '14rem',
+            overflow: 'auto',
+          }}
+        >
+          {excerpt}
+        </pre>
+      )}
+    </Stack>
   );
 }
 
@@ -458,9 +571,12 @@ export function MySubmissionsList({
   };
 
   // Group by app, apply the text filter, sort newest-first, then partition into
-  // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
-  // section, so the column header is no longer sortable — a plain submittedAt-desc
-  // sort within each section keeps the newest request on top.
+  // status SECTIONS (Live / Pending / Rejected / Withdrawn / Removed-by-a-moderator).
+  // Status is now the section, so the column header is no longer sortable — a plain
+  // submittedAt-desc sort within each section keeps the newest request on top. The
+  // `overrideBucketOf` routes a moderator-removed listing into its own collapsed
+  // section, taking precedence over the any-approved→Live rule (a once-live app a mod
+  // took down would otherwise misfile under Live).
   const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
@@ -473,14 +589,26 @@ export function MySubmissionsList({
       { column: 'submitted', direction: 'desc' },
       ONSITE_ACCESSORS
     );
-    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status);
+    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status, OWNER_STATUS_BUCKETS, (g) =>
+      // INVARIANT: the backing-listing fields (`listingStatus` + `lastModerationAction`)
+      // are keyed per APP (the single `AppListing`), not per version — the server
+      // projects the same values onto every publish-request row in the group — so
+      // reading them off `g.latest` is equivalent to reading them off any version.
+      isModRemovedListing({
+        listingStatus: g.latest.listingStatus,
+        lastModerationAction: g.latest.lastModerationAction,
+      })
+        ? 'mod-removed'
+        : null
+    );
   }, [submissions, query]);
 
   const totalGroups =
     buckets.live.length +
     buckets.pending.length +
     buckets.rejected.length +
-    buckets.withdrawn.length;
+    buckets.withdrawn.length +
+    buckets['mod-removed'].length;
 
   const toggle = (identity: string) =>
     setExpanded((prev) => {
@@ -492,65 +620,80 @@ export function MySubmissionsList({
 
   const renderTable = (groups: SubmissionGroup<Submission>[]) => (
     <Card withBorder p={0}>
-      <Table verticalSpacing="md" horizontalSpacing="md">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>App</Table.Th>
-            <Table.Th>Version</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Submitted</Table.Th>
-            <Table.Th>Reviewed</Table.Th>
-            <Table.Th>Installs</Table.Th>
-            <Table.Th>Usage (30d)</Table.Th>
-            <Table.Th />
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {groups.map((g) => {
-            const isExpanded = expanded.has(g.identity);
-            // Single source of truth for the "live" badge + "Open live" button:
-            // the newest approved version across this listing's history.
-            const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
-            return (
-              <Fragment key={g.identity}>
-                <OnsiteRow
-                  s={g.latest}
-                  nested={false}
-                  isCurrentlyPublished={g.latest.id === publishedId}
-                  onWithdraw={onWithdraw}
-                  withdrawing={withdrawing}
-                  owner={owner}
-                  canOpenPage={canOpenPage}
-                  toggle={
-                    g.older.length > 0 ? (
-                      <VersionToggle
-                        expanded={isExpanded}
-                        count={g.versionCount}
-                        onToggle={() => toggle(g.identity)}
-                        variant="subtle"
-                        testId={`apps-submissions-versions-${g.identity}`}
+      {/*
+        `.mantine-Card-root` is `overflow: hidden`, and this row's action cell is a
+        `wrap="nowrap"` group of up to six buttons — so without a scroll container the
+        card silently CLIPS the actions (measured: 138 px cut at a 1497 px viewport,
+        no scrollbar). `type="native"` deliberately, not Mantine's default ScrollArea:
+        ScrollArea defaults to `type="hover"` (scrollbars hidden until hover), and the
+        whole defect is a MISSING affordance. A native `overflow-x: auto` box shows the
+        platform scrollbar and keeps native keyboard/trackpad scrolling.
+      */}
+      <Table.ScrollContainer
+        minWidth={SUBMISSIONS_TABLE_MIN_WIDTH}
+        type="native"
+        data-testid="apps-submissions-table-scroll"
+      >
+        <Table verticalSpacing="md" horizontalSpacing="md">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>App</Table.Th>
+              <Table.Th>Version</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Submitted</Table.Th>
+              <Table.Th>Reviewed</Table.Th>
+              <Table.Th>Installs</Table.Th>
+              <Table.Th>Usage (30d)</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {groups.map((g) => {
+              const isExpanded = expanded.has(g.identity);
+              // Single source of truth for the "live" badge + "Open live" button:
+              // the newest approved version across this listing's history.
+              const publishedId = currentlyPublishedVersionId([g.latest, ...g.older]);
+              return (
+                <Fragment key={g.identity}>
+                  <OnsiteRow
+                    s={g.latest}
+                    nested={false}
+                    isCurrentlyPublished={g.latest.id === publishedId}
+                    onWithdraw={onWithdraw}
+                    withdrawing={withdrawing}
+                    owner={owner}
+                    canOpenPage={canOpenPage}
+                    toggle={
+                      g.older.length > 0 ? (
+                        <VersionToggle
+                          expanded={isExpanded}
+                          count={g.versionCount}
+                          onToggle={() => toggle(g.identity)}
+                          variant="subtle"
+                          testId={`apps-submissions-versions-${g.identity}`}
+                        />
+                      ) : undefined
+                    }
+                  />
+                  {isExpanded &&
+                    g.older.map((older) => (
+                      <OnsiteRow
+                        key={older.id}
+                        s={older}
+                        nested
+                        isCurrentlyPublished={older.id === publishedId}
+                        onWithdraw={onWithdraw}
+                        withdrawing={withdrawing}
+                        owner={owner}
+                        canOpenPage={canOpenPage}
                       />
-                    ) : undefined
-                  }
-                />
-                {isExpanded &&
-                  g.older.map((older) => (
-                    <OnsiteRow
-                      key={older.id}
-                      s={older}
-                      nested
-                      isCurrentlyPublished={older.id === publishedId}
-                      onWithdraw={onWithdraw}
-                      withdrawing={withdrawing}
-                      owner={owner}
-                      canOpenPage={canOpenPage}
-                    />
-                  ))}
-              </Fragment>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
+                    ))}
+                </Fragment>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
     </Card>
   );
 
@@ -593,7 +736,10 @@ export function MySubmissionsList({
  * {@link getDetailPrimaryAction} matrix (identical to the store detail):
  *   - page app + canOpenPage → **Open** → `/apps/run/<slug>` (internal in-host page).
  *   - page app + !canOpenPage → **Open live** → the standalone `<slug>.civit.ai` origin.
- *   - model-slot app (no page) → informational "Runs on model pages" → the block detail.
+ *   - model-slot app (no page) → informational "Runs on model pages", TEXT ONLY.
+ *     It used to link to `/apps/<appBlockId>`; #3493 retired that route (it now
+ *     302s to `/apps/store-preview/<slug>` or 404s), so `getDetailPrimaryAction`
+ *     returns no href for this arm at all and the text fallback is what renders.
  */
 function OpenLiveAction({
   submission,
@@ -647,8 +793,13 @@ function OpenLiveAction({
       </Button>
     );
   }
-  // Model-slot / no launchable page → informational; links to the block detail where
-  // the install affordance lives, never a dead standalone link.
+  // Model-slot / no launchable page → informational. `getDetailPrimaryAction`
+  // produces NO href for `info` today (its only such target was the retired
+  // `/apps/[appBlockId]`) and `connect` never carried one, so the TEXT arm below
+  // is the live one. The link arm is kept, unreachable, as the type's
+  // optional-href contract-keeper — mirroring `AppListingDetailBody`'s `info`
+  // renderer so the two consumers of this matrix stay shaped the same — NOT as a
+  // place to reinstate a link to the retired route.
   if (action.href) {
     return (
       <Button
@@ -785,11 +936,23 @@ function SubmissionActions({
             size="xs"
             variant="default"
             component={Link}
-            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit-manifest`}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit`}
             leftSection={<IconPencil size={12} />}
             data-testid={`apps-onsite-edit-${s.slug}`}
           >
             Edit
+          </Button>
+        )}
+        {showEdit && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit?tab=media`}
+            leftSection={<IconPhoto size={12} />}
+            data-testid={`apps-onsite-listing-media-${s.slug}`}
+          >
+            Listing images
           </Button>
         )}
         {canManage && s.appBlockId && (

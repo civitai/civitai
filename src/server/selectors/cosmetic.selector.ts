@@ -52,6 +52,9 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'
     color?: string;
     url?: string;
     offset?: string;
+    // Per-side fit adjustment for creator-shop avatar decorations (see
+    // decorationFrameStyle); wins over the legacy uniform `offset`.
+    offsets?: { top: number; right: number; bottom: number; left: number };
     crop?: string;
     cssFrame?: string;
     glow?: boolean;
@@ -60,6 +63,10 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };
+};
+
+export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
+  data: { slug: string; url: string; animated?: boolean };
 };
 
 export type WithClaimKey<T> = T & { claimKey: string };

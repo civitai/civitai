@@ -114,12 +114,11 @@ export async function recordScopeGrant(opts: {
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `block:settings:*` and `apps:storage:*` (per-user KV) are intentionally NOT
- * consent-gated here — they are publisher-only / ambient-but-otherwise-gated
- * scopes that have their own issuance-time checks (caller-is-installer,
- * resolveStorageContext). Subjecting them to per-user consent would make the
- * publisher re-consent to their own block's settings on every version bump for
- * no security gain. The remaining user-resource scopes (media/user/ai/buzz/
+ * `apps:storage:*` (per-user KV) is intentionally NOT consent-gated here — it is
+ * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
+ * (resolveStorageContext). Subjecting it to per-user consent would make the
+ * publisher re-consent to their own block's storage on every version bump for
+ * no security gain. The remaining user-resource scopes (user/ai/buzz/
  * social, models:write) flow through the consent gate.
  *
  * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
@@ -166,8 +165,11 @@ export async function recordScopeGrant(opts: {
  * exemption above: read:self always mints; read:private mints only after consent.)
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
-  'block:settings:read',
-  'block:settings:write',
+  // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed
+  // from the block-scope registry (decorative/unenforced). Do NOT re-add them
+  // here: if a settings scope is ever reintroduced it must be reintroduced WITH
+  // an explicit consent decision, not silently exempted (a stale exempt entry
+  // would mint it consent-free the moment it re-entered the registry).
   'apps:storage:read',
   'apps:storage:write',
   // SHARED (cross-user) storage — governed by resolveSharedContext's server-side

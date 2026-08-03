@@ -124,7 +124,12 @@ async function invoke(query: Record<string, unknown>) {
   // Import after mocks are registered.
   const mod = await import('~/pages/api/v1/blocks/models');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
-  const req = { method: 'GET', query, headers: {}, url: '/api/v1/blocks/models' } as unknown as NextApiRequest;
+  const req = {
+    method: 'GET',
+    query,
+    headers: {},
+    url: '/api/v1/blocks/models',
+  } as unknown as NextApiRequest;
   const res = fakeRes();
   await handler(req, res);
   return res;
@@ -206,6 +211,16 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(input).not.toHaveProperty('nsfw');
     expect(input).not.toHaveProperty('browsingLevel');
     expect(input).not.toHaveProperty('someJunk');
+  });
+
+  it('forces disableMinor on the search input, even under a SFW ceiling', async () => {
+    // The public endpoint lets the addon policy decide, and that rule only fires
+    // above R — so a SFW-clamped block would otherwise start listing minor models.
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag, domain: 'green' });
+    await invoke({});
+
+    const [input] = mockRunModelSearch.mock.calls[0];
+    expect(input.disableMinor).toBe(true);
   });
 
   it('forwards the selector params (query/types/baseModels/sort/limit)', async () => {

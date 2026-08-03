@@ -5,6 +5,7 @@ export const collectionNotifications = createNotificationProcessor({
   'contest-collection-item-status-change': {
     displayName: 'Your item has been reviewed',
     category: NotificationCategory.Update,
+    toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `The item you submitted to the contest "${details.collectionName}" has been ${details.status}.`,
       url: details.imageId
@@ -18,6 +19,43 @@ export const collectionNotifications = createNotificationProcessor({
         : `/collections/${details.collectionId}`,
     }),
   },
+  'collection-item-accepted': {
+    displayName: 'Your submission was accepted',
+    category: NotificationCategory.Update,
+    prepareMessage: ({ details }) => ({
+      message: `Your submission to ${details.collectionName} was accepted.`,
+      url: details.imageId
+        ? `/images/${details.imageId}`
+        : details.modelId
+        ? `/models/${details.modelId}`
+        : details.articleId
+        ? `/articles/${details.articleId}`
+        : details.postId
+        ? `/posts/${details.postId}`
+        : `/collections/${details.collectionId}`,
+    }),
+  },
+  'collection-item-rejected': {
+    displayName: "Your submission wasn't accepted",
+    category: NotificationCategory.Update,
+    prepareMessage: ({ details }) => ({
+      message: details.reason
+        ? `Your submission to ${details.collectionName} wasn't accepted. ${details.reason}`
+        : `Your submission to ${details.collectionName} wasn't accepted.`,
+      url: details.imageId
+        ? `/images/${details.imageId}`
+        : details.modelId
+        ? `/models/${details.modelId}`
+        : details.articleId
+        ? `/articles/${details.articleId}`
+        : details.postId
+        ? `/posts/${details.postId}`
+        : `/collections/${details.collectionId}`,
+    }),
+  },
+  // No longer sent — `collection-item-rejected` carries the reason instead. Kept because
+  // getNotificationMessage resolves at render time, so removing it would blank out notifications
+  // already delivered to users.
   'beggars-board-rejected': {
     displayName: 'Beggars board entry declined',
     category: NotificationCategory.Buzz,

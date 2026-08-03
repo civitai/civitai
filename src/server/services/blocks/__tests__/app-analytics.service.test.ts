@@ -43,6 +43,7 @@ vi.mock('@prisma/client', () => ({
 import {
   DEFAULT_RANGE_DAYS,
   MAX_RANGE_DAYS,
+  emptyAnalytics,
   getMyAppAnalytics,
   getOwnedAppBlockIds,
   resolveRange,
@@ -235,5 +236,63 @@ describe('getMyAppAnalytics (ownership enforcement)', () => {
     expect(result.notOwned).toBe(false);
     expect(result.installs.total).toBe(0);
     expect(mockDbRead.blockSpendAttribution.aggregate).not.toHaveBeenCalled();
+  });
+});
+
+describe('emptyAnalytics (measurement vs placeholder discriminator)', () => {
+  const range = { from: new Date(0), to: new Date(0), granularity: 'day' as const };
+
+  it('flags a non-owned placeholder', () => {
+    expect(emptyAnalytics(range, true).unavailable).toBe('notOwned');
+  });
+
+  it('flags an explicit not-entitled placeholder (the dark-flag caller)', () => {
+    expect(emptyAnalytics(range, false, 'notEntitled').unavailable).toBe('notEntitled');
+  });
+
+  it('leaves a genuine zero UNflagged', () => {
+    expect(emptyAnalytics(range, false).unavailable).toBeUndefined();
+    expect('unavailable' in emptyAnalytics(range, false)).toBe(false);
+  });
+});
+
+describe('getMyAppAnalytics (fabricated-zero discriminator)', () => {
+  it('a non-owned id is flagged unavailable; a measured empty app is not', async () => {
+    const notOwned = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: FOREIGN_ID });
+    expect(notOwned.unavailable).toBe('notOwned');
+
+    // Owned app, every aggregate legitimately returns zero — a REAL measurement
+    // of "no activity yet". It must stay unflagged, otherwise the UI hides a
+    // dashboard the author is entitled to see.
+    // mockReset first: the beforeEach queues `mockResolvedValueOnce` values that
+    // the short-circuiting notOwned call above never consumed, and a queued
+    // Once wins over mockResolvedValue.
+    mockDbRead.blockUserSubscription.count.mockReset();
+    mockDbRead.blockUserSubscription.count.mockResolvedValue(0);
+    mockDbRead.blockSpendAttribution.aggregate.mockReset();
+    mockDbRead.blockSpendAttribution.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { buzzAmount: null },
+    });
+    mockDbRead.blockBuzzAttribution.aggregate.mockReset();
+    mockDbRead.blockBuzzAttribution.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { buzzAmount: null, usdAmountCents: null },
+    });
+    mockDbRead.blockScopeInvocation.count.mockReset();
+    mockDbRead.blockScopeInvocation.count.mockResolvedValue(0);
+    mockDbRead.blockScopeInvocation.groupBy.mockReset();
+    mockDbRead.blockScopeInvocation.groupBy.mockResolvedValue([]);
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    const measured = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+    expect(measured.unavailable).toBeUndefined();
+    expect(measured.notOwned).toBe(false);
+
+    // Same all-zero counters on both sides — the discriminator is the only signal.
+    expect(measured.installs).toEqual(notOwned.installs);
+    expect(measured.runs).toEqual(notOwned.runs);
+    expect(measured.engagement).toEqual(notOwned.engagement);
   });
 });

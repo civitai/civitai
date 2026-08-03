@@ -20,8 +20,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
@@ -82,6 +82,7 @@ export function SettingsCard() {
             disabled={isLoading}
           />
         </Group>
+        <SwipeGalleryCardsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -94,22 +95,6 @@ export function SettingsCard() {
               mutate({
                 id: user.id,
                 filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
-              })
-            }
-            disabled={isLoading}
-          />
-          <Select
-            label="Preferred Size"
-            name="size"
-            data={constants.modelFileSizes.map((size) => ({
-              value: size,
-              label: titleCase(size),
-            }))}
-            value={user.filePreferences?.size ?? 'pruned'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
               })
             }
             disabled={isLoading}
@@ -140,7 +125,8 @@ export function SettingsCard() {
             <Select
               label="Preferred Quant Type"
               name="quantType"
-              data={quantTypes}
+              // "Unquantized" isn't a meaningful download preference; leaving this unset is.
+              data={quantTypes.filter((x) => x !== UNQUANTIZED_QUANT_TYPE)}
               allowDeselect={false}
               value={user.filePreferences?.quantType ?? 'Q4_K_M'}
               onChange={(value: string | null) =>
@@ -225,6 +211,23 @@ function AutoplayGifsToggle() {
       label="Autoplay GIFs"
       checked={autoplayGifs}
       onChange={(e) => setState({ autoplayGifs: e.target.checked })}
+    />
+  );
+}
+
+function SwipeGalleryCardsToggle() {
+  const { swipeGalleryCards } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="swipeGalleryCards"
+      label="Swipe between images on gallery cards"
+      description="Drag left or right on a gallery post to move through its images instead of using the arrows. May feel slower on long feeds or older devices."
+      checked={swipeGalleryCards ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
     />
   );
 }

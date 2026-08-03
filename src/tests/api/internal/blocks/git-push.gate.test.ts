@@ -122,7 +122,10 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
-  BlockManifestValidator: { validate: mockValidate },
+  // validateSubmission is the async submission gate the handler now calls; it
+  // wraps validate + the settings-pattern ReDoS check. Point it at the same mock
+  // so `state.validation` drives the outcome as before.
+  BlockManifestValidator: { validate: mockValidate, validateSubmission: mockValidate },
 }));
 // listRepoTreeAtRef + getBlobContent included to avoid this partial factory leaking into a co-resident
 // file (push-diff-enrichment) whose REAL publish-request.service reaches them — see build-callback.test.ts.

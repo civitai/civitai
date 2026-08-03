@@ -50,10 +50,19 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
     req.blockClaims = claimsBox.claims;
     return handler(req, res);
   },
+  // W13 audit-detail stash — the endpoint imports + calls this on the happy path.
+  // Omitting it (as this mock originally did) is exactly what made the call site
+  // `undefined(...)` → TypeError → 500 on a successful increment (#3161 regression);
+  // exported here so the happy path exercises a real fn, and the regression test
+  // below overrides it to throw to prove the enrichment can never 500.
+  stashBlockActionDetail: (...args: unknown[]) => mockStash(...args),
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockIncrement } = vi.hoisted(() => ({ mockIncrement: vi.fn() }));
+const { mockIncrement, mockStash } = vi.hoisted(() => ({
+  mockIncrement: vi.fn(),
+  mockStash: vi.fn(),
+}));
 vi.mock('~/server/routers/apps-shared.router', () => ({
   incrementSharedCounter: mockIncrement,
   // identity — the endpoint's zod schema already bounds the key
@@ -118,6 +127,23 @@ describe('POST /api/v1/blocks/shared-storage/increment', () => {
     expect(res._status()).toBe(200);
     expect(res._json()).toEqual({ key: 'playcount:7', count: 4 });
     expect(mockIncrement).toHaveBeenCalledWith('tok', 'playcount:7');
+  });
+
+  it('REGRESSION: audit-detail enrichment that THROWS still returns the real 200 (never 500)', async () => {
+    // #3161 added a best-effort audit-detail stash on the happy path, inside the
+    // handler try/catch. ANY throw at the enrichment call site (missing stash
+    // export → `undefined(...)`, non-writable `res`, …) surfaced as a 500 on an
+    // increment that already succeeded. The endpoint now wraps the entire
+    // enrichment in a swallow-everything guard.
+    mockStash.mockImplementationOnce(() => {
+      throw new Error('stash boom (non-writable res)');
+    });
+    const { req, res } = createMocks({ body: { key: 'playcount:7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(res._json()).toEqual({ key: 'playcount:7', count: 4 });
+    expect(mockIncrement).toHaveBeenCalledWith('tok', 'playcount:7');
+    expect(mockStash).toHaveBeenCalledTimes(1);
   });
 
   it('maps a sub-trust FORBIDDEN → 403 (min-trust gate; app treats increment as best-effort)', async () => {

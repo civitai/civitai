@@ -42,6 +42,57 @@
       // color should be set inline via style prop if it depends on error
       font-size: var(--editor-font-size, 14px);
     }
+
+    // Tailwind preflight resets headings to inherit, and the editor content —
+    // unlike the published article — isn't wrapped in TypographyStylesWrapper.
+    // Without this an H1 and a paragraph look identical while writing and only
+    // diverge once published. Mirrors the same Mantine variables that wrapper
+    // uses so the two views agree. Only h1-h3 exist here (see CustomHeading).
+    h1,
+    h2,
+    h3 {
+      margin-bottom: var(--mantine-spacing-xs);
+      text-wrap: var(--mantine-heading-text-wrap);
+      font-family: var(--mantine-font-family-headings);
+    }
+
+    h1 {
+      margin-top: calc(1.5 * var(--mantine-spacing-xl));
+      font-size: var(--mantine-h1-font-size);
+      line-height: var(--mantine-h1-line-height);
+      font-weight: var(--mantine-h1-font-weight);
+    }
+
+    h2 {
+      margin-top: var(--mantine-spacing-xl);
+      font-size: var(--mantine-h2-font-size);
+      line-height: var(--mantine-h2-line-height);
+      font-weight: var(--mantine-h2-font-weight);
+    }
+
+    h3 {
+      margin-top: calc(0.8 * var(--mantine-spacing-xl));
+      font-size: var(--mantine-h3-font-size);
+      line-height: var(--mantine-h3-line-height);
+      font-weight: var(--mantine-h3-font-weight);
+    }
+
+    // Same gap for blockquote: StarterKit enables it wherever `formatting` is on,
+    // so `> ` produces one, but preflight zeroes its margins and it renders as a
+    // plain paragraph until published.
+    blockquote {
+      font-size: var(--mantine-font-size-lg);
+      line-height: var(--mantine-line-height);
+      margin: var(--mantine-spacing-md) 0;
+      border-radius: var(--mantine-radius-sm);
+      padding: var(--mantine-spacing-md) var(--mantine-spacing-lg);
+      background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+    }
+
+    // The first block shouldn't be pushed away from the top of the editor.
+    > :first-child {
+      margin-top: 0;
+    }
   }
 
   iframe {

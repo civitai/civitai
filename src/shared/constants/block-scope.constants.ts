@@ -11,15 +11,15 @@
  *      to defend against post-approval manifest swaps (audit H-1 + C2).
  *
  * Block JWT scopes are a different concept from the underlying OAuth bits:
- * they're per-block-instance and short-lived (15min / 5min for settings).
- * The OAuth bit on the publisher's app is the policy ceiling. A scope
- * with `SKIP_OAUTH_CHECK` (e.g. block:settings:*) gates elsewhere — see
- * the issuance-time caller-is-installer check.
+ * they're per-block-instance and short-lived (15min). The OAuth bit on the
+ * publisher's app is the policy ceiling. A scope with `SKIP_OAUTH_CHECK`
+ * (e.g. apps:storage:*) gates elsewhere — see the per-op server-side checks
+ * (resolveStorageContext / resolveSharedContext).
  *
  * Forward-extensibility contract:
  *   - New block scopes MUST be added here with their OAuth-bit relationship.
  *   - A scope that intentionally has no bitmask requirement (e.g.
- *     block:settings:*) uses the `SKIP_OAUTH_CHECK` sentinel — NOT a 0
+ *     apps:storage:*) uses the `SKIP_OAUTH_CHECK` sentinel — NOT a 0
  *     value. The sentinel is explicit so a future maintainer doesn't
  *     accidentally type 0 and get OAuth-allowlist bypass by surprise.
  */
@@ -29,7 +29,7 @@ import { TokenScope } from './token-scope.constants';
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
  * bit. The validator treats this as "approval gate elsewhere" (e.g. the
- * issuance-time caller-is-installer check for block:settings:*).
+ * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
 export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
@@ -45,14 +45,22 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // declarable+grantable scope added friction (Go CLI manifest validator + each
   // app's OauthClient.allowedScopes bit) with no security value, since the
   // catalog is strictly MORE restricted than the public /api/v1/models.
-  'media:read:owned': TokenScope.MediaRead,
+  // NOTE: there is intentionally NO `media:read:owned` block scope. It was
+  // declared/validated/mintable but had NO runtime consumer that ever checked
+  // it (no block-token endpoint gated on it), so it was purely decorative and
+  // was removed as part of the "every declared block scope is actually
+  // enforced" hygiene pass. The underlying OAuth `TokenScope.MediaRead` bit is
+  // UNCHANGED — it still backs ~80 tRPC media routes (image/post/comment/…) via
+  // `requiredScope`; it simply no longer maps to a block scope.
   'user:read:self': TokenScope.UserRead,
   'ai:write:budgeted': TokenScope.AIServicesWrite,
   'buzz:read:self': TokenScope.BuzzRead,
-  // block:settings:* relies on the issuance-time caller-is-installer gate
-  // (audit C8) instead of an OAuth bit. SKIP_OAUTH_CHECK makes that explicit.
-  'block:settings:read': SKIP_OAUTH_CHECK,
-  'block:settings:write': SKIP_OAUTH_CHECK,
+  // NOTE: there is intentionally NO `block:settings:read` / `block:settings:write`
+  // block scope. Both were declared/validated/mintable but NO runtime capability
+  // ever verified them (the per-install settings read/write paths authorize on
+  // valid-token + app-developer + installer-resolution, not on a token scope), so
+  // they were purely decorative and were removed in the same hygiene pass. There is
+  // no OAuth bit to orphan — they used SKIP_OAUTH_CHECK, not a TokenScope bit.
   'social:tip:self': TokenScope.SocialTip,
   // apps:storage:* — the W4 KV datastore. There is no OAuth bitmask bit for
   // per-app storage (it never touches the user's civitai resources via the
@@ -109,8 +117,159 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 
+/**
+ * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
+ * ceiling a moderator's OWN account can spend across ALL run-for-real
+ * generations of ONE pending publish request. This is the number surfaced in
+ * the loud consent copy ("…spends YOUR Buzz, capped at N…") AND the number the
+ * server enforces as a per-(mod, publishRequestId) cumulative Redis reservation
+ * in `blocks.router.ts` (see `reserveReviewRunForRealBuzzSpend`).
+ *
+ * SINGLE SOURCE OF TRUTH: defined HERE (a client-safe shared constants module)
+ * so the server enforcement, the mint service, and the client consent dialog all
+ * read the identical value — a low per-call `buzzBudget` alone is NOT sufficient
+ * (a hostile app loops sub-budget calls; see `blocks.router.ts:594`), so this
+ * cumulative ceiling is what actually bounds a run-for-real session.
+ */
+export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
+/**
+ * Membership test against the authoritative scope vocabulary.
+ *
+ * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks
+ * the prototype chain, so `BLOCK_SCOPE_TO_OAUTH_BIT` being a plain object
+ * literal made 12 inherited `Object.prototype` keys answer "known scope":
+ * `__proto__`, `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+ * `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, and the four
+ * `__define*`/`__lookup*` accessors. Every caller treats a `true` here as
+ * "this string is part of the fixed platform vocabulary" and several then read
+ * `BLOCK_SCOPE_TO_OAUTH_BIT[scope]` expecting a number — for those keys that
+ * read yields a FUNCTION.
+ *
+ * The registration-time manifest path was never reachable (its `SCOPE_RE`
+ * requires at least one colon and rejects all 12 before this predicate runs),
+ * so this is defense-in-depth for the paths that call the predicate on
+ * untrusted runtime input WITHOUT a shape check first — notably the review
+ * host's REQUEST_CONSENT notice, whose `payload.scopes` comes straight from
+ * the reviewed app's own frame and whose filtered output is rendered into
+ * moderator-facing text.
+ *
+ * `Object.prototype.hasOwnProperty.call(...)` rather than
+ * `BLOCK_SCOPE_TO_OAUTH_BIT.hasOwnProperty(...)` so a future map that is
+ * null-prototype or that ever declares its own `hasOwnProperty` key still works.
+ */
 export function isKnownBlockScope(scope: string): scope is BlockScopeString {
-  return scope in BLOCK_SCOPE_TO_OAUTH_BIT;
+  return Object.prototype.hasOwnProperty.call(BLOCK_SCOPE_TO_OAUTH_BIT, scope);
+}
+
+/**
+ * SENSITIVE block scopes — the subset of the vocabulary that carries elevated
+ * privacy/financial risk to the VIEWER, and therefore warrants distinct,
+ * warning-styled emphasis wherever scopes are surfaced (the mod review modal,
+ * the consent/grant prompt, and the per-app "granted permissions" panels).
+ *
+ * A scope is sensitive when granting it lets the app do one of:
+ *   - spend the viewer's Buzz          (`ai:write:budgeted`, `social:tip:self`)
+ *   - read the viewer's Buzz balance   (`buzz:read:self`)
+ *   - read the viewer's PRIVATE data   (`collections:read:private`)
+ *   - write data OTHER users see       (`apps:storage:shared:write`)
+ *
+ * This set does two things. (1) PRESENTATION — it drives the distinct,
+ * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
+ * now also gates MANIFEST VALIDITY: at submit time the manifest validator
+ * REQUIRES a non-empty `scopeJustifications` entry for every declared sensitive
+ * scope (see `block-manifest-validator.service.ts`), so a moderator always sees
+ * WHY an elevated-risk permission was requested. It does NOT change whether a
+ * granted scope is enforced at call time — that stays with the server-side
+ * per-op gates + consent grant. Keeping it a set (not a per-scope flag on the
+ * map) keeps the enforcement map and this classification decoupled.
+ *
+ * INVARIANT (guarded by a test): every entry must be a currently-known scope in
+ * `BLOCK_SCOPE_TO_OAUTH_BIT`. If a scope is renamed/removed (as
+ * `media:read:owned` / `block:settings:*` were in #3212) it must be updated
+ * here too, so a sensitive scope can never silently drop out of the set.
+ */
+export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
+  'ai:write:budgeted',
+  'social:tip:self',
+  'buzz:read:self',
+  'collections:read:private',
+  'apps:storage:shared:write',
+]);
+
+export function isSensitiveBlockScope(scope: string): boolean {
+  return SENSITIVE_BLOCK_SCOPES.has(scope);
+}
+
+/**
+ * Manifest-shaped input for the sensitive-scope-justification gate. Only the two
+ * fields the rule actually reads are needed, and both are `unknown` because
+ * callers pass raw, not-yet-fully-validated manifests — the ZIP-extracted blob
+ * at submit (`submitVersion`) and the stored/deep-validated manifest at
+ * `validate`. Keeping the shape this loose is what lets ONE helper back both
+ * enforcement sites.
+ */
+export type SensitiveScopeManifestInput = {
+  scopes?: unknown;
+  scopeJustifications?: unknown;
+};
+
+/**
+ * Returns the DECLARED sensitive scopes that lack a non-empty
+ * `scopeJustifications` entry (deduped, in declaration order). Empty when the
+ * manifest is compliant, declares no sensitive scope, or has a non-array
+ * `scopes`. A justification "counts" only when it is a string with non-whitespace
+ * content — an empty/whitespace value, a non-string value, or a missing key all
+ * leave the sensitive scope unjustified.
+ *
+ * SINGLE SOURCE OF TRUTH for the "sensitive scopes must be justified" rule: the
+ * manifest validator (`validate`) and the submit path (`submitVersion`) both
+ * call this so the two enforcement sites can never drift. Pure + client-safe.
+ */
+export function unjustifiedSensitiveScopes(manifest: SensitiveScopeManifestInput): string[] {
+  if (!Array.isArray(manifest.scopes)) return [];
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? (manifest.scopeJustifications as Record<string, unknown>)
+      : {};
+  return [
+    ...new Set(
+      (manifest.scopes as unknown[])
+        .filter((s): s is string => typeof s === 'string')
+        .filter((scope) => isSensitiveBlockScope(scope))
+        .filter((scope) => {
+          const raw = justifications[scope];
+          return !(typeof raw === 'string' && raw.trim().length > 0);
+        })
+    ),
+  ];
+}
+
+/**
+ * The exact operator-facing message both enforcement sites raise for an
+ * unjustified sensitive scope. Single-sourced so the validator's
+ * `errors.push(...)` string and `submitVersion`'s `throw` stay byte-identical.
+ */
+export function sensitiveScopeJustificationError(unjustifiedScopes: string[]): string {
+  return `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedScopes.join(
+    ', '
+  )}`;
+}
+
+/**
+ * Throws (with `sensitiveScopeJustificationError`) when any declared sensitive
+ * scope lacks a justification; a no-op when the manifest is compliant. This is
+ * the imperative form used by `submitVersion` at submit time — the validator
+ * uses `unjustifiedSensitiveScopes` directly so it can accumulate the message
+ * into its `errors[]` alongside the other checks.
+ */
+export function assertSensitiveScopesJustified(manifest: SensitiveScopeManifestInput): void {
+  const unjustifiedScopes = unjustifiedSensitiveScopes(manifest);
+  if (unjustifiedScopes.length > 0) {
+    throw new Error(sensitiveScopeJustificationError(unjustifiedScopes));
+  }
 }
 
 /**
@@ -169,7 +328,7 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * inert (any manifest scope was always within the all-bits ceiling).
  *
  * The bitmask is the OR of the OAuth bits each known scope maps to. Scopes
- * with `SKIP_OAUTH_CHECK` (block:settings:*, apps:storage:*) and unknown
+ * with `SKIP_OAUTH_CHECK` (apps:storage:*) and unknown
  * scopes contribute nothing — they are gated by other mechanisms, not the
  * OAuth bitmask. Result is therefore the *intersection* of the manifest with
  * the OAuth-eligible scope set, exactly what the validator / token-mint path

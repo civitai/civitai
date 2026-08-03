@@ -12,6 +12,8 @@ import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
+import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
@@ -24,6 +26,13 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { logToAxiom } from '~/server/logging/client';
+import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveVersionHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -64,8 +73,6 @@ export default MixedAuthEndpoint(async function handler(
         mv."trainingDetails",
         mv."baseModel",
         mv."baseModelType",
-        mv."earlyAccessEndsAt",
-        mv."earlyAccessConfig",
         mv.description,
         (SELECT rr."resourceId" FROM "RecommendedResource" rr
          WHERE rr."sourceId" = mv.id
@@ -163,7 +170,9 @@ export default MixedAuthEndpoint(async function handler(
 export async function prepareModelVersionResponse(
   modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
-  images?: AsyncReturnType<typeof getImagesForModelVersion>
+  images?: AsyncReturnType<typeof getImagesForModelVersion>,
+  // `null` means known-ungated; only `undefined` self-fetches.
+  paidAccess?: PublicPaidAccessDto | null
 ) {
   const { files, model, metrics, vaeId, ...version } = modelVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
@@ -179,13 +188,47 @@ export async function prepareModelVersionResponse(
     include: ['meta'],
     imagesPerVersion: 10,
   });
+  if (paidAccess === undefined)
+    paidAccess = toPublicPaidAccessDto(
+      (await getPaidAccess('ModelVersion', [version.id]))[version.id]
+    );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
+
+  // Creator Controls: gate the version download count (public API — no owner/mod
+  // bypass wired here, matching buildPublicModelResponse). The base query doesn't
+  // carry meta/owner, so fetch the privacy inputs directly.
+  const privacy = await dbRead.modelVersion.findUnique({
+    where: { id: version.id },
+    select: {
+      meta: true,
+      model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
+    },
+  });
+  // Only resolve CP membership when something is actually hidden (version meta, model
+  // meta, or the owner's user default). When nothing is hidden, the resolver returns
+  // NONE regardless of membership, so the cached membership read can be skipped —
+  // byte-identical output. The check, when needed, is served from the read-through cache.
+  const ownerHidesAnything =
+    anyMetricHidden(getMetaMetricPrivacy(privacy?.meta)) ||
+    anyMetricHidden(getMetaMetricPrivacy(privacy?.model?.meta)) ||
+    anyMetricHidden(getUserMetricPrivacyDefaults(privacy?.model?.user?.settings));
+  const hidden = resolveVersionHiddenMetrics({
+    versionMeta: privacy?.meta,
+    modelMeta: privacy?.model?.meta,
+    userSettings: privacy?.model?.user?.settings,
+    isOwnerOrModerator: false,
+    hasValidMembership:
+      ownerHidesAnything && privacy?.model?.userId
+        ? await hasValidCreatorMembershipCached(privacy.model.userId)
+        : false,
+  });
 
   return {
     ...version,
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
     licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    paidAccess,
     air: stringifyAIR({
       baseModel: version.baseModel,
       type: model.type,
@@ -194,7 +237,7 @@ export async function prepareModelVersionResponse(
       fileType: primaryFile.type,
     }),
     stats: {
-      downloadCount: metrics[0]?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : metrics[0]?.downloadCount ?? 0,
       thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },

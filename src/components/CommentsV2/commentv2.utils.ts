@@ -29,7 +29,7 @@ export const useMutateComment = () => {
   };
 
   async function handleTogglePinned({ id, entityType, entityId }: ToggleHideCommentInput) {
-    togglePinnedMutation.mutateAsync({ id }).then(async () => {
+    togglePinnedMutation.mutateAsync({ id, entityType, entityId }).then(async () => {
       await Promise.all([
         queryUtils.commentv2.getInfinite.invalidate(),
         queryUtils.commentv2.getCount.invalidate({ entityType, entityId }),

@@ -2,10 +2,13 @@ import {
   Alert,
   Anchor,
   Card,
+  Checkbox,
   Divider,
   Group,
   Input,
+  NumberInput,
   Popover,
+  Radio,
   SegmentedControl,
   Select,
   Stack,
@@ -18,9 +21,10 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -29,6 +33,8 @@ import {
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import {
   Form,
   InputCreatableMultiSelect,
@@ -40,6 +46,8 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Flags } from '~/shared/utils/flags';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 import {
   constants,
   EARLY_ACCESS_CONFIG,
@@ -49,22 +57,36 @@ import {
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   baseModelSupportsClipSkip,
+  defaultBaseModel,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
+import { useLastUsedBaseModelStore } from '~/store/last-used-base-model.store';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
-  ModelVersionEarlyAccessConfig,
+  ModelVersionMeta,
+  ModelVersionPaidAccessDto,
+  ModelVersionPaidAccessInputSchema,
   ModelVersionUpsertInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
   baseModelToTraningDetailsBaseModelMap,
-  earlyAccessConfigInput,
-  MAX_LICENSING_FEE,
   modelVersionUpsertSchema2,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
+import {
+  type ModelVersionTerms,
+  DEFAULT_GENERATION_TRIAL_LIMIT,
+  DEFAULT_FEE_IMAGES,
+  buildModelVersionTerms,
+  feeMaxFor,
+  feeToRatio,
+  monetizationLimits,
+  ratioToFee,
+  resolveCapTier,
+  suggestedFee,
+} from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import {
   getMaxEarlyAccessDays,
@@ -83,20 +105,109 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
+// The form keeps paid-access config — the timed early-access window AND the permanent gate — in this
+// UX-shaped local field; the API contract is `paidAccess` + `donationGoal`. These transforms map across
+// the boundary (submit / initial values).
+const formPaidAccessConfigSchema = z.object({
+  // Permanent = never-expiring gate (always paid); false = a timed Early Access window that becomes free.
+  permanent: z.boolean().default(false),
+  timeframe: z.number(),
+  // "Price for access" — unlocks download + generation (the bundle). Required when charging.
+  accessPrice: z.number().optional(),
+  // Optional cheaper generation-only tier; defaults to the access price when unset.
+  generationPrice: z.number().optional(),
+  // Gate the download but leave generation free for everyone (no price, no trial limit).
+  freeGeneration: z.boolean().default(false),
+  // Free preview generations before purchase is required (the trial limit). Cleared/empty = 0 (no trial),
+  // matching Creator Studio; a new gate seeds the default via the enable switch.
+  freePreviewGenerations: z.preprocess(
+    (v) => (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v)) ? 0 : v),
+    z.number().int()
+  ),
+  donationGoalEnabled: z.boolean().default(false),
+  donationGoal: z.number().optional(),
+});
+type FormPaidAccessConfig = z.infer<typeof formPaidAccessConfigSchema>;
+
+// Wrap the terms in the permanent/timed gate shape (or null for an off/invalid gate).
+function toGate(
+  config: FormPaidAccessConfig,
+  terms: ModelVersionTerms
+): ModelVersionPaidAccessInputSchema | null {
+  if (config.permanent) return { permanent: true, terms };
+  const timeframeDays = config.timeframe ?? 0;
+  if (timeframeDays <= 0) return null;
+  return { permanent: false, timeframeDays, terms };
+}
+
+function toPaidAccessInput(
+  config: FormPaidAccessConfig | null | undefined,
+  usageControl: ModelUsageControl | undefined
+): ModelVersionPaidAccessInputSchema | null {
+  if (!config || config.accessPrice == null) return null;
+  // Only downloadable or on-site-generation versions can be gated; other usage controls (internal /
+  // external API) can't set paid access at all.
+  if (
+    usageControl &&
+    usageControl !== ModelUsageControl.Download &&
+    usageControl !== ModelUsageControl.Generation
+  )
+    return null;
+  const terms = buildModelVersionTerms({
+    accessPrice: config.accessPrice,
+    generationPrice: config.generationPrice,
+    freePreviewGenerations: config.freePreviewGenerations,
+    genOnly: usageControl === ModelUsageControl.Generation,
+    freeGeneration: config.freeGeneration,
+  });
+  return toGate(config, terms);
+}
+
+type GenerationMode = 'bundled' | 'separate' | 'free';
+const generationModeOf = (config: FormPaidAccessConfig | null | undefined): GenerationMode =>
+  config?.freeGeneration ? 'free' : config?.generationPrice != null ? 'separate' : 'bundled';
+
+function toDonationGoalInput(config: FormPaidAccessConfig | null | undefined) {
+  // A donation goal only makes sense for a timed gate (it ends the window early); permanent never ends.
+  if (config?.permanent || !config?.donationGoalEnabled || !config.donationGoal) return null;
+  return { amount: config.donationGoal };
+}
+
+function toFormPaidAccessConfig(
+  paidAccess: { timeframeDays: number | null; terms: ModelVersionTerms } | null | undefined,
+  donationGoal: { goalAmount: number } | null | undefined
+): FormPaidAccessConfig | null {
+  if (!paidAccess) return null;
+  const terms = paidAccess.terms ?? {};
+  const paidGen = terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
+  return {
+    // No timeframeDays on the row => a permanent (never-expiring) gate.
+    permanent: paidAccess.timeframeDays == null,
+    timeframe: paidAccess.timeframeDays ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
+    // "Price for access" is the download price when downloadable; for a gen-only version (no download
+    // tier) it's the generation price. The separate generation-only tier only exists with a download bundle.
+    accessPrice: terms.download?.price ?? paidGen?.price,
+    generationPrice: terms.download ? paidGen?.price : undefined,
+    freeGeneration: !!terms.generation && `free` in terms.generation,
+    freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
+    donationGoalEnabled: !!donationGoal,
+    donationGoal: donationGoal?.goalAmount,
+  };
+}
+
 const schema = modelVersionUpsertSchema2
+  .omit({ paidAccess: true, donationGoal: true })
   .extend({
     skipTrainedWords: z.boolean().default(false),
-    earlyAccessConfig: earlyAccessConfigInput
-      .omit({
-        originalPublishedAt: true,
-      })
-      .extend({
-        timeframe: z
-          .number()
-          .refine((v) => EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === v), {
-            error: 'Invalid value',
-          }),
-      })
+    paidAccessConfig: formPaidAccessConfigSchema
+      // A timed gate needs a valid window; a permanent gate ignores the timeframe entirely.
+      .refine(
+        (c) => c.permanent || EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === c.timeframe),
+        {
+          error: 'Invalid value',
+          path: ['timeframe'],
+        }
+      )
       .nullish(),
     useMonetization: z.boolean().default(false),
     recommendedResources: generationResourceSchema
@@ -128,23 +239,33 @@ const schema = modelVersionUpsertSchema2
     },
     { error: 'Max strength must be greater than min strength', path: ['settings.maxStrength'] }
   )
+  // Pricing rules (paid access). A charging config must carry an access price (blank → silently ungated);
+  // for a gen-only version this same price is the generation charge. The optional generation-only tier
+  // can't cost more than the access price.
   .refine(
     (data) => {
-      const { generationPrice, downloadPrice } = data.earlyAccessConfig ?? {};
-      if (generationPrice && downloadPrice) {
-        return generationPrice <= downloadPrice;
-      }
-
+      const c = data.paidAccessConfig;
+      if (!c) return true;
+      return c.accessPrice != null && c.accessPrice > 0;
+    },
+    { error: 'Enter a price for access', path: ['paidAccessConfig.accessPrice'] }
+  )
+  .refine(
+    (data) => {
+      const { generationPrice, accessPrice } = data.paidAccessConfig ?? {};
+      if (generationPrice && accessPrice) return generationPrice <= accessPrice;
       return true;
     },
-    { error: 'Generation price cannot be greater than download price', path: ['generationPrice'] }
+    {
+      error: 'Generation-only price cannot be greater than the access price',
+      path: ['paidAccessConfig.generationPrice'],
+    }
   );
 type Schema = z.infer<typeof schema>;
 
+// Unfiltered on purpose: a legacy value must always be present in the options or
+// the Select renders blank.
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
-// Sentinel for the Licensing Base picker's default option; maps to a null
-// licensingSourceVersionId (inherit the base model's standard-fee root).
-const LICENSING_DEFAULT = 'default';
 const capitalizeFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const licensingOptionLabel = (versionName: string, fee: number | null) =>
   `${capitalizeFirst(versionName)}${fee != null ? ` (${fee} Buzz)` : ''}`;
@@ -157,6 +278,7 @@ export function ModelVersionUpsertForm({
   id,
   model,
   version,
+  previousBaseModel,
   children,
   onSubmit,
   afterName,
@@ -165,6 +287,17 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const { hideDonationGoals } = useCurrentUserSettings();
+  const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
+    useMutateUserSettings();
+  const { requirements } = useCreatorProgramRequirements();
+  const isActiveCreatorMember = !!requirements?.validMembership;
+  const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
+  const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
+  // For a brand-new version, seed the base model from the previous version (if any),
+  // then the user's last-used selection, then the global default.
+  const initialBaseModel =
+    version?.baseModel ?? previousBaseModel ?? lastUsedBaseModel ?? defaultBaseModel;
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -177,35 +310,46 @@ export function ModelVersionUpsertForm({
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
-  const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
+  // Retired field: only surfaced for legacy versions already carrying a non-default
+  // value, so they stay editable/clearable without letting anyone newly opt in.
+  // Read from the saved version, not form state, so picking 'Standard' doesn't rip
+  // the control out mid-edit.
+  const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
+  // "Over" means a TIMED window that has ended. A permanent gate (endsAt null) never ends, and a version
+  // with no gate has nothing to be over — neither should lock the controls.
   const isEarlyAccessOver =
     version?.status === 'Published' &&
-    (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
+    !!version?.paidAccess?.endsAt &&
+    !isFutureDate(version.paidAccess.endsAt);
+  // A donation goal is immutable once it exists (create-once), and locked once the EA window is over.
+  const donationGoalLocked = !!version?.donationGoal || isEarlyAccessOver;
 
   const MAX_EARLY_ACCCESS = 30;
+
+  // A NEW version seeds the type-based suggested licensing fee (non-checkpoints = 1 ⚡ per 10 images), but only
+  // when the fee editor is actually shown — never seed a fee the creator can't see. Existing versions keep their
+  // stored value (0 = off).
+  const initialLicensingFee = version?.id
+    ? Number(version.licensingFee ?? 0)
+    : features.licensingFee
+    ? suggestedFee({ modelType: model?.type, baseModel: initialBaseModel })
+    : 0;
 
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',
-    baseModel: version?.baseModel ?? 'SD 1.5',
-    baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
+    baseModel: initialBaseModel,
+    baseModelType: version?.baseModelType ?? undefined,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
         ? !version.trainedWords.length
         : false
       : true,
-    earlyAccessConfig:
-      version?.earlyAccessConfig &&
-      !!version?.earlyAccessConfig?.timeframe &&
-      features.earlyAccessModel
-        ? {
-            ...(version?.earlyAccessConfig ?? {}),
-            timeframe:
-              version.earlyAccessConfig?.timeframe ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
-          }
-        : null,
+    paidAccessConfig: features.earlyAccessModel
+      ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
+      : null,
     modelId: model?.id ?? -1,
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
@@ -213,7 +357,7 @@ export function ModelVersionUpsertForm({
     clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    licensingFee: Number(version?.licensingFee ?? 0),
+    licensingFee: initialLicensingFee,
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
     licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
@@ -223,13 +367,18 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
+    meta: {
+      hideBuzz: (version?.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+      hideDownloads: (version?.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+      hideGenerations: (version?.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+    },
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
-  const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  const baseModel = form.watch('baseModel') ?? initialBaseModel;
   // Non-commercial base models (e.g. Ideogram) can't be monetized — hide the
   // licensing-fee and early-access controls for these versions.
   const isNonCommercial = isNonCommercialBaseModel(baseModel);
@@ -244,11 +393,58 @@ export function ModelVersionUpsertForm({
     'settings.maxStrength',
   ]) as number[];
   const { isDirty } = form.formState;
-  const earlyAccessConfig = form.watch('earlyAccessConfig');
+  const paidAccessConfig = form.watch('paidAccessConfig');
+  // The three generation grants the terms model supports. Seeded from the stored config so an existing
+  // choice survives an unrelated edit, and resynced in the form.reset effect below — without that, a reset
+  // restores a price underneath a stale radio.
+  const [genMode, setGenMode] = useState<GenerationMode>(() =>
+    generationModeOf(toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal))
+  );
   const usageControl = form.watch('usageControl');
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // The fee is edited as a whole-number "buzz per N images" ratio; the stored `licensingFee` stays per-image.
+  const [feeRatio, setFeeRatio] = useState(() => feeToRatio(initialLicensingFee));
+  const applyFeeRatio = (next: { buzz: number; images: number }) => {
+    setFeeRatio(next);
+    form.setValue('licensingFee', ratioToFee(next.buzz, next.images), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+  };
+  // Anyone may set a licensing fee, free tier included (CU 868kj4q49) — the tier caps only how much, and
+  // checkpoints carry a higher ceiling than everything else. Moderators are uncapped. Mirrored server-side
+  // in upsertModelVersionHandler, which is the enforcement point.
+  //
+  // `memberInBadState` mirrors the server's getCapTier, which excludes bad-state subs — so the UI never
+  // advertises a ceiling the server will reject.
+  const feeCapTier = resolveCapTier({
+    tier: currentUser?.tier ?? null,
+    isMember: !!currentUser?.tier && currentUser.tier !== 'free' && !currentUser.memberInBadState,
+  });
+  // Keyed to the WATCHED base model, not the seeded one, so switching ecosystem mid-form moves the caps
+  // instead of stranding them on whatever the form loaded with.
+  const limits = monetizationLimits({
+    tier: feeCapTier,
+    modelType: model?.type,
+    baseModel,
+    isModerator: currentUser?.isModerator,
+    // Only a permanent gate has a price ceiling; a timed early-access window becomes free when it closes.
+    permanent: !!paidAccessConfig?.permanent,
+  });
+  const licensingFeeCap = limits.fee.maxPerGeneration;
+  const feeImageOptions = limits.fee.denominators;
+  // An unlimited price renders as no cap at all, so the input falls back to the donation ceiling.
+  const paidAccessCap = limits.access.maxPrice ?? MAX_DONATION_GOAL;
+  const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
+  const storedPaidGen =
+    storedTerms?.generation && !('free' in storedTerms.generation)
+      ? storedTerms.generation
+      : undefined;
+  // What the version already charges for access — the download bundle, or the generation price on a gen-only
+  // version (which has no download tier, so `download?.price` alone would read as unpriced).
+  const storedAccessPrice = storedTerms?.download?.price ?? storedPaidGen?.price ?? 0;
   const showLicensingFeeBlock =
     !isNonCommercial &&
     (!!features.licensingFee ||
@@ -263,19 +459,23 @@ export function ModelVersionUpsertForm({
     { baseModel, modelType: model?.type },
     { enabled: !!baseModel }
   );
-  // Exclude the version being edited (a root can't point at itself) and the
-  // standard-fee root (it's already the explicit default option, so listing it
-  // again would be a duplicate with different persisted semantics). We only hide
-  // the whole picker when no other roots remain.
-  const standardLicensingId = licensingRootsData?.standardVersionId ?? null;
-  const standardLicensingFee = licensingRootsData?.standardFee ?? null;
-  const standardLicensingName = licensingRootsData?.standardVersionName ?? null;
-  const licensingRoots = (licensingRootsData?.roots ?? []).filter(
-    (r) => r.id !== version?.id && r.id !== standardLicensingId
+  const defaultLicensingSourceId = licensingRootsData?.defaultVersionId ?? null;
+  // A version that is itself a licensing root is the source, so it doesn't pick a parent.
+  const currentIsLicensingRoot = (licensingRootsData?.roots ?? []).some(
+    (r) => r.id === version?.id
   );
+  // Versions flagged NotDerivative (e.g. API-only official checkpoints) aren't
+  // fine-tunes, so the form doesn't require/auto-select a parent for them. They
+  // can still set their own licensing fee via the fee field above.
+  const notDerivative = Flags.hasFlag(version?.flags ?? 0, ModelVersionFlag.NotDerivative);
+  // Exclude only the version being edited (a root can't point at itself). The
+  // default root is a normal, pre-selected option — there is no null "Default".
+  const licensingRoots = (licensingRootsData?.roots ?? []).filter((r) => r.id !== version?.id);
+  const showLicensingPicker =
+    licensingRoots.length > 0 && !currentIsLicensingRoot && !notDerivative;
 
-  // A licensing lineage root is scoped to a base model, so a base-model change
-  // invalidates any selected source. Skip the initial value (edit pre-fill).
+  // A base-model change invalidates the selected source (roots are base-scoped);
+  // the default effect below re-selects the new base's default.
   const prevBaseModelRef = useRef(baseModel);
   useEffect(() => {
     if (prevBaseModelRef.current === baseModel) return;
@@ -283,6 +483,16 @@ export function ModelVersionUpsertForm({
     if (form.getValues('licensingSourceVersionId') != null)
       form.setValue('licensingSourceVersionId', null, { shouldDirty: true });
   }, [baseModel]);
+
+  // A derivative must record an explicit parent — a null source means no fee, so
+  // pre-select the ecosystem's default root when none is set. Skipped for roots
+  // and exempt versions (which legitimately have no parent).
+  useEffect(() => {
+    if (currentIsLicensingRoot || notDerivative) return;
+    if (defaultLicensingSourceId == null) return;
+    if (form.getValues('licensingSourceVersionId') == null)
+      form.setValue('licensingSourceVersionId', defaultLicensingSourceId, { shouldDirty: false });
+  }, [defaultLicensingSourceId, currentIsLicensingRoot, notDerivative]);
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -306,9 +516,12 @@ export function ModelVersionUpsertForm({
   // when switching to such a base model so the form can save.
   useEffect(() => {
     if (!isNonCommercial) return;
-    if ((form.getValues('licensingFee') ?? 0) > 0) form.setValue('licensingFee', 0);
+    if ((form.getValues('licensingFee') ?? 0) > 0) {
+      form.setValue('licensingFee', 0);
+      setFeeRatio((r) => ({ buzz: 0, images: r.images }));
+    }
     if (form.getValues('monetization')) form.setValue('monetization', null);
-    if (form.getValues('earlyAccessConfig')) form.setValue('earlyAccessConfig', null);
+    if (form.getValues('paidAccessConfig')) form.setValue('paidAccessConfig', null);
     if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
   }, [isNonCommercial]);
 
@@ -343,6 +556,8 @@ export function ModelVersionUpsertForm({
       return;
     }
 
+    if (data.baseModel) setLastUsedBaseModel(data.baseModel);
+
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
@@ -352,7 +567,10 @@ export function ModelVersionUpsertForm({
       !version?.id ||
       templateId ||
       bountyId ||
-      !isEqual(data.earlyAccessConfig, version.earlyAccessConfig)
+      !isEqual(
+        data.paidAccessConfig,
+        toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
+      )
     ) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
@@ -360,6 +578,8 @@ export function ModelVersionUpsertForm({
           settings: { strength },
         })) ?? [];
 
+      const gatedConfig =
+        model?.availability === Availability.Private ? null : data.paidAccessConfig;
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         // Don't persist a stale clip skip for base models that don't use it.
@@ -367,12 +587,10 @@ export function ModelVersionUpsertForm({
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessConfig:
-          model?.availability === Availability.Private || !data.earlyAccessConfig
-            ? null
-            : data.earlyAccessConfig,
+        paidAccess: toPaidAccessInput(gatedConfig, data.usageControl),
+        donationGoal: toDonationGoalInput(gatedConfig),
         trainedWords: skipTrainedWords ? [] : trainedWords,
-        baseModelType: hasBaseModelType ? data.baseModelType : undefined,
+        baseModelType: data.baseModelType,
         monetization: data.monetization,
         recommendedResources,
         templateId,
@@ -401,7 +619,7 @@ export function ModelVersionUpsertForm({
   };
 
   useEffect(() => {
-    if (version)
+    if (version) {
       form.reset({
         ...version,
         licensingFee: Number(version.licensingFee ?? 0),
@@ -414,14 +632,26 @@ export function ModelVersionUpsertForm({
             ? !version.trainedWords.length
             : false
           : true,
-        earlyAccessConfig:
-          version?.earlyAccessConfig &&
-          version?.earlyAccessConfig?.timeframe &&
-          features.earlyAccessModel
-            ? version?.earlyAccessConfig
-            : null,
+        paidAccessConfig: features.earlyAccessModel
+          ? toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
+          : null,
         recommendedResources: version.recommendedResources ?? [],
+        meta: {
+          hideBuzz: (version.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+          hideDownloads: (version.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+          hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+        },
       });
+      // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
+      setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));
+      // Same for the generation-price checkbox. Without this it keeps its mount-time value while `reset`
+      // restores a generationPrice underneath it: on first render `version` is undefined so the box seeds
+      // off, then a price arrives and is charged while the input stays hidden — and after the creator
+      // unchecks it, any refetch/invalidate re-populates the value they just cleared and re-saves it.
+      setGenMode(
+        generationModeOf(toFormPaidAccessConfig(version.paidAccess, version.donationGoal))
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
@@ -437,22 +667,63 @@ export function ModelVersionUpsertForm({
     })
     .filter(isDefined);
 
-  const atEarlyAccess = !!version?.earlyAccessEndsAt;
+  // A gate is present (timed OR permanent) — a permanent gate has no endsAt, so check the row, not endsAt.
+  // Keeps the Paid Access section visible/editable for a published permanent-gated version.
+  const atEarlyAccess = !!version?.paidAccess;
   const isPublished = version?.status === 'Published';
+  // A gen-only version ratchets on its generation price, having no download tier. The stored price is a
+  // floor: the server allows resubmitting over-cap, so clamping down would silently cut it.
+  const accessPriceMax = Math.max(
+    Math.min(
+      isPublished ? storedAccessPrice || MAX_DONATION_GOAL : MAX_DONATION_GOAL,
+      paidAccessCap
+    ),
+    storedAccessPrice
+  );
   const isPrivateModel = model?.availability === Availability.Private;
-  const showEarlyAccessInput =
+  // A timed Early Access window can't be *started* after publish; only a version already on one keeps it.
+  // Permanent Paid Access has no window, so it stays available post-publish.
+  const timedAlreadySet = version?.paidAccess?.timeframeDays != null;
+  const canChooseTimed = !isPublished || timedAlreadySet;
+  // Paid access applies only to downloadable or on-site-generation versions (undefined = Download);
+  // on-site-generation-only can't charge for download (see isGenOnly). Other controls can't be gated.
+  const isGenOnly = usageControl === ModelUsageControl.Generation;
+  const paidAccessUsageOk =
+    !usageControl || usageControl === ModelUsageControl.Download || isGenOnly;
+  // Who may configure a gate: a moderator; a creator with early-access score (timed EA, only pre-publish
+  // or while already gated); or anyone adding permanent Paid Access post-publish (no timed window).
+  const canConfigurePaidAccess =
+    currentUser?.isModerator ||
+    (maxEarlyAccessModels > 0 &&
+      features.earlyAccessModel &&
+      earlyAccessUnlockedDays.length > 0 &&
+      (!isPublished || atEarlyAccess)) ||
+    isPublished;
+  const showPaidAccessInput =
     !model?.poi && // POI models won't allow EA.
     !isPrivateModel &&
     !isNonCommercial && // Non-commercial base models can't be monetized.
-    (currentUser?.isModerator ||
-      (maxEarlyAccessModels > 0 &&
-        features.earlyAccessModel &&
-        earlyAccessUnlockedDays.length > 0 &&
-        (!isPublished || atEarlyAccess)));
+    paidAccessUsageOk &&
+    canConfigurePaidAccess;
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
-    : version?.earlyAccessConfig?.timeframe ?? 0;
+    : version?.paidAccess?.timeframeDays ?? 0;
+
+  // Editing a version that already holds an EA slot doesn't count against the cap — mirrors the
+  // server carve-out in assertUserEarlyAccessLimits.
+  const { data: userEarlyAccessVersions } = trpc.modelVersion.getUserEarlyAccessVersions.useQuery(
+    undefined,
+    { enabled: showPaidAccessInput && !currentUser?.isModerator }
+  );
+  const activeEarlyAccessCount = userEarlyAccessVersions?.length ?? 0;
+  const editingCountsTowardCap =
+    version?.id != null && !!userEarlyAccessVersions?.some((v) => v.id === version.id);
+  const atEarlyAccessModelCap =
+    !currentUser?.isModerator &&
+    maxEarlyAccessModels > 0 &&
+    activeEarlyAccessCount >= maxEarlyAccessModels &&
+    !editingCountsTowardCap;
   const resourceLabel = getDisplayName(model?.type ?? '');
   const modelDownloadEnabled = !usageControl || usageControl === ModelUsageControl.Download;
 
@@ -484,16 +755,6 @@ export function ModelVersionUpsertForm({
                 placeholder="Select how this resource can be used"
                 withAsterisk
                 style={{ flex: 1 }}
-                onChange={(value) => {
-                  if (earlyAccessConfig && value !== ModelUsageControl.Download) {
-                    // Reset download values:
-                    form.setValue('earlyAccessConfig', {
-                      ...earlyAccessConfig,
-                      chargeForDownload: false,
-                      downloadPrice: undefined,
-                    });
-                  }
-                }}
                 data={Object.values(ModelUsageControl)
                   .map((x) => ({
                     value: x,
@@ -531,9 +792,9 @@ export function ModelVersionUpsertForm({
             </>
           )}
 
-          {showEarlyAccessInput && (
+          {showPaidAccessInput && (
             <Stack gap={0}>
-              <Divider label="Early Access Set Up" mb="md" />
+              <Divider label="Paid Access Set Up" mb="md" />
 
               <DismissibleAlert
                 id="ea-info"
@@ -564,10 +825,13 @@ export function ModelVersionUpsertForm({
                       the early access period ends, your model will be available to everyone for
                       free.
                     </Text>
-                    <Text size="xs">
-                      You can have up to {maxEarlyAccessModels} models in early access at a time.
-                      This will increase as you post more models on the site.
-                    </Text>
+                    {!currentUser?.isModerator && maxEarlyAccessModels > 0 && (
+                      <Text size="xs">
+                        You have {activeEarlyAccessCount} of {maxEarlyAccessModels} early access{' '}
+                        {maxEarlyAccessModels === 1 ? 'slot' : 'slots'} in use. This limit increases
+                        as you post more models on the site.
+                      </Text>
+                    )}
                   </Stack>
                 }
                 mb="xs"
@@ -578,244 +842,328 @@ export function ModelVersionUpsertForm({
                   access settings.
                 </Text>
               )}
+              {atEarlyAccessModelCap && paidAccessConfig === null && (
+                <Alert color="yellow" icon={<IconAlertTriangle size={18} />} my="sm">
+                  <Text size="xs">
+                    You&apos;ve reached your limit of {maxEarlyAccessModels} concurrent early access{' '}
+                    {maxEarlyAccessModels === 1 ? 'model' : 'models'}. Remove early access from
+                    another model, or wait for one to end, before adding it here.
+                  </Text>
+                </Alert>
+              )}
+              <Alert color="blue" icon={<IconInfoCircle size={18} />} my="sm">
+                <Text size="xs">
+                  Charge a fee for access to this version — a timed{' '}
+                  <Text span fw={600}>
+                    Early Access
+                  </Text>{' '}
+                  window that becomes free when it ends, or ongoing{' '}
+                  <Text span fw={600}>
+                    Paid Access
+                  </Text>{' '}
+                  that always requires purchase. Buyers unlock download and generation.
+                </Text>
+              </Alert>
               <Switch
                 my="sm"
-                label="I want to make this version part of the Early Access Program"
-                checked={earlyAccessConfig !== null}
+                label="I want to charge for access to this version"
+                checked={paidAccessConfig !== null}
                 onChange={(e) =>
                   form.setValue(
-                    'earlyAccessConfig',
+                    'paidAccessConfig',
                     e.target.checked
                       ? {
+                          permanent: !canChooseTimed,
                           timeframe: EARLY_ACCESS_CONFIG.timeframeValues[0],
-                          chargeForDownload: modelDownloadEnabled ? true : false,
-                          downloadPrice: modelDownloadEnabled ? 5000 : undefined,
-                          chargeForGeneration: !modelDownloadEnabled ? true : false,
-                          generationPrice: !modelDownloadEnabled ? 2500 : undefined,
-                          generationTrialLimit: 10,
+                          accessPrice: 5000,
+                          generationPrice: undefined,
+                          freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
                           donationGoalEnabled: false,
                           donationGoal: undefined,
                         }
                       : null
                   )
                 }
-                disabled={isEarlyAccessOver}
+                disabled={isEarlyAccessOver || (atEarlyAccessModelCap && paidAccessConfig === null)}
               />
-              {earlyAccessConfig && (
+              {paidAccessConfig && (
                 <Stack>
                   <Input.Wrapper
-                    label={
-                      <Group gap="xs">
-                        <Text fw="bold">Early Access Time Frame</Text>
-                        <Popover width={300} withArrow withinPortal shadow="sm">
-                          <Popover.Target>
-                            <IconInfoCircle size={16} />
-                          </Popover.Target>
-                          <Popover.Dropdown>
-                            <Stack gap="xs">
-                              <Text size="sm">
-                                The amount of resources you can have in early access and for how
-                                long is determined by actions you&rsquo;ve taken on the site.
-                                Increase your limits by posting more free models that people want,
-                                being kind, and generally doing good within the community.
-                              </Text>
-                            </Stack>
-                          </Popover.Dropdown>
-                        </Popover>
-                      </Group>
+                    label={<Text fw="bold">Access mode</Text>}
+                    description={
+                      paidAccessConfig.permanent
+                        ? 'Always requires purchase — this version never becomes free.'
+                        : 'A timed Early Access window; the version becomes free when it ends.'
                     }
-                    description="How long would you like to offer early access to your version from the date of publishing?"
-                    error={form.formState.errors.earlyAccessConfig?.message}
                   >
                     <SegmentedControl
+                      value={paidAccessConfig.permanent ? 'permanent' : 'timed'}
                       onChange={(value) =>
-                        form.setValue('earlyAccessConfig.timeframe', parseInt(value, 10))
+                        form.setValue('paidAccessConfig.permanent', value === 'permanent')
                       }
-                      value={
-                        earlyAccessConfig?.timeframe?.toString() ??
-                        EARLY_ACCESS_CONFIG.timeframeValues[0]
-                      }
-                      data={earlyAccessUnlockedDays.map((v) => ({
-                        label: `${v} days`,
-                        value: v.toString(),
-                        disabled: maxEarlyAccessValue < v,
-                      }))}
+                      data={[
+                        {
+                          label: 'Early Access (timed)',
+                          value: 'timed',
+                          // A timed window can't be started after publish (permanent stays available).
+                          disabled: !canChooseTimed,
+                        },
+                        {
+                          label: 'Paid Access (permanent)',
+                          value: 'permanent',
+                        },
+                      ]}
                       color="blue"
                       size="xs"
+                      fullWidth
+                      disabled={isEarlyAccessOver}
                       styles={{
                         root: {
                           border: `1px solid ${
                             colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
                           }`,
                           background: 'none',
-                          marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
+                          marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)',
                         },
                       }}
-                      fullWidth
-                      disabled={isEarlyAccessOver}
                     />
-                    {earlyAccessUnlockedDays.length !==
-                      EARLY_ACCESS_CONFIG.timeframeValues.length && (
-                      <Group wrap="nowrap">
-                        <Text size="xs" c="yellow">
-                          You will unlock more early access day over time by posting models to the
-                          site.
-                        </Text>
-                      </Group>
-                    )}
-                    {!canIncreaseEarlyAccess && (
-                      <Text size="xs" c="dimmed" mt="sm">
-                        You cannot increase early access value after a model has been published
-                      </Text>
-                    )}
                   </Input.Wrapper>
-                  <Stack mt="sm">
-                    {modelDownloadEnabled && (
-                      <Card withBorder>
-                        <Card.Section withBorder>
-                          <Group py="sm" px="md" justify="space-between" wrap="nowrap">
-                            <div>
-                              <Text fw={500} size="sm">
-                                Allow users to pay for download (Includes ability to generate)
-                              </Text>
-                              <Text size="xs">
-                                This will require users to pay Buzz to download your {resourceLabel}{' '}
-                                during the early access period
-                              </Text>
-                            </div>
-                            <InputSwitch
-                              name="earlyAccessConfig.chargeForDownload"
-                              disabled={isEarlyAccessOver}
-                            />
-                          </Group>
-                        </Card.Section>
-                        {earlyAccessConfig?.chargeForDownload && (
-                          <Card.Section py="sm" px="md">
-                            <InputNumber
-                              name="earlyAccessConfig.downloadPrice"
-                              label="Download price"
-                              description=" How much Buzz would you like to charge for your version download?"
-                              min={100}
-                              max={
-                                isPublished
-                                  ? version?.earlyAccessConfig?.downloadPrice
-                                  : MAX_DONATION_GOAL
-                              }
-                              step={100}
-                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                              withAsterisk
-                              disabled={isEarlyAccessOver}
-                            />
-                          </Card.Section>
-                        )}
-                      </Card>
-                    )}
-                    <Card withBorder>
-                      <Card.Section withBorder>
-                        <Group py="sm" px="md" justify="space-between" wrap="nowrap">
-                          <div>
-                            <Text fw={500} size="sm">
-                              Allow users to pay for generation only - no download.
-                            </Text>
-                            <Text size="xs">
-                              This will require users to pay Buzz to generate with your{' '}
-                              {resourceLabel} during the early access period
-                            </Text>
-                          </div>
-                          <InputSwitch
-                            name="earlyAccessConfig.chargeForGeneration"
-                            disabled={isEarlyAccessOver}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                form.setValue(
-                                  'earlyAccessConfig.generationPrice',
-                                  earlyAccessConfig?.downloadPrice ?? 2500
-                                );
-                              } else {
-                                form.setValue('earlyAccessConfig.generationPrice', undefined);
-                              }
-                            }}
-                          />
+                  {!paidAccessConfig.permanent && (
+                    <Input.Wrapper
+                      label={
+                        <Group gap="xs">
+                          <Text fw="bold">Early access time frame</Text>
+                          <Popover width={300} withArrow withinPortal shadow="sm">
+                            <Popover.Target>
+                              <IconInfoCircle size={16} />
+                            </Popover.Target>
+                            <Popover.Dropdown>
+                              <Stack gap="xs">
+                                <Text size="sm">
+                                  The amount of resources you can have in early access and for how
+                                  long is determined by actions you&rsquo;ve taken on the site.
+                                  Increase your limits by posting more free models that people want,
+                                  being kind, and generally doing good within the community.
+                                </Text>
+                              </Stack>
+                            </Popover.Dropdown>
+                          </Popover>
                         </Group>
+                      }
+                      description="When the window ends the version becomes free. Up to 30 days at your current Creator Program score."
+                      error={form.formState.errors.paidAccessConfig?.message}
+                    >
+                      <SegmentedControl
+                        onChange={(value) =>
+                          form.setValue('paidAccessConfig.timeframe', parseInt(value, 10))
+                        }
+                        value={
+                          paidAccessConfig?.timeframe?.toString() ??
+                          EARLY_ACCESS_CONFIG.timeframeValues[0]
+                        }
+                        data={earlyAccessUnlockedDays.map((v) => ({
+                          label: `${v} days`,
+                          value: v.toString(),
+                          disabled: maxEarlyAccessValue < v,
+                        }))}
+                        color="blue"
+                        size="xs"
+                        styles={{
+                          root: {
+                            border: `1px solid ${
+                              colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                            }`,
+                            background: 'none',
+                            marginTop: 'calc(var(--mantine-spacing-xs) * 0.5)', // 5px
+                          },
+                        }}
+                        fullWidth
+                        disabled={isEarlyAccessOver}
+                      />
+                      {earlyAccessUnlockedDays.length !==
+                        EARLY_ACCESS_CONFIG.timeframeValues.length && (
+                        <Group wrap="nowrap">
+                          <Text size="xs" c="yellow">
+                            You will unlock more early access day over time by posting models to the
+                            site.
+                          </Text>
+                        </Group>
+                      )}
+                      {!canIncreaseEarlyAccess && (
+                        <Text size="xs" c="dimmed" mt="sm">
+                          You cannot increase early access value after a model has been published
+                        </Text>
+                      )}
+                    </Input.Wrapper>
+                  )}
+                  <Stack mt="sm">
+                    <Card withBorder>
+                      <Card.Section withBorder inheritPadding py="sm">
+                        <Text fw={600} size="sm">
+                          Pricing
+                        </Text>
                       </Card.Section>
-                      {earlyAccessConfig?.chargeForGeneration && (
-                        <Card.Section py="sm" px="md">
-                          <Stack>
-                            <InputNumber
-                              name="earlyAccessConfig.generationPrice"
-                              label="Generation price"
-                              description="How much would you like to charge to generate with your version?"
-                              min={50}
-                              max={earlyAccessConfig?.downloadPrice}
-                              step={100}
-                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                              disabled={isEarlyAccessOver}
-                              withAsterisk
+                      <Card.Section inheritPadding py="sm">
+                        <Stack>
+                          <InputNumber
+                            name="paidAccessConfig.accessPrice"
+                            label="Price for access"
+                            description={
+                              isGenOnly
+                                ? 'What buyers pay to generate with this version on-site.'
+                                : 'Buyers unlock download + generation.'
+                            }
+                            min={100}
+                            max={accessPriceMax}
+                            step={100}
+                            leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                            withAsterisk
+                            disabled={isEarlyAccessOver}
+                          />
+                          {(paidAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
+                            <Text size="xs" c="yellow.5">
+                              This price is above your membership&apos;s{' '}
+                              {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower it,
+                              but not raise it.
+                            </Text>
+                          )}
+                          {!currentUser?.isModerator && (
+                            <CapUpsell
+                              value={paidAccessConfig?.accessPrice}
+                              cap={limits.access.maxPrice ?? Infinity}
+                              capTier={feeCapTier}
+                              capFor={(t) =>
+                                monetizationLimits({ tier: t, baseModel, permanent: true }).access
+                                  .maxPrice ?? Infinity
+                              }
+                              title="Price for access"
                             />
+                          )}
+                          {!isGenOnly && (
+                            <>
+                              <Radio.Group
+                                label="Generating on-site"
+                                value={genMode}
+                                onChange={(next) => {
+                                  const mode = next as GenerationMode;
+                                  setGenMode(mode);
+                                  // Only `separate` carries a price — the other two must clear it, or a
+                                  // stale value would keep the cheaper tier alive underneath the choice.
+                                  if (mode !== 'separate')
+                                    form.setValue(
+                                      'paidAccessConfig.generationPrice',
+                                      undefined as never
+                                    );
+                                  form.setValue('paidAccessConfig.freeGeneration', mode === 'free');
+                                }}
+                              >
+                                <Stack gap={4} mt={4}>
+                                  <Radio
+                                    value="bundled"
+                                    label="Same as the access price"
+                                    disabled={isEarlyAccessOver}
+                                  />
+                                  <Radio
+                                    value="separate"
+                                    label="A cheaper generation-only price"
+                                    disabled={isEarlyAccessOver}
+                                  />
+                                  <Radio
+                                    value="free"
+                                    label="Free for everyone"
+                                    description="Anyone can generate on-site without buying; only the download is gated. Earn per generation with a licensing fee instead."
+                                    disabled={isEarlyAccessOver}
+                                  />
+                                </Stack>
+                              </Radio.Group>
+                              {genMode === 'separate' && (
+                                <InputNumber
+                                  name="paidAccessConfig.generationPrice"
+                                  label="Generation-only price"
+                                  description="What buyers pay to generate on-site without unlocking the download. Can't exceed the access price."
+                                  min={50}
+                                  // Grandfather floor, as on the access price — generation is capped
+                                  // per-component and increase-only.
+                                  max={Math.max(
+                                    Math.min(
+                                      paidAccessConfig?.accessPrice ?? paidAccessCap,
+                                      paidAccessCap
+                                    ),
+                                    storedPaidGen?.price ?? 0
+                                  )}
+                                  step={100}
+                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  disabled={isEarlyAccessOver}
+                                />
+                              )}
+                            </>
+                          )}
+                          {/* A free grant has no trial to run out, so there's nothing to sample toward. */}
+                          {!(genMode === 'free' && !isGenOnly) && (
                             <InputNumber
-                              name="earlyAccessConfig.generationTrialLimit"
-                              label="Free Trial Limit"
-                              description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
-                              min={10}
+                              name="paidAccessConfig.freePreviewGenerations"
+                              label="Free preview generations"
+                              description={`How many free test generations a user can do before purchasing the ${resourceLabel}.`}
+                              min={0}
                               max={1000}
                               disabled={isEarlyAccessOver}
                               withAsterisk
                             />
-                          </Stack>
-                        </Card.Section>
-                      )}
+                          )}
+                        </Stack>
+                      </Card.Section>
                     </Card>
 
-                    {(version?.status !== 'Published' ||
-                      version?.earlyAccessConfig?.donationGoalId) &&
+                    {!paidAccessConfig.permanent &&
+                      (version?.status !== 'Published' || version?.donationGoal) &&
                       features.donationGoals && (
                         <Card withBorder>
                           <Card.Section withBorder>
                             <Group py="sm" px="md" justify="space-between" wrap="nowrap">
                               <div>
                                 <Text fw={500} size="sm">
-                                  Enable donation goal
+                                  Let the community unlock this early
                                 </Text>
                                 <Text size="xs">
-                                  You can use this feature to remove early access once a certain
-                                  amount of Buzz is met. This will allow you to set a goal for your
-                                  model and remove early access once that goal is met.
-                                </Text>
-                                <Text size="xs">
-                                  Please note that after the model is published, you cannot change
-                                  this value.
+                                  If the goal is met before the window ends, early access ends
+                                  immediately and the version becomes free for everyone. After the
+                                  model is published, you cannot change this value.
                                 </Text>
                               </div>
                               <InputSwitch
-                                name="earlyAccessConfig.donationGoalEnabled"
-                                disabled={
-                                  !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
-                                }
+                                name="paidAccessConfig.donationGoalEnabled"
+                                disabled={donationGoalLocked}
                                 onChange={(e) => {
                                   if (e.target.checked) {
-                                    form.setValue('earlyAccessConfig.donationGoal', 50000);
+                                    form.setValue('paidAccessConfig.donationGoal', 50000);
                                   } else {
-                                    form.setValue('earlyAccessConfig.donationGoal', undefined);
+                                    form.setValue('paidAccessConfig.donationGoal', undefined);
                                   }
                                 }}
                               />
                             </Group>
                           </Card.Section>
-                          {earlyAccessConfig?.donationGoalEnabled && (
+                          {paidAccessConfig?.donationGoalEnabled && (
                             <Card.Section py="sm" px="md">
                               <Stack>
                                 <InputNumber
-                                  name="earlyAccessConfig.donationGoal"
-                                  label="Donation Goal Amount"
-                                  description="How much Buzz would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
+                                  name="paidAccessConfig.donationGoal"
+                                  label="Goal amount"
+                                  description="Early access purchases count toward this goal. After publishing, you cannot change this value."
                                   min={MIN_DONATION_GOAL}
                                   max={MAX_DONATION_GOAL}
                                   step={100}
                                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                  disabled={
-                                    !!version?.earlyAccessConfig?.donationGoalId ||
-                                    isEarlyAccessOver
+                                  disabled={donationGoalLocked}
+                                />
+                                <Switch
+                                  label="Hide donation goals from public view"
+                                  description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
+                                  checked={hideDonationGoals ?? false}
+                                  onChange={(e) =>
+                                    mutateUserSettings({ hideDonationGoals: e.target.checked })
                                   }
+                                  disabled={hideDonationGoalsUpdating}
                                 />
                               </Stack>
                             </Card.Section>
@@ -826,7 +1174,7 @@ export function ModelVersionUpsertForm({
                 </Stack>
               )}
 
-              {version?.earlyAccessConfig && !earlyAccessConfig && (
+              {version?.paidAccess && !paidAccessConfig && (
                 <Text size="xs" c="red">
                   You will not be able to add this model to early access again after removing it.
                   Also, your payment for early access will be lost. Please consider this before
@@ -838,16 +1186,73 @@ export function ModelVersionUpsertForm({
           )}
           {showLicensingFeeBlock && (
             <Stack gap="xs">
-              <InputNumber
-                name="licensingFee"
-                label="License Fee per Image"
-                description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
-                min={0}
-                max={MAX_LICENSING_FEE}
-                step={0.01}
-                decimalScale={2}
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-              />
+              <Input.Wrapper
+                label="License Fee"
+                description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Your membership allows up to ${licensingFeeCap} Buzz per generation for this model type.`}
+              >
+                <Group gap="xs" wrap="nowrap" mt={4}>
+                  <NumberInput
+                    aria-label="Licensing fee (Buzz)"
+                    value={feeRatio.buzz}
+                    onChange={(v) =>
+                      applyFeeRatio({
+                        buzz: typeof v === 'number' ? v : 0,
+                        images: feeRatio.images,
+                      })
+                    }
+                    min={0}
+                    max={feeMaxFor(limits, feeRatio.images)}
+                    step={1}
+                    allowDecimal={false}
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    w={140}
+                  />
+                  <Text size="sm" c="dimmed">
+                    per
+                  </Text>
+                  <Select
+                    aria-label="Number of generations"
+                    value={String(feeRatio.images)}
+                    onChange={(v) => {
+                      const images = Number(v) || DEFAULT_FEE_IMAGES;
+                      // Clamp in the RATIO domain: the cap is per-image and can be fractional (free/other is
+                      // 0.1), so `cap * images` would put a decimal into a whole-number field the schema then
+                      // rejects. floor() keeps the value enterable and valid.
+                      applyFeeRatio({
+                        buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
+                        images,
+                      });
+                    }}
+                    data={feeImageOptions.map((n) => ({ value: String(n), label: String(n) }))}
+                    allowDeselect={false}
+                    w={90}
+                  />
+                  <Text size="sm" c="dimmed">
+                    {feeRatio.images === 1 ? 'generation' : 'generations'}
+                  </Text>
+                </Group>
+              </Input.Wrapper>
+              {!currentUser?.isModerator && (
+                <CapUpsell
+                  value={feeRatio.buzz}
+                  cap={feeMaxFor(limits, feeRatio.images)}
+                  capTier={feeCapTier}
+                  capFor={(t) =>
+                    feeMaxFor(
+                      monetizationLimits({ tier: t, modelType: model?.type, baseModel }),
+                      feeRatio.images
+                    )
+                  }
+                  title="Licensing fee"
+                  perLabel={`${feeRatio.images} generation${feeRatio.images === 1 ? '' : 's'}`}
+                />
+              )}
+              {currentLicensingFee > licensingFeeCap && (
+                <Text size="xs" c="yellow.5">
+                  This fee is above your membership&apos;s {licensingFeeCap} Buzz cap for this model
+                  type. You can keep or lower it, but not raise it.
+                </Text>
+              )}
               {showLicensingFeeSettlementCurrency && (
                 <InputSelect
                   name="licensingFeeSettlementCurrency"
@@ -889,8 +1294,11 @@ export function ModelVersionUpsertForm({
               allowDeselect={false}
               withAsterisk
               searchable
+              // Select the current value on focus so the user can click and immediately
+              // type to filter (e.g. "wan") instead of clearing the field first.
+              onFocus={(e) => e.currentTarget.select()}
             />
-            {hasBaseModelType && (
+            {showBaseModelType && (
               <InputSelect
                 name="baseModelType"
                 label="Base Model Type"
@@ -900,33 +1308,24 @@ export function ModelVersionUpsertForm({
               />
             )}
           </Group>
-          {licensingRoots.length > 0 && (
+          {showLicensingPicker && (
             <Stack gap="xs">
               <Select
-                label="Licensing Base"
-                description="If this model is built on a specific base, pick it so generations inherit that base's licensing fee."
+                label="Fine-tuned from"
+                description="Select the parent model this version was fine-tuned from. Its licensing fee applies to generations made with your model."
+                placeholder="Select a parent model"
                 allowDeselect={false}
                 comboboxProps={{ withinPortal: true }}
-                value={licensingSourceVersionId ? String(licensingSourceVersionId) : LICENSING_DEFAULT}
+                value={licensingSourceVersionId ? String(licensingSourceVersionId) : null}
                 onChange={(val) =>
-                  form.setValue(
-                    'licensingSourceVersionId',
-                    val && val !== LICENSING_DEFAULT ? Number(val) : null,
-                    { shouldDirty: true }
-                  )
+                  form.setValue('licensingSourceVersionId', val ? Number(val) : null, {
+                    shouldDirty: true,
+                  })
                 }
-                data={[
-                  {
-                    value: LICENSING_DEFAULT,
-                    label: standardLicensingName
-                      ? licensingOptionLabel(standardLicensingName, standardLicensingFee)
-                      : 'Default',
-                  },
-                  ...licensingRoots.map((r) => ({
-                    value: String(r.id),
-                    label: licensingOptionLabel(r.versionName, r.licensingFee),
-                  })),
-                ]}
+                data={licensingRoots.map((r) => ({
+                  value: String(r.id),
+                  label: licensingOptionLabel(r.versionName, r.licensingFee),
+                }))}
               />
             </Stack>
           )}
@@ -971,6 +1370,35 @@ export function ModelVersionUpsertForm({
             includeControls={['formatting', 'list', 'link']}
             editorSize="xl"
           />
+          <Stack gap="xs">
+            <Divider label="Version metric privacy" />
+            <Text size="xs" c="dimmed">
+              Hide these stats in this version&apos;s details card. This is a sub-option of the
+              model-level controls — hiding at the model level already hides the model page totals
+              and cards.{' '}
+              {isActiveCreatorMember
+                ? 'You and moderators always see your real stats.'
+                : 'Requires an active Creator Program membership.'}
+            </Text>
+            <InputSwitch
+              name="meta.hideBuzz"
+              label="Hide earned Buzz"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideDownloads"
+              label="Hide download count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideGenerations"
+              label="Hide generation count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+          </Stack>
           {acceptsTrainedWords && (
             <Stack gap="xs">
               {!skipTrainedWords && (
@@ -1103,24 +1531,33 @@ export function ModelVersionUpsertForm({
   );
 }
 
-type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
+type VersionInput = Omit<
+  ModelVersionUpsertInput,
+  'recommendedResources' | 'paidAccess' | 'donationGoal'
+> & {
   createdAt: Date | null;
   recommendedResources?: (Omit<
     GenerationResourceSchema,
     'strength' | 'minStrength' | 'maxStrength'
   > &
     RecommendedSettingsSchema)[];
-  earlyAccessEndsAt: Date | null;
-  earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
+  // The DTO shape the version is loaded with (getById), NOT the write-input shape.
+  paidAccess: ModelVersionPaidAccessDto | null;
+  donationGoal: { goalAmount: number } | null;
 };
 type Props = {
   id?: string;
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
+  // Base model of the model's most recent existing version; used to default the
+  // picker when adding a brand-new version to an existing model.
+  previousBaseModel?: string | null;
   // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
-  version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
+  version?: Omit<Partial<VersionInput>, 'licensingFee' | 'meta'> & {
     licensingFee?: number | { valueOf(): string } | null;
+    flags?: number;
+    meta?: unknown;
   };
   afterName?: React.ReactNode;
 };

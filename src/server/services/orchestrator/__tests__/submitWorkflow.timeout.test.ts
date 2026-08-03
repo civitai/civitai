@@ -204,3 +204,36 @@ describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouc
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
   });
 });
+
+/**
+ * The contract the App Blocks server-minted `externalId` rests on (audit 🔴-1).
+ *
+ * `submitWorkflowWithRetry`'s own doc says it adds NO idempotency key and that "the
+ * same body — and thus the same key — is reused across every retry here". The blocks
+ * router mints ONE `externalId` before building the body precisely because of that.
+ * Nothing asserted it, so pin it: if a future refactor ever cloned/rebuilt the body
+ * per attempt, a lost-response retry would silently start double-charging again.
+ */
+describe('submitWorkflowWithRetry — externalId stability across attempts', () => {
+  it('presents the SAME body.externalId on every attempt of one logical submit', async () => {
+    // Attempt 1 + 2 are retryable 5xx; attempt 3 succeeds.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ data: undefined, response: { status: 502 } })
+      .mockResolvedValueOnce({ data: undefined, response: { status: 503 } })
+      .mockResolvedValueOnce(okResult('wf-1'));
+
+    const body = { steps: [], externalId: 'bls11111111-2222-3333-4444-555555555555' };
+    const result = await submitWorkflowWithRetry(
+      { client: {} as never, body: body as never },
+      { baseDelayMs: 0 }
+    );
+
+    expect(result.attempts).toBe(3);
+    const seen = mockSubmitWorkflow.mock.calls.map((c: any[]) => c[0].body.externalId);
+    expect(seen).toHaveLength(3);
+    // 🔴 The load-bearing assertion: one id across all attempts, so the orchestrator's
+    // `(userId, externalId)` dedupe collapses them to ONE workflow + ONE charge.
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]).toBe('bls11111111-2222-3333-4444-555555555555');
+  });
+});

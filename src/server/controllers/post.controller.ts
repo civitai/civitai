@@ -329,6 +329,7 @@ export const updatePostHandler = async ({
           collectionId: collection.id,
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
+          canAccessUserChallenges: ctx.features.userChallenges,
           postIds,
           imageIds: images.map((i) => i.id),
         });
@@ -382,6 +383,7 @@ export const updatePostHandler = async ({
               userId: ctx.user.id,
               tagId: collectionTagId,
               isModerator: ctx.user.isModerator,
+              canAccessUserChallenges: ctx.features.userChallenges,
             },
             permissions,
           });
@@ -406,6 +408,7 @@ export const updatePostHandler = async ({
               imageIds: images.map((i) => i.id),
               userId: ctx.user.id,
               tagId: collectionTagId,
+              canAccessUserChallenges: ctx.features.userChallenges,
             },
             permissions,
           });

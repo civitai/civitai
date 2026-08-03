@@ -370,6 +370,31 @@ export const serverSchema = z
     TEXT_MODERATION_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+    // Age-out threshold (minutes) for never-returning image scans. A scan verdict
+    // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
+    // call back (dropped callback, or a stuck/unassigned workflow), and neither
+    // civitai nor the orchestrator times that out — so those images stay
+    // ingestion='Pending' forever and the retry cron re-drives them with no
+    // ceiling. The `ingest-images` cron flips a NON-backfill image whose
+    // `createdAt` (immutable first-upload time ~= first scan request; NOT
+    // `scanRequestedAt`, which every re-send resets) is older than this to Error,
+    // routing it into the existing capped Error-retry path. Conservative default:
+    // must exceed the wall-time of any legitimately in-flight scan so a healthy
+    // scan is never terminalized — well beyond a normal scan (seconds–minutes),
+    // while the never-returning cases are hours-to-days old. Positive to avoid a
+    // zero/negative threshold aging out every fresh Pending image. Tune via env
+    // without a redeploy; takes effect on the next pod restart (read at boot).
+    IMAGE_SCANNING_PENDING_TIMEOUT: z.coerce.number().int().positive().default(60),
+    // Upper bound on how many queued images the `ingest-images` retry/backfill cron
+    // pulls (and therefore can submit) per run. Sized to the scanner's sustainable
+    // throughput so a large backlog drains gradually across runs instead of in one
+    // dump. New user uploads scan directly via ingestImage on creation and are NOT
+    // gated by this. Conservative default; tune via env without a redeploy.
+    // Positive integer guard: an empty/0 value would make findMany take:0 (all
+    // retries silently wedged) and a negative value would flip Prisma's take to
+    // newest-first (starving the oldest backlog) — a bad hand-tune must fail
+    // loudly at boot instead.
+    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
@@ -386,6 +411,34 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Debounce window (ms) for flushing model-metric-affected ids into the
+    // model search-index update queue. The model metric processor runs every
+    // minute and accumulates every model whose ModelVersionMetric.updatedAt
+    // changed into a Redis SET (dedup); it only drains that SET into the
+    // search-index queue once per window. Widening the window collapses more
+    // of a hot model's repeated metric changes into a single reindex, shrinking
+    // the burst the search backend has to drain at peak. Cost: metric-count /
+    // popularity-rank staleness on the search doc lags by up to the window
+    // (genuine mutations still reindex immediately via the service layer).
+    // Default 45m (3× the previous fixed 15m); tune down to react faster or up
+    // to shed more search-index write pressure. Changing it requires a pod
+    // restart/rollout to take effect (env is read once at module load — no live
+    // reconfiguration, though no image rebuild is needed).
+    // `.int().min(60_000).catch(45m)` fail-soft: this is a single, non-critical
+    // search-hygiene knob, but it is parsed as part of the whole-app serverSchema
+    // that throws on ANY invalid field (src/env/server.ts) — so a bad value here
+    // (0/empty/float/garbage — e.g. a "disable debounce" attempt) would crash the
+    // ENTIRE app boot, not just search. `.catch(...)` degrades any parse/validation
+    // failure to the safe 45m default instead of crashing; the `.min(60_000)`
+    // (1-minute) floor is documented intent — a sub-minute window is pointless
+    // (the processor only runs once per minute) and out-of-range/garbage values
+    // fall back to the default rather than throwing. Mirrors the
+    // EXTERNAL_MODERATION_TIMEOUT_MS clamp pattern below.
+    SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .catch(45 * 60 * 1000),
     // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
     // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
     // Traefik's 30s router timeout fires. Default tuned for the image feed
@@ -421,6 +474,15 @@ export const serverSchema = z
     MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
     MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(30),
     MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
+    // The resource-select picker runs on its own limiter, outside the shared
+    // `search` semaphore + circuit (see withMeiliResourceSelect). It is
+    // user-initiated and un-polled, so shedding it produces a blank modal
+    // rather than the deferred retry that shedding the feed produces — a much
+    // worse trade. Concurrency is high-but-bounded (a runaway backstop, not a
+    // brownout guard) and the timeout stays well under Traefik's 30s router
+    // timeout so a hung backend still can't pin event-loop slots.
+    MEILI_RESOURCE_SELECT_CONCURRENCY: z.coerce.number().int().min(1).optional().default(500),
+    MEILI_RESOURCE_SELECT_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(10_000),
     PODNAME: z.string().optional(),
     INTEGRATION_TOKEN: z.string().optional(),
     NEWSLETTER_ID: z.string().optional(),
@@ -753,6 +815,43 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // How long the review-build callback waits for a freshly-deployed review
+    // preview's PUBLIC host to become reachable before giving up and marking the
+    // preview failed. The dominant lag is the per-host DNS record's creation +
+    // public propagation (the DNS sync loop runs on ~a 60s cycle), NOT the
+    // deploy — so the default is set to ~3× that (180s) to tolerate a backed-up
+    // sync without spuriously failing a healthy preview. Tunable per-environment
+    // without a code change. See waitForReviewHostReachable.
+    REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
+    // APPS_REVIEW_INGRESS_TARGET   the Traefik LB IP the review-preview
+    //   reachability probe connects to ORIGIN-DIRECT (raw IP + Host header),
+    //   instead of the review host's PUBLIC DNS name. Probing the public name
+    //   during the ~40s before external-dns creates the record gets NXDOMAIN,
+    //   and the civit.ai SOA negative-cache (min 1800s / 30min) then hides the
+    //   real record from the resolver for the rest of the window — spuriously
+    //   failing a healthy preview. An origin-direct probe never touches public
+    //   DNS, so it dodges that poisoning entirely (see waitForReviewHostReachable).
+    //   OPTIONAL + intentionally NO default (never commit the origin IP to a
+    //   PUBLIC repo). When UNSET it FALLS BACK to APPS_DEV_TUNNEL_INGRESS_TARGET
+    //   (the same shared Traefik LB IP, already set on dp-prod) so the fix is
+    //   live on dp-prod with no config change; when NEITHER is set the probe
+    //   falls back to the legacy public-DNS probe (nothing regresses locally).
+    APPS_REVIEW_INGRESS_TARGET: z.string().optional(),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1). Per-review spend ceiling handed to
+    // the review agent pod as COST_CAP_USD — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses this. A STRING (envsubst-rendered
+    // straight into the pod env / the report cost accounting), default "2".
+    // Everything else the feature needs reuses existing config (APPS_KUBE_NAMESPACE
+    // for the provisioning Job, BUNDLE_S3_* for the presigned bundle, NEXTAUTH_URL
+    // for the callback base) — no parallel infra knobs.
+    AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
+    // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
+    // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the
+    // per-review bearer never traverse the public internet. Optional: when unset
+    // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
+    // keeps working before infra sets the in-cluster value ahead of un-dark.
+    AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.

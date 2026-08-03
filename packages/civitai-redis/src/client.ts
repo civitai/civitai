@@ -1624,6 +1624,40 @@ export const REDIS_SYS_KEYS = {
     // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
     TIP_CAP: 'system:blocks:tip-cap',
     /**
+     * Idempotency record for the block TIP endpoint (`POST /api/v1/blocks/tip`),
+     * keyed `system:blocks:tip-idem:${userId}:${clientIdempotencyKey}`. A tip
+     * moves REAL Buzz to a third party and is IRREVERSIBLE, so a timeout /
+     * lost-response retry that re-POSTs the same logical tip must NOT move money
+     * twice. The endpoint claims this key with `SET NX` before it reserves/charges;
+     * a replay that finds it set either (a) replays the cached TERMINAL result
+     * (200/4xx/5xx) verbatim — no second reserve, no second charge — or (b) gets a
+     * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
+     * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
+     * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
+     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
+     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     */
+    TIP_IDEM: 'system:blocks:tip-idem',
+    /**
+     * Idempotency record for the block GENERATION submit (`blocks.submitWorkflow`
+     * — both the txt2img and customComfy branches), keyed
+     * `system:blocks:gen-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`. A
+     * generation submit RESERVES the viewer's daily/per-app Buzz cap and SUBMITS to
+     * the orchestrator (a real charge), so two CONCURRENT same-key submits (a
+     * double-click / SDK auto-retry racing before the orchestrator's own
+     * `(userId, externalId)` dedupe engages) could otherwise BOTH reserve and BOTH
+     * charge. The handler `SET NX`-claims this key BEFORE the cap reservation; a
+     * concurrent submit that finds it in-progress gets a 409 (no 2nd reservation,
+     * no 2nd orchestrator submit), and a lost-response retry AFTER success replays
+     * the cached snapshot (no re-submit). DISTINCT from BUZZ_CAP (the daily-spend
+     * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
+     * logical generation across retries. Per-(user, app, key) so a key can never
+     * collide across apps or users. Short TTL (covers realistic retry windows); a
+     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
+     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     */
+    GEN_IDEM: 'system:blocks:gen-idem',
+    /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
      * bounds a single USER's daily Buzz SPEND; this one bounds the daily
@@ -1675,6 +1709,16 @@ export const REDIS_SYS_KEYS = {
      */
     SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
     /**
+     * Per-user (fallback per-IP) rate-limit counter for the PUBLIC app-catalog
+     * read (`/api/v1/apps` list + `/api/v1/apps/{slug}` detail). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
+     * created with its TTL), on `sysRedis`. Mirrors the 60/60 limit the tRPC
+     * marketplace procs carry, keyed on the authenticated user when a bearer is
+     * present and the client IP otherwise. Bounds a scripted crawler of the
+     * published-apps listing.
+     */
+    APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -1703,6 +1747,35 @@ export const REDIS_SYS_KEYS = {
      * the approved/owned path is unaffected (only the ephemeral branch increments).
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
+    /**
+     * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
+     * post-paid customComfy job's terminal poll/cancel can refund the
+     * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
+     * against BOTH the per-user daily and per-app aggregate reservations.
+     * Keyed `${CUSTOM_COMFY_SETTLE}:<workflowId>`, JSON value
+     * `{ buzzCapKey, appSpendKey|null, ceiling }`, hard-TTL EX ~25h so it
+     * self-expires with the reservation window. Written at submit (after
+     * reserving the ceiling), consumed once via GET+DEL at the FIRST terminal
+     * observation (idempotent settle). On `sysRedis`, like the sibling BLOCKS
+     * caps/limiters. DEV/live-harness tokens still get a per-user daily
+     * reservation + settle; the per-app reservation (and its settle key) is
+     * absent for them (synthetic appBlockId), matching the txt2img caps.
+     */
+    CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
+    /**
+     * MOD REVIEW SANDBOX "run for real" (#2831) — AGGREGATE Buzz-spend ceiling
+     * for a moderator opting IN to run an UNAPPROVED review app for real against
+     * their OWN account. Keyed `${REVIEW_RUN_FOR_REAL_BUZZ_CAP}:<modUserId>:<publishRequestId>`
+     * so ALL run-for-real generations by one mod against one pending request
+     * accumulate against a SINGLE tight session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+     * — a per-call budget alone can't bound a hostile app looping sub-budget calls
+     * (blocks.router.ts §aggregate-cap). The key intentionally binds to
+     * (mod, publishRequestId) NOT the token jti, so re-minting/re-confirming the
+     * consent CANNOT reset the ceiling within the window. Same atomic INCRBY
+     * reserve-and-refund + hard-TTL EX shape as the sibling BLOCKS caps, on
+     * `sysRedis`.
+     */
+    REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -1929,6 +2002,9 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
+    // callbacks so the terminal workflow event can classify the failure. Short TTL.
+    IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
@@ -1986,10 +2062,14 @@ export const REDIS_KEYS = {
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
+    ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
+    PAID_ACCESS: 'packed:caches:paid-access',
+    PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
+    USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
@@ -2008,6 +2088,7 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
+    OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
@@ -2018,6 +2099,8 @@ export const REDIS_KEYS = {
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
+    MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
@@ -2043,11 +2126,49 @@ export const REDIS_KEYS = {
     CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
     CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
     TAG_PAGE_SEO: 'packed:caches:tag-page-seo',
+    // Per-tag-name lookup backing `tag.getTagWithModelCount` (the tag page's
+    // id/name/unfeatured resolve). ~2.5M calls/peak of a near-static citext row
+    // read; keyed by the lowercased tag name (mirrors citext case-insensitivity),
+    // positive results only (unknown names stay uncached so a new tag is findable
+    // immediately), busted on tag delete. See `getTagWithModelCount` in tag.service.
+    TAG_WITH_MODEL_COUNT: 'packed:caches:tag-with-model-count',
     // Total-creators count for the v1 /api/v1/creators pagination metadata. The
     // underlying dbRead.user.count scans the whole ~892k-row Model table on every
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
+    // The user-independent active-auction list backing `auction.getAll` (~21.8
+    // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
+    // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
+    // one global key serves everyone. Short TTL (30s), no bust: the set is time-
+    // windowed (startAt<=now<endAt, transitions bounded to <=30s) and the frequently-
+    // mutating input is bids (each shifts lowestBidRequired) — busting per-bid at
+    // ~21/s would defeat the cache, and a slightly-stale lowestBidRequired is display-
+    // only (bid submission re-validates the true minimum server-side). See
+    // `getAllAuctions` in auction.service.
+    ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // url -> {id, url, hideMeta} lookup backing the internal image-delivery endpoint
+    // (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
+    // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
+    // profile. Keyed by the EXACT url (case/whitespace-sensitive — the WHERE key is not
+    // normalized), positive results only (an unknown url stays uncached so a newly
+    // registered image resolves immediately), busted when `hideMeta` flips in
+    // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
+    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
+    // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
+    // cached (the resolver is a total function over the id). Busted on any subscription
+    // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
+    // See `getValidCreatorMembershipMap` in creator-membership.service.
+    CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
+    // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
+    // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
+    // associated) never fetch + synchronously deserialize the FULL `settings` blob per
+    // owner per request just to read three booleans. Busted on any settings write via
+    // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
+    // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
+    USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

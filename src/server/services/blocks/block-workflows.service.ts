@@ -159,6 +159,50 @@ function decodeCursor(cursor: string): { submittedAt: string; workflowId: string
 }
 
 /**
+ * SECURITY GATE for `blocks.cancelAppWorkflow`. Returns true iff a queue row
+ * exists for the exact (userId, appBlockId, workflowId) tuple — i.e. THIS viewer
+ * submitted THIS workflow through THIS app block. Both `userId` and `appBlockId`
+ * are bound SERVER-SIDE from the verified block token; `workflowId` is the
+ * (untrusted) client input being authorized.
+ *
+ * WHY this is the ownership proof (not the orchestrator by-id read): the
+ * orchestrator's GET/PATCH/DELETE `/{workflowId}` endpoints do NOT verify
+ * caller-vs-workflow ownership, so fetching/canceling a workflow with the
+ * viewer's orchestrator token is NOT by itself an ownership gate — a guessed id
+ * belonging to another user could be actioned. `block_workflows` is the ONLY
+ * durable USER-bound record of a block generation, so a matching row is the
+ * authoritative "this user owns this workflow, via this app" assertion. The
+ * caller ADDITIONALLY re-reads the workflow and asserts its `app-block:<appId>`
+ * tag as defense-in-depth (the orchestrator's own record must agree it's this
+ * app's), but THIS check is the load-bearing user binding.
+ *
+ * FAIL-CLOSED: the submit-time upsert is best-effort (fire-and-forget), so a lost
+ * write means a legitimate cancel is rejected rather than an illegitimate one
+ * allowed — the correct trade-off for a security guard. Any DB error → false
+ * (reject), never a throw that could be mistaken for "allowed".
+ */
+export async function blockWorkflowOwnedByAppUser(input: {
+  userId: number;
+  appBlockId: string;
+  workflowId: string;
+}): Promise<boolean> {
+  const { userId, appBlockId, workflowId } = input;
+  try {
+    const rows = await dbRead.$queryRaw<Array<{ one: number }>>`
+      SELECT 1 AS "one"
+      FROM "block_workflows"
+      WHERE "workflow_id" = ${workflowId}
+        AND "user_id" = ${userId}
+        AND "app_block_id" = ${appBlockId}
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  } catch {
+    return false; // fail-closed
+  }
+}
+
+/**
  * Read the CALLER's OWN recent workflows for ONE app block, newest first,
  * keyset-paginated. Both `userId` and `appBlockId` are bound SERVER-SIDE from
  * the verified block token, so a block can only ever read the queue of the exact

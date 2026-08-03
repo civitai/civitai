@@ -16,11 +16,15 @@
   "[sql]": {
     "editor.formatOnSave": false
   },
-  "typescript.tsdk": "node_modules\\typescript\\lib",
+  // Forward slashes resolve on every platform; backslashes only work on Windows.
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  // Without a prompt, VS Code keeps using its bundled TypeScript until someone runs
+  // "Select TypeScript Version" by hand, so the tsdk path above does nothing for teammates.
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
   "[typescriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  "typescript.preferences.autoImportFileExcludePatterns": ["@prisma/client"],
+  "js/ts.preferences.autoImportFileExcludePatterns": ["@prisma/client"],
   "makefile.configureOnOpen": false,
   "chat.agent.enabled": true,
   "mcp": {

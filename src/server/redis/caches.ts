@@ -1,3 +1,22 @@
+/* eslint-disable local-rules/no-module-scope-cache --
+ * 22 module-scope caches, every one of them keyed off REDIS_KEYS during module
+ * evaluation. This is a tracked BACKLOG, not a safe shape: it is structurally the
+ * same tripwire as the eager `capTierCache` that broke three suites at collection
+ * and turned `Unit tests` red on main (#3505 / #3506), and this module is imported
+ * far more widely than paid-access.service.ts was. Any suite that wholesale-mocks
+ * `~/server/redis/client` without `REDIS_KEYS.CACHES` and reaches this file
+ * unmocked dies during COLLECTION — the three suites in #3505 stay green only
+ * because they additionally mock this module.
+ *
+ * Disabled file-wide rather than converted here because that is 22 call-site
+ * migrations across the busiest cache module in the repo, and it wants to be its
+ * own reviewable change. The file-wide form also silences a NEW cache added here,
+ * which is accepted: a 23rd cache in this file adds no NEW tripwire, because
+ * anything reaching this module already has to mock it. A new cache in a SERVICE
+ * does add one, and that is what the rule is scoped to catch.
+ *
+ * Delete this disable once the caches below are lazy — the rule then guards them.
+ */
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -9,15 +28,25 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
+import {
+  publicDonationGoalsLookupFn,
+  type ModelVersionPublicDonationGoalCacheItem,
+} from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
-import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
+import {
+  type ImageTagComposite,
+  imageTagCompositeSelect,
+  type ModelTagComposite,
+  modelTagCompositeSelect,
+} from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -26,8 +55,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  CosmeticType,
+  ModelStatus,
+  TagSource,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -50,6 +85,18 @@ export const tagIdsForImagesCache = createCachedObject<{
   // unaffected (they revalidate at the 8h logical boundary either way).
   ttl: CacheTTL.hour * 8,
   staleWhileRevalidateTtl: CacheTTL.hour,
+  // L1: image tag-ids are near-static display metadata (busted on scan/tag edits);
+  // an 8h Redis TTL dwarfs the per-pod L1, which only delays a cross-pod tag edit by
+  // ≤localTtl. Not a visibility gate (feed SQL enforces that). This is the single
+  // largest driver of api-heavy's per-id Redis GET volume (feed streams distinct
+  // imageIds), so the L1 was starved at localTtl=15s/localMax=10k. Enlarged to a
+  // ~3min window + 50k hot entries so cross-user popular-image overlap + scroll-back
+  // land as L1 hits. Strictly byte-bounded (see l1-cache-budget) — the byte cap, not
+  // the entry cap, is the binding heap guard. The longer localTtl is safe here BECAUSE
+  // this value gates nothing (only delays a busted tag-list edit by ≤localTtl).
+  localTtl: 180,
+  localMax: 50000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.tagIdsForImages,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -125,6 +172,55 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+type UserOwnedStickerLookup = {
+  userId: number;
+  cosmeticIds: number[];
+};
+/**
+ * Sticker are owned, never equipped, so `userCosmeticCache` — which only holds
+ * equipped cosmetics — can't answer "may this user send this sticker".
+ */
+export const lookupOwnedSticker = async (ids: number[], fromWrite?: boolean) => {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const owned = await db.userCosmetic.findMany({
+    where: { userId: { in: goodIds }, cosmetic: { type: CosmeticType.Sticker } },
+    select: { userId: true, cosmeticId: true },
+  });
+  return owned.reduce((acc, { userId, cosmeticId }) => {
+    acc[userId] ??= { userId, cosmeticIds: [] };
+    if (!acc[userId].cosmeticIds.includes(cosmeticId)) acc[userId].cosmeticIds.push(cosmeticId);
+    return acc;
+  }, {} as Record<number, UserOwnedStickerLookup>);
+};
+
+export const userOwnedStickerCache = createCachedObject<UserOwnedStickerLookup>({
+  key: REDIS_KEYS.CACHES.USER_OWNED_STICKER,
+  idKey: 'userId',
+  staleWhileRevalidate: false,
+  lookupFn: lookupOwnedSticker,
+  // Deliberately minutes, not the day the caches around this one use: a stale
+  // entry means someone can't send an sticker they paid for, and the bulk-SQL
+  // cosmetic crons grant without surfacing whose entry to drop. Cheap to rebuild
+  // (one small row) and read once per message send.
+  ttl: 60 * 5,
+});
+
+/**
+ * Call wherever a UserCosmetic write already has the affected user ids in hand,
+ * including paths that can't grant an sticker today — a redundant delete costs
+ * nothing next to the Postgres write it follows. Paths that would need a query
+ * change to learn the ids are left to the TTL above instead.
+ */
+export async function refreshOwnedStickerCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  if (!ids.length) return;
+  // `refresh` is already best-effort internally; this catch is belt-and-braces
+  // because every caller runs it after a committed grant.
+  await userOwnedStickerCache.refresh(ids).catch(() => undefined);
+}
 
 type CosmeticLookup = {
   id: number;
@@ -336,9 +432,52 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
     return Object.fromEntries(userBasicData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+  // L1: username/avatar/deletedAt are cosmetic near-static fields with a 1-day Redis
+  // TTL and refresh-only invalidation (deleteBasicDataForUser). A 30s per-pod L1 is
+  // strictly fresher than what Redis already serves; the only effect is a ≤30s
+  // cross-pod delay on a rename/avatar/soft-delete propagating — imperceptible.
+  localTtl: 30,
+  localMax: 10000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.userBasic, // ~4MB (tiny records)
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
+export type ModelVersionAccessCache = EntityAccessDataType & {
+  publishedAt: Date;
+  status: ModelStatus;
+};
+
+/**
+ * The authoritative availability read behind modelVersionAccessCache. Exported because
+ * `dontCacheFn` below means the cache is *allowed* to hold nothing for an id, and callers that
+ * gate access on the result (hasEntityAccess) must be able to resolve those ids for real rather
+ * than assume the worst.
+ */
+export async function lookupModelVersionAccess(
+  ids: number[],
+  fromWrite?: boolean
+): Promise<Record<string, ModelVersionAccessCache>> {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    SELECT
+      mv.id AS "entityId",
+      mmv."userId" AS "userId",
+      -- Model availability prevails if it's private
+      CASE
+        WHEN mmv.availability = 'Private'
+          THEN mmv."availability"
+        ELSE mv."availability"
+      END AS "availability",
+      mv."publishedAt" AS "publishedAt",
+      mv."status" as "status"
+    FROM "ModelVersion" mv
+         JOIN "Model" mmv ON mv."modelId" = mmv.id
+    WHERE
+      mv.id IN (${Prisma.join(goodIds, ',')})
+  `);
+  return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+}
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -359,29 +498,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
-      SELECT
-        mv.id AS "entityId",
-        mmv."userId" AS "userId",
-        -- Model availability prevails if it's private
-        CASE
-          WHEN mmv.availability = 'Private'
-            THEN mmv."availability"
-          ELSE mv."availability"
-        END AS "availability",
-        mv."publishedAt" AS "publishedAt",
-        mv."status" as "status"
-      FROM "ModelVersion" mv
-           JOIN "Model" mmv ON mv."modelId" = mmv.id
-      WHERE
-        mv.id IN (${Prisma.join(goodIds, ',')})
-    `);
-    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupModelVersionAccess(ids as number[], fromWrite),
 });
 
 type TagLookup = {
@@ -411,6 +528,24 @@ export const tagCache = createCachedObject<TagLookup>({
     );
   },
   ttl: CacheTTL.day,
+  // L1: the tag catalog is a small, near-static, SHARED universe keyed by tag id, so a
+  // per-pod L1 sized to hold the hot catalog reaches a near-100% feed hit ratio and
+  // removes tagCache's per-id Redis GET fan-out. The 1d Redis TTL dwarfs a 30s L1.
+  // BEHAVIOR-AUDIT (2026-07): the value carries nsfwLevel + unlisted. Every reader was
+  // grepped — neither field feeds a HARD content-visibility gate on the feed. Readers
+  // use tag NAMES for display (getTagNamesForImages, search-index tagNames), tag id/name
+  // for category filtering (model.service), and `unlisted` ONLY in stripUnlistedTags —
+  // a non-moderator filter on the model VOTABLE-TAGS panel (a tag-label surface, not
+  // image/content visibility; the ImageTag SQL view already drops unlisted at the DB
+  // layer, and moderators bypass it). Image/model visibility is gated by the entity's
+  // OWN nsfwLevel, never the tag's. So a ≤30s L1 delay on a busted tag-level/unlisted
+  // edit is a cosmetic tag-label lag, not a moderation-visibility bug. localTtl kept
+  // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
+  // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
+  // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
+  localTtl: 30,
+  localMax: 100000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
 });
 
 export const tagCacheByName = {
@@ -444,11 +579,9 @@ export const tagCacheByName = {
     // backfill only), so the extra roundtrips are acceptable.
     await Promise.all(
       entries.map(({ key, data }) =>
-        redis.packed.set(
-          `${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${key}`,
-          data,
-          { EX: CacheTTL.day }
-        )
+        redis.packed.set(`${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${key}`, data, {
+          EX: CacheTTL.day,
+        })
       )
     );
   },
@@ -472,6 +605,7 @@ type ModelVersionDetails = {
   publishedAt: Date | null;
   status: ModelStatus;
   covered: boolean;
+  flags: number;
   availability: Availability;
   nsfwLevel: NsfwLevel;
 };
@@ -506,6 +640,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         mv."trainingStatus",
         mv."publishedAt",
         mv."status",
+        mv."flags",
         mv.availability,
         mv."nsfwLevel",
         mv."description",
@@ -1280,6 +1415,11 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidateTtl: CacheTTL.hour,
+  // NO per-pod L1 here (deliberate): `meta` is gated on `hideMeta`, and when an owner
+  // flips hideMeta false→true the write path calls imageMetaCache.refresh() (meta→NULL).
+  // A per-pod L1 can't observe that cross-pod refresh, so other viewers' pods would keep
+  // serving the old prompt for up to localTtl — a prompt-exposure window on a PRIVACY
+  // control. Not worth it; also the heaviest value, so its exclusion frees the most heap.
 });
 
 type ImageWithMetadata = {
@@ -1486,6 +1626,12 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   // before reuse. SWR off → effective Redis EX = 1h. (2026-06-09 redis usage audit)
   ttl: CacheTTL.hour,
   staleWhileRevalidate: false,
+  // L1: votable-tag composites (busted on tag votes/edits). 1h Redis TTL vs a 15s
+  // per-pod L1 → ≤15s cross-pod delay on a tag vote/edit. Display metadata + soft
+  // hidden-tag filtering, not a hard visibility gate. max 5000: ~4.2KB/key, heavy.
+  localTtl: 15,
+  localMax: 5000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.imageTags, // ~16MB (heaviest remaining value)
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 
@@ -1508,6 +1654,82 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
     return result;
   },
 });
+
+type ModelVotableTagsCacheItem = {
+  modelId: number;
+  tags: ModelTagComposite[];
+};
+
+// Caches the STATIC, user-independent portion of `tag.getVotableTags` for models:
+// the `ModelTag` composite-view read (tagId/tagName/tagType/score/upVotes/downVotes
+// for a model's score>0 tags). This is the mirror of `imageTagsCache` for the model
+// path — the image path was already cache-backed, the model path hit the DB on every
+// call. The per-user vote (`tag.vote`) is merged UNCACHED by getVotableTags from
+// `tagsOnModelsVote`, so no per-user data lives in this cache. Busted on model tag
+// votes (addTagVotes/removeTagVotes) exactly like imageTagsCache. 1h TTL / no SWR to
+// match imageTagsCache semantics; the model tag taxonomy is edit-rare so brief
+// cross-pod aggregate staleness within the TTL is imperceptible.
+export const modelVotableTagsCache = createCachedObject<ModelVotableTagsCacheItem>({
+  key: REDIS_KEYS.CACHES.MODEL_VOTABLE_TAGS,
+  idKey: 'modelId',
+  ttl: CacheTTL.hour,
+  staleWhileRevalidate: false,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const modelTags = await db.modelTag.findMany({
+      where: { modelId: { in: ids }, score: { gt: 0 } },
+      select: {
+        modelId: true,
+        ...modelTagCompositeSelect,
+      },
+      orderBy: { score: 'desc' },
+    });
+
+    return modelTags.reduce((acc, tag) => {
+      const { modelId, ...tagData } = tag;
+      acc[modelId] ??= { modelId, tags: [] };
+      acc[modelId].tags.push(tagData);
+      return acc;
+    }, {} as Record<number, ModelVotableTagsCacheItem>);
+  },
+});
+
+export type {
+  DonationGoalWithTotal,
+  ModelVersionPublicDonationGoalCacheItem,
+} from '~/server/redis/donation-goals-cache';
+
+/**
+ * Read-through cache for the PUBLIC variant of a model version's donation goals, keyed by
+ * `modelVersionId`. The public variant is fully determined by the model version id (it does
+ * NOT vary by viewer), so a single shared entry is correct for every anonymous / non-owner /
+ * non-moderator caller. The privileged (owner/mod) variant — which additionally exposes
+ * inactive/draft goals — is computed fresh and NEVER routed through this cache (see
+ * `modelVersionDonationGoal`), so a draft-inclusive payload can never leak into the shared
+ * key and a cached public payload can never be served to a privileged viewer.
+ *
+ * Correctness rides on explicit busts, not TTL expiry — every writer (goal create in
+ * `ensureDonationGoal`, donation + goal-completion in `checkDonationGoalComplete`) busts the key
+ * eagerly, so the TTL (CacheTTL.hour, matching `PaidAccess`) is just a backstop. `staleWhileRevalidate:
+ * false` so a bust truly clears the entry rather than serving one more stale read.
+ *
+ * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
+ * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).
+ *
+ * The lookupFn — including the security-relevant `active: true` public filter — lives in the
+ * light `donation-goals-cache` module so it can be tested against the REAL function (no mirror
+ * divergence).
+ */
+export const modelVersionPublicDonationGoalsCache =
+  createCachedObject<ModelVersionPublicDonationGoalCacheItem>({
+    key: REDIS_KEYS.CACHES.MODEL_VERSION_PUBLIC_DONATION_GOALS,
+    idKey: 'modelVersionId',
+    ttl: CacheTTL.hour,
+    staleWhileRevalidate: false,
+    cacheNotFound: false,
+    lookupFn: publicDonationGoalsLookupFn,
+  });
 
 type ModelTagCacheItem = {
   modelId: number;
@@ -1574,6 +1796,18 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   // the day TTL resided for 48h, generous for a sub-average-hit cache.
   // Effective Redis EX = 16h. (2026-06-09 redis usage audit)
   ttl: CacheTTL.hour * 8,
+  // L1: which models an image used — attribution metadata, refresh-only on resource
+  // edits, 8h Redis TTL. A 30s per-pod L1 only delays a cross-pod resource edit by
+  // ≤30s. Not sensitive / not a visibility gate.
+  //
+  // Per-pod L1 byte budgets are centralized + ceiling-enforced in l1-cache-budget.ts
+  //   (userBasic 4 + imageResources 12 + imageTags 16 + tagIdsForImages 30 + basicTags 20
+  //   = 82MB/pod, under the 96MB ceiling; well below the >3200MB heap-headroom alert and
+  //   the 4096MB old-space limit). Byte-bounded so a per-value size spike can never blow
+  //   the cap (deterministic, deploy fleet-wide safely).
+  localTtl: 30,
+  localMax: 10000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.imageResources, // ~12MB
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};

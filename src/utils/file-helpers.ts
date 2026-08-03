@@ -10,19 +10,29 @@ export function getModelFileFormat(filename: string): ModelFileFormat {
   return 'Other';
 }
 
-/** Map a safetensors dtype string to a ModelFileFp precision value. */
-function safetensorsDtypeToFp(dtype: string): ModelFileFp | null {
+const SAFETENSORS_DTYPE_TO_FP: Record<string, string> = {
+  F16: 'fp16',
+  BF16: 'bf16',
+  F32: 'fp32',
+  F64: 'fp32',
+  F8_E8M0: 'mxfp8',
+  I8: 'int8',
+};
+
+/**
+ * Map a safetensors dtype string to a precision value. Scaling schemes
+ * (fp8_scaled, nvfp4, …) aren't dtypes and can't be inferred from the header.
+ * U8 is deliberately unmapped: bitsandbytes packs nf4/fp4 weights as U8, so
+ * guessing int8 there would auto-fill the wrong supported value.
+ */
+function safetensorsDtypeToFp(dtype: string): string | null {
   const d = dtype.toUpperCase();
-  if (d === 'F16') return 'fp16';
-  if (d === 'BF16') return 'bf16';
-  if (d === 'F32' || d === 'F64') return 'fp32';
-  if (d.startsWith('F8')) return 'fp8';
-  return null;
+  return SAFETENSORS_DTYPE_TO_FP[d] ?? (d.startsWith('F8') ? 'fp8' : null);
 }
 
 /**
  * Read a .safetensors file's header (client-side) and infer the dominant weight
- * precision (fp16/bf16/fp32/fp8). Returns null when it can't be determined.
+ * precision. Returns null when it can't be determined.
  * Only the JSON header is read — never the tensor data — so this is cheap.
  */
 export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp | null> {
@@ -44,7 +54,7 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
     >;
 
     // Pick the dtype that accounts for the most bytes of tensor data.
-    const bytesByFp = new Map<ModelFileFp, number>();
+    const bytesByFp = new Map<string, number>();
     for (const [key, value] of Object.entries(header)) {
       if (key === '__metadata__' || !value?.dtype) continue;
       const fp = safetensorsDtypeToFp(value.dtype);
@@ -54,7 +64,7 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
       bytesByFp.set(fp, (bytesByFp.get(fp) ?? 0) + Math.max(size, 0));
     }
 
-    let best: ModelFileFp | null = null;
+    let best: string | null = null;
     let bestBytes = -1;
     for (const [fp, bytes] of bytesByFp) {
       if (bytes > bestBytes) {
@@ -62,7 +72,13 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
         bestBytes = bytes;
       }
     }
-    return best;
+
+    // MXFP8 stores weights as F8_E4M3 with F8_E8M0 shared-exponent scales (~1 byte
+    // per 32 elements), so the scale tensors' presence identifies it, not byte share.
+    if (best === 'fp8' && bytesByFp.has('mxfp8')) best = 'mxfp8';
+
+    // Precision options are mod-managed at runtime; the union lags behind them.
+    return best as ModelFileFp | null;
   } catch {
     return null;
   }

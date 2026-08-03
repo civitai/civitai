@@ -42,12 +42,12 @@ export const changelogRouter = router({
     .mutation(({ input }) => deleteChangelog(input)),
   getAllTags: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getChangelogsInput.pick({ domain: true }).optional())
+    .input(getChangelogsInput.pick({ domain: true }).default({}))
     .use(applyRequestDomainColor)
     .query(({ input }) => getAllTags(input)),
   getLatest: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getChangelogsInput.pick({ domain: true }).optional())
+    .input(getChangelogsInput.pick({ domain: true }).default({}))
     .use(applyRequestDomainColor)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getLatestChangelog(input)),

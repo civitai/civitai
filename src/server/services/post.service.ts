@@ -54,6 +54,7 @@ import {
   purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
@@ -1380,6 +1381,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   ];
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
     cacheRefreshPromises.push(purgeResizeCache({ url: result.url }));
+  }
+  // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
+  // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
+  // embedding (or keep stripping) generation metadata for up to its TTL. The privacy-
+  // sensitive direction (false -> true) is the reason this bust is explicit rather than
+  // TTL-bounded.
+  if (image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta) {
+    cacheRefreshPromises.push(bustImageDeliveryMetadataCache(result.url));
   }
   await Promise.all(cacheRefreshPromises);
 

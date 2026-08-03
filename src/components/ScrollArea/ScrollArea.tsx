@@ -15,6 +15,7 @@ export function ScrollArea({
   className,
   scrollRestore,
   intersectionObserverOptions,
+  withPullToRefresh = true,
   ...props
 }: ScrollAreaProps & { children: React.ReactNode }) {
   const { ref: scrollRef, key } = useScrollRestore<HTMLDivElement>(scrollRestore);
@@ -31,7 +32,7 @@ export function ScrollArea({
           className={clsx('scroll-area flex-1 @container ', className)}
           {...props}
         >
-          {isMobile && <DragLoader />}
+          {isMobile && withPullToRefresh && <DragLoader />}
           {children}
         </Box>
       </IntersectionObserverProvider>
@@ -46,6 +47,12 @@ export type ScrollAreaProps = BoxProps & {
   scrollRestore?: UseScrollRestoreProps;
   id?: string;
   intersectionObserverOptions?: IntersectionObserverInit;
+  /**
+   * Pull-down-to-refresh on touch devices. Off for surfaces where reloading the
+   * page is not a sensible response to a downward drag — modals, and anything
+   * that handles its own gestures.
+   */
+  withPullToRefresh?: boolean;
 };
 
 function DragLoader() {
@@ -68,6 +75,10 @@ function DragLoader() {
     };
 
     const pullStart = (e: TouchEvent) => {
+      // A view with nothing to scroll has no top to pull from, so every downward
+      // drag would arm the refresh — including a drift off a horizontal swipe in
+      // a full-height view like image detail.
+      if (node.scrollHeight <= node.clientHeight) return;
       const { screenY } = e.targetTouches[0];
       if (node.scrollTop === 0) {
         startPointRef.current = screenY;

@@ -1,6 +1,7 @@
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppListingsMarketplaceBody } from '~/components/Apps/AppListingsMarketplaceBody';
+import { LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -42,12 +43,20 @@ export default function AppsPage() {
           (`MarketplaceBody` → `AppBlockCard`) is intentionally retained in the
           tree; swap this back to `<MarketplaceBody />` (re-import it) to fall
           back to the AppBlock-backed grid.
+          ⚠️ That rollback is now PARTIAL: `AppBlockCard`'s title/description link
+          to `/apps/<appBlockId>`, which is retired and redirects to the store
+          detail. Restoring the old grid therefore no longer restores the old
+          detail surface — undo the route retirement too if that is the intent.
 
           The grid will be EMPTY until the mod-only backfills run on prod
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
           ("No apps yet"); expected + fine while dark. */}
-      <AppsPageLayout size="xl">
+      <AppsPageLayout size={LISTING_STORE_CONTAINER_SIZE}>
+        {/* Widened past the default `xl` (1320px) token. The width is UNCHANGED by
+            the larger-cover pass — the store now runs a 4-across grid at `xl` (see
+            `LISTING_GRID_SPAN`), and the container/grid pair is pinned together in
+            `appListingGrid.ts` so neither can drift alone. */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

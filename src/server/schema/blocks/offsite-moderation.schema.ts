@@ -13,7 +13,7 @@ import * as z from 'zod';
  * of truth — the CHECK constraint in the migration `.sql` is the DB-layer mirror).
  *
  * The reason / status tuples MUST match the CHECK constraints applied in
- * `prisma/migrations/20260706120050_w13_p3b_app_listing_reports/migration.sql`:
+ * `packages/civitai-db-schema/prisma/migrations/20260706120050_w13_p3b_app_listing_reports/migration.sql`:
  *   reason IN (impersonation, phishing-malware, broken, inappropriate, spam, other)
  *   status IN (pending, resolved, dismissed)
  * A drift here would let the proc write a value the DB rejects (23514). A unit

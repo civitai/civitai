@@ -33,3 +33,17 @@
 .control {
   border: none !important;
 }
+
+/* Alternating full-bleed band background, painted purely in CSS on the parent (mirrors the home
+   page's `.container` home-block treatment). -12px cancels the shared SubNav wrapper's mb-3 so the
+   first band sits flush under the subnav. */
+.sections {
+  margin-top: -12px;
+
+  & > *:nth-of-type(even) {
+    background: light-dark(
+      color-mix(in srgb, var(--mantine-color-gray-0), black 1%),
+      var(--mantine-color-dark-8)
+    );
+  }
+}

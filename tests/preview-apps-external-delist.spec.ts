@@ -11,13 +11,14 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * approve-success → store-render → delist/claim round-trip:
  *
  *   The full "approve an off-site listing, see it in the store, delist/claim it,
- *   purge to self-clean" round-trip requires a SUCCESSFUL approve, which the dark P1
- *   asset gate (`assertListingAssetsComplete`) blocks unless the draft has an
- *   icon+cover+≥1 screenshot whose backing Image is `ingestion = Scanned`. In a PR
- *   preview the external image scanner is UNREACHABLE, so uploaded images stay
+ *   purge to self-clean" round-trip requires a SUCCESSFUL approve, which two approve
+ *   gates block: the publish FLOOR (`assertListingMeetsFloor` — icon+cover required,
+ *   screenshots optional since #3392) and the go-live SCAN-CLEAN gate, which requires
+ *   every attached asset's backing Image to be `ingestion = Scanned`. In a PR preview
+ *   the external image scanner is UNREACHABLE, so uploaded images stay
  *   `Pending` forever (see `tests/preview-post-images.spec.ts`: "image ingestion …
- *   is unreachable in preview so the row stays Pending"). An attach of a Pending
- *   image is rejected ("scan is not complete"), so an off-site listing can NOT reach
+ *   is unreachable in preview so the row stays Pending"). A Pending asset therefore
+ *   never clears the scan-clean gate, so an off-site listing can NOT reach
  *   `approved`/`removed` in preview — i.e. a CLAIMABLE-state listing is not
  *   constructible here. So the claim HAPPY-PATH (approved/removed → reassigned +
  *   audit event) is covered EXHAUSTIVELY in the unit tests instead
@@ -62,7 +63,7 @@ const EXTERNAL_URL = 'https://example.com/ci-smoke-external-delist';
 type SubmitResult = { listingId: string; publishRequestId: string; slug: string };
 type ModEventList = { items: Array<{ id: string; action: string }>; nextCursor: string | null };
 
-function submitInput(slug: string) {
+function submitInput(slug: string, connectClientId: string) {
   return {
     slug,
     name: 'CI Smoke — external delist/purge (P3b PR3)',
@@ -71,7 +72,36 @@ function submitInput(slug: string) {
     category: 'utility',
     contentRating: 'g',
     changelog: 'ci-smoke delist/purge',
+    // W13 merged external+connect model (#3227): every external listing links the
+    // caller's OWN OAuth client. This pure external-link app discloses NO scopes,
+    // so an empty requested-scope mask (0) + empty justifications is the minimal
+    // valid connect shape (0 ⊆ any client ceiling; no scopes → no justifications).
+    connectClientId,
+    requestedScopes: 0,
+    scopeJustifications: {},
   };
+}
+
+/**
+ * The W13 merged external+connect model requires every external listing to link
+ * the caller's OWN OAuth client (existence/ownership/not-app-block checked in the
+ * service). Create a throwaway client per test and delete it on cleanup —
+ * self-cleaning like the draft listing + slug.
+ */
+async function createConnectClient(request: APIRequestContext): Promise<string> {
+  const res = await trpcMutation<{ clientId: string }>(request, 'oauthClient.create', {
+    name: 'CI Smoke — external-listing connect client',
+    redirectUris: ['https://example.com/ci-smoke-oauth-callback'],
+  });
+  return res.clientId;
+}
+
+async function deleteConnectClient(
+  request: APIRequestContext,
+  clientId: string | null
+): Promise<void> {
+  if (!clientId) return;
+  await trpcMutation(request, 'oauthClient.delete', { id: clientId }).catch(() => {});
 }
 
 /** Best-effort: flip any leftover pending request for this preview's request id. */
@@ -103,11 +133,13 @@ test.describe('App Blocks P3b PR3: off-site moderation actions (mod, self-cleani
     const request = page.request;
 
     let publishRequestId: string | null = null;
+    let clientId: string | null = null;
     try {
+      clientId = await createConnectClient(request);
       const result = await trpcMutation<SubmitResult>(
         request,
         'appListings.submitExternalListing',
-        submitInput(SLUG)
+        submitInput(SLUG, clientId)
       );
       publishRequestId = result.publishRequestId;
       const listingId = result.listingId;
@@ -159,6 +191,7 @@ test.describe('App Blocks P3b PR3: off-site moderation actions (mod, self-cleani
       expect(history.items, 'a guarded/rejected mutation writes no audit event').toHaveLength(0);
     } finally {
       await withdrawQuietly(request, publishRequestId);
+      await deleteConnectClient(request, clientId);
     }
   });
 
@@ -168,11 +201,13 @@ test.describe('App Blocks P3b PR3: off-site moderation actions (mod, self-cleani
     const request = page.request;
 
     let publishRequestId: string | null = null;
+    let clientId: string | null = null;
     try {
+      clientId = await createConnectClient(request);
       const result = await trpcMutation<SubmitResult>(
         request,
         'appListings.submitExternalListing',
-        submitInput(SLUG)
+        submitInput(SLUG, clientId)
       );
       publishRequestId = result.publishRequestId;
       const listingId = result.listingId;
@@ -198,6 +233,7 @@ test.describe('App Blocks P3b PR3: off-site moderation actions (mod, self-cleani
       // The submit's publish request is now an orphan (appListingId SET NULL by the
       // purge). Flip it out of the pending queue so nothing lingers.
       await withdrawQuietly(request, publishRequestId);
+      await deleteConnectClient(request, clientId);
     }
   });
 });

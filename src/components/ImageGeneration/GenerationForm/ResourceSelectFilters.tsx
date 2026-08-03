@@ -15,7 +15,6 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
-import { useSortBy } from 'react-instantsearch';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import type {
   ResourceFilter,
@@ -228,19 +227,17 @@ export function ResourceSelectFiltersDropdown() {
 
 export function ResourceSelectSort() {
   const features = useFeatureFlags();
-  const { currentRefinement, options, refine } = useSortBy({
-    items: Object.entries(resourceSort)
-      .map(([k, v]) => ({ label: v, value: k }))
-      .filter((x) => {
-        return !(!features.canViewNsfw && x.label === 'Newest');
-      }),
-  });
+  const { sort, setSort } = useResourceSelectContext();
+
+  const options = Object.entries(resourceSort)
+    .map(([k, v]) => ({ label: v, value: k }))
+    .filter((x) => !(!features.canViewNsfw && x.label === 'Newest'));
 
   return (
     <SelectMenuV2
-      label={resourceSort[currentRefinement as ResourceSort]}
-      value={currentRefinement}
-      onClick={refine}
+      label={resourceSort[sort]}
+      value={sort}
+      onClick={(value) => setSort(value as ResourceSort)}
       options={options}
     />
   );

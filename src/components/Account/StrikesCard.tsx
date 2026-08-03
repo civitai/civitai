@@ -7,17 +7,19 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
-// The strike email links to `/user/account#strikes`. This card sits near the
-// bottom of the page and only renders its `id` once data loads, so the browser's
-// native hash scroll fires too early. A stable callback ref scrolls the card into
-// view the moment its node mounts (post-load). `scroll-margin-top` (globals.css
-// `[id]`) clears the fixed header. Module-level so its identity stays stable —
-// an inline ref would re-run on every render.
-function scrollToStrikesIfHashed(node: HTMLDivElement | null) {
-  if (node && typeof window !== 'undefined' && window.location.hash === '#strikes') {
-    node.scrollIntoView({ block: 'start' });
-  }
+// The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
+// rows link to `#creator-score`. Both targets only render their `id` once data loads, so the
+// browser's native hash scroll fires too early. Module-level so the ref identity stays stable.
+function scrollIfHashed(hash: string) {
+  return (node: HTMLElement | null) => {
+    if (node && typeof window !== 'undefined' && window.location.hash === hash) {
+      node.scrollIntoView({ block: 'start' });
+    }
+  };
 }
+
+const scrollToStrikes = scrollIfHashed('#strikes');
+const scrollToCreatorScore = scrollIfHashed('#creator-score');
 
 export function StrikesCard() {
   const currentUser = useCurrentUser();
@@ -44,7 +46,7 @@ export function StrikesCard() {
   const strikes = strikesData?.strikes ?? [];
 
   return (
-    <Card withBorder id="strikes" ref={scrollToStrikesIfHashed}>
+    <Card withBorder id="strikes" ref={scrollToStrikes}>
       <Stack gap="lg">
         {/* Header — the standing badge now lives beside the Strikes subheading below,
             since it's derived purely from strike points, not the Creator Score. Keeping
@@ -53,8 +55,9 @@ export function StrikesCard() {
 
         <Divider />
 
-        {/* User Score Section */}
-        <UserScoreDisplay scores={scores} />
+        <div id="creator-score" ref={scrollToCreatorScore}>
+          <UserScoreDisplay scores={scores} />
+        </div>
 
         <Divider />
 

@@ -2,6 +2,7 @@ import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetPaginatedCosmeticShopItemInput = z.infer<typeof getPaginatedCosmeticShopItemInput>;
 export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
@@ -12,8 +13,16 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     archived: z.boolean().optional(),
+    // Only published creator-listed items marked sellable-by-others — lets mods
+    // pick up resellable creator cosmetics for official shop sections.
+    resellable: z.boolean().optional(),
+    ids: z.array(z.number()).optional(),
   })
 );
+
+// Shop context for purchases: the official Civitai shop attributes as the
+// system user (-1); creator storefronts attribute as their owner's user id.
+export const CIVITAI_SHOP_ATTRIBUTION = -1;
 
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
@@ -46,6 +55,9 @@ export const cosmeticShopItemMeta = z.object({
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),
   sellerShare: z.number().optional(),
+  // Creator opt-in: buyers may pay with Blue Buzz (fully or partially). The
+  // creator is paid blue for the blue-paid portion of each sale.
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -55,7 +67,7 @@ export const upsertCosmeticInput = z
     videoUrl: z.string().nullish(),
     // Fields below are required when creating a new cosmetic (no id provided)
     name: z.string().min(1).optional(),
-    description: z.string().nullish(),
+    description: getSanitizedStringSchema().nullish(),
     type: z.enum(CosmeticType).optional(),
     source: z.enum(CosmeticSource).optional(),
     permanentUnlock: z.boolean().optional(),
@@ -73,7 +85,7 @@ export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemI
 export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
-  description: z.string().nullish(),
+  description: getSanitizedStringSchema().nullish(),
   videoUrl: z.string().nullish(),
   cosmeticId: z.number(),
   unitAmount: z.number(),
@@ -96,13 +108,16 @@ export type CosmeticShopSectionMeta = z.infer<typeof cosmeticShopSectionMeta>;
 export const cosmeticShopSectionMeta = z.object({
   hideTitle: z.boolean().optional(),
   availableItemsMax: z.number().optional(),
+  // Renders the sitewide community-cosmetics feed in place of hand-picked
+  // items, so mods control the hub's placement/banner/copy like any section.
+  communityHub: z.boolean().optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
 export const upsertCosmeticShopSectionInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
-  description: z.string().nullish(),
+  description: getSanitizedStringSchema().nullish(),
   placement: z.number().optional(),
   items: z.array(z.number()).optional(),
   image: comfylessImageSchema.nullish(),
@@ -123,6 +138,10 @@ export const purchaseCosmeticShopItemInput = z.object({
   // The creator whose shop this was bought through — used to credit a reseller
   // (Creator Shop cross-creator selling). Verified server-side.
   viaShopUserId: z.number().optional(),
+  // Buyer's payment choice for items that accept Blue Buzz: the domain color
+  // only (default), or blue first with the remainder in the domain color.
+  // Rejected server-side if the item doesn't accept blue.
+  payWith: z.enum(['default', 'blue-first']).optional(),
 });
 
 export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;

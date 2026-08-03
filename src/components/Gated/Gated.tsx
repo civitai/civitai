@@ -1,4 +1,3 @@
-import { useCallback, useRef } from 'react';
 import { Button, Text, ThemeIcon } from '@mantine/core';
 import {
   IconArrowLeft,
@@ -15,6 +14,7 @@ import {
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import {
@@ -26,7 +26,9 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
+import { useAdGate } from '~/components/Ads/AdsProvider';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
+import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
@@ -129,6 +131,9 @@ type GatedProps<TImage extends { nsfwLevel: number; url: string; type?: MediaTyp
   contentNsfwLevel: number;
   nsfw?: boolean;
   bypassRating?: boolean;
+  /** Suppress ads for a reason unrelated to content rating — e.g. an unpublished model,
+   *  visible only to its owner and moderators, so there is no audience to monetize. */
+  suppressAds?: boolean;
   /**
    * Meta props for `<head>` tags. Required so the schema (when augmented
    * with paywall properties for verified bots) and the `.paywalled-content`
@@ -156,11 +161,15 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   contentNsfwLevel,
   nsfw,
   bypassRating,
+  suppressAds,
   meta,
   children,
 }: GatedProps<TImage>) {
   const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
   const { allowMatureContent } = useAppContext();
+
+  // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
+  useAdGate(!!suppressAds || isAdGatedContent({ contentNsfwLevel, nsfw }));
 
   // Whether the content is canonically SFW for the purpose of the deindex
   // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean
@@ -246,20 +255,10 @@ function MatureContentRedirect() {
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(239,68,68,0.12), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(239,68,68,0.12)',
+  });
 
   return (
     <div
@@ -340,20 +339,10 @@ function MatureContentRedirect() {
 
 function UnratedContent() {
   const hasHistory = useHasClientHistory();
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(234,179,8,0.12), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(234,179,8,0.12)',
+  });
 
   return (
     <div
@@ -461,20 +450,10 @@ function FeatureRow({
 function LoginRequiredCard() {
   const router = useRouter();
   const returnUrl = router.asPath;
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(59,130,246,0.14), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(59,130,246,0.14)',
+  });
 
   return (
     <div

@@ -1,20 +1,26 @@
 import { Box, Group, Text, Tooltip } from '@mantine/core';
+import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 type BadgeItem = { id: number; name?: string | null; data?: { url?: string | null } | null };
 
-// Owned badges as clickable tiles; clicking toggles a badge into the highlight
-// list (the click order is the display order). Selected tiles show a ring + the
-// pin position. Value is an ordered array of cosmetic ids.
+// Owned badges as clickable tiles; clicking toggles a badge into the list.
+// - highlight: click order is the display order; selected tiles show a ring +
+//   the pin position.
+// - hide: selected tiles are dimmed with a red ring + eye-off marker (order is
+//   irrelevant).
+// Value is an array of cosmetic ids (ordered for highlight).
 export function HighlightedBadgesInput({
   badges,
   value,
   onChange,
+  variant = 'highlight',
 }: {
   badges: BadgeItem[];
   value: number[];
   onChange: (ids: number[]) => void;
+  variant?: 'highlight' | 'hide';
 }) {
   const toggle = (id: number) =>
     onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
@@ -25,6 +31,8 @@ export function HighlightedBadgesInput({
         You don&apos;t have any badges yet.
       </Text>
     );
+
+  const accent = variant === 'hide' ? 'red' : 'yellow';
 
   return (
     <Group gap="xs">
@@ -51,9 +59,11 @@ export function HighlightedBadgesInput({
                 padding: 4,
                 borderRadius: 'var(--mantine-radius-md)',
                 cursor: 'pointer',
-                opacity: selected ? 1 : 0.65,
-                border: `2px solid ${selected ? 'var(--mantine-color-yellow-5)' : 'transparent'}`,
-                background: selected ? 'var(--mantine-color-yellow-light)' : undefined,
+                opacity: selected ? (variant === 'hide' ? 0.45 : 1) : 0.65,
+                border: `2px solid ${
+                  selected ? `var(--mantine-color-${accent}-5)` : 'transparent'
+                }`,
+                background: selected ? `var(--mantine-color-${accent}-light)` : undefined,
               }}
             >
               {url && (
@@ -78,11 +88,11 @@ export function HighlightedBadgesInput({
                     borderRadius: '50%',
                     fontSize: 11,
                     fontWeight: 700,
-                    color: 'var(--mantine-color-dark-9)',
-                    background: 'var(--mantine-color-yellow-5)',
+                    color: variant === 'hide' ? 'white' : 'var(--mantine-color-dark-9)',
+                    background: `var(--mantine-color-${accent}-5)`,
                   }}
                 >
-                  {order + 1}
+                  {variant === 'hide' ? <IconEyeOff size={12} /> : order + 1}
                 </div>
               )}
             </Box>

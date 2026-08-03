@@ -97,3 +97,31 @@ export function classifyBlockImageUploadScan(image: {
 
   return { status: 'ready', contentRating };
 }
+
+// Civitai-controlled image hosts. A workflow OUTPUT blob resolves to an
+// `https://orchestration…civitai.com` url (the same bound the vetted
+// `blockSourceImageSchema` in workflow.schema.ts applies to SOURCE images) — NOT
+// the `ORCHESTRATOR_ENDPOINT` API host, which is an internal cluster service
+// whose registrable domain (e.g. `cluster.local`) does not cover the public blob
+// / media-CDN host and so rejected every real output. Bounded by parsed HOSTNAME
+// (not substring) so userinfo / host-confusion tricks are rejected.
+const CIVITAI_OUTPUT_IMAGE_HOSTS = ['civitai.com', 'civitai.red', 'civitai.green'] as const;
+
+/**
+ * SSRF allowlist for a workflow output url. The url is server-resolved from the
+ * ownership-verified workflow (the block never supplies it), so the realistic
+ * threat is only a compromised/misbehaving orchestrator response — but we still
+ * gate defensively: HTTPS only, on a Civitai-controlled image host (+ subdomains),
+ * matched by parsed hostname.
+ */
+export function isAllowedOutputHost(rawUrl: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  return CIVITAI_OUTPUT_IMAGE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}

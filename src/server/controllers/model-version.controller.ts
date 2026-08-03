@@ -1,4 +1,11 @@
 import { TRPCError } from '@trpc/server';
+import { capMediaType, maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import {
+  assertPaidAccessCaps,
+  getViewerMonetization,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -6,13 +13,13 @@ import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -29,15 +36,15 @@ import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
+  assertUserEarlyAccessLimits,
   createModelVersionPostFromTraining,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
-  getUserEarlyAccessModelVersions,
   getVersionById,
   getWorkflowIdFromModelVersion,
-  modelVersionDonationGoals,
+  modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   queryModelVersions,
@@ -46,12 +53,8 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  getMaxEarlyAccessDays,
-  getMaxEarlyAccessModels,
-} from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -78,8 +81,6 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { Flags } from '~/shared/utils/flags';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -116,8 +117,6 @@ const loadModelVersion = async ({
         description: true,
         baseModel: true,
         baseModelType: true,
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
         trainedWords: true,
         epochs: true,
         steps: true,
@@ -133,6 +132,7 @@ const loadModelVersion = async ({
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
         licensingSourceVersionId: true,
+        flags: true,
         meta: true,
         model: {
           select: {
@@ -266,6 +266,7 @@ const loadModelVersion = async ({
           covered: version.generationCoverage?.covered ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
+          flags: version.flags,
           modelVersionAlias: (version.meta as ModelVersionMeta | null)?.generationAlias,
         },
       ],
@@ -279,12 +280,38 @@ const loadModelVersion = async ({
     const canGenerate = versionState?.canGenerate ?? false;
     const wildcardSetId = versionState?.wildcardSetId;
 
+    // Expose the version's gate + EA donation goal (the client reads paidAccess.terms directly).
+    // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
+    // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
+    // modelVersion.donationGoal instead.
+    const { paidAccess, licensingFee } = (
+      await getViewerMonetization({
+        versions: [
+          {
+            id,
+            ownerId: version.model.user.id,
+            licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+            modelType: version.model.type,
+            baseModel: version.baseModel,
+          },
+        ],
+        viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+      })
+    )[id];
+    const isOwnerOrMod =
+      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+    const eaDonationGoal =
+      paidAccess && isOwnerOrMod
+        ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
+        : null;
+
     return {
       ...version,
-      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+      licensingFee,
       canGenerate,
       wildcardSetId,
-      earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
@@ -370,34 +397,32 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    if (!!input.earlyAccessConfig?.timeframe) {
-      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta, features: ctx.features });
+    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
+    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
+    // memoized because both the paid-access and licensing-fee checks need it: getAllUserSubscriptions is
+    // uncached and hits the primary.
+    let capTier: string | null | undefined;
+    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
 
-      if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
-        throw throwBadRequestError('Early access days exceeds user limit');
-      }
-    }
+    await assertPaidAccessCaps({
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      versionId: input.id,
+      paidAccess: input.paidAccess,
+      tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+      baseModel: input.baseModel,
+    });
 
-    if (input?.earlyAccessConfig?.timeframe) {
-      // Confirm the user doesn't have any other early access models that are still active.
-      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
+    await assertUserEarlyAccessLimits({
+      userId: ctx.user.id,
+      userMeta: ctx.user.meta,
+      features: ctx.features,
+      isModerator: ctx.user.isModerator,
+      timeframeDays: input.paidAccess?.timeframeDays,
+      versionId: input.id,
+    });
 
-      if (
-        !ctx.user.isModerator &&
-        activeEarlyAccess.length >=
-          getMaxEarlyAccessModels({ userMeta: ctx.user.meta, features: ctx.features }) &&
-        (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
-      ) {
-        throw throwBadRequestError(
-          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
-        );
-      }
-    }
-
-    if (
-      input?.usageControl !== ModelUsageControl.Download &&
-      input?.earlyAccessConfig?.chargeForDownload
-    ) {
+    if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
       throw throwBadRequestError(
         'Cannot charge for download if downloads are disabled for this model version'
       );
@@ -414,6 +439,18 @@ export const upsertModelVersionHandler = async ({
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
+      // Per-tier ceiling, varying by model type. Compared in whole cents: the stored value is a Prisma
+      // Decimal and the input a JSON float, so a raw > can read "raised" on an untouched fee.
+      if (!ctx.user.isModerator) {
+        const toCents = (v: number) => Math.round(v * 100);
+        const model = await getModel({ id: input.modelId, select: { type: true } });
+        const cap = maxLicensingFee(await actorTier(), model?.type, capMediaType(input.baseModel));
+        const stored = toCents(Number(existing?.licensingFee ?? 0));
+        if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
+          throw throwBadRequestError(
+            `Your tier allows a licensing fee of up to ${cap} Buzz per generation for this model type. Lower the fee or upgrade your membership.`
+          );
+      }
       if (
         input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&
         !ctx.user.isModerator &&
@@ -426,15 +463,15 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Licensing lineage: the chosen source must be a LicensingRoot for the same
-    // base model. Guards against pointing at an arbitrary (or zero-fee) version
-    // to dodge the base-model rule.
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for
+    // the same base model. Guards against pointing at an arbitrary version to
+    // dodge the base-model rule.
     if (input.licensingSourceVersionId != null) {
-      const source = await dbRead.modelVersion.findUnique({
-        where: { id: input.licensingSourceVersionId },
-        select: { flags: true, baseModel: true },
+      const source = await dbRead.licensingRoot.findUnique({
+        where: { modelVersionId: input.licensingSourceVersionId },
+        select: { baseModel: true },
       });
-      if (!source || !Flags.hasFlag(source.flags, ModelVersionFlag.LicensingRoot))
+      if (!source)
         throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
       if (source.baseModel !== input.baseModel)
         throw throwBadRequestError('Licensing source must share the same base model.');
@@ -443,12 +480,15 @@ export const upsertModelVersionHandler = async ({
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
+      tracker: ctx.track,
+      actorUserId: userId,
+      isModerator: ctx.user.isModerator,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
     // Just update early access deadline if updating the model version
     if (input.id)
-      await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+      await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline');
         console.error(e);
       });
@@ -511,7 +551,12 @@ export const upsertModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // The service returns a full Prisma row; devalue (TRPC_WRITE_DEVALUE pools)
+    // throws on a raw `Decimal`, so convert before it hits the wire.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -529,14 +574,18 @@ export const deleteModelVersionHandler = async ({
     const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
-    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // `deleteVersionById` returns the full deleted row — same Decimal hazard as upsert above.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -558,7 +607,6 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        earlyAccessConfig: true,
         model: { select: { userId: true, nsfw: true } },
       },
     });
@@ -591,7 +639,7 @@ export const publishModelVersionHandler = async ({
       republishing,
     });
 
-    await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
@@ -860,7 +908,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
   }
 };
 
-export const modelVersionDonationGoalsHandler = async ({
+export const modelVersionDonationGoalHandler = async ({
   input,
   ctx,
 }: {
@@ -872,7 +920,7 @@ export const modelVersionDonationGoalsHandler = async ({
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
-    return await modelVersionDonationGoals({
+    return await modelVersionDonationGoal({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,

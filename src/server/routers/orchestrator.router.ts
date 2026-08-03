@@ -59,6 +59,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -155,11 +156,13 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
 
 const orchestratorProcedure = protectedProcedure
   .use(orchestratorMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
   .use(experimentalMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
@@ -342,10 +345,18 @@ export const orchestratorRouter = router({
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
+        // correct graceful degradation the issue defends — a stale localStorage
+        // version id after an ecosystem switch, with the picker visibly snapping
+        // back. Labelling it keeps it out of the App Blocks incidence number that
+        // gates the phase-3 policy decision, instead of inflating it with the one
+        // case everyone agrees is working as intended.
+        'onsite'
+      );
 
       // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
       // hides the option in the picker UI — a crafted submission payload would
@@ -416,10 +427,18 @@ export const orchestratorRouter = router({
     .input(z.any())
     .query(async ({ ctx, input }) => {
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
+        // correct graceful degradation the issue defends — a stale localStorage
+        // version id after an ecosystem switch, with the picker visibly snapping
+        // back. Labelling it keeps it out of the App Blocks incidence number that
+        // gates the phase-3 policy decision, instead of inflating it with the one
+        // case everyone agrees is working as intended.
+        'onsite'
+      );
 
       // Mirror of the gate in `generateFromGraph`. Reject what-if costing for
       // flag-gated workflows the user can't reach so we don't leak pricing
@@ -477,8 +496,7 @@ export const orchestratorRouter = router({
             name: 'what-if-from-graph',
             type: 'info',
             payload: input,
-            error:
-              e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
+            error: e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
           }).catch();
         } else {
           logToAxiom({

@@ -58,6 +58,8 @@ import {
   recordDrift,
   classifyDrift,
   __initEventLoopDelayGaugesForTests,
+  LONGTASK_DURATION_BUCKETS,
+  LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS,
   type DriftClassification,
 } from '~/server/eventloop-longtask';
 
@@ -157,6 +159,57 @@ describe('eventloop-longtask metrics: emission reaches the REGISTERED metric', (
     recordDrift(classified, recordOpts);
     expect(await counterValue(COUNTER)).toBe(cBefore + 1);
     expect(await histogramCount(HISTOGRAM, 'unlabeled')).toBe(hBefore + 1);
+  });
+});
+
+describe('eventloop-longtask metrics: duration buckets cover the suspension cap', () => {
+  const topFinite = LONGTASK_DURATION_BUCKETS[LONGTASK_DURATION_BUCKETS.length - 1];
+  const capSeconds = LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS / 1000;
+
+  it('the top finite bucket reaches the highest supported suspension cap', () => {
+    expect(
+      topFinite,
+      `Top finite histogram bucket is ${topFinite}s but the highest supported ` +
+        `EVENTLOOP_LONGTASK_SUSPEND_MS is ${LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS}ms (${capSeconds}s). ` +
+        'Blocks between the top bucket and the cap ARE recorded, but they all land in the ' +
+        '+Inf bucket, so histogram_quantile() reports exactly the top bound and cannot ' +
+        'distinguish them. If the deployed cap was raised, add the matching buckets to ' +
+        'LONGTASK_DURATION_BUCKETS in the same change.'
+    ).toBeGreaterThanOrEqual(capSeconds);
+  });
+
+  it('no bucket exceeds the cap (such a bucket could never be observed)', () => {
+    expect(
+      topFinite,
+      `Bucket ${topFinite}s is above the suspension cap ${capSeconds}s. classifyDrift ` +
+        'reclassifies any gap at or above the cap as `suspension` and skips the histogram, ' +
+        'so a bucket above the cap is a permanently-empty series — pure cardinality cost. ' +
+        'Either lower the bucket or raise LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS to match ' +
+        'the deployed cap.'
+    ).toBeLessThanOrEqual(capSeconds);
+  });
+
+  it('buckets are strictly ascending (prom-client requires ordered bounds)', () => {
+    for (let i = 1; i < LONGTASK_DURATION_BUCKETS.length; i++) {
+      expect(
+        LONGTASK_DURATION_BUCKETS[i],
+        `Bucket bounds must be strictly ascending; index ${i} (${LONGTASK_DURATION_BUCKETS[i]}) ` +
+          `is not greater than index ${i - 1} (${LONGTASK_DURATION_BUCKETS[i - 1]}).`
+      ).toBeGreaterThan(LONGTASK_DURATION_BUCKETS[i - 1]);
+    }
+  });
+
+  it('a block in the newly-covered band is observed below +Inf, not swallowed by it', async () => {
+    // 15s block: under the 30s cap so classifyDrift keeps it as a block, and with
+    // the extended buckets it lands in le="20" rather than only +Inf.
+    const classified = classifyDrift(15_020, 0, 20, 50, LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS);
+    expect(classified).toEqual({ kind: 'block', blockedMs: 15_000 });
+    recordDrift(classified, { logMinMs: 50, threshold: 50, logPerMin: 30 });
+
+    const scraped = await testRegistry.getSingleMetricAsString(HISTOGRAM);
+    const le20 = /le="20"[^\n]*?\s(\d+)$/m.exec(scraped);
+    expect(le20, `expected an le="20" bucket series in:\n${scraped}`).not.toBeNull();
+    expect(Number(le20?.[1])).toBeGreaterThanOrEqual(1);
   });
 });
 

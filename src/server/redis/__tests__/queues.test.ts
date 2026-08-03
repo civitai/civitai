@@ -105,6 +105,20 @@ describe('getBucketNames (via queues.ts public API)', () => {
     expect(sAdd).toHaveBeenCalledTimes(1);
   });
 
+  it('chunks a large enqueue instead of issuing one oversized sAdd', async () => {
+    hGet.mockResolvedValue(BUCKETS_CSV);
+    const ids = Array.from({ length: 25000 }, (_, i) => i + 1);
+
+    await addToQueue('images_v6:Update', ids);
+
+    const calls = sAdd.mock.calls as unknown as Array<[string, string[]]>;
+    expect(calls).toHaveLength(3);
+    for (const [, chunk] of calls) expect(chunk.length).toBeLessThanOrEqual(10000);
+
+    const written = calls.flatMap(([, chunk]) => chunk);
+    expect(new Set(written).size).toBe(25000);
+  });
+
   it('handles a multi-bucket Buffer reply (comma-joined) without throwing', async () => {
     const csv = `${BUCKETS_CSV},queues:buckets:images_v6:Update:1782075150000`;
     hGet.mockResolvedValue(Buffer.from(csv, 'utf8'));

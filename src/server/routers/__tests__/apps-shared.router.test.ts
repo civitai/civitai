@@ -21,6 +21,7 @@ const {
   mockGetSessionUser,
   mockCheckAppendRl,
   mockCheckVoteRl,
+  mockCheckReportRl,
   mockThrowOnBlockedLinkDomain,
   mockAuditPromptServer,
   mockIsRevoked,
@@ -44,6 +45,7 @@ const {
     mockGetSessionUser: vi.fn(),
     mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
+    mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
     mockThrowOnBlockedLinkDomain: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
     mockIsRevoked: vi.fn(async () => false),
@@ -66,6 +68,7 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
+  checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -155,6 +158,7 @@ beforeEach(() => {
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
+  mockCheckReportRl.mockResolvedValue({ allowed: true });
   mockThrowOnBlockedLinkDomain.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -760,8 +764,78 @@ describe('H4 rate limits', () => {
   });
 });
 
+// F1 (pre-GA): `report` is now block-reachable and each report files a row + fires
+// a mod-channel webhook, so — like every other shared write op — it MUST be
+// rate-limited, AND a repeat report of the same row by the same reporter must be a
+// no-op (no 2nd row, no 2nd alert, no 2nd webhook). The Discord webhook is
+// co-gated with the Axiom report emit in the SAME `if (!filed) return` branch, so
+// the emit count is the faithful observable for "was the mod-notify fired".
+describe('F1 report rate-limit + per-(reporter,key) dedup', () => {
+  function auditEmits(name: string) {
+    return (mockLogToAxiom.mock.calls as Array<[Record<string, unknown>, string?]>)
+      .filter((c) => c[1] === 'block-audit' && c[0]?.name === name)
+      .map((c) => c[0]);
+  }
+  // The row-exists SELECT (on shared_kv) resolves truthy; the dedup INSERT (on
+  // shared_kv_reports) resolves with the caller-supplied rowCount so we can pin
+  // "new" (1) vs "duplicate" (0) independently of the existence check.
+  function mockReportPath(insertRowCount: number) {
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('shared_kv_reports')) return { rows: [], rowCount: insertRowCount };
+      return { rows: [{ x: 1 }], rowCount: 1 }; // the row-exists pre-check
+    });
+  }
+
+  it('report over the daily cap → TOO_MANY_REQUESTS (before any DB write)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckReportRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 3600 });
+    await expect(
+      caller().report({ blockToken: 't', key: 'req-1', reason: 'spam' })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // Rate-limited before it touches the DB or emits.
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+
+  it('a NEW (reporter,key) report files exactly one row + emits once', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(1); // insert affected a row → genuinely new
+    const out = await caller().report({ blockToken: 't', key: 'req-new', reason: 'harassment' });
+    expect(out).toEqual({ ok: true });
+    // exactly one dedup-INSERT against shared_kv_reports, and it is a WHERE NOT
+    // EXISTS conditional insert (the structural dedup) — not an unconditional VALUES.
+    const inserts = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).filter((c) =>
+      c[0].includes('INSERT INTO') && c[0].includes('shared_kv_reports')
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][0]).toMatch(/WHERE NOT EXISTS/i);
+    // the alert (and its co-gated Discord notify) fired exactly once
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(1);
+  });
+
+  it('a DUPLICATE (reporter,key) report is a no-op: no 2nd row, no 2nd webhook/emit', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(0); // WHERE NOT EXISTS matched an existing row → nothing inserted
+    const out = await caller().report({ blockToken: 't', key: 'req-dup', reason: 'again' });
+    // still succeeds (idempotent from the caller's view) …
+    expect(out).toEqual({ ok: true });
+    // … but the report alert + its co-gated mod-Discord notify are SKIPPED.
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+
+  it('distinct keys from the same reporter each file + emit (dedup is per-key)', async () => {
+    // Two distinct keys → the WHERE NOT EXISTS admits both (rowCount 1 each).
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(1);
+    await caller().report({ blockToken: 't', key: 'k1' });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await caller().report({ blockToken: 't', key: 'k2' });
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(2);
+  });
+});
+
 describe('isolation + read invariants', () => {
-  it('list reads ONLY shared_kv/counters (never kv/votes), excludes hidden', async () => {
+  it('list reads shared_kv/counters + a viewer-scoped votes join (never the per-user kv), excludes hidden', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await caller().list({ blockToken: 't' });
@@ -769,8 +843,13 @@ describe('isolation + read invariants', () => {
     expect(sql).toContain('.shared_kv');
     expect(sql).toContain('.counters');
     expect(sql).toContain('hidden_at IS NULL');
+    // NEVER the per-user kv table.
     expect(sql).not.toMatch(/\.kv\b/);
-    expect(sql).not.toMatch(/\.votes\b/);
+    // item 3: votes IS joined now — but ONLY the viewer's own row (v.user_id = the
+    // resolved subject uid) to derive the boolean; the raw vote rows are never
+    // SELECTed/returned (only the derived `viewer_voted`).
+    expect(sql).toMatch(/LEFT JOIN\s+"app_app_voting"\.votes v ON v\.key = s\.key AND v\.user_id = \$4/);
+    expect(sql).toContain('(v.user_id IS NOT NULL) AS viewer_voted');
   });
 
   it('per-app isolation: schema derives from claims.blockId (app A ≠ app B)', async () => {
@@ -779,6 +858,189 @@ describe('isolation + read invariants', () => {
     const sql = (mockPool.query.mock.calls[0] as [string])[0];
     expect(sql).toContain('"app_app_beta".shared_kv');
     expect(sql).not.toContain('app_app_voting');
+  });
+});
+
+// Item 3 — per-viewer vote hydration on `list`. A LEFT JOIN on the viewer's OWN
+// vote row derives an additive `viewerVoted` boolean; anon → NULL uid → false.
+// The raw vote rows are never returned, only the derived boolean.
+describe('item 3 viewerVoted (per-viewer vote flag on list)', () => {
+  it('JOINs votes on the RESOLVED subject uid and maps viewer_voted → viewerVoted', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims()); // sub user:42
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          key: 'K1',
+          author_user_id: 7,
+          value: { title: 't' },
+          count: '2',
+          created_at: new Date(),
+          updated_at: new Date(),
+          viewer_voted: true,
+        },
+        {
+          key: 'K2',
+          author_user_id: 8,
+          value: { title: 'u' },
+          count: '0',
+          created_at: new Date(),
+          updated_at: new Date(),
+          viewer_voted: false,
+        },
+      ],
+      rowCount: 2,
+    });
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items[0].viewerVoted).toBe(true);
+    expect(out.items[1].viewerVoted).toBe(false);
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    // The vote join + derived boolean are present, keyed on the $4 uid param.
+    expect(sql).toContain('.votes v');
+    expect(sql).toContain('(v.user_id IS NOT NULL) AS viewer_voted');
+    expect(sql).toContain('v.user_id = $4::int');
+    // $4 is the RESOLVED subject uid (42) — never client input.
+    expect(params[3]).toBe(42);
+    // The ONLY reference to a vote row's user_id is the DERIVED boolean — the raw
+    // vote rows are never selected/returned.
+    expect(sql.match(/v\.user_id/g)?.length).toBe(2); // the JOIN predicate + the boolean
+    expect(sql).toContain('(v.user_id IS NOT NULL) AS viewer_voted');
+  });
+
+  it('anon viewer passes a NULL uid → the join never matches (viewerVoted false)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't' });
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[3]).toBeNull();
+  });
+
+  it('is PER-VIEWER: the join keys on the token subject, not a fixed user', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:99' }));
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ id: 99 }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't' });
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[3]).toBe(99);
+  });
+});
+
+// Item 6 — single-row fetch-by-key for `?g=` deep links. READ op (anon-allowed),
+// same per-viewer visibility gate (`hidden_at IS NULL`) as `list`.
+describe('item 6 apps.shared.get (single-row fetch-by-key)', () => {
+  it('returns the row (count + viewerVoted) mapped to the list item shape', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const created = new Date();
+    const updated = new Date();
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          key: 'K',
+          author_user_id: 7,
+          value: { title: 't', data: { x: 1 } },
+          count: '5',
+          created_at: created,
+          updated_at: updated,
+          viewer_voted: true,
+        },
+      ],
+      rowCount: 1,
+    });
+    const out = await caller().get({ blockToken: 't', key: 'K' });
+    expect(out.item).toMatchObject({ key: 'K', authorUserId: 7, count: 5, viewerVoted: true });
+    expect((out.item as { value: unknown }).value).toEqual({ title: 't', data: { x: 1 } });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('WHERE s.key = $1 AND s.hidden_at IS NULL');
+    expect(sql).toContain('.votes v');
+    expect(params[0]).toBe('K');
+    expect(params[1]).toBe(42); // resolved subject uid for viewerVoted
+  });
+
+  it('returns item:null for a missing key', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const out = await caller().get({ blockToken: 't', key: 'ghost' });
+    expect(out.item).toBeNull();
+  });
+
+  it('does NOT leak a hidden/moderated row — the query filters hidden_at IS NULL so a hidden row yields item:null', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    // Assert the visibility gate is IN the SQL, and (as the DB would) a hidden row
+    // returns no rows → item:null. A get by key can't bypass the list's gate.
+    mockPool.query.mockImplementationOnce(async (sql: string) => {
+      expect(sql).toContain('hidden_at IS NULL');
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().get({ blockToken: 't', key: 'hidden-row' });
+    expect(out.item).toBeNull();
+  });
+
+  it('anon may READ a single row (get is a READ op) with a NULL viewer uid', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const out = await caller().get({ blockToken: 't', key: 'K' });
+    expect(out.item).toBeNull();
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[1]).toBeNull();
+  });
+
+  it('get requires the READ scope (a write-only token is FORBIDDEN, no DB access)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [WRITE] }));
+    await expect(caller().get({ blockToken: 't', key: 'K' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('per-app isolation: the get query derives the schema from claims.blockId', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ blockId: 'app-beta' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().get({ blockToken: 't', key: 'K' });
+    const sql = (mockPool.query.mock.calls[0] as [string])[0];
+    expect(sql).toContain('"app_app_beta".shared_kv');
+    expect(sql).not.toContain('app_app_voting');
+  });
+});
+
+// Item 5 — the `report` procedure ALREADY existed (its emit/report-row behavior
+// is covered under "FIX 1 abuse observability"). These pin its AUTHZ: report is a
+// WRITE-trust op (not a read), so anon/untrusted/read-only-scope are all denied.
+describe('item 5 apps.shared.report authz (write-trust gated)', () => {
+  it('a read-only token is FORBIDDEN (report requires the write scope)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [READ] }));
+    await expect(caller().report({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('anon may NOT report (UNAUTHORIZED)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    await expect(caller().report({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('an untrusted (too-new) reporter is DENIED (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ createdAt: new Date() }));
+    await expect(caller().report({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('a trusted reporter files the report row and returns { ok: true }', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [{ x: 1 }], rowCount: 1 }); // row exists + insert
+    const out = await caller().report({ blockToken: 't', key: 'req-1', reason: 'spam' });
+    expect(out).toEqual({ ok: true });
+    const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('shared_kv_reports')
+    );
+    expect(report).toBeTruthy();
+    // the reporter uid is the RESOLVED subject (42), never client input
+    expect((report![1] as unknown[])[2]).toBe(42);
   });
 });
 

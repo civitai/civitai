@@ -1,6 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons-react';
+import { IconChevronDown, IconGift } from '@tabler/icons-react';
 import { useCallback, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -203,7 +203,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     classNames={{
                       root: 'mt-[2px] border-b-2 border-b-current',
                       input: 'h-[20px] min-h-[20px] text-start uppercase',
-                      option: 'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
+                      option:
+                        'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
                       section: 'mr-0',
                     }}
                   />
@@ -216,12 +217,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                         Manage your Membership
                       </Button>
                     ) : redirectToPrepaidPage ? (
-                      <Button
-                        component={Link}
-                        href="/purchase/buzz"
-                        radius="xl"
-                        {...btnProps}
-                      >
+                      <Button component={Link} href="/purchase/buzz" radius="xl" {...btnProps}>
                         Purchase Buzz
                       </Button>
                     ) : isDowngrade ? (
@@ -241,7 +237,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                           });
                         }}
                       >
-                        Downgrade to {capitalize(meta?.tier)} {isActivePlanDiffInterval ? ' (Monthly)' : ''}
+                        Downgrade to {capitalize(meta?.tier)}{' '}
+                        {isActivePlanDiffInterval ? ' (Monthly)' : ''}
                       </Button>
                     ) : isUpgrade ? (
                       <Button
@@ -259,19 +256,38 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                           });
                         }}
                       >
-                        Upgrade to {capitalize(meta?.tier)} {isActivePlanDiffInterval ? ' (Annual)' : ''}
+                        Upgrade to {capitalize(meta?.tier)}{' '}
+                        {isActivePlanDiffInterval ? ' (Annual)' : ''}
                       </Button>
                     ) : (
                       <SubscribeButton
                         priceId={priceId}
                         disabled={ctaDisabled}
-                        forceProvider={meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined}
+                        forceProvider={
+                          meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined
+                        }
                       >
                         <Button radius="xl" {...btnProps}>
-                          {isActivePlan ? `You are ${capitalize(meta?.tier)}` : `Subscribe to ${capitalize(meta?.tier)}`}
+                          {isActivePlan
+                            ? `You are ${capitalize(meta?.tier)}`
+                            : `Subscribe to ${capitalize(meta?.tier)}`}
                         </Button>
                       </SubscribeButton>
                     )}
+                    {features.giftMemberships &&
+                      product.provider === PaymentProvider.Stripe &&
+                      ['bronze', 'silver', 'gold'].includes(meta.tier) && (
+                        <Button
+                          radius="xl"
+                          variant="subtle"
+                          color="gray"
+                          leftSection={<IconGift size={16} />}
+                          component={Link}
+                          href={`/pricing/gift?tier=${meta.tier}`}
+                        >
+                          Gift this tier
+                        </Button>
+                      )}
                   </>
                 )}
               </Stack>
