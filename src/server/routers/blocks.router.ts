@@ -5104,6 +5104,13 @@ export const blocksRouter = router({
    * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
    * capability); no need to also assert ownership of the requested appBlockId
    * (the join filter does it).
+   *
+   * NO `.meta({ requiredScope })` — deliberate, and NOT an oversight left behind by
+   * the getMyAppAnalytics annotation below. No CLI command calls this proc (nor
+   * `getMyApps`), so it is reached only by the web panel, which is session-authed and
+   * therefore takes enforceTokenScope's Full early-return regardless. Annotate it the
+   * day something token-authed needs it — at which point AppBlocksSubmit is the
+   * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -5167,10 +5174,24 @@ export const blocksRouter = router({
     //     consent label is literally "Open on-site dev tunnels"). Reusing it would
     //     force analytics readers to grant tunnel-opening, and vice versa.
     // A Full personal API key still passes — enforceTokenScope early-returns on
-    // `ctx.tokenScope === TokenScope.Full`, and createContext defaults a session (the
-    // web /apps/revenue panel) to Full — so this is not a regression for any caller
-    // that works today. No allowedScopes migration either: the civitai-cli client is
-    // already provisioned with this bit and the login token already carries it.
+    // `ctx.tokenScope === TokenScope.Full` — and createContext defaults a session (the
+    // web /apps/revenue panel) to Full.
+    //
+    // 🔴 That early return is EXACT EQUALITY, so the no-regression claim is CONDITIONAL,
+    // not universal: a mask that is a strict SUPERSET of Full but lacks bit 25 (e.g.
+    // `Full|AppBlocksDevTunnel` = 100663295) passed before and is FORBIDDEN now.
+    // No such credential can exist today, and that is enforced by schema caps rather
+    // than luck — `api-key.schema.ts` caps a personal key's tokenScope at `.max(Full)`
+    // and `oauth-client.schema.ts` caps `allowedScopes` at `.max(Full)`, so bit 25/26
+    // are unreachable through either public surface (the civitai-cli client's
+    // 100663297 comes from a migration, not the API). Those caps are pinned by a test
+    // below; if one is ever raised, re-check this gate.
+    //
+    // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
+    // and the login token requests it, so no NEW migration is needed here. Note the
+    // repo cannot prove prod state — those migrations are manual-apply and the device
+    // flow lives on the auth hub. If bit 25 were somehow absent in prod the failure
+    // mode is "this fix does not take effect", never "a working path breaks".
     .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     .input(
@@ -5709,6 +5730,13 @@ export const blocksRouter = router({
    * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
+    // Same gate, same bit, same reason as getMyAppAnalytics above: un-annotated meant
+    // an implicit `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token
+    // — and the CLI reports that failure as "not permitted (are you the app owner, and
+    // is Apps enabled for your account?)", which sends the developer looking for an
+    // ownership problem they do not have. A Full personal API key is unaffected
+    // (enforceTokenScope early-returns on Full).
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
     // CLI `civitai app pull --app <slug|appBlockId>` lets a developer pass the

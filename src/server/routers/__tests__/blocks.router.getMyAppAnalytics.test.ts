@@ -8,8 +8,8 @@ import { TRPCError } from '@trpc/server';
  * stubbed so importing the router doesn't drag in the stale generated
  * Prisma client). The analytics SERVICE is mocked at the boundary — this
  * test asserts the ROUTER wiring:
- *   - moderatorProcedure + enforceAppBlocksFlag gate (non-mod / anon rejected,
- *     dark behind the appBlocks flag);
+ *   - appDeveloperProcedure (the `appBlocksAuthor` capability) + enforceAppBlocksFlag
+ *     gate (non-author / anon rejected, dark behind the appBlocks flag);
  *   - the caller's session user id is threaded into the service (ownership is
  *     enforced inside the service, covered by app-analytics.service.test.ts);
  *   - the zod input is validated (appBlockId length cap, from/to datetime).
@@ -336,7 +336,11 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
  * `.meta` line deleted, ONLY 'CLI OAuth login token … reaches the service' goes red,
  * and it fails with this gate's own error ("Your API key does not have the required
  * scope for this action", enforce-token-scope.ts:84) — the exact 403 this change
- * fixes. The other three stay GREEN on pre-change code and are INVARIANT guards, not
+ * fixes.
+ *
+ * Everything else in this describe block stays GREEN on pre-change code: the three
+ * BEHAVIOURAL cases below plus the enum-only bitmask sanity test, i.e. FOUR green
+ * tests, only one of which is regression coverage. They are INVARIANT guards, not
  * regression guards:
  *   - NO_SUBMIT was already FORBIDDEN before, because an un-annotated proc implicitly
  *     requires `Full` and that token lacks Full too. It pins that narrowing the gate
@@ -400,5 +404,52 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
     expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 The no-regression property is CONDITIONAL, and this is what it rests on.
+   *
+   * enforceTokenScope's bypass is exact equality (`ctx.tokenScope !== TokenScope.Full`),
+   * NOT `hasFlag`. So a mask that is a strict SUPERSET of Full but lacks bit 25 —
+   * `Full|AppBlocksDevTunnel` = 100663295 — satisfied the un-annotated gate before and
+   * is FORBIDDEN after. That is a real allow→deny flip, harmless only because no such
+   * credential can be created. The caps that make it unreachable are pinned here: if
+   * either is raised, the flip becomes reachable and every `requiredScope` in this
+   * router needs re-examining.
+   */
+  it('no creatable credential can hold a superset-of-Full mask (the flip is unreachable)', async () => {
+    const { addApiKeyInputSchema } = await import('~/server/schema/api-key.schema');
+    const { createOauthClientSchema, updateOauthClientSchema } = await import(
+      '~/server/schema/oauth-client.schema'
+    );
+
+    const SUPERSET = TokenScope.Full | TokenScope.AppBlocksDevTunnel;
+    expect(SUPERSET).toBe(100663295);
+    // Sanity: this really is the allow→deny case — it satisfies Full by hasFlag (so it
+    // passed the un-annotated gate) yet does not carry bit 25.
+    expect((SUPERSET & TokenScope.Full) === TokenScope.Full).toBe(true);
+    expect((SUPERSET & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(false);
+
+    // A personal API key cannot be created with it...
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: SUPERSET }).success).toBe(false);
+    // ...nor an OAuth client be granted it, on create or update.
+    const clientBase = {
+      name: 'c',
+      redirectUris: ['https://example.com/cb'],
+    };
+    expect(
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: SUPERSET }).success
+    ).toBe(false);
+    expect(updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: SUPERSET }).success).toBe(
+      false
+    );
+    // Boundary: the caps still ADMIT Full itself, so they are not vacuously rejecting
+    // everything (which would make the three assertions above prove nothing).
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: TokenScope.Full }).success).toBe(
+      true
+    );
+    expect(
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: TokenScope.Full }).success
+    ).toBe(true);
   });
 });
