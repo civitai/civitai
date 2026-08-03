@@ -1,4 +1,5 @@
 import type * as z from 'zod';
+import { chatCompletionStep } from './chat-completion.step';
 import { convertImageStep } from './convert-image.step';
 import type { StepOutputMedia } from './output';
 
@@ -1279,8 +1280,13 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // recurse into an entry's nested values — those include zod schemas, which
 // populate internal caches lazily and must stay mutable. A deep freeze here
 // would trade a consistency nicety for a runtime failure mode.
+// 🔴 ORDER IS OBSERVABLE: `REGISTERED_STEP_IDS` is `Object.keys(...)`, so a new
+// entry goes at the END. Prepending would renumber the wire enum's iteration
+// order for no reason and shift `REGISTERED_STEP_IDS[0]`, which existing tests
+// use as "a valid id".
 const stepRegistry = Object.freeze({
   'convert-image': Object.freeze(convertImageStep),
+  'chat-completion': Object.freeze(chatCompletionStep),
 });
 
 export type RegisteredStepId = keyof typeof stepRegistry & string;

@@ -40,6 +40,7 @@ import {
   getStepByOrchestratorType,
   listRegisteredSteps,
   NATIVELY_EXTRACTED_STEP_TYPES,
+  postureProducesMedia,
   type AnyBlockStep,
 } from '../steps';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -2125,12 +2126,40 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
     });
   }
 
+  // 🔴 POSTURE-GATED, ON THE REGISTRY'S OWN PREDICATE — not on
+  // `extractOutput != null`. Both loops below used to call `step.extractOutput`
+  // for EVERY entry, which was silently fine only while every registered entry
+  // produced media. The first `'textOutput'` entry made it a raw
+  // `TypeError: step.extractOutput is not a function`, because a text entry has
+  // no media extractor BY CONSTRUCTION (`TextOutputSurface.extractOutput?: never`
+  // plus load-time clause 8-ii).
+  //
+  // 🔴 THE GATE MUST NOT MAKE THE TEXT HALF VACUOUS. Skipping text entries would
+  // turn a population test into one that covers only the population it already
+  // covered. So each loop asserts the MIRROR property for a text entry: it
+  // contributes NOTHING to the media channel. That is the read-path half of the
+  // anti-smuggling rule — `StepOutputMedia.url` is a bare string that reaches
+  // `imageUrls` / `images[].url` without ever meeting
+  // `attachModeratedStepTextOutputs`, so a text step appearing there at all
+  // would be generated text published unscanned.
+  //
+  // Keyed on `postureProducesMedia` because that is what `snapshotFromWorkflow`
+  // and `projectAppWorkflow` themselves key on — one rule, one predicate, and
+  // the test cannot drift from the code by asking a different question.
   it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const expected = step.extractOutput(step.canonicalOutputFor(variant)).map((m) => m.url);
-        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
         const snap = snapshotFromWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            snap.imageUrls ?? [],
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).map((m) => m.url);
+        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
         expect(
           snap.imageUrls,
           `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
@@ -2143,8 +2172,16 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const expected = step.extractOutput(step.canonicalOutputFor(variant));
         const projected = projectAppWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            projected.images,
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant));
         expect(
           projected.images.map((i) => i.url),
           `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
@@ -2155,6 +2192,20 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         );
       }
     }
+  });
+
+  // 🔴 A POSITIVE CONTROL ON THE GATE ITSELF. The two loops above now `continue`
+  // on a text entry, and a gate that skips everything is indistinguishable from
+  // a gate that works. This asserts the population actually contains BOTH
+  // shapes, so neither branch above is vacuous — and it fails loudly if the last
+  // entry of either kind is ever removed, rather than leaving a silently
+  // one-sided test behind.
+  it('the registered population contains BOTH a media entry and a text entry', () => {
+    const shapes = listRegisteredSteps().map(([, s]) => postureProducesMedia(s.moderationPosture));
+    expect(shapes.filter(Boolean).length, 'no MEDIA entry — the media branch above is vacuous')
+      .toBeGreaterThan(0);
+    expect(shapes.filter((m) => !m).length, 'no TEXT entry — the text branch above is vacuous')
+      .toBeGreaterThan(0);
   });
 
   // The concrete shape, pinned literally rather than derived from the extractor
