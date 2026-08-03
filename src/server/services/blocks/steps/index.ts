@@ -181,6 +181,35 @@ export type OrchestratorStepTemplate = {
 // included — a checkpoint IS an AIR, so it is a `staticAllowlist` case, not a
 // separate field), and until one exists it fails at registry LOAD. Same
 // unskippable property moderation already had.
+//
+// 🔴 THIS AXIS IS AIR-SPECIFIC, AND READING IT WIDER IS THE MISTAKE TO AVOID.
+// Both policy kinds are about AIR URNs and nothing else: `staticAllowlist`'s
+// only field is `airs`, clause 7's enforcement is `containsAirReference` (a
+// `urn:air:` substring scan), and the harm it names is the generation-graph
+// ENTITLEMENT belt — reaching a gated / early-access / Private model version.
+// So `resourcePolicy: 'none'` means "no AIR reference", NOT "this entry's model
+// surface is bounded", and a reviewer who reads it as the latter has stopped
+// checking the thing that matters.
+//
+// The concrete case, because it is coming: the orchestrator's `chatCompletion`
+// input takes `model: string` — a plain provider id ("gpt-4o"), NOT an AIR
+// (`ChatCompletionInput` in the generated `@civitai/client` types). Such an
+// entry would declare `'none'` TRUTHFULLY and pass clause 7, while forwarding
+// an arbitrary model name from an untrusted iframe. There is also no
+// orchestrator-side model validation to catch it — a fabricated name quotes
+// fine and fails only at execution.
+//
+// 🔴 DO NOT FORCE A NON-AIR MODEL ALLOWLIST INTO `staticAllowlist`. Putting
+// "gpt-4o" in a field named `airs` would make the eventual AIR-allowlist
+// implementation (which has to compare against the entitlement belt) wrong for
+// whichever entries lied to it. The smallest honest shape is the one the
+// registry ALREADY provides, with no new field: put the permitted models in the
+// entry's own `.strict()` `paramSchema` as a `z.enum`, AND declare them as the
+// entry's `variants` with `resolveVariant` returning the chosen one. That gets
+// the pinning from the schema (a non-member is a BAD_REQUEST at parse), the
+// bound from `resolveStepVariant`, and per-model pricing from
+// `priceForVariant` — which a flat price today does not need but a rate card
+// eventually will.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepResourcePolicy =
   /**
@@ -516,6 +545,11 @@ interface BlockStepBase<P> {
    * The price/budget, the built step, and the display estimate MUST all agree on
    * this one value, so they all derive it here. Returns a bounded id from
    * `variants` — never a client-raw string.
+   *
+   * 🔴 CALL IT THROUGH `resolveStepVariant`, NEVER DIRECTLY. "Returns a bounded
+   * id" is a promise the ENTRY makes about a function that receives untrusted
+   * params; the wrapper is what checks it. Clause 5 below only checks the
+   * canonical params, i.e. one author-chosen input per variant.
    */
   resolveVariant(params: P): string;
   /**
@@ -688,6 +722,62 @@ type BillingModeHandler = {
 };
 
 /**
+ * `step.resolveVariant(params)`, BOUNDED to the entry's declared `variants`.
+ *
+ * 🔴 WHY A WRAPPER RATHER THAN THE RAW CALL. `resolveVariant` is documented as
+ * returning "a bounded id from `variants` — never a client-raw string", and
+ * until now that was a PROSE promise the entry made: nothing checked it, and
+ * clause 5 only checks it for `canonicalParamsFor(v)` — one fixed input per
+ * variant, chosen by the entry author. At REQUEST time the argument is the
+ * untrusted iframe's `.strict()`-parsed params, and the return value is fed
+ * straight into `priceForVariant` on the money path.
+ *
+ * 🔴 THE FAILURE THAT MOTIVATES IT, MEASURED RATHER THAN REASONED. With an
+ * entry whose `resolveVariant` returns a param (`(p) => p.model`) and whose
+ * `priceForVariant` is a record lookup, an out-of-set value made
+ * `priceForVariant` return `undefined` → `planStepSpend().reserveBuzz`
+ * `undefined` → the router's `Math.ceil(...)` `NaN` → and `NaN > buzzBudget`
+ * evaluates **false**, so the per-call budget gate PASSES. Executed on
+ * unmodified `main` before this wrapper existed; the numbers are from that run,
+ * not from reading the code.
+ *
+ * 🔴 BE EXACT ABOUT REACHABILITY — this is a LATENT fail-open, not a live one.
+ * The sole registered entry today (`convert-image`) returns a CONSTANT
+ * (`() => 'default'`), so no params can steer it and the shape above cannot be
+ * reached by any shipped code path. It becomes reachable the moment an entry
+ * derives its variant FROM params — which is exactly what a model-allowlisted
+ * entry wants to do, since per-model pricing has to key off the variant. This
+ * wrapper is therefore a prerequisite for that shape, not a fix for a live bug,
+ * and the test that pins it says so.
+ *
+ * 🔴 AND BE EXACT ABOUT WHAT IT BINDS. It proves the resolved value is a MEMBER
+ * of `step.variants`. It does NOT prove `variants` itself is a sensible set —
+ * that stays what it always was, a reviewed declaration in a code-reviewed
+ * trust root. What it buys is that everything downstream (the price lookup, the
+ * settle `engine`, the audit row) receives a value from a fixed, reviewed,
+ * enumerable set rather than whatever the entry chose to return.
+ *
+ * Throws a plain `Error` (not a TRPC caller error) on purpose: the params were
+ * already accepted by the entry's own `.strict()` schema, so a resolution
+ * outside the declared set is a REGISTRY-ENTRY bug, not a caller mistake, and
+ * it should surface as a 500 the way any other broken invariant does. A plain
+ * `Error` also keeps this module import-light, which `workflow.schema` depends
+ * on.
+ */
+export function resolveStepVariant(step: AnyBlockStep, params: unknown): string {
+  const variant = step.resolveVariant(params);
+  if (!step.variants.includes(variant)) {
+    throw new Error(
+      `block step '${step.id}': resolveVariant() returned '${variant}', which is not one of the ` +
+        `declared variants [${step.variants.join(', ')}] — the price lookup, the settle record ` +
+        'and the audit row all key off this value, so an unbounded one is a money-path input ' +
+        'nobody reviewed'
+    );
+  }
+  return variant;
+}
+
+/**
  * A mode that is DECLARED (so the type + wire surface is stable and future
  * additions are additive) but whose money path is not implemented yet.
  *
@@ -714,7 +804,12 @@ const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
     planSpend: (step, params) => {
       const entry = step as PrepaidFixedStep<unknown>;
       return {
-        reserveBuzz: entry.priceForVariant(entry.resolveVariant(params)),
+        // 🔴 `resolveStepVariant`, NOT `entry.resolveVariant` — the price lookup
+        // is the money-path consumer that made an unbounded resolution a
+        // budget-gate bypass (see that function's header for the measured
+        // sequence). Every other consumer of the resolved variant must use the
+        // same wrapper; one rule, one place.
+        reserveBuzz: entry.priceForVariant(resolveStepVariant(entry, params)),
         // Exact price → the reservation is final; never touch the post-paid
         // settle machinery.
         postPaidSettle: false,

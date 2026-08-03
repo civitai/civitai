@@ -6558,6 +6558,34 @@ describe("step-type registry bridge (kind: 'step')", () => {
       );
     });
 
+    // 🔴 THE USAGE DIMENSIONS. Every OTHER field on this row is identical to the
+    // one the txt2img path writes — same `ai:write:budgeted` scope, same
+    // `workflow:submit:<id>` endpoint shape — so without `detail.step` a step
+    // submit and a txt2img submit are indistinguishable in
+    // `block_scope_invocations`, and two step types are indistinguishable from
+    // each other. `detail` is a nullable JSON column, so this needs no migration.
+    //
+    // `variant` is the registry's resolved variant, BOUNDED by
+    // `resolveStepVariant`. For `convert-image` it is `'default'` — real, if
+    // uninformative, so this assertion is genuine coverage of the shipped
+    // population rather than a guard waiting on a future entry.
+    it('records the step id and the resolved variant on the audit row (per-(user, app, capability) usage)', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+      await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+      const auditArg = vi.mocked(recordScopeInvocation).mock.calls[0][0];
+      expect(auditArg.detail).toMatchObject({
+        action: 'workflow.submit',
+        outcome: 'ok',
+        step: STEP_ID,
+        variant: 'default',
+      });
+    });
+
     it('emits the step id (never txt2img) as the workflow-type tag, preserving app-block provenance', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();

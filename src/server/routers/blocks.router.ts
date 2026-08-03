@@ -152,6 +152,7 @@ import {
   estimateStepBuzz,
   getStep,
   planStepSpend,
+  resolveStepVariant,
 } from '~/server/services/blocks/steps';
 // Moderation dispatch for the same registry. A SEPARATE module because it pulls
 // `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
@@ -7056,7 +7057,8 @@ async function submitStepWorkflow(opts: {
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling: reserveBuzz,
-      engine: step.resolveVariant(params),
+      // Bounded to the entry's declared `variants` — see `resolveStepVariant`.
+      engine: resolveStepVariant(step, params),
       recipe: step.id,
       submittedAt,
     });
@@ -7106,10 +7108,32 @@ async function submitStepWorkflow(opts: {
         scope: 'ai:write:budgeted',
         endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
         statusCode: snapshot.status === 'failed' ? 500 : 200,
+        // 🔴 THE TWO STEP DIMENSIONS. Everything else on this row is identical
+        // to what the txt2img path writes — same `scope`, same
+        // `workflow:submit:<id>` endpoint shape — so WITHOUT these a step submit
+        // and a txt2img submit are indistinguishable in `block_scope_invocations`,
+        // and two different step types are indistinguishable from each other.
+        // That is the gap: per-(user, app, capability) usage was not answerable
+        // from the table that exists to answer it.
+        //
+        // 🔴 NO SCHEMA CHANGE. `detail` is a nullable JSON column, so these are
+        // additive keys on new rows; existing rows and every other writer are
+        // untouched, and `describeBlockAction` ignores keys it does not read.
+        //
+        // 🔴 NOT A PER-STEP BRANCH — this stays inside the dispatch rule at the
+        // top of this section. Both values are read off the registry entry
+        // generically (`step.id`, and the entry's own variant resolver); nothing
+        // here tests WHICH step it is.
         detail: {
           action: 'workflow.submit',
           amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: step.id,
+          // Bounded to the entry's declared `variants` — that wrapper, not the
+          // entry's promise, is what makes this safe to persist. For an entry
+          // that makes its model its variant this IS the model; for
+          // `convert-image` it is always `'default'`.
+          variant: resolveStepVariant(step, params),
         },
         dev: claims.dev === true,
       });

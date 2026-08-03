@@ -18,6 +18,7 @@ import {
   planStepSpend,
   postureRequiresAuditableText,
   REGISTERED_STEP_IDS,
+  resolveStepVariant,
   STEP_BILLING_MODES,
   STEP_MODERATION_POSTURES,
   STEP_TYPE_ACCEPTABLE_POSTURES,
@@ -785,6 +786,110 @@ describe('block step registry — billing-mode dispatch', () => {
         expect(String(error)).toContain(`billing mode '${mode}' has no money-path handler`);
       }
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `resolveStepVariant` — the REQUEST-TIME bound on the resolved variant.
+//
+// 🔴 WHAT THESE TESTS ARE. The fixture here is the shape a MODEL-ALLOWLISTED
+// entry would have: `resolveVariant` derives the variant from a param instead of
+// returning a constant. No registered entry has that shape today
+// (`convert-image` returns `() => 'default'`), so these are NOT regression
+// coverage for a live bug — they pin a guard against a shape that arrives with
+// the next entry. Labelled here rather than left to read as coverage of the
+// shipped population.
+//
+// 🔴 WHAT WAS MEASURED ON UNMODIFIED `main`, and why the guard is worth its
+// keep. With this exact fixture, `planStepSpend(entry, { model: <not
+// declared> })` returned `reserveBuzz: undefined`. The router then computes
+// `Math.ceil(undefined)` → `NaN`, and its per-call gate `reserveBuzz >
+// claims.buzzBudget` evaluates **false** for `NaN` — i.e. the budget gate lets
+// it through. That sequence was executed, not reasoned about.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('block step registry — resolveStepVariant bounds the resolved variant', () => {
+  /** Params-derived variant: the model-allowlist shape. */
+  type ModelParams = { model: string };
+  const DECLARED = ['model-a', 'model-b'] as const;
+  const PRICES: Record<string, number> = { 'model-a': 3, 'model-b': 9 };
+
+  function makeModelVariantStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+    return makeFixtureStep({
+      // 🔴 DELIBERATELY WIDER THAN `variants`. A correctly-written entry pins the
+      // schema to the same set (`z.enum(DECLARED)`), which is what makes the
+      // out-of-set case unreachable — the point of this fixture is that the
+      // registry must not DEPEND on the entry having done that.
+      paramSchema: z.object({ model: z.string() }).strict(),
+      variants: [...DECLARED],
+      resolveVariant: (p: ModelParams) => p.model,
+      canonicalParamsFor: (v: string): ModelParams => ({ model: v }),
+      priceForVariant: (v: string) => PRICES[v],
+      estimateBuzz: (p: ModelParams) => PRICES[p.model],
+      ...overrides,
+    } as Partial<AnyBlockStep>);
+  }
+
+  // 🔴 THE NEGATIVE CONTROL. The fixture is valid and prices correctly for BOTH
+  // declared variants — so every rejection below is caused by the one field the
+  // test changes, not by the fixture being malformed.
+  it('returns the resolved variant unchanged when it IS declared, and prices off it', () => {
+    const step = makeModelVariantStep();
+    expect(() => assertStepInvariants('fixture-step', step)).not.toThrow();
+    for (const model of DECLARED) {
+      const params = step.paramSchema.parse({ model });
+      expect(resolveStepVariant(step, params)).toBe(model);
+      expect(planStepSpend(step, params).reserveBuzz).toBe(PRICES[model]);
+    }
+  });
+
+  it('REJECTS a resolution outside the declared variants, naming THIS guard', () => {
+    const step = makeModelVariantStep();
+    const rogue = step.paramSchema.parse({ model: 'model-not-declared' });
+    let error: unknown;
+    try {
+      resolveStepVariant(step, rogue);
+    } catch (e) {
+      error = e;
+    }
+    // Pinned to this guard's own wording, so the test cannot pass because a
+    // neighbouring guard threw first.
+    expect(String(error)).toContain(
+      "resolveVariant() returned 'model-not-declared', which is not one of the declared variants"
+    );
+    expect(String(error)).toContain('[model-a, model-b]');
+    // NOT a billing-mode failure, NOT a load-time clause — the two nearest
+    // neighbours on this path.
+    expect(String(error)).not.toContain('has no money-path handler');
+    expect(String(error)).not.toContain('canonicalParamsFor');
+  });
+
+  // 🔴 THE MONEY-PATH CONSEQUENCE, which is the reason the wrapper exists rather
+  // than a lint. Before it, this call RETURNED `{ reserveBuzz: undefined }` and
+  // the router's budget gate passed on the resulting `NaN` (see the block header
+  // — measured). Now the same call throws, before any reservation exists.
+  it('makes an out-of-set resolution a THROW on the spend path, not an undefined price', () => {
+    const step = makeModelVariantStep();
+    const rogue = step.paramSchema.parse({ model: 'model-not-declared' });
+    expect(() => planStepSpend(step, rogue)).toThrow(/is not one of the declared variants/);
+
+    // The precise thing that used to happen, pinned so a future refactor that
+    // reintroduces it fails here: an unbounded variant reaching `priceForVariant`
+    // yields `undefined`, whose `Math.ceil` is `NaN`, and `NaN > budget` is FALSE
+    // — a budget gate that admits everything.
+    expect(PRICES['model-not-declared']).toBeUndefined();
+    expect(Math.ceil(undefined as unknown as number)).toBeNaN();
+    expect(Math.ceil(undefined as unknown as number) > 1).toBe(false);
+  });
+
+  // The bound is on MEMBERSHIP in `variants` — nothing more. Stated as a test so
+  // the limit is visible rather than inferred from the implementation.
+  it('bounds membership only — it does not re-derive or second-guess the variant', () => {
+    const step = makeModelVariantStep({
+      // Ignores its params entirely and always answers with a DECLARED variant.
+      resolveVariant: () => 'model-b',
+    } as Partial<AnyBlockStep>);
+    const params = step.paramSchema.parse({ model: 'model-a' });
+    expect(resolveStepVariant(step, params)).toBe('model-b');
   });
 });
 
