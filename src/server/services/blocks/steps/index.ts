@@ -379,17 +379,62 @@ export function isResourcePolicyImplemented(policy: StepResourcePolicy): boolean
 const AIR_URN_PREFIX = 'urn:air:';
 
 /**
- * True when any string ANYWHERE in the value is (or embeds) an AIR URN.
+ * Recursion budget for {@link containsAirReference}.
+ *
+ * 🔴 THE SCAN IS TOTAL, NOT PARTIAL — it must never throw. Its declared contract
+ * is a `boolean` (and, one layer up, a `PolicyDecision`), never "may throw", and
+ * `evaluateSubmittedStep` does not wrap it. An unbounded recursion over
+ * attacker-shaped JSON hits `RangeError: Maximum call stack size exceeded` at
+ * roughly 5k nesting levels, which a ~10 KB `[[[[…]]]]` request body reaches
+ * trivially — a free 500 from a value the guard was supposed to *decide* on.
+ *
+ * At the cap the scan returns TRUE (fail-closed): "I could not prove this input
+ * carries no AIR." No legitimate orchestrator step input nests anywhere near
+ * this deep, so the cap costs nothing real and turns a crash into a rejection.
+ */
+const AIR_SCAN_MAX_DEPTH = 128;
+
+/**
+ * True when any string ANYWHERE in the value — a leaf, an array element, an
+ * object VALUE, **or an object KEY** — is (or embeds) an AIR URN.
  *
  * Deliberately a deep scan rather than a check of a known field name: the point
  * is to catch an AIR arriving through a field NOBODY thought to look at, which
  * is the only way the `'none'` declaration can become a lie.
+ *
+ * 🔴 KEYS ARE SCANNED, AND THAT IS NOT DEFENSIVE PARANOIA — IT IS THE
+ * ORCHESTRATOR'S OWN SCHEMA. `ImageJobParams.additionalNetworks` is typed
+ * `{ [key: string]: ImageJobNetworkParams }` and its doc comment reads "Use the
+ * AIR of the network as the key"; `WorkflowCost.fees` is likewise keyed by
+ * resource AIR (both in the generated `@civitai/client` types). A scan over
+ * `Object.values` alone therefore misses the single most likely real-world
+ * placement of an AIR in a submitted step, and returns a confident
+ * `noResourceReference` for `{ additionalNetworks: { 'urn:air:…': {…} } }` — a
+ * LoRA reaching the entitlement belt through the gate's blind spot.
+ *
+ * 🔴 "ANYWHERE" IS SCOPED TO JSON-SHAPED INPUT, AND THE ONE EXCEPTION IS
+ * `toJSON`-BEARING INSTANCES. What makes the totality claim hold in general is
+ * that `Object.entries` visibility ≈ `JSON.stringify` visibility: `Map`, `Set`
+ * and non-enumerable own properties are invisible to BOTH, so an AIR hidden in
+ * one cannot reach the orchestrator either. A class with a `toJSON` breaks that
+ * equivalence — measured: `containsAirReference(new URL('https://x/urn:air:…'))`
+ * returns FALSE while `JSON.stringify` of it CONTAINS the AIR.
+ *
+ * NOT reachable today: `parseStepParams` runs the entry's `.strict()`
+ * `paramSchema` before `buildStep`, and no registered entry admits a class
+ * instance. It becomes reachable the first time an entry declares a
+ * `z.unknown()` / `z.any()` / `z.custom()` param — superjson DOES reconstruct a
+ * `URL` across the tRPC boundary. An entry doing that owes either a stricter
+ * schema or a pre-scan `JSON.parse(JSON.stringify(input))` normalisation.
  */
-export function containsAirReference(value: unknown): boolean {
+export function containsAirReference(value: unknown, depth = 0): boolean {
+  if (depth > AIR_SCAN_MAX_DEPTH) return true;
   if (typeof value === 'string') return value.toLowerCase().includes(AIR_URN_PREFIX);
-  if (Array.isArray(value)) return value.some(containsAirReference);
+  if (Array.isArray(value)) return value.some((v) => containsAirReference(v, depth + 1));
   if (value !== null && typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).some(containsAirReference);
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, v]) => containsAirReference(key, depth + 1) || containsAirReference(v, depth + 1)
+    );
   }
   return false;
 }
@@ -493,7 +538,7 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  * "complete" and review disproved it. Uncovered types whose OUTPUT carries free
  * text include `imageResourceTraining` (`sampleImagesPrompts[]` — echoed user
  * prompts, the SAME rationale used to list `echo` below, which is a live
- * inconsistency), `mediaRating.blockedReason`, `modelParseMetadata.metadata`
+ * inconsistency), `modelParseMetadata.metadata`
  * (a `__metadata__` header out of a user-uploaded safetensors), the
  * `modelClamScan` / `modelPickleScan` `output` + `skipReason` fields, and
  * `qwenImageBench.errors`. They are NOT listed because whether each is really
@@ -501,6 +546,15 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  * make, not one to settle silently in this commit. Listing the candidates is
  * the honest middle: the next person to add a text-producing entry starts from
  * a named set rather than from "complete".
+ *
+ * 🔴 `mediaRating.blockedReason` USED TO BE ON THAT LIST AND WAS REMOVED, not
+ * overlooked. `blockedReason` is platform-AUTHORED moderation copy, not
+ * external free text, and it is now recorded per-row in
+ * `platformDiagnosticFields` (`./request-time-policy`) across the 24 `$type`s
+ * whose output carries it — a `Blob` field, so it reaches far more rows than
+ * `mediaRating` alone. `mediaRating` remains `undecidedNeedsDomainOwner` on its
+ * own merits (`labels[]`, `ageClassification.error`), which is why deleting it
+ * from this list licenses nothing.
  *
  * An unlisted text-IN type registering as `'none'` skips an
  * audit it should run — a real gap, RECORDED AND NOT CLOSED, and a different

@@ -5,11 +5,17 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   getStepByOrchestratorType,
   isModerationPostureImplemented,
+  listRegisteredSteps,
   posturePhaseRequirements,
   STEP_MODERATION_POSTURES,
+  STEP_TYPE_ACCEPTABLE_POSTURES,
   type AnyBlockStep,
   type StepModerationPosture,
 } from './index';
+import {
+  assertPolicyAgreesWithRegistryMap,
+  assertRegistryEntryAgreesWithPolicy,
+} from './request-time-policy';
 import { screenGeneratedText, TEXT_OUTPUT_WITHHELD_MESSAGE } from './text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,6 +365,41 @@ export function assertModerationHandlerTable(
 }
 
 assertModerationHandlerTable(moderationPostureHandlers);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUEST-TIME POLICY CROSS-CHECK — asserted HERE rather than in `./index`.
+//
+// 🔴 WHY THIS FILE. `./request-time-policy` imports `containsAirReference` and
+// the posture/billing types FROM `./index`, so asserting there would create an
+// import CYCLE between two modules that both run load-time invariants — the
+// shape where one module observes the other half-initialised. This file already
+// imports `./index`, already owns a load-time assert, and is on the router's
+// step submit path, so the cross-check runs in production rather than only under
+// test. Same layering reason `./output` and `./text-output-moderation` are leaf
+// modules.
+//
+// 🔴 WHAT IT PINS. `./request-time-policy` derives the same three decisions
+// (posture, entitlement, billing mode) from the SUBMITTED `$type` instead of
+// from a registered entry's declaration — which is what the App Blocks →
+// orchestrator-types pivot needs, because the declarations disappear with
+// registration. Two tables answering the same question is exactly the setup that
+// drifts, so both directions are pinned at load:
+//   1. every REGISTERED entry's declared posture/billing agrees with the derived
+//      policy for the `$type` it submits, and
+//   2. every `$type` the registry's own posture map licenses derives a posture
+//      that map accepts — a wider population than (1), which sees only the one
+//      `$type` a registered entry currently claims.
+// A disagreement is a BUILD failure, not a Friday surprise on a spend path.
+// ─────────────────────────────────────────────────────────────────────────────
+assertPolicyAgreesWithRegistryMap(STEP_TYPE_ACCEPTABLE_POSTURES);
+for (const [id, step] of listRegisteredSteps()) {
+  assertRegistryEntryAgreesWithPolicy({
+    id,
+    orchestratorType: step.orchestratorType,
+    moderationPosture: step.moderationPosture,
+    billingMode: step.billingMode,
+  });
+}
 
 /**
  * Run the declared moderation posture for a step submit.
