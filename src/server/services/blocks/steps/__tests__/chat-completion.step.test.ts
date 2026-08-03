@@ -450,7 +450,9 @@ describe('chat-completion — extractText, against the REAL response', () => {
     expect(chatCompletionStep.extractText({ output: { choices: 'nope' } })).toEqual([]);
     expect(chatCompletionStep.extractText({ output: { choices: [null] } })).toEqual([]);
     expect(chatCompletionStep.extractText({ output: { choices: [{}] } })).toEqual([]);
-    expect(chatCompletionStep.extractText({ output: { choices: [{ message: null }] } })).toEqual([]);
+    expect(chatCompletionStep.extractText({ output: { choices: [{ message: null }] } })).toEqual(
+      []
+    );
     expect(
       chatCompletionStep.extractText({ output: { choices: [{ message: { content: 42 } }] } })
     ).toEqual([]);
@@ -462,9 +464,9 @@ describe('chat-completion — extractText, against the REAL response', () => {
     // equal the captured response held independently at the top of this file.
     for (const variant of CHAT_COMPLETION_MODELS) {
       expect(chatCompletionStep.canonicalOutputFor(variant)).toEqual(REAL_COMPLETED_STEP);
-      expect(chatCompletionStep.extractText(chatCompletionStep.canonicalOutputFor(variant))).toEqual(
-        ['OK']
-      );
+      expect(
+        chatCompletionStep.extractText(chatCompletionStep.canonicalOutputFor(variant))
+      ).toEqual(['OK']);
     }
   });
 });
