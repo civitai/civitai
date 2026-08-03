@@ -1843,6 +1843,17 @@ export const COLLECTION_AI_REVIEW_KEY_PREFIX = 'collection-ai-review:';
 export const collectionAiReviewKey = (collectionId: number) =>
   `${COLLECTION_AI_REVIEW_KEY_PREFIX}${collectionId}`;
 
+// The prompt is deliberately not in the repo: it describes exactly which signals reject versus
+// escalate, and this repository is public.
+export const getCollectionAiReviewDefaultPrompt = async () => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: `${COLLECTION_AI_REVIEW_KEY_PREFIX}default` },
+    select: { value: true },
+  });
+  const value = row?.value as { prompt?: string } | null;
+  return value?.prompt ?? '';
+};
+
 export const getCollectionAiReview = async (collectionId: number) => {
   const row = await dbRead.keyValue.findUnique({
     where: { key: collectionAiReviewKey(collectionId) },
