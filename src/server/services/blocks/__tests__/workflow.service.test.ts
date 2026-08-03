@@ -40,6 +40,7 @@ import {
   getStepByOrchestratorType,
   listRegisteredSteps,
   NATIVELY_EXTRACTED_STEP_TYPES,
+  postureProducesMedia,
   type AnyBlockStep,
 } from '../steps';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -385,9 +386,7 @@ describe('snapshotFromWorkflow', () => {
     });
 
     it('omits spentAccountType when the transactions list is empty', () => {
-      const snap = snapshotFromWorkflow(
-        fakeWorkflow({ transactions: { list: [] } }) as never
-      );
+      const snap = snapshotFromWorkflow(fakeWorkflow({ transactions: { list: [] } }) as never);
       expect(snap.spentAccountType).toBeUndefined();
     });
 
@@ -1172,9 +1171,7 @@ describe('block input yields populated workflow metadata params (real graph path
     // The checkpoint anchor shows up in the resources snapshot (this is the part
     // of `workflowMetadata.resources` the graph resolves without enrichment).
     expect(resources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } })])
     );
   });
 
@@ -1278,7 +1275,11 @@ describe('block input yields populated workflow metadata params (real graph path
       if (!result.success) {
         throw new Error(`img2img:edit graph validation failed: ${JSON.stringify(result.errors)}`);
       }
-      const data = result.data as { workflow: string; ecosystem: string; images?: Array<{ url: string }> };
+      const data = result.data as {
+        workflow: string;
+        ecosystem: string;
+        images?: Array<{ url: string }>;
+      };
       expect(data.workflow).toBe('img2img:edit');
       expect(data.ecosystem).toBe(ecoKey);
       // The bounded source image rides into the graph's reference `images` node.
@@ -1666,10 +1667,7 @@ describe('edit-only checkpoint version + no sourceImage', () => {
 
   // ── NO REGRESSION ──────────────────────────────────────────────────────────
   it('still accepts an edit-only version WITH a sourceImage (img2img:edit)', () => {
-    const out = buildImageWorkflowInput(
-      body({ sourceImage }) as never,
-      resolved(QWEN_EDIT_V2511)
-    );
+    const out = buildImageWorkflowInput(body({ sourceImage }) as never, resolved(QWEN_EDIT_V2511));
     expect(out.workflow).toBe('img2img:edit');
     expect(out.ecosystem).toBe('Qwen');
     // The version the caller asked for is the one that anchors the graph.
@@ -1993,7 +1991,11 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
   const recipe = getRecipe('seamless-pano-360')!;
 
   it('applies the recipe param schema then runs its pure builder', () => {
-    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1, engine: 'zimage-turbo' });
+    const input = buildCustomComfyWorkflowInput(recipe, {
+      prompt: 'a lake',
+      seed: 1,
+      engine: 'zimage-turbo',
+    });
     expect(input.trace).toBe('binary');
     expect(input.resources[0]).toContain('z_image_turbo');
     expect(input.workflow['1'].class_type).toBe('UNETLoader');
@@ -2027,12 +2029,16 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
   it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     expect(
-      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds)
-        .timeout
+      createBlockCustomComfyStep(
+        input,
+        recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds
+      ).timeout
     ).toBe('00:01:30');
     expect(
-      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds)
-        .timeout
+      createBlockCustomComfyStep(
+        input,
+        recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds
+      ).timeout
     ).toBe('00:02:30');
   });
 });
@@ -2076,7 +2082,13 @@ describe('projectAppWorkflow: customComfy blobs', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true, nsfwLevel: 'pg' },
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/pano.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'p2', type: 'image', url: 'https://blocked/', available: false },
             ],
           },
@@ -2125,12 +2137,40 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
     });
   }
 
+  // 🔴 POSTURE-GATED, ON THE REGISTRY'S OWN PREDICATE — not on
+  // `extractOutput != null`. Both loops below used to call `step.extractOutput`
+  // for EVERY entry, which was silently fine only while every registered entry
+  // produced media. The first `'textOutput'` entry made it a raw
+  // `TypeError: step.extractOutput is not a function`, because a text entry has
+  // no media extractor BY CONSTRUCTION (`TextOutputSurface.extractOutput?: never`
+  // plus load-time clause 8-ii).
+  //
+  // 🔴 THE GATE MUST NOT MAKE THE TEXT HALF VACUOUS. Skipping text entries would
+  // turn a population test into one that covers only the population it already
+  // covered. So each loop asserts the MIRROR property for a text entry: it
+  // contributes NOTHING to the media channel. That is the read-path half of the
+  // anti-smuggling rule — `StepOutputMedia.url` is a bare string that reaches
+  // `imageUrls` / `images[].url` without ever meeting
+  // `attachModeratedStepTextOutputs`, so a text step appearing there at all
+  // would be generated text published unscanned.
+  //
+  // Keyed on `postureProducesMedia` because that is what `snapshotFromWorkflow`
+  // and `projectAppWorkflow` themselves key on — one rule, one predicate, and
+  // the test cannot drift from the code by asking a different question.
   it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const expected = step.extractOutput(step.canonicalOutputFor(variant)).map((m) => m.url);
-        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
         const snap = snapshotFromWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            snap.imageUrls ?? [],
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).map((m) => m.url);
+        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
         expect(
           snap.imageUrls,
           `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
@@ -2143,8 +2183,16 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const expected = step.extractOutput(step.canonicalOutputFor(variant));
         const projected = projectAppWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            projected.images,
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant));
         expect(
           projected.images.map((i) => i.url),
           `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
@@ -2155,6 +2203,24 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         );
       }
     }
+  });
+
+  // 🔴 A POSITIVE CONTROL ON THE GATE ITSELF. The two loops above now `continue`
+  // on a text entry, and a gate that skips everything is indistinguishable from
+  // a gate that works. This asserts the population actually contains BOTH
+  // shapes, so neither branch above is vacuous — and it fails loudly if the last
+  // entry of either kind is ever removed, rather than leaving a silently
+  // one-sided test behind.
+  it('the registered population contains BOTH a media entry and a text entry', () => {
+    const shapes = listRegisteredSteps().map(([, s]) => postureProducesMedia(s.moderationPosture));
+    expect(
+      shapes.filter(Boolean).length,
+      'no MEDIA entry — the media branch above is vacuous'
+    ).toBeGreaterThan(0);
+    expect(
+      shapes.filter((m) => !m).length,
+      'no TEXT entry — the text branch above is vacuous'
+    ).toBeGreaterThan(0);
   });
 
   // The concrete shape, pinned literally rather than derived from the extractor
@@ -2347,7 +2413,10 @@ describe('sourceImages[] — normalization + per-ecosystem cap', () => {
 
   // ── the emitted graph input ────────────────────────────────────────────────
   it('emits EVERY array element into the graph images[] (order preserved)', () => {
-    const out = buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Qwen'));
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: images(3) }) as never,
+      resolved('Qwen')
+    );
     expect(out.workflow).toBe('img2img:edit');
     expect(out.images).toEqual([
       { url: 'https://image.civitai.com/abc/0.jpeg', width: 1024, height: 1024 },
