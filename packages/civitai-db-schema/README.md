@@ -24,6 +24,7 @@ you import the `DB` type or enums yourself.
 | `@civitai/db-schema/kysely` | `DB` — the full Kysely schema type (pure types, no runtime) |
 | `@civitai/db-schema/enums` | Prisma enums |
 | `@civitai/db-schema/models` | model types |
+| `@civitai/db-schema/kysely/updated-at-tables` | `UPDATED_AT_TABLES` — the `keyof DB` set of tables with a Prisma `@updatedAt` column, for `@civitai/db-queries`' `updatedAtPlugin` |
 
 ## Use
 
@@ -40,4 +41,7 @@ None.
 
 - The Prisma entry needs a generated client (`pnpm run db:generate`). The `/kysely` and `/enums`
   subpaths are pure types/values and need no generation step at type-check time.
+- Everything under `src/` is generated — never hand-edit it. Each artifact has a `generator` block in
+  `prisma/schema.full.prisma`; if you add a generator script, register it there or `prisma generate`
+  never runs it and its output silently rots. `pnpm run db:check-generated` is the drift gate (CI).
 - No env, no DB connection — this is types/contracts only. Connections live in `@civitai/db`.

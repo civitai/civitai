@@ -32,6 +32,16 @@ generator kysely {
   enumFileName = "enums.ts"
 }
 
+// The set of tables carrying a Prisma `@updatedAt` column, consumed by @civitai/db-queries'
+// updatedAtPlugin (Kysely does not auto-stamp `updatedAt` and there is no DB trigger). MUST stay
+// registered here: it runs off the same DMMF as the `kysely` generator above, which is the only
+// thing keeping the set from drifting out of `keyof DB`. Emitted last so it regenerates alongside
+// types.ts on every `prisma generate`; `pnpm db:check-generated` then gates the drift.
+generator updatedAtTables {
+  provider = "node ./scripts/prisma-updated-at-generator.mjs"
+  output   = "../src/kysely/updated-at-tables.ts"
+}
+
 datasource db {
   provider          = "postgresql"
   // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below

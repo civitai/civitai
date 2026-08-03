@@ -174,6 +174,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Generated schema artifacts must match the schema they claim to be generated from.
+      # Typecheck alone only catches drift in ONE direction: a table in UPDATED_AT_TABLES
+      # that is no longer `keyof DB` is a compile error, but a table MISSING from the set
+      # is silently legal and just stops auto-stamping `updatedAt`. That silent direction
+      # is what left 5 tables unstamped and 1 dropped table stale until #3575's generator
+      # was actually registered in schema.full.prisma.
+      - name: Generated schema artifacts are in sync
+        run: pnpm run db:check-generated
+
       - name: Typecheck
         run: pnpm run typecheck
 
