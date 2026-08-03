@@ -51,6 +51,24 @@ import { containsAirReference } from './index';
 //      drops out of the population entirely — again fail-open. Resolution is
 //      case-insensitive.
 //
+//   3. 🔴 A ONE-LEVEL WALK OF THE DECLARED `<Name>Output` IS NOT THE POPULATION.
+//      Three generated types EXTEND another output with an intersection, and a
+//      walk that stops at the declared type reports "clean" for all three:
+//        - `AudioComposeMediaOutput = Omit<ComposeMediaOutput,'type'> & { audioBlob: AudioBlob; … }`
+//        - `VideoComposeMediaOutput = Omit<ComposeMediaOutput,'type'> & { videoBlob: VideoBlob; … }`
+//        - `HaiperVideoGenOutput = VideoGenOutput & { …; externalTOSViolation?; message?: null | string }`
+//      `ComposeMediaOutput`'s own doc says the runtime value IS one of the first
+//      two, discriminated on `type`; `composeMedia` therefore reaches a
+//      `blockedReason` that its declared type does not mention at all. The
+//      Haiper case is what reclassified the `videoGen` row (see it). Those three
+//      are the COMPLETE set of `*Output` intersection types in
+//      v0.2.0-beta.83 — enumerated over the generated file, not sampled.
+//
+// 🔴 THERE ARE TWO PROVENANCE COLUMNS, NOT ONE — `textFields` (text from outside
+// the platform's control) and `platformDiagnosticFields` (text the orchestrator
+// itself authored, i.e. `Blob.blockedReason`). See `StepTypePolicy` for why the
+// split exists and what it deliberately does NOT close.
+//
 // 43 `$type` values exist in the generated types; all 43 are covered below.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -112,6 +130,52 @@ export type StepTypePolicy = {
    */
   textFields: readonly string[];
   /**
+   * 🔴 PLATFORM-AUTHORED DIAGNOSTIC STRINGS reachable in the output — today,
+   * every `Blob.blockedReason` the type can surface. Enumerated from the
+   * generated types exactly like `textFields`, and required on every row (`[]`
+   * when there are none) so it cannot be silently omitted.
+   *
+   * WHY THIS IS A SEPARATE COLUMN AND NOT PART OF `textFields`. Both columns
+   * record free text, but they answer different questions and a reviewer needs
+   * to be able to tell them apart at a glance:
+   *
+   *   - `textFields` is text whose CONTENT ORIGINATES OUTSIDE the platform's
+   *     control — a model's output, a caller's echo, a string lifted out of a
+   *     user-uploaded artifact, a third-party provider's message. It is what the
+   *     `textSurface` classification and its posture are ABOUT.
+   *   - This column is text the CIVITAI ORCHESTRATOR ITSELF authored. `Blob`'s
+   *     generated doc reads "Get an optional reason for why the blob was
+   *     blocked" — it is our own moderation pipeline explaining its own
+   *     decision, not a surface an app or a model can write into.
+   *
+   * 🔴 WHY THE COLUMN HAD TO EXIST AT ALL — AND WHAT IT DOES NOT FIX. Before it,
+   * 22 rows classified `textSurface: 'none'` / `textFields: []` — whose own
+   * definition is "structural strings (urls, ids, hashes) only" — each reached a
+   * `blockedReason?: null | string`. `convertImage.blob.blockedReason` is the
+   * plainest case. That made those rows SELF-CONTRADICTING, and in the
+   * fail-OPEN direction: the same class as the `TranscriptionOutput.text`
+   * near-miss recorded in the header above.
+   *
+   * This column makes the surface RECORDED. It does NOT scan it, and no posture
+   * covers it — the rows keep `textSurface: 'none'` deliberately, because the
+   * alternative considered was reclassifying all 22 to
+   * `undecidedNeedsDomainOwner`, which would make `convertImage` — the ONLY
+   * shipped registry entry — unsubmittable and take the capability down over a
+   * first-party moderation string. Naming the residue is the honest half of the
+   * fix; whether the host should scan, redact, or simply STRIP `blockedReason`
+   * at the output-extraction boundary (the cheap deterministic close, since no
+   * app has been promised the field) is a domain-owner call this module is not
+   * entitled to make silently.
+   *
+   * 🔴 IT IS ENUMERATED THROUGH INTERSECTION/EXTENSION TYPES, NOT A ONE-LEVEL
+   * WALK. `composeMedia`'s declared output is `ComposeMediaOutput`, which
+   * carries no blob at all — but its generated doc says the runtime value is
+   * discriminated on `type` into `AudioComposeMediaOutput` (`audioBlob`) or
+   * `VideoComposeMediaOutput` (`videoBlob`), both `Omit<ComposeMediaOutput,
+   * 'type'> & { … }`. A walk of the declared type alone reports "clean" for it.
+   */
+  platformDiagnosticFields: readonly string[];
+  /**
    * 🔴 TRUE when the `$type` can return MEDIA — including a type whose PRIMARY
    * surface is text. See `chatCompletion` below; this flag exists because of it.
    */
@@ -164,9 +228,13 @@ const STEP_TYPE_POLICY_TABLE = {
     textFields: [
       'choices[].message.content',
       'choices[].message.refusal',
+      // "Optional name for the participant" — a free string on the ASSISTANT
+      // message, so it is model-side output, not a role enum.
+      'choices[].message.name',
       'choices[].message.tool_calls[].function.arguments',
       'choices[].finishReason',
     ],
+    platformDiagnosticFields: [],
     // 🔴 THE CROSS-AXIS CASE, AND THE REASON `emitsMedia` EXISTS AT ALL.
     // `ChatCompletionInput.modalities` ("Output modalities the model should
     // produce. Defaults to text-only when omitted.") makes this `$type` return
@@ -194,6 +262,7 @@ const STEP_TYPE_POLICY_TABLE = {
   mediaCaptioning: {
     textSurface: 'generatedText',
     textFields: ['caption'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -204,10 +273,19 @@ const STEP_TYPE_POLICY_TABLE = {
       'results[].text',
       'results[].caption',
       'results[].lyrics',
+      // 🔴 `bpm` AND `duration` ARE `null | string`, NOT NUMBERS. Every field on
+      // `AudioCaptioningOutputItem` is an unconstrained string with no doc
+      // comment, so there is no evidence these two are more bounded than
+      // `keyScale` / `timeSignature`, which the row already lists. Excluding
+      // them on the ASSUMPTION that a field named `bpm` holds a number is the
+      // name-heuristic mistake the header records.
+      'results[].bpm',
       'results[].keyScale',
       'results[].timeSignature',
+      'results[].duration',
       'results[].language',
     ],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -220,6 +298,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // `extractText` contract makes "not returned" mean "not published", so the
     // safe reading is that BOTH must be returned or the capability is partial.
     textFields: ['text', 'timeStamps[].text'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -232,6 +311,7 @@ const STEP_TYPE_POLICY_TABLE = {
       'recommendations[]',
       'issues[].description',
     ],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     // `PromptEnhancementInput.images[]` are reference images, not AIRs.
     airBearingInput: false,
@@ -248,11 +328,21 @@ const STEP_TYPE_POLICY_TABLE = {
       'results[].modelReason',
       'results[].postprocess',
       'results[].error',
+      // 🔴 `topToken` AND `finishReason` ARE THE MODEL'S OWN OUTPUT, and both
+      // are plain `string` on `XGuardLabelResult` with no doc and no enum —
+      // `topToken` is literally the guard model's highest-probability token.
+      // Reading `finishReason` as a bounded enum is an assumption the generated
+      // type does not support.
+      'results[].topToken',
+      'results[].finishReason',
       'results[].matchedTerms.text[]',
       'results[].matchedTerms.positivePrompt[]',
       'results[].matchedTerms.negativePrompt[]',
+      // Caller-named custom signals echoed back on the moderation result.
+      'signalMetadata.customSignals[].name',
       'triggeredLabels[]',
     ],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -263,6 +353,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // `postureForTextSurface` gives the two the SAME answer, deliberately.
     textSurface: 'echoedInput',
     textFields: ['message'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -279,21 +370,58 @@ const STEP_TYPE_POLICY_TABLE = {
     // inconsistency". This row records the inconsistency rather than resolving
     // it by fiat.
     //
-    // 🔴 ONLY `sampleImagesPrompts[]` IS TEXT. The sibling string arrays
-    // `epochs[].sampleImages[]` and `sampleInputImages[]` are BLOB NAMES per
-    // their generated doc comments ("the names of the blobs that represent
-    // sample images"), not prose — listing them here would overstate the
-    // surface, and an over-broad `textFields` is how a reviewer stops trusting
-    // the column.
+    // 🔴 ONLY `sampleImagesPrompts[]` IS TEXT — but the two sibling string
+    // arrays are excluded on DIFFERENT evidence, and the earlier version of this
+    // comment cited one doc for both:
+    //
+    //   - `epochs[].sampleImages[]` is blob names, and its own generated doc
+    //     says so verbatim: "Get a list of the names of the blobs that represent
+    //     sample images".
+    //   - `sampleInputImages[]` has NO such doc. Its generated comment reads
+    //     only "The selected images for sample images" — which does not say
+    //     names, urls, or anything else. It is excluded because it is a
+    //     REFERENCE LIST (the images the user picked as training samples, echoed
+    //     back), not because a doc comment classified it. Under either reading —
+    //     blob names or urls — it is not prose.
+    //
+    // Listing either here would overstate the surface, and an over-broad
+    // `textFields` is how a reviewer stops trusting the column. Nothing is
+    // licensed by the distinction: this row is `undecidedNeedsDomainOwner`
+    // regardless.
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['sampleImagesPrompts[]'],
+    platformDiagnosticFields: [],
     emitsMedia: true,
     airBearingInput: true, // `model` — "The primary model to train upon."
     billingMode: null,
   },
   mediaRating: {
+    // 🔴 `blockedReason` MOVED OUT OF `textFields` INTO
+    // `platformDiagnosticFields`, and that move is the whole reason the second
+    // column exists. This row was the ONLY place `blockedReason` was recorded as
+    // text, while the same field reached 22 rows classified `'none'` — one
+    // field, called text here and absent there. The row's classification is
+    // UNCHANGED and does not depend on the move: `labels[]` and
+    // `ageClassification.error` are model output and keep it undecided on their
+    // own.
+    //
+    // 🔴 THE FOUR CLASSIFIER LABELS ARE MODEL OUTPUT, NOT AN ENUM. All four are
+    // plain `string`, and `aiRecognition.label`'s own doc says it is "taken from
+    // the model's own id2label" — i.e. whatever labels the deployed checkpoint
+    // happens to define, which changes with the model and is not pinned by the
+    // generated type. The parenthesised examples in the other three docs
+    // ("adult"/"child"/"teen", "anime"/"real", "human"/"no_human") are EXAMPLES,
+    // and reading an example list as a closed set is the fail-open direction.
     textSurface: 'undecidedNeedsDomainOwner',
-    textFields: ['blockedReason', 'labels[]', 'ageClassification.error'],
+    textFields: [
+      'labels[]',
+      'ageClassification.detections[].ageLabel',
+      'ageClassification.error',
+      'aiRecognition.label',
+      'animeRecognition.label',
+      'humanRecognition.label',
+    ],
+    platformDiagnosticFields: ['blockedReason'],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -304,6 +432,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // string.
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['metadata'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true, // `model` — "The AIR of the model file to read metadata from."
     billingMode: null,
@@ -311,6 +440,7 @@ const STEP_TYPE_POLICY_TABLE = {
   modelClamScan: {
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['output'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
@@ -320,6 +450,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // user-uploaded pickle — attacker-chosen strings, published verbatim.
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['output', 'skipReason', 'globalImports[]', 'dangerousImports[]'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
@@ -331,7 +462,13 @@ const STEP_TYPE_POLICY_TABLE = {
     // field. Both are recorded because an extractor written from the registry's
     // wording would miss one of them.
     textSurface: 'undecidedNeedsDomainOwner',
-    textFields: ['results[].error', 'results[].errors[]', 'results[].scores[].name'],
+    // 🔴 `scores[]` IS A TREE, NOT A LIST. `QwenImageBenchScoreNode` is
+    // `{ name: string; score?; children: Array<QwenImageBenchScoreNode> }` —
+    // self-referential, so `results[].scores[].name` names only the ROOT level
+    // and every nested `name` below it was uncounted. The `**` marks the
+    // recursive descent; there is no depth bound in the generated type.
+    textFields: ['results[].error', 'results[].errors[]', 'results[].scores[]**.name'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true, // `model` — "The AIR model to use for the benchmark judge."
     billingMode: null,
@@ -342,6 +479,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // otherwise media-only type.
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['errors[]'],
+    platformDiagnosticFields: ['images[].blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -353,6 +491,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // to an app is a disclosure question, which is a domain owner's to answer.
     textSurface: 'undecidedNeedsDomainOwner',
     textFields: ['labels[][].age'],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
@@ -365,6 +504,7 @@ const STEP_TYPE_POLICY_TABLE = {
   convertImage: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blob.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     // 🔴 THE ONE EVIDENCED BILLING MODE, and the evidence is the shipped
@@ -377,6 +517,7 @@ const STEP_TYPE_POLICY_TABLE = {
   aceStepAudio: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blob.blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -384,6 +525,7 @@ const STEP_TYPE_POLICY_TABLE = {
   blobArchive: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -391,6 +533,7 @@ const STEP_TYPE_POLICY_TABLE = {
   comfy: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blobs[].blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -399,13 +542,27 @@ const STEP_TYPE_POLICY_TABLE = {
     // `nodepack` / `layerAir` are AIRs, not prose — structural identifiers.
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [
+      'results[].layer.blockedReason',
+      'results[].objectInfo.blockedReason',
+      'results[].web.blockedReason',
+    ],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
   },
   composeMedia: {
+    // 🔴 THE DIAGNOSTIC PATHS BELOW EXIST ON NEITHER FIELD OF THE DECLARED
+    // OUTPUT TYPE. `ComposeMediaOutput` is `{ type; elements[] }` and reaches no
+    // `Blob` whatsoever — a walk of it alone says "clean". Its own generated doc
+    // says the runtime value is discriminated on `type` into
+    // `AudioComposeMediaOutput` (`audioBlob: AudioBlob`) or
+    // `VideoComposeMediaOutput` (`videoBlob: VideoBlob`), and both blobs carry
+    // `blockedReason`. Paths are given per-variant; exactly one is present on
+    // any given response.
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['audioBlob.blockedReason', 'videoBlob.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -413,6 +570,7 @@ const STEP_TYPE_POLICY_TABLE = {
   customComfy: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blobs[].blockedReason', 'tempBlobs[].blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -420,6 +578,7 @@ const STEP_TYPE_POLICY_TABLE = {
   imageBackgroundRemoval: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['image.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -427,6 +586,7 @@ const STEP_TYPE_POLICY_TABLE = {
   imageToSvg: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['svg.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -434,6 +594,7 @@ const STEP_TYPE_POLICY_TABLE = {
   imageUpload: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blob.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -441,6 +602,7 @@ const STEP_TYPE_POLICY_TABLE = {
   imageUpscaler: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blob.blockedReason'],
     emitsMedia: true,
     // The named bypass case in `index.ts`: `model` takes an arbitrary AIR URN.
     airBearingInput: true,
@@ -449,6 +611,7 @@ const STEP_TYPE_POLICY_TABLE = {
   mediaHash: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -456,6 +619,7 @@ const STEP_TYPE_POLICY_TABLE = {
   model3DPreview: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['images[].blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -463,6 +627,7 @@ const STEP_TYPE_POLICY_TABLE = {
   modelHash: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
@@ -470,6 +635,21 @@ const STEP_TYPE_POLICY_TABLE = {
   polyGen: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [
+      'model.blockedReason',
+      'fbxModel.blockedReason',
+      'thumbnail.blockedReason',
+      'riggedModel.blockedReason',
+      'riggedFbxModel.blockedReason',
+      'animatedModel.blockedReason',
+      'animatedFbxModel.blockedReason',
+      'basicAnimations.walkingModel.blockedReason',
+      'basicAnimations.walkingFbxModel.blockedReason',
+      'basicAnimations.walkingArmatureModel.blockedReason',
+      'basicAnimations.runningModel.blockedReason',
+      'basicAnimations.runningFbxModel.blockedReason',
+      'basicAnimations.runningArmatureModel.blockedReason',
+    ],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -477,6 +657,7 @@ const STEP_TYPE_POLICY_TABLE = {
   preprocessImage: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['blob.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -484,6 +665,7 @@ const STEP_TYPE_POLICY_TABLE = {
   textToImage: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['images[].blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -494,6 +676,7 @@ const STEP_TYPE_POLICY_TABLE = {
     // separate, still-open question `index.ts` documents at length.
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['audioBlob.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -501,6 +684,7 @@ const STEP_TYPE_POLICY_TABLE = {
   training: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['epochs[].model.blockedReason', 'epochs[].samples[].blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -508,6 +692,7 @@ const STEP_TYPE_POLICY_TABLE = {
   transcode: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -515,6 +700,7 @@ const STEP_TYPE_POLICY_TABLE = {
   videoBackgroundRemoval: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['video.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -522,6 +708,7 @@ const STEP_TYPE_POLICY_TABLE = {
   videoEnhancement: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['video.blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -529,13 +716,39 @@ const STEP_TYPE_POLICY_TABLE = {
   videoFrameExtraction: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['frames[].blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
   },
   videoGen: {
-    textSurface: 'none',
-    textFields: [],
+    // 🔴 RECLASSIFIED FROM `'none'` — A THIRD-PARTY PROVIDER MESSAGE THAT A
+    // ONE-LEVEL WALK OF THE DECLARED OUTPUT TYPE CANNOT SEE.
+    //
+    // `VideoGenStep.output` is typed `VideoGenOutput`, which holds only
+    // `video` + `additionalVideos` and no text at all. But the generated types
+    // also declare
+    //   `HaiperVideoGenOutput = VideoGenOutput & { progress?; externalTOSViolation?; message?: null | string }`
+    // and its input sibling `HaiperVideoGenInput = Omit<VideoGenInput,'engine'>
+    // & { engine: 'haiper'; … }` — i.e. `videoGen` submitted with
+    // `engine: 'haiper'` is served by the Haiper provider, and `message`
+    // alongside `externalTOSViolation` is that provider's MODERATION EXPLANATION.
+    // Third-party free text, published verbatim: the same class as
+    // `modelClamScan`'s raw scanner output, which is already undecided.
+    //
+    // 🔴 HONEST LIMIT ON THE EVIDENCE. Unlike `composeMedia` — whose generated
+    // doc names its two runtime subtypes explicitly — nothing in the generated
+    // types wires `HaiperVideoGenOutput` into a union or a step declaration; it
+    // is referenced nowhere else in the file. The inference is from the
+    // engine-keyed input/output naming pair. That is why this row goes to
+    // `undecidedNeedsDomainOwner` (a refusal pending a ruling) rather than to
+    // `generatedText` (an assertion about what the scan should do to it).
+    //
+    // Costs nothing today: `convertImage` is the only registry entry, so no
+    // shipped capability submits `videoGen`.
+    textSurface: 'undecidedNeedsDomainOwner',
+    textFields: ['message'],
+    platformDiagnosticFields: ['video.blockedReason', 'additionalVideos[].blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -543,6 +756,7 @@ const STEP_TYPE_POLICY_TABLE = {
   videoInterpolation: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['video.blockedReason'],
     emitsMedia: true,
     airBearingInput: true,
     billingMode: null,
@@ -550,6 +764,7 @@ const STEP_TYPE_POLICY_TABLE = {
   videoMetadata: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: false,
     billingMode: null,
@@ -557,6 +772,7 @@ const STEP_TYPE_POLICY_TABLE = {
   videoUpscaler: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: ['video.blockedReason'],
     emitsMedia: true,
     airBearingInput: false,
     billingMode: null,
@@ -564,6 +780,7 @@ const STEP_TYPE_POLICY_TABLE = {
   wdTagging: {
     textSurface: 'none',
     textFields: [],
+    platformDiagnosticFields: [],
     emitsMedia: false,
     airBearingInput: true,
     billingMode: null,
@@ -594,7 +811,14 @@ export const STEP_TYPE_POLICY: Readonly<Record<string, StepTypePolicy>> = Object
     Object.fromEntries(
       Object.entries(STEP_TYPE_POLICY_TABLE).map(([type, policy]) => [
         type,
-        Object.freeze({ ...policy, textFields: Object.freeze([...policy.textFields]) }),
+        Object.freeze({
+          ...policy,
+          textFields: Object.freeze([...policy.textFields]),
+          // Both provenance columns are frozen. `Object.freeze` on the row is
+          // SHALLOW, so an array left unfrozen stays push-able through a frozen
+          // row — which is the same hole `textFields` was closed against.
+          platformDiagnosticFields: Object.freeze([...policy.platformDiagnosticFields]),
+        }),
       ])
     )
   )
@@ -728,6 +952,20 @@ export function requiredPostureForSubmittedType(
  * Civitai-hosted url whose path contains it) is rejected too. Refusing a
  * pathological url costs one bounced request; forwarding an unentitled AIR costs
  * the entitlement belt.
+ *
+ * 🔴 "ANYWHERE" INCLUDES OBJECT KEYS, and that had to be made true rather than
+ * merely asserted. The scan originally recursed over `Object.values` only, so
+ * `{ additionalNetworks: { 'urn:air:sd1:lora:civitai:1234@5678': { strength: 1 } } }`
+ * returned `noResourceReference` and the composite gate ACCEPTED it — which is
+ * not a hypothetical payload but the shape the orchestrator's own generated
+ * schema prescribes (`additionalNetworks` is documented "Use the AIR of the
+ * network as the key"; `WorkflowCost.fees` is keyed by resource AIR the same
+ * way). Fixed at the shared helper, which also strengthens the registry's
+ * load-time clause-7 probe that calls it.
+ *
+ * 🔴 IT IS ALSO TOTAL — it cannot throw. The scan carries a depth cap and
+ * returns "contains an AIR" (i.e. this rejection) when it is hit, so a deeply
+ * nested body is a decided rejection rather than an unhandled `RangeError`.
  */
 export function screenSubmittedStepResources(submitted: {
   orchestratorType: string;

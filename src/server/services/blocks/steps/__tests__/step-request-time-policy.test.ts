@@ -196,6 +196,96 @@ describe('request-time policy: GUARD 2 — resource / AIR entitlement on the sub
     if (d.ok) throw new Error('unreachable');
     expect(d.code).toBe('unknownStepType');
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 AIR CARRIED IN AN OBJECT **KEY**.
+  //
+  // The scan recursed over `Object.values` only, so every case below returned
+  // `{ ok: true, value: 'noResourceReference' }` and the composite gate
+  // ACCEPTED the submit. This is not a contrived shape: the orchestrator's own
+  // generated types prescribe it. `ImageJobParams.additionalNetworks` is
+  // `{ [key: string]: ImageJobNetworkParams }` documented "Use the AIR of the
+  // network as the key", and `WorkflowCost.fees` is keyed by resource AIR the
+  // same way. An AIR-keyed map is the MOST likely real placement, not the least.
+  //
+  // Each case is paired with the value-carried equivalent as a positive control,
+  // so a scan that silently stopped scanning anything at all cannot pass.
+  // ───────────────────────────────────────────────────────────────────────────
+  const KEY_AIR = 'urn:air:sd1:lora:civitai:1234@5678';
+
+  it('FAILS CLOSED on the literal `additionalNetworks` AIR-keyed map shape', () => {
+    const control = screenSubmittedStepResources({
+      orchestratorType: 'textToImage',
+      input: { additionalNetworks: { theKey: { air: KEY_AIR, strength: 1 } } },
+    });
+    expect(control.ok).toBe(false); // positive control: AIR in a VALUE
+
+    const d = screenSubmittedStepResources({
+      orchestratorType: 'textToImage',
+      input: { additionalNetworks: { [KEY_AIR]: { strength: 1, triggerWord: 'x' } } },
+    });
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('unentitledResourceReference');
+  });
+
+  it('FAILS CLOSED on an AIR key at the TOP level of the input', () => {
+    const d = screenSubmittedStepResources({
+      orchestratorType: 'convertImage',
+      input: { [KEY_AIR]: 1 },
+    });
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('unentitledResourceReference');
+  });
+
+  it('FAILS CLOSED on an AIR key buried in a nested / array-wrapped position', () => {
+    const d = screenSubmittedStepResources({
+      orchestratorType: 'convertImage',
+      input: { a: { b: [{ c: { [KEY_AIR.toUpperCase()]: { strength: 0.8 } } }] } },
+    });
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('unentitledResourceReference');
+  });
+
+  it('FAILS CLOSED on the `WorkflowCost.fees` AIR-keyed shape', () => {
+    const d = screenSubmittedStepResources({
+      orchestratorType: 'convertImage',
+      input: { cost: { fees: { [KEY_AIR]: 0.02 } } },
+    });
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('unentitledResourceReference');
+  });
+
+  it('the COMPOSITE gate rejects an AIR-keyed submit end to end', () => {
+    // The full accept was the actual exposure: `evaluateSubmittedStep` returned
+    // `{ ok: true, value: { posture: 'none', billingMode: 'prepaidFixed', … } }`
+    // for this exact payload.
+    const d = evaluateSubmittedStep({
+      orchestratorType: 'convertImage',
+      input: { additionalNetworks: { [KEY_AIR]: { strength: 1 } } },
+    });
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('unentitledResourceReference');
+  });
+
+  it('IS TOTAL — a pathologically nested input is a DECISION, not a RangeError', () => {
+    // ~10 KB of `[[[[…]]]]` blows an unbounded recursion's call stack. The
+    // declared contract is `PolicyDecision`, never "may throw", and
+    // `evaluateSubmittedStep` does not wrap this call.
+    let deep: unknown = 'leaf';
+    for (let i = 0; i < 20000; i++) deep = [deep];
+    let d: ReturnType<typeof screenSubmittedStepResources>;
+    expect(() => {
+      d = screenSubmittedStepResources({ orchestratorType: 'convertImage', input: deep });
+    }).not.toThrow();
+    expect(d!.ok).toBe(false);
+    if (d!.ok) throw new Error('unreachable');
+    expect(d!.code).toBe('unentitledResourceReference');
+  });
 });
 
 describe('request-time policy: GUARD 3 — billing mode from the submitted $type', () => {
@@ -444,5 +534,279 @@ describe('request-time policy: the findings this table records', () => {
       const d = requiredPostureForSubmittedType(type);
       expect(d.ok, `${type} is submittable but its classification is undecided`).toBe(false);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `platformDiagnosticFields` — the DRIFT GUARD, derived from the generated types
+// rather than restated from the table.
+//
+// 🔴 WHAT WENT WRONG AND WHY A REVIEW-ONLY COLUMN WOULD NOT HAVE CAUGHT IT.
+// 22 rows declared `textSurface: 'none'` + `textFields: []` — whose own
+// definition is "structural strings (urls, ids, hashes) only" — while every one
+// of them reached `Blob.blockedReason?: null | string`, generated doc "Get an
+// optional reason for why the blob was blocked". The single row that DID record
+// the field (`mediaRating`) proved the table already regarded it as text, which
+// is what made the other 22 self-contradicting rather than merely terse.
+//
+// 🔴 THE WALK BELOW MUST FOLLOW INTERSECTION/EXTENSION TYPES, AND THAT IS THE
+// SECOND HALF OF THE DEFECT. `composeMedia`'s declared `ComposeMediaOutput` is
+// `{ type; elements[] }` and reaches no `Blob` at all — a one-level walk calls
+// it clean. Its runtime value is `AudioComposeMediaOutput` /
+// `VideoComposeMediaOutput`, both `Omit<ComposeMediaOutput,'type'> & { …Blob }`.
+// A guard written without extension-awareness would therefore report
+// `composeMedia` as NOT carrying the field and fail against a correct table —
+// so the walk's extension handling is load-bearing, not incidental.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('request-time policy: platformDiagnosticFields is derived, not asserted', () => {
+  /** Every `export type NAME = <rhs>` in the generated declaration file. */
+  function generatedDecls(): Map<string, string> {
+    const require = createRequire(import.meta.url);
+    const pkg = require.resolve('@civitai/client/package.json');
+    const decl = path.join(path.dirname(pkg), 'dist/generated/types.gen.d.ts');
+    const lines = fs.readFileSync(decl, 'utf8').split('\n');
+    const out = new Map<string, string>();
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^export type ([A-Za-z0-9_]+) = (.*)$/.exec(lines[i]);
+      if (!m) continue;
+      let depth = (m[2].match(/\{/g) ?? []).length - (m[2].match(/\}/g) ?? []).length;
+      const buf = [m[2]];
+      let j = i;
+      while (depth > 0 && j + 1 < lines.length) {
+        j++;
+        buf.push(lines[j]);
+        depth += (lines[j].match(/\{/g) ?? []).length - (lines[j].match(/\}/g) ?? []).length;
+      }
+      out.set(m[1], buf.join('\n'));
+      i = j;
+    }
+    return out;
+  }
+
+  const decls = generatedDecls();
+
+  /** Named types referenced anywhere inside a declaration body. */
+  function referenced(body: string): string[] {
+    return [...new Set(body.replace(/'[^']*'/g, '').match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [])];
+  }
+
+  /** True when `name`, or anything it reaches, declares a `blockedReason` field. */
+  const memo = new Map<string, boolean>();
+  function carries(name: string, seen = new Set<string>()): boolean {
+    const hit = memo.get(name);
+    if (hit !== undefined) return hit;
+    if (seen.has(name) || !decls.has(name)) return false;
+    seen.add(name);
+    const body = decls.get(name)!;
+    let result = /^\s*blockedReason\??:/m.test(body);
+    if (!result) {
+      for (const ref of referenced(body)) {
+        if (ref !== name && carries(ref, seen)) {
+          result = true;
+          break;
+        }
+      }
+    }
+    if (seen.size === 1) memo.set(name, result);
+    return result;
+  }
+
+  /** `X & {…}` / `Omit<X,…> & {…}` types that extend `base`. */
+  function extensionsOf(base: string): string[] {
+    const out: string[] = [];
+    for (const [name, body] of decls) {
+      if (!body.includes('&')) continue;
+      const head = body.split('&')[0].trim();
+      if (head === base || new RegExp(`^Omit<\\s*${base}\\s*,`).test(head)) out.push(name);
+    }
+    return out;
+  }
+
+  function outputTypeFor(type: string): string | undefined {
+    const want = `${type}output`.toLowerCase();
+    for (const name of decls.keys()) if (name.toLowerCase() === want) return name;
+    return undefined;
+  }
+
+  it('reads the generated declarations at all (POSITIVE CONTROL)', () => {
+    // 🔴 The guard's reassuring answer is a ZERO, which a parser wired to
+    // nothing produces just as readily as a correct table. Pin that the parse
+    // observes real declarations, that the walk can answer BOTH ways, and that
+    // extension resolution finds the `composeMedia` variants — otherwise the
+    // "every row agrees" assertion below is vacuous.
+    expect(decls.size).toBeGreaterThan(500);
+    expect(decls.has('Blob')).toBe(true);
+    expect(carries('Blob')).toBe(true); // declares it directly
+    expect(carries('ImageBlob')).toBe(true); // reaches it through `Omit<Blob,'type'> & …`
+    expect(carries('ConvertImageOutput')).toBe(true); // reaches it one level down
+    expect(carries('ComposeMediaOutput')).toBe(false); // NEGATIVE: the declared type is clean
+    expect(carries('TranscriptionOutput')).toBe(false); // NEGATIVE: no blob anywhere
+    expect(extensionsOf('ComposeMediaOutput').sort()).toEqual([
+      'AudioComposeMediaOutput',
+      'VideoComposeMediaOutput',
+    ]);
+    expect(extensionsOf('VideoGenOutput')).toEqual(['HaiperVideoGenOutput']);
+  });
+
+  it('every $type whose output reaches blockedReason declares it, and no other row does', () => {
+    const derived: string[] = [];
+    for (const type of Object.keys(STEP_TYPE_POLICY)) {
+      const out = outputTypeFor(type);
+      expect(out, `no <Name>Output resolved for ${type}`).toBeDefined();
+      const candidates = [out!, ...extensionsOf(out!)];
+      if (candidates.some((c) => carries(c))) derived.push(type);
+    }
+    // A floor, so an empty derivation cannot pass as "the table is right".
+    expect(derived.length).toBeGreaterThan(20);
+
+    const declaredRows = Object.entries(STEP_TYPE_POLICY)
+      .filter(([, p]) => p.platformDiagnosticFields.length > 0)
+      .map(([t]) => t);
+    expect(declaredRows.sort()).toEqual(derived.sort());
+  });
+
+  it('pins the paths for the cases the enumeration got wrong the first time', () => {
+    // The plainest `'none'` row, and the one shipped registry entry's $type.
+    expect(STEP_TYPE_POLICY.convertImage.platformDiagnosticFields).toEqual(['blob.blockedReason']);
+    // Reachable ONLY through the two intersection subtypes.
+    expect(STEP_TYPE_POLICY.composeMedia.platformDiagnosticFields).toEqual([
+      'audioBlob.blockedReason',
+      'videoBlob.blockedReason',
+    ]);
+    // A `null | Array<VideoBlob>` element path — the `[]` must survive the
+    // `null |` prefix, which a naive `^Array<` match drops.
+    expect(STEP_TYPE_POLICY.videoGen.platformDiagnosticFields).toEqual([
+      'video.blockedReason',
+      'additionalVideos[].blockedReason',
+    ]);
+    // The widest row — 13 paths across 7 optional blob slots plus a nested
+    // `basicAnimations` group. A truncated walk shows up here first.
+    expect(STEP_TYPE_POLICY.polyGen.platformDiagnosticFields).toHaveLength(13);
+    // Three separate raw `Blob`s on one result element.
+    expect(STEP_TYPE_POLICY.comfyNodepackSnapshot.platformDiagnosticFields).toEqual([
+      'results[].layer.blockedReason',
+      'results[].objectInfo.blockedReason',
+      'results[].web.blockedReason',
+    ]);
+    // NEGATIVE anchors: rows whose outputs genuinely carry no blob.
+    expect(STEP_TYPE_POLICY.transcription.platformDiagnosticFields).toEqual([]);
+    expect(STEP_TYPE_POLICY.blobArchive.platformDiagnosticFields).toEqual([]);
+    expect(STEP_TYPE_POLICY.wdTagging.platformDiagnosticFields).toEqual([]);
+  });
+
+  it('keeps the two provenance columns disjoint in meaning', () => {
+    // 🔴 `blockedReason` used to live in `mediaRating.textFields` and NOWHERE
+    // else, which is precisely how one field ended up called text on one row and
+    // absent on 22. No row may list it as `textFields` again.
+    for (const [type, p] of Object.entries(STEP_TYPE_POLICY)) {
+      expect(
+        p.textFields.filter((f) => f.includes('blockedReason')),
+        `${type} lists blockedReason in textFields; it belongs in platformDiagnosticFields`
+      ).toEqual([]);
+    }
+    // …and mediaRating still fails closed on its OWN merits, not on that field:
+    // its remaining `textFields` are all model output.
+    expect(STEP_TYPE_POLICY.mediaRating.textSurface).toBe('undecidedNeedsDomainOwner');
+    expect(STEP_TYPE_POLICY.mediaRating.textFields).toContain('labels[]');
+    expect(STEP_TYPE_POLICY.mediaRating.textFields).toContain('ageClassification.error');
+    expect(STEP_TYPE_POLICY.mediaRating.textFields.length).toBeGreaterThan(1);
+    expect(requiredPostureForSubmittedType('mediaRating').ok).toBe(false);
+  });
+
+  it('every row declares the column (it cannot be forgotten on a new row)', () => {
+    for (const [type, p] of Object.entries(STEP_TYPE_POLICY)) {
+      expect(Array.isArray(p.platformDiagnosticFields), `${type} missing the column`).toBe(true);
+      expect(Object.isFrozen(p.platformDiagnosticFields), `${type} column not frozen`).toBe(true);
+    }
+  });
+});
+
+describe('request-time policy: videoGen carries a THIRD-PARTY provider message', () => {
+  it('is refused rather than published, because HaiperVideoGenOutput adds `message`', () => {
+    // `VideoGenStep.output` is typed `VideoGenOutput` ({ video, additionalVideos }
+    // — no text), but `HaiperVideoGenOutput = VideoGenOutput & { …;
+    // externalTOSViolation?; message?: null | string }` is the shape a
+    // `videoGen` step with `engine: 'haiper'` produces. That `message` is the
+    // provider's moderation explanation — third-party free text, the same class
+    // as `modelClamScan`'s raw output, which is already undecided.
+    expect(STEP_TYPE_POLICY.videoGen.textSurface).toBe('undecidedNeedsDomainOwner');
+    expect(STEP_TYPE_POLICY.videoGen.textFields).toEqual(['message']);
+
+    const d = requiredPostureForSubmittedType('videoGen');
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error('unreachable');
+    expect(d.code).toBe('undecidedTextSurface');
+
+    // The whole gate refuses it, not just guard 1.
+    const gate = evaluateSubmittedStep({
+      orchestratorType: 'videoGen',
+      input: { prompt: 'a cat' },
+    });
+    expect(gate.ok).toBe(false);
+  });
+
+  it('records the text fields a first pass missed on ALREADY-text rows', () => {
+    // 🟡 These rows were already `generatedText` / `undecidedNeedsDomainOwner`,
+    // so nothing was ever licensed by the omission — but `textFields` is the
+    // column a reviewer checks a classification against and a scan would be
+    // written from, and an incomplete one reads as a complete one.
+    const x = STEP_TYPE_POLICY.xGuardModeration.textFields;
+    // Plain `string` on `XGuardLabelResult`, no doc, no enum — `topToken` is the
+    // guard model's highest-probability token.
+    expect(x).toContain('results[].topToken');
+    expect(x).toContain('results[].finishReason');
+    expect(x).toContain('signalMetadata.customSignals[].name');
+
+    // "Optional name for the participant", on the ASSISTANT message.
+    expect(STEP_TYPE_POLICY.chatCompletion.textFields).toContain('choices[].message.name');
+
+    // `null | string`, not numbers — nothing in the generated type bounds them.
+    expect(STEP_TYPE_POLICY.audioCaptioning.textFields).toContain('results[].bpm');
+    expect(STEP_TYPE_POLICY.audioCaptioning.textFields).toContain('results[].duration');
+
+    // Four classifier labels; `aiRecognition.label` is documented as coming from
+    // "the model's own id2label", so the example lists are not closed sets.
+    const m = STEP_TYPE_POLICY.mediaRating.textFields;
+    for (const f of [
+      'ageClassification.detections[].ageLabel',
+      'aiRecognition.label',
+      'animeRecognition.label',
+      'humanRecognition.label',
+    ]) {
+      expect(m, `mediaRating missing ${f}`).toContain(f);
+    }
+
+    // 🔴 `QwenImageBenchScoreNode.children: Array<QwenImageBenchScoreNode>` is
+    // self-referential, so a `scores[].name` path names ONLY the root level.
+    expect(STEP_TYPE_POLICY.qwenImageBench.textFields).toContain('results[].scores[]**.name');
+    expect(STEP_TYPE_POLICY.qwenImageBench.textFields).not.toContain('results[].scores[].name');
+  });
+
+  it('pins the recursion that the qwenImageBench path notation stands for', () => {
+    // A path string is a claim about the generated types; this checks the claim
+    // rather than trusting the notation. If `children` ever stops being
+    // self-referential the `**` is wrong and should come back out.
+    const require = createRequire(import.meta.url);
+    const pkg = require.resolve('@civitai/client/package.json');
+    const src = fs.readFileSync(
+      path.join(path.dirname(pkg), 'dist/generated/types.gen.d.ts'),
+      'utf8'
+    );
+    const decl = /export type QwenImageBenchScoreNode = \{([\s\S]*?)\n\};/.exec(src);
+    expect(decl, 'QwenImageBenchScoreNode not found — the pin below proves nothing').not.toBeNull();
+    expect(decl![1]).toMatch(/name:\s*string/);
+    expect(decl![1]).toMatch(/children:\s*Array<QwenImageBenchScoreNode>/);
+  });
+
+  it('does not disturb the one shipped registry entry (THE CONTROL)', () => {
+    // convertImage is the only registered step; the F2/F3 corrections must not
+    // have made it unsubmittable.
+    expect(requiredPostureForSubmittedType('convertImage')).toEqual({ ok: true, value: 'none' });
+    expect(
+      evaluateSubmittedStep({
+        orchestratorType: 'convertImage',
+        input: { sourceImage: 'https://example.com/a.png', format: 'jpeg' },
+      }).ok
+    ).toBe(true);
   });
 });

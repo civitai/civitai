@@ -379,17 +379,47 @@ export function isResourcePolicyImplemented(policy: StepResourcePolicy): boolean
 const AIR_URN_PREFIX = 'urn:air:';
 
 /**
- * True when any string ANYWHERE in the value is (or embeds) an AIR URN.
+ * Recursion budget for {@link containsAirReference}.
+ *
+ * 🔴 THE SCAN IS TOTAL, NOT PARTIAL — it must never throw. Its declared contract
+ * is a `boolean` (and, one layer up, a `PolicyDecision`), never "may throw", and
+ * `evaluateSubmittedStep` does not wrap it. An unbounded recursion over
+ * attacker-shaped JSON hits `RangeError: Maximum call stack size exceeded` at
+ * roughly 5k nesting levels, which a ~10 KB `[[[[…]]]]` request body reaches
+ * trivially — a free 500 from a value the guard was supposed to *decide* on.
+ *
+ * At the cap the scan returns TRUE (fail-closed): "I could not prove this input
+ * carries no AIR." No legitimate orchestrator step input nests anywhere near
+ * this deep, so the cap costs nothing real and turns a crash into a rejection.
+ */
+const AIR_SCAN_MAX_DEPTH = 128;
+
+/**
+ * True when any string ANYWHERE in the value — a leaf, an array element, an
+ * object VALUE, **or an object KEY** — is (or embeds) an AIR URN.
  *
  * Deliberately a deep scan rather than a check of a known field name: the point
  * is to catch an AIR arriving through a field NOBODY thought to look at, which
  * is the only way the `'none'` declaration can become a lie.
+ *
+ * 🔴 KEYS ARE SCANNED, AND THAT IS NOT DEFENSIVE PARANOIA — IT IS THE
+ * ORCHESTRATOR'S OWN SCHEMA. `ImageJobParams.additionalNetworks` is typed
+ * `{ [key: string]: ImageJobNetworkParams }` and its doc comment reads "Use the
+ * AIR of the network as the key"; `WorkflowCost.fees` is likewise keyed by
+ * resource AIR (both in the generated `@civitai/client` types). A scan over
+ * `Object.values` alone therefore misses the single most likely real-world
+ * placement of an AIR in a submitted step, and returns a confident
+ * `noResourceReference` for `{ additionalNetworks: { 'urn:air:…': {…} } }` — a
+ * LoRA reaching the entitlement belt through the gate's blind spot.
  */
-export function containsAirReference(value: unknown): boolean {
+export function containsAirReference(value: unknown, depth = 0): boolean {
+  if (depth > AIR_SCAN_MAX_DEPTH) return true;
   if (typeof value === 'string') return value.toLowerCase().includes(AIR_URN_PREFIX);
-  if (Array.isArray(value)) return value.some(containsAirReference);
+  if (Array.isArray(value)) return value.some((v) => containsAirReference(v, depth + 1));
   if (value !== null && typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).some(containsAirReference);
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, v]) => containsAirReference(key, depth + 1) || containsAirReference(v, depth + 1)
+    );
   }
   return false;
 }

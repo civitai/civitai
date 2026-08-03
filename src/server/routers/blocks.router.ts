@@ -6816,6 +6816,12 @@ async function submitStepWorkflow(opts: {
   // too. That is a false positive, and it is the direction we want — refusing a
   // pathological url costs a caller one bounced request; forwarding an
   // unentitled AIR costs the entitlement belt.
+  //
+  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
+  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
+  // the scan used to recurse over `Object.values` only. See
+  // `containsAirReference` for the mechanism and the depth cap that keeps the
+  // scan total.
   if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
