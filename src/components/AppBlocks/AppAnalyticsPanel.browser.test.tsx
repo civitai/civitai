@@ -76,16 +76,19 @@ describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
 });
 
 /**
- * The "Top endpoints" table renders the aggregate's GROUP BY key. #3561 bounded that
- * column, which promoted the internal tokens to the TOP rows — so this table became
- * the most prominent place raw internal strings appear on the panel.
+ * The two "top N" cards render the aggregates' GROUP BY keys. #3561 bounded the endpoint
+ * column, which promoted the internal tokens to the TOP rows — so those cards became the
+ * most prominent place raw internal strings appear on the panel.
  *
- * `endpointBucketLabel` is unit-tested on its own (endpoint-bucket-label.test.ts);
- * what these two cases pin is the WIRING — that the render site actually calls it.
- * A helper nothing calls is the failure mode this exists to prevent.
+ * The label functions are unit-tested on their own (analytics-bucket-labels.test.ts);
+ * what these cases pin is the WIRING — that both render sites actually call them. A
+ * helper nothing calls is the failure mode this exists to prevent.
+ *
+ * `getByText` matches on SUBSTRING, which makes the negative assertions stronger, not
+ * weaker: `getByText('workflow:submit')` would also match a leaked `workflow:submit:wf_x`.
  */
-describe('AppAnalyticsPanel — Top endpoints are humanised, not raw tokens', () => {
-  test('a bounded token renders as an operation name and the raw token is absent', async () => {
+describe('AppAnalyticsPanel — top-N cards are humanised, not raw tokens', () => {
+  test('bounded endpoint tokens render as operation names and the raw tokens are absent', async () => {
     mocks.analytics.current = {
       ...ZEROED,
       engagement: {
@@ -99,13 +102,14 @@ describe('AppAnalyticsPanel — Top endpoints are humanised, not raw tokens', ()
     };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Generation submits')).toBeInTheDocument();
-    await expect.element(page.getByText('App storage writes')).toBeInTheDocument();
+    await expect.element(page.getByText('Generations')).toBeInTheDocument();
+    await expect.element(page.getByText('App-local storage writes')).toBeInTheDocument();
     // The raw tokens must not survive anywhere in the rendered output.
     expect(page.getByText('workflow:submit').elements()).toHaveLength(0);
     expect(page.getByText('storage:set').elements()).toHaveLength(0);
-    // And it must not have degraded to the per-row humaniser's no-detail output.
+    // And must not have degraded to either Activity-panel labeller's output.
     expect(page.getByText('(no workflow id)').elements()).toHaveLength(0);
+    expect(page.getByText('Generated an image').elements()).toHaveLength(0);
   });
 
   test('a legacy tailed bucket keeps its tail so two such rows stay distinguishable', async () => {
@@ -122,7 +126,44 @@ describe('AppAnalyticsPanel — Top endpoints are humanised, not raw tokens', ()
     };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Generation submits (wf_aaa)')).toBeInTheDocument();
-    await expect.element(page.getByText('Generation submits (wf_bbb)')).toBeInTheDocument();
+    await expect.element(page.getByText('Generations (wf_aaa)')).toBeInTheDocument();
+    await expect.element(page.getByText('Generations (wf_bbb)')).toBeInTheDocument();
+  });
+
+  test('the `pending` sentinel is never surfaced as a status', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      engagement: {
+        ...ZEROED.engagement,
+        apiCalls: 3,
+        topEndpoints: [{ endpoint: 'workflow:submit:pending', count: 3 }],
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Generations (no id)')).toBeInTheDocument();
+    // "pending" would read as "still in flight" — the opposite of what the row means.
+    expect(page.getByText('pending').elements()).toHaveLength(0);
+  });
+
+  test('the adjacent Top scopes card is humanised too', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      engagement: {
+        ...ZEROED.engagement,
+        apiCalls: 300,
+        topScopes: [
+          { scope: 'ai:write:budgeted', count: 245 },
+          { scope: '(any-token)', count: 40 },
+        ],
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('AI workflow submits')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Any-token routes (no scope required)'))
+      .toBeInTheDocument();
+    expect(page.getByText('ai:write:budgeted').elements()).toHaveLength(0);
   });
 });

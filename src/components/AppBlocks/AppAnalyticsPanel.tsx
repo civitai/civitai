@@ -27,7 +27,10 @@ import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
-import { endpointBucketLabel } from '~/components/AppBlocks/endpoint-bucket-label';
+import {
+  endpointBucketLabel,
+  scopeBucketLabel,
+} from '~/components/AppBlocks/analytics-bucket-labels';
 import { trpc } from '~/utils/trpc';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip, Filler);
@@ -322,9 +325,14 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               ) : (
                 <Table mt="sm">
                   <Table.Tbody>
+                    {/* key stays the RAW scope — labels can collide, keys cannot. */}
                     {analytics.engagement.topScopes.map((s) => (
                       <Table.Tr key={s.scope}>
-                        <Table.Td>{s.scope}</Table.Td>
+                        <Table.Td>
+                          <Text size="sm" lineClamp={1}>
+                            {scopeBucketLabel(s.scope)}
+                          </Text>
+                        </Table.Td>
                         <Table.Td ta="right">{s.count.toLocaleString()}</Table.Td>
                       </Table.Tr>
                     ))}
