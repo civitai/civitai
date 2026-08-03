@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 type InlineAnalytics = {
   runs: { count: number };
   engagement: { activeUsers: number };
+  unavailable?: 'notEntitled' | 'notOwned';
 };
 
 /**
@@ -51,6 +52,21 @@ export function AppAnalyticsInline({
     <Group gap={8} wrap="nowrap" align="center">
       {statQuery.isLoading ? (
         <Loader size="xs" />
+      ) : data?.unavailable ? (
+        <Tooltip
+          label={
+            data.unavailable === 'notEntitled'
+              ? 'Your account does not have access to app analytics yet — these metrics were not measured.'
+              : 'You do not own this app — its analytics were not measured.'
+          }
+          multiline
+          maw={260}
+          withinPortal
+        >
+          <Text size="xs" c="dimmed">
+            Analytics unavailable
+          </Text>
+        </Tooltip>
       ) : data ? (
         <Tooltip
           label="Runs and unique users in the last 30 days. Anonymous / no-scope runs are undercounted until render-event tracking ships."

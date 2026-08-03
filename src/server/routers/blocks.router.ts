@@ -5159,10 +5159,12 @@ export const blocksRouter = router({
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
-      // marks the ctx → return the zeroed analytics shape (with the resolved
-      // range, so the UI still has a window) WITHOUT running any aggregate.
+      // marks the ctx → return the zeroed shape WITHOUT running any aggregate.
+      // It MUST carry `unavailable` (and the fail-closed `notOwned`) or the
+      // all-zero counters are indistinguishable from a real app with no
+      // activity, and clients render fabricated zeros as a measurement.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
-        return emptyAnalytics(resolveRange({ from, to }), false);
+        return emptyAnalytics(resolveRange({ from, to }), true, 'notEntitled');
       }
       const user = ctx.user as SessionUser;
       return getMyAppAnalytics({
