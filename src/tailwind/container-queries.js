@@ -1,22 +1,33 @@
-import plugin from 'tailwindcss/plugin';
+// CommonJS on purpose. This plugin is loaded exclusively by `tailwind.config.js`, a
+// CJS module, via `require()`. Node's CJS resolver cannot resolve `.ts`, so authoring
+// this as TypeScript made a plain `require()` of the tailwind config throw — the whole
+// project theme then silently depended on the config being loaded by a TypeScript-aware
+// loader (tailwind's bundled jiti). Types are kept as JSDoc.
+// eslint-disable-next-line @typescript-eslint/no-var-requires -- intentional CJS; see above
+const plugin = require('tailwindcss/plugin');
 
-type VariantSortProps = {
-  value: string;
-  modifier: string | null;
-};
+/**
+ * @typedef {{ value: string; modifier: string | null }} VariantSortProps
+ */
 
-export default plugin(
+module.exports = plugin(
   function containerQueries({ matchUtilities, matchVariant, theme }) {
-    const values: Record<string, string> = theme('containers') ?? {};
+    /** @type {Record<string, string>} */
+    const values = theme('containers') ?? {};
 
-    function parseValue(value: string) {
+    /** @param {string} value */
+    function parseValue(value) {
       const numericValue = value.match(/^(\d+\.\d+|\d+|\.\d+)\D+/)?.[1] ?? null;
       if (numericValue === null) return null;
 
       return parseFloat(value);
     }
 
-    function sort(aVariant: VariantSortProps, zVariant: VariantSortProps) {
+    /**
+     * @param {VariantSortProps} aVariant
+     * @param {VariantSortProps} zVariant
+     */
+    function sort(aVariant, zVariant) {
       const a = parseFloat(aVariant.value);
       const z = parseFloat(zVariant.value);
 
