@@ -73,6 +73,10 @@ type Fixture = {
   meta?: Record<string, string>;
   /** `User.meta` as the primary holds it, when the two have not converged yet. */
   primaryMeta?: Record<string, string>;
+  /** `CsamReport` rows the worklist's replica can see for this account. */
+  csamReports?: CsamReport[];
+  /** `CsamReport` rows the primary holds, when a report lands after the worklist read. */
+  primaryCsamReports?: CsamReport[];
   /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
@@ -94,6 +98,8 @@ type Fixture = {
   graceAfterBatches?: number;
 };
 
+type CsamReport = { reportSentAt: Date | null; archivedAt: Date | null };
+
 let fixtures: Record<number, Fixture> = {};
 let cursorStore: Record<string, Date> = {};
 let cursorSets: Record<string, Date[]> = {};
@@ -109,6 +115,8 @@ const SKIPS_BLOCKED = `ingestion <> 'Blocked'`;
 const TAKES_BLOCKED = `ingestion = 'Blocked'`;
 /** The parenthesised form of the choice check on the destructive path. */
 const IMMEDIATE_PREDICATE = /\((u\.meta->>'[^']*' IS NULL OR u\.meta->>'[^']*' = '[^']*')\)/;
+/** The report subquery's own condition, past the owner check every spelling of it carries. */
+const CSAM_CONDITION = /AND \(([^)]+)\)/;
 
 const AI_NOT_VERIFIED = 'AiNotVerified';
 
@@ -159,6 +167,49 @@ function modeExpression(sql: string) {
   const [, condition, whenTrue, whenFalse] = branches;
   return (fixture: Fixture) => (metaHolds(condition, fixture.meta) ? whenTrue : whenFalse);
 }
+
+/** Lifts the report subquery out of a statement by balancing its parentheses. */
+function csamSubquery(sql: string) {
+  const anchor = sql.indexOf('FROM "CsamReport" c');
+  if (anchor < 0) return undefined;
+  const open = sql.lastIndexOf('(', anchor);
+  let depth = 0;
+  let close = open;
+  while (close < sql.length) {
+    if (sql[close] === '(') depth++;
+    else if (sql[close] === ')' && --depth === 0) break;
+    close++;
+  }
+  return { negated: /NOT\s+EXISTS\s*$/.test(sql.slice(0, open)), body: sql.slice(open + 1, close) };
+}
+
+/** Whether a report answers the subquery's own condition, or all of them if it carries none. */
+function matchesReportSubquery(body: string, report: CsamReport) {
+  const condition = CSAM_CONDITION.exec(body)?.[1];
+  if (!condition) return true;
+  return condition.split(/\s+OR\s+/).some((atom) => {
+    const column = /c\."(\w+)" IS NULL/.exec(atom)?.[1];
+    if (column !== 'reportSentAt' && column !== 'archivedAt')
+      throw new Error(`unrecognized CsamReport atom: ${atom}`);
+    return report[column] == null;
+  });
+}
+
+/**
+ * Answers the report exclusion off the statement that carries it — whether it is negated, and
+ * which timestamps it names — rather than assuming one spelling, so dropping either timestamp
+ * reads here as a report the job counts as finished and inverting it excludes the wrong accounts.
+ * A statement carrying no subquery at all is answered as unguarded.
+ */
+function blockedByCsamReport(sql: string, reports: CsamReport[] | undefined) {
+  const subquery = csamSubquery(sql);
+  if (!subquery) return false;
+  const matched = (reports ?? []).some((report) => matchesReportSubquery(subquery.body, report));
+  return subquery.negated ? matched : !matched;
+}
+
+/** What the primary sees, which is what every gate on a write is answered from. */
+const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
 function passesPrimaryChoice(sql: string, fixture: Fixture) {
@@ -257,6 +308,7 @@ function applyImageUpdate(sql: string, values: unknown[]) {
   const userId = values[joined + 1] as number;
   const fixture = fixtures[userId];
   if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
+  if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return [];
 
   const row = parseSetClause(sql, values);
   // Only the WHERE clause selects rows; the SET clause names the same columns.
@@ -332,6 +384,7 @@ function seed(next: Record<number, Fixture>) {
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
+        .filter((id) => !blockedByCsamReport(sql, fixtures[id].csamReports))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -387,6 +440,7 @@ function seed(next: Record<number, Fixture>) {
         imageLimits.push(limit);
         if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
           return Promise.resolve([]);
+        if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -412,6 +466,7 @@ function seed(next: Record<number, Fixture>) {
         const fixture = fixtures[userId];
         if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
           return Promise.resolve(0);
+        if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
         const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
         const eligible = fixture.images.filter(
           (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
@@ -426,6 +481,7 @@ function seed(next: Record<number, Fixture>) {
       const fixture = fixtures[userId];
       if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
+      if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -1239,5 +1295,122 @@ describe('removal choice re-read on the destructive path', () => {
     // flip still costs the account every id already fetched.
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
     expect(result.deletedImages).toBe(100);
+  });
+});
+
+describe('unfinished CSAM reports', () => {
+  const UNFINISHED: CsamReport[] = [{ reportSentAt: null, archivedAt: null }];
+
+  it('keeps an account with an unfinished report out of both worklists', async () => {
+    cursorStore[FRESH_KEY] = NEWER;
+    seed({
+      7: { deletedAt: RECENT, images: ids(10), posts: [900], csamReports: UNFINISHED },
+      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], csamReports: UNFINISHED },
+    });
+
+    const result = await run();
+
+    // archive-csam-reports rebuilds the NCMEC evidence from the live CDN five minutes after this
+    // job, and skips silently for anything already gone — so the account has to be out of range
+    // of both passes, not just the one that happens to be draining today.
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
+  });
+
+  it('treats a report as unfinished until it is both sent and archived', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(10),
+        csamReports: [{ reportSentAt: NOW, archivedAt: null }],
+      },
+      8: {
+        deletedAt: OLDER,
+        images: ids(10, 100),
+        csamReports: [{ reportSentAt: null, archivedAt: NOW }],
+      },
+    });
+
+    const result = await run();
+
+    // Sent-but-unarchived is the window this job lands in the middle of, and either timestamp
+    // read on its own reads one of these two as a report that is already done with the images.
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(result.deletedImages).toBe(0);
+  });
+
+  it('processes an account whose report is finished', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(10),
+        posts: [900],
+        csamReports: [{ reportSentAt: NOW, archivedAt: NOW }],
+      },
+    });
+
+    const result = await run();
+
+    // The evidence is off the CDN and into the archive by then; holding the account past that
+    // point retains the images forever against a deletion request.
+    expect(result.deletedImages).toBe(10);
+    expect(deletedPostIds).toEqual([900]);
+    expect(result.deletedUsers).toBe(1);
+  });
+
+  it('processes an account with no report at all', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], csamReports: [] } });
+
+    const result = await run();
+
+    expect(result.deletedImages).toBe(10);
+    expect(deletedPostIds).toEqual([900]);
+    expect(result.deletedUsers).toBe(1);
+  });
+
+  it('stops the image delete for a report filed after the worklist read', async () => {
+    seed({
+      7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryCsamReports: UNFINISHED },
+    });
+
+    const result = await run();
+
+    // The worklist is read off a replica, so its exclusion cannot see a report filed inside the
+    // run; carrying the same check onto the statement is what closes that window.
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(pagedImageIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+    expect(result.deletedUsers).toBe(0);
+  });
+
+  it('stops the post delete for a report filed after the worklist read', async () => {
+    seed({
+      7: { deletedAt: NEWER, images: [], posts: [900], primaryCsamReports: UNFINISHED },
+    });
+
+    const result = await run();
+
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(0);
+  });
+
+  it('still blocks a grace user whose report is filed after the worklist read', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: ids(10),
+        primaryCsamReports: UNFINISHED,
+      },
+    });
+
+    const result = await run();
+
+    // Deliberately not gated the way the destructive path is: blocking never touches S3 and the
+    // archive re-fetches from the CDN, which still serves a blocked image, so the only thing a
+    // gate here would buy is a restorable account stalling until the report clears.
+    expect(result.blockedImages).toBe(10);
   });
 });

@@ -102,6 +102,11 @@ async function drainUser(
         AND u."deletedAt" IS NOT NULL
         AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
       WHERE i."userId" = ${userId}
+        AND NOT EXISTS (
+          SELECT 1 FROM "CsamReport" c
+          WHERE c."userId" = ${userId}
+            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+        )
       LIMIT ${budget}
     `;
 
@@ -148,6 +153,11 @@ async function drainUser(
             WHERE u.id = ${userId}
               AND u."deletedAt" IS NOT NULL
               AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "CsamReport" c
+            WHERE c."userId" = ${userId}
+              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
           )
       `;
     }
@@ -201,6 +211,10 @@ async function queueBlockedImagesForDelete(userId: number) {
   `;
 }
 
+/**
+ * No statement-level CSAM gate here, unlike `drainUser`: blocking never touches S3, and the NCMEC
+ * archive re-fetches from the CDN, which still serves a blocked image.
+ */
 async function blockUserImages(
   userId: number,
   budget: number,
@@ -396,6 +410,10 @@ export const removeDeletedUserImages = createJob(
     // while they own an image the purge pipeline would not take — their posts leave at day 7 with
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
+
+    // An account with an unfinished CSAM report is left out entirely: archive-csam-reports runs
+    // five minutes after this job and rebuilds the NCMEC evidence by re-fetching each image from
+    // the CDN, silently skipping — and then stamping the report archived — for anything gone.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
@@ -407,6 +425,11 @@ export const removeDeletedUserImages = createJob(
       ) m
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
+        AND NOT EXISTS (
+          SELECT 1 FROM "CsamReport" c
+          WHERE c."userId" = u.id
+            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+        )
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -448,6 +471,11 @@ export const removeDeletedUserImages = createJob(
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
+          AND NOT EXISTS (
+            SELECT 1 FROM "CsamReport" c
+            WHERE c."userId" = u.id
+              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i
