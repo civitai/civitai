@@ -91,6 +91,34 @@ afterEach(() => {
   cleanup();
 });
 
+/**
+ * A 1x1 transparent PNG — the canonical image fixture for browser tests.
+ *
+ * 🔴 Use this ANY time a browser test needs an image source it will then assert
+ * on. A `data:` URI resolves synchronously and locally, so the `<img>` LOADS and
+ * survives for the whole test.
+ *
+ * An http(s) URL does NOT. Nothing serves it in the test browser, so the fetch
+ * fails and the element's real `error` event fires ~11 ms after mount. Whether
+ * that BREAKS a test depends on the component, and only the first case below can:
+ *   - Mantine `Avatar` (and any bespoke `onError -> placeholder`, e.g.
+ *     `src/components/Apps/AppListingCard.tsx:135`) renders a placeholder INSTEAD
+ *     of the `<img>` — the element is DESTROYED ~11 ms after mount.
+ *   - Mantine `Image` does NOT: it only swaps when `fallbackSrc` is set (and that
+ *     prop appears zero times in `src/`), otherwise it re-renders the same `<img>`.
+ * So `expect(...querySelector('img')).not.toBeNull()` against an Avatar-backed
+ * fixture races that ~11 ms window — passing on a fast local machine and failing
+ * on a loaded CI box. That defect sat red on `main` across five PRs before #3551.
+ * (An earlier draft of this note said EVERY image-rendering component destroys
+ * the `<img>`; that was false — checked against the installed `@mantine/core`.)
+ *
+ * Deliberately testing the error path (an image that must FAIL to load) is a
+ * legitimate exception — see the escape hatch documented on the
+ * `local-rules/no-unloadable-image-fixture` ESLint rule.
+ */
+export const LOADABLE_IMAGE_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
 function Providers({ children }: { children: React.ReactNode }) {
   // Fresh client per render so cache never leaks between tests.
   const queryClient = new QueryClient({
