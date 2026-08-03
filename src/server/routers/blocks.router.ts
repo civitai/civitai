@@ -5147,6 +5147,31 @@ export const blocksRouter = router({
    * non-owned id, so an author can never read another author's metrics.
    */
   getMyAppAnalytics: appDeveloperProcedure
+    // 🔴 AppBlocksSubmit, NOT DevTunnel and NOT UserRead. With no `.meta` this proc
+    // implicitly required `TokenScope.Full` (enforceTokenScope defaults to it), so a
+    // personal API key worked but the `civitai login` OAuth token — the CLI's DEFAULT
+    // auth path — 403'd, which made `civitai app metrics` unusable for most users.
+    // Why this bit specifically:
+    //   - It is the same bit `GET /api/v1/blocks/submissions` already requires, and
+    //     `civitai app metrics <slug>` calls BOTH (submissions to resolve slug →
+    //     appBlockId, then this proc). Any other choice would leave one hop of one
+    //     command needing a scope the other does not.
+    //   - It keeps that route's established rule: the same credential that could
+    //     submit can read its own app data, and nothing weaker.
+    //   - NOT UserRead: UserRead is inside `Full`, i.e. what every third-party
+    //     "log in with Civitai" client asks for. This proc exposes install counts,
+    //     Buzz spend, endpoint names and active-user counts, so gating it on UserRead
+    //     would hand a developer's app economics to any such client. AppBlocksSubmit
+    //     is opt-in and deliberately EXCLUDED from `Full`.
+    //   - NOT AppBlocksDevTunnel: that bit means "open an on-site dev tunnel" (its
+    //     consent label is literally "Open on-site dev tunnels"). Reusing it would
+    //     force analytics readers to grant tunnel-opening, and vice versa.
+    // A Full personal API key still passes — enforceTokenScope early-returns on
+    // `ctx.tokenScope === TokenScope.Full`, and createContext defaults a session (the
+    // web /apps/revenue panel) to Full — so this is not a regression for any caller
+    // that works today. No allowedScopes migration either: the civitai-cli client is
+    // already provisioned with this bit and the login token already carries it.
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({

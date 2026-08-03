@@ -319,3 +319,86 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * OAuth token-scope gate on getMyAppAnalytics — the proc `civitai app metrics`
+ * calls. It was UN-annotated, so `enforceTokenScope` implicitly required
+ * `TokenScope.Full`: a personal API key worked but the `civitai login` OAuth token
+ * (the CLI's default auth path) 403'd. Now
+ * `.meta({ requiredScope: TokenScope.AppBlocksSubmit })` — the same bit
+ * `GET /api/v1/blocks/submissions` requires, which the same command already calls
+ * to resolve slug → appBlockId. Mirrors app-listings.router.cli-scope.test.ts.
+ *
+ * Bitmasks are hard-coded so an enum drift trips the sanity test rather than
+ * silently re-pointing the gate.
+ *
+ * 🔴 WHICH OF THESE IS ACTUAL REGRESSION COVERAGE — measured, not assumed. With the
+ * `.meta` line deleted, ONLY 'CLI OAuth login token … reaches the service' goes red,
+ * and it fails with this gate's own error ("Your API key does not have the required
+ * scope for this action", enforce-token-scope.ts:84) — the exact 403 this change
+ * fixes. The other three stay GREEN on pre-change code and are INVARIANT guards, not
+ * regression guards:
+ *   - NO_SUBMIT was already FORBIDDEN before, because an un-annotated proc implicitly
+ *     requires `Full` and that token lacks Full too. It pins that narrowing the gate
+ *     did not accidentally WIDEN it — a different property, worth keeping, but it
+ *     would not have caught the original bug.
+ *   - the Full-key and session cases pin no-regression, and passed before by
+ *     construction.
+ * Do not read four green tests here as four tests of the fix.
+ */
+const FULL = 33554431; // TokenScope.Full — a Full personal API key
+const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel = 67108865 — lacks AppBlocksSubmit
+
+// A token-authenticated caller (apiKeyId set) carrying `scope`. The user stays a
+// moderator so the author/flag gates are satisfied and the ONLY variable is scope.
+function tokenCtx(scope: number) {
+  return { ...fakeCtx(modUser), apiKeyId: 999, tokenScope: scope };
+}
+
+describe('getMyAppAnalytics — OAuth scope gate', () => {
+  it('the hard-coded bitmasks match the enum', () => {
+    expect(TokenScope.Full).toBe(FULL);
+    expect(TokenScope.AppBlocksSubmit).toBe(1 << 25);
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
+      CLI
+    );
+    expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(NO_SUBMIT);
+    // Full deliberately EXCLUDES AppBlocksSubmit — so it is enforceTokenScope's
+    // early-return on Full, NOT hasFlag(Full, AppBlocksSubmit), that preserves the
+    // existing personal-API-key path. If someone ever folds bit 25 into Full, this
+    // fails and the reasoning above has to be revisited.
+    expect((TokenScope.Full & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(
+      false
+    );
+  });
+
+  it('CLI OAuth login token (carries AppBlocksSubmit) reaches the service', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(CLI) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  it('Full personal API key still reaches the service (no regression)', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(FULL) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  it('a scoped token WITHOUT AppBlocksSubmit is FORBIDDEN and never reaches the service', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(NO_SUBMIT) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('scope'),
+    });
+    // The denial must come from the SCOPE gate, before any aggregate runs — not from
+    // the author/flag gate, which this ctx satisfies.
+    expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+
+  it('a session (no bearer token) is unaffected — the web panel path', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+});
