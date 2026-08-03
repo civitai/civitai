@@ -67,6 +67,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     setPricePerUse,
     pricePerUseError,
     perUseFloor,
+    economicsEditable,
     name,
     description,
     price,
@@ -215,66 +216,6 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               />
             )}
 
-            {isSticker && (
-              <NumberInput
-                label={
-                  <Group gap={4} wrap="nowrap">
-                    <span>Uses per purchase</span>
-                    <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
-                      <Text size="xs">
-                        A use is spent when a buyer places your sticker in{' '}
-                        {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
-                        {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
-                        out they can top up at the price you set below.
-                      </Text>
-                    </InfoPopover>
-                  </Group>
-                }
-                description={
-                  uses
-                    ? `How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
-                        uses * CREATOR_GRANT_USES_MULTIPLIER
-                      )} uses of your own once it's approved.`
-                    : `How many times a buyer can place this sticker. You'll receive ${CREATOR_GRANT_USES_MULTIPLIER}x that many of your own once it's approved.`
-                }
-                placeholder="e.g. 100"
-                // Empty rather than defaulted: a prefilled number is
-                // indistinguishable from a chosen one, and this field decides
-                // what every buyer gets.
-                value={uses ?? ''}
-                onChange={(v) => setUses(typeof v === 'number' ? v : undefined)}
-                min={1}
-                step={10}
-                error={usesError}
-                withAsterisk
-              />
-            )}
-
-            {isSticker && (
-              <NumberInput
-                label={
-                  <Group gap={4} wrap="nowrap">
-                    <span>Price per extra use</span>
-                    <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
-                      <Text size="xs">
-                        What one more use costs a buyer who has run out. They&apos;re offered it
-                        where they run out rather than being sent back to the shop, and you keep the
-                        same share as a sale.
-                      </Text>
-                    </InfoPopover>
-                  </Group>
-                }
-                description={`At least ${perUseFloor} Buzz. This price belongs to the sticker, so it's the same wherever it was bought.`}
-                placeholder={`e.g. ${perUseFloor}`}
-                value={pricePerUse ?? ''}
-                onChange={(v) => setPricePerUse(typeof v === 'number' ? v : undefined)}
-                min={perUseFloor}
-                step={5}
-                error={pricePerUseError}
-                withAsterisk
-              />
-            )}
-
             {!artLocked && !localUrl && !imageId && <CosmeticStudioCallout />}
 
             <ArtworkField
@@ -354,6 +295,73 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                 </Text>
               </Alert>
             )}
+          </>
+        )}
+
+        {/* Beside price and quantity, not inside the content block a published
+            item hides: these are prices, the server permits changing them after
+            publish, and a sticker that predates per-use pricing can only be
+            repaired if its creator can still see the field. Hidden entirely
+            from a cross-lister, who may not change another creator's
+            economics — the server refuses it, so requiring it would strand
+            them on a disabled button. */}
+        {economicsEditable && (
+          <>
+            <NumberInput
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <span>Uses per purchase</span>
+                  <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                    <Text size="xs">
+                      A use is spent when a buyer places your sticker in{' '}
+                      {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
+                      {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
+                      out they can top up at the price you set below.
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
+              description={
+                uses
+                  ? `How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
+                      uses * CREATOR_GRANT_USES_MULTIPLIER
+                    )} uses of your own once it's approved.`
+                  : `How many times a buyer can place this sticker. You'll receive ${CREATOR_GRANT_USES_MULTIPLIER}x that many of your own once it's approved.`
+              }
+              placeholder="e.g. 100"
+              // Empty rather than defaulted: a prefilled number is
+              // indistinguishable from a chosen one, and this field decides
+              // what every buyer gets.
+              value={uses ?? ''}
+              onChange={(v) => setUses(typeof v === 'number' ? v : undefined)}
+              min={1}
+              step={10}
+              error={usesError}
+              withAsterisk
+            />
+
+            <NumberInput
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <span>Price per extra use</span>
+                  <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                    <Text size="xs">
+                      What one more use costs a buyer who has run out. They&apos;re offered it where
+                      they run out rather than being sent back to the shop, and you keep the same
+                      share as a sale.
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
+              description={`At least ${perUseFloor} Buzz. This price belongs to the sticker, so it's the same wherever it was bought.`}
+              placeholder={`e.g. ${perUseFloor}`}
+              value={pricePerUse ?? ''}
+              onChange={(v) => setPricePerUse(typeof v === 'number' ? v : undefined)}
+              min={perUseFloor}
+              step={5}
+              error={pricePerUseError}
+              withAsterisk
+            />
           </>
         )}
 

@@ -11,6 +11,7 @@ import {
   type PreviewCosmetic,
 } from '~/components/CreatorShop/Submit/submit.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type {
   AutoCheck,
@@ -47,6 +48,7 @@ export function useSubmitCreatorShopForm({
   onClose: () => void;
 }) {
   const isEdit = !!item;
+  const currentUser = useCurrentUser();
   const { submitItem, updateItem } = useMutateCreatorShop();
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
@@ -111,6 +113,14 @@ export function useSubmitCreatorShopForm({
   const priceFloor = cosmeticPriceFloor(type);
 
   const isSticker = type === CosmeticType.Sticker;
+  // A cross-lister may never change another creator's economics — the server
+  // refuses it — so requiring the fields of them would disable their save with
+  // an error attached to a field they cannot act on. Published is deliberately
+  // NOT part of this: the server permits economics changes after publish, and a
+  // sticker predating per-use pricing can only be repaired by its creator here.
+  const isOriginalCreator =
+    !isEdit || !item?.cosmetic.createdById || item.cosmetic.createdById === currentUser?.id;
+  const economicsEditable = isSticker && isOriginalCreator;
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
   // An unset economic field is an error the creator can see, not a field that
@@ -120,7 +130,9 @@ export function useSubmitCreatorShopForm({
   const usesError = !isSticker
     ? null
     : uses === undefined
-    ? 'Set how many uses a purchase grants'
+    ? economicsEditable
+      ? 'Set how many uses a purchase grants'
+      : null
     : price < usesFloor
     ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     : null;
@@ -130,7 +142,9 @@ export function useSubmitCreatorShopForm({
   const pricePerUseError = !isSticker
     ? null
     : pricePerUse === undefined
-    ? 'Set what one extra use costs'
+    ? economicsEditable
+      ? 'Set what one extra use costs'
+      : null
     : pricePerUse < perUseFloor
     ? `A single use must cost at least ${perUseFloor} Buzz`
     : null;
@@ -331,6 +345,7 @@ export function useSubmitCreatorShopForm({
     setType,
     priceFloor,
     isSticker,
+    economicsEditable,
     uses,
     setUses,
     usesError,
