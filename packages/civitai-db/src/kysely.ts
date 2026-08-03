@@ -30,6 +30,34 @@ function registerNumericTypeParsers() {
   numericParsersRegistered = true;
 }
 
+// pg has no built-in parser for arrays of a user-defined enum: enum types get DYNAMIC oids, so a
+// `"SomeEnum"[]` column comes back as the raw Postgres literal string `{a,b}` instead of `string[]`. (Scalar
+// enum columns are fine — plain text.) Prisma parses these itself; the Kysely-over-pg path does not, so
+// without this an enum-array select silently yields a string where the typed result promises an array — a bug
+// EXPLAIN tests can't catch. Discover every enum's array oid from the catalog and register the built-in
+// text-array parser for it (enum values are plain text, so text-array parsing is exactly right).
+//
+// Like registerNumericTypeParsers this mutates pg's PROCESS-GLOBAL registry, so it runs once and benefits
+// every node-postgres pool; Prisma (separate engine) is unaffected. It needs one catalog round-trip, so it is
+// async and MUST be awaited at startup before the first enum-array select. The oids are read from `pool`'s
+// database — in a multi-DB process the same oid can name a different type elsewhere, so register from the
+// primary (schema) pool and only run enum-array selects against DBs that share that schema (the app's
+// primary + its replicas do).
+const TEXT_ARRAY_OID = 1009; // pg's fixed oid for `text[]` (_text); stable across versions
+let enumArrayParsersRegistered = false;
+export async function registerEnumArrayTypeParsers(pool: Pool): Promise<void> {
+  if (enumArrayParsersRegistered) return;
+  const { rows } = await pool.query<{ typarray: number }>(
+    `SELECT typarray FROM pg_type WHERE typtype = 'e' AND typarray <> 0`
+  );
+  // getTypeParser's typed param is pg's builtin-oid union; TEXT_ARRAY_OID is a real oid the runtime accepts.
+  const textArrayParser = types.getTypeParser(
+    TEXT_ARRAY_OID as Parameters<typeof types.getTypeParser>[0]
+  );
+  for (const { typarray } of rows) types.setTypeParser(typarray, textArrayParser);
+  enumArrayParsersRegistered = true;
+}
+
 // Force `sslmode=no-verify` on a connection string: keep SSL on, skip chain verification. node-postgres
 // maps a URL's `sslmode=require` to FULL verification (unlike libpq), which rejects the cnpg pooler's
 // self-signed cert — and a separate `ssl` option is overridden by the URL's sslmode. Centralized here so
