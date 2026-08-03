@@ -1,8 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -17,11 +18,29 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
+  // Every `recordRecentlyOpenedApp(...)` argument seen this test, in order.
+  recorded: [] as unknown[],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
 }));
+
+// Recents SPY — spread the real module and wrap only the writer, so the store's
+// real behaviour (localStorage, per-kind cap, de-dup) is untouched and every
+// other importer keeps working. Used by the hero-banner "records exactly as the
+// CTA does" tests below, WITH a positive control (see them) — a bare `0` from a
+// counter nobody has proved can count is not evidence.
+vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof RecentsMod>();
+  return {
+    ...actual,
+    recordRecentlyOpenedApp: (app: Parameters<typeof actual.recordRecentlyOpenedApp>[0]) => {
+      mocks.recorded.push(app);
+      return actual.recordRecentlyOpenedApp(app);
+    },
+  };
+});
 
 // The detail body now renders the discovery rail, which reads the feature flags
 // + `appListings.listAvailable`. Mock both so the suite stays network-free.
@@ -68,6 +87,7 @@ const { AppListingDetailBody } = await import('./AppListingDetailBody');
 beforeEach(() => {
   mocks.currentUser = null;
   mocks.relatedItems = [];
+  mocks.recorded = [];
 });
 
 function base(over: Partial<ListingDetail>): ListingDetail {
@@ -348,6 +368,21 @@ describe('AppListingDetailBody', () => {
    * mounts and throw on strict mode. Each variant's href is unique, so each wait
    * can only be satisfied by its own mount.
    *
+   * 🔴 `[class*="Button-root"]` is load-bearing. The click-to-launch hero banner
+   * is an anchor to the SAME `/apps/run/<slug>` href and sits EARLIER in the
+   * tree, so a bare `a[href=…]` returns the banner and `glyphOf` then reads the
+   * cover placeholder's category icon instead of the CTA's. That is a real
+   * failure for the glyph test — and, worse, a silent FALSE PASS for the
+   * link-semantics test below, whose assertions (no `target`, no `rel`) the
+   * banner happens to satisfy too. These tests are about the BUTTON; say so in
+   * the selector.
+   *
+   * Discriminate on what the CTA IS, not on what it is not: an earlier revision
+   * excluded the banner's `data-testid`, which works here but is a trap to copy —
+   * `next.config.mjs` strips `data-testid` in production builds
+   * (`reactRemoveProperties`), so that shape matches nothing in a prod-build
+   * harness. Mirrors `waitForCta` in AppListingCard.browser.test.tsx.
+   *
    * Timeout matches the 10s that `test/component-setup.tsx` deliberately sets as
    * the project-wide `vi.waitFor` default — its comment names the saturated
    * preview CI box, where these browser tests share a host with the image build.
@@ -358,10 +393,18 @@ describe('AppListingDetailBody', () => {
     ctaHref: string
   ): Promise<HTMLAnchorElement> {
     await renderWithProviders(ui);
-    const cta = await vi.waitUntil(() => document.body.querySelector(`a[href="${ctaHref}"]`), {
-      timeout: 10000,
-      interval: 25,
-    });
+    const cta = await vi.waitUntil(
+      () =>
+        // 🔴 Discriminate STRUCTURALLY (the CTA is the Button), not by excluding
+        // the banner's `data-testid`. `next.config.mjs` strips `data-testid` in
+        // production builds via `reactRemoveProperties`, so a testid-based
+        // selector is correct in vitest (dev transform) but silently matches
+        // nothing in any prod-build harness. This mirrors the existing precedent
+        // at AppListingCard.browser.test.tsx's `waitForCta`, and it is
+        // self-describing: it says what the CTA IS rather than what it is not.
+        document.body.querySelector(`a[href="${ctaHref}"][class*="Button-root"]`),
+      { timeout: 10000, interval: 25 }
+    );
     return cta as HTMLAnchorElement;
   }
 
@@ -524,5 +567,225 @@ describe('AppListingDetailBody', () => {
     await expect.element(label).toBeInTheDocument();
     await label.hover();
     await expect.element(page.getByText(longName, { exact: true })).toBeInTheDocument();
+  });
+
+  // ── Hero banner click-to-launch ────────────────────────────────────────────
+  //
+  // The banner is a SECOND affordance for the primary `open` action — an
+  // ordinary `<a href="/apps/run/<slug>">` wrapping the cover art. Not a frame,
+  // not a div-with-onClick.
+  //
+  // 🔴 RED-AT-BASE STATUS, stated per test rather than implied. Measured by
+  // running each test in isolation (`-t`) against the pristine parent commit:
+  //   RED   — "is a real link", "NO cover art still launches", "keyboard
+  //           focusable and Enter activates", "records recents exactly as the
+  //           Open CTA does". These are genuine regression coverage.
+  //   GREEN — the four negative tests (preview, off-site, the on-site "Open
+  //           live" escape hatch, the model-slot info branch) and the positive
+  //           control. Base renders no banner link at all, so the negatives pass
+  //           there VACUOUSLY: they are INVARIANT GUARDS, not coverage. What
+  //           they are worth is mutation-proof against THIS change's own guard —
+  //           drop a clause from `heroLaunchHref` and each goes red for its own
+  //           reason. Do not count them as regression coverage.
+
+  /** The banner's launch anchor, when there is one. */
+  const HERO = 'apps-listing-hero-launch';
+
+  /**
+   * Render, and return a locator scoped to THIS mount's container.
+   *
+   * 🔴 Every query below goes through `within`, never the page-wide `page.*` or
+   * `document.body`. Measured while establishing the red-at-base matrix (on the
+   * pre-#3556 base, where the `afterEach` `cleanup()` was not awaited): a test
+   * that FAILS could leave its mounted tree in `document.body`, so with three
+   * neighbours red the next test saw three extra copies — a body-wide
+   * `getByText('My App')` hit "strict mode violation: resolved to 3 elements"
+   * and a body-wide `querySelectorAll('a[href="/apps/run/my-app"]')` counted the
+   * previous mount's CTA and reported "expected 0, got 1". Both were FALSE reds
+   * about this change: run in isolation the same tests passed. #3556 has since
+   * fixed that root cause; the scoping stays anyway, because whether this test
+   * passes should not depend on whether its neighbours did.
+   *
+   * (`renderWithProviders`'s own returned selectors do NOT do this — vitest-
+   * browser-react binds them to `baseElement`, which defaults to
+   * `document.body`. `page.elementLocator(container)` is the scoped one.)
+   */
+  async function renderScoped(ui: Parameters<typeof renderWithProviders>[0]) {
+    const { container } = await renderWithProviders(ui);
+    return { container, within: page.elementLocator(container) };
+  }
+
+  /**
+   * Swallow a real activation: capture-phase `preventDefault()` on `document`.
+   *
+   * Runs BEFORE React's root-container listeners, so (a) the browser performs no
+   * navigation and opens no tab, and (b) `next/link`'s own handler sees
+   * `e.defaultPrevented` and bails out of `router.push`. A plain `<a onClick>`
+   * (the off-site Visit CTA) still runs its React handler — which is exactly
+   * what the positive control below needs: the side effect fires, the
+   * navigation does not.
+   */
+  async function withoutNavigating<T>(fn: () => Promise<T>): Promise<T> {
+    const stop = (e: Event) => e.preventDefault();
+    document.addEventListener('click', stop, true);
+    try {
+      return await fn();
+    } finally {
+      document.removeEventListener('click', stop, true);
+    }
+  }
+
+  test('🔴 on-site + canOpenPage → the banner is a real link to the SAME target as the Open CTA', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({})} canOpenPage />
+    );
+    const hero = within.getByTestId(HERO);
+    await expect.element(hero).toBeInTheDocument();
+
+    const el = hero.element() as HTMLElement;
+    // Semantics, not a click handler on a box: a real anchor, same-tab.
+    expect(el.tagName).toBe('A');
+    expect(el.getAttribute('href')).toBe('/apps/run/my-app');
+    expect(el.getAttribute('target')).toBeNull();
+    // Accessible NAME — neither the cover `alt` ("… cover image") nor the
+    // aria-hidden placeholder can supply one, so it is explicit.
+    expect(el.getAttribute('aria-label')).toBe('Open My App');
+    // No nested interactive: the banner wraps art only.
+    expect(el.querySelectorAll('a, button, input, select, textarea')).toHaveLength(0);
+
+    // "Same destination as the CTA" asserted as a fact about the DOM, not by
+    // restating the string: exactly two anchors point at the run route — the
+    // banner and the button. If the banner ever aims somewhere else this is 1.
+    expect(container.querySelectorAll('a[href="/apps/run/my-app"]')).toHaveLength(2);
+  });
+
+  test('🔴 a listing with NO cover art still gets the launch affordance', async () => {
+    // The placeholder-gradient branch. An owner who has not uploaded a cover yet
+    // must not silently lose the way into their own app.
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({ coverUrl: null })} canOpenPage />);
+    const hero = within.getByTestId(HERO);
+    await expect.element(hero).toBeInTheDocument();
+    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app');
+    // …and it really is the seeded-gradient placeholder inside, not a cover
+    // image — otherwise this test would pass on the wrong branch.
+    expect(hero.element().querySelector('[data-listing-cover-placeholder]')).not.toBeNull();
+  });
+
+  test('🔴 the banner is keyboard focusable and Enter activates it', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} canOpenPage />);
+    const hero = within.getByTestId(HERO);
+    await expect.element(hero).toBeInTheDocument();
+    const el = hero.element() as HTMLElement;
+
+    const activated: (string | null)[] = [];
+    await withoutNavigating(async () => {
+      el.focus();
+      // A `<div onClick>` is not focusable without an explicit tabIndex, so this
+      // line alone discriminates the real-semantics requirement.
+      expect(document.activeElement).toBe(el);
+      document.addEventListener(
+        'click',
+        (e) => activated.push((e.target as Element).closest('a')?.getAttribute('href') ?? null),
+        { capture: true, once: true }
+      );
+      await userEvent.keyboard('{Enter}');
+    });
+    // The browser synthesised an activation click from the keypress, and it came
+    // from the banner anchor.
+    expect(activated).toEqual(['/apps/run/my-app']);
+  });
+
+  test('preview mode renders NO launchable banner (invariant guard — see the block note)', async () => {
+    // The moderator listing-media review posture. `canOpenPage` is passed TRUE
+    // on purpose: the only thing suppressing the banner here must be `preview`.
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({})} canOpenPage preview />
+    );
+    await expect.element(within.getByText('My App')).toBeInTheDocument(); // render barrier
+    expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
+    // Nothing anywhere in the read-only body links to the run route.
+    expect(container.querySelectorAll('a[href="/apps/run/my-app"]')).toHaveLength(0);
+  });
+
+  test('off-site (Visit) → the banner is NOT interactive (invariant guard)', async () => {
+    // Design call: an off-site destination is never reached from decorative art.
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={offsite()} />
+    );
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
+    // Exactly one route off-platform: the labelled button.
+    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(1);
+  });
+
+  test('the on-site raw-origin escape hatch does NOT make the banner interactive (invariant guard)', async () => {
+    // on-site page app, viewer WITHOUT `appBlocksPages` → the action is `visit`
+    // to <slug>.civit.ai. Same off-platform reasoning as the off-site case, and
+    // the branch a `mode !== 'visit'`-shaped guard would most easily get wrong.
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
+    expect(container.querySelectorAll('a[href="https://my-app.civit.ai"]')).toHaveLength(1);
+  });
+
+  test('the model-slot info branch (no href at all) leaves the banner inert (invariant guard)', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'blk-1',
+            hasPage: false,
+            liveUrl: 'https://my-app.civit.ai',
+          },
+        })}
+        canOpenPage
+      />
+    );
+    await expect.element(within.getByText('Runs on model pages')).toBeInTheDocument();
+    expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
+  });
+
+  // ── Recents: exactly once, matching the CTA ────────────────────────────────
+  //
+  // 🔴 The claim under test is a ZERO ("the banner adds no recents write"), and
+  // a zero from a counter that has never been shown to count is indistinguishable
+  // from a counter wired to nothing. So the control comes FIRST and must read 1.
+
+  test('POSITIVE CONTROL — the off-site Visit CTA records exactly 1 through this counter', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={offsite()} />);
+    const cta = within.getByTestId('apps-listing-open-live');
+    await expect.element(cta).toBeInTheDocument();
+    expect(mocks.recorded).toHaveLength(0); // a VIEW records nothing
+    await withoutNavigating(() => userEvent.click(cta));
+    expect(mocks.recorded).toHaveLength(1);
+  });
+
+  test('🔴 the banner records recents exactly as the Open CTA does — i.e. not on click at all', async () => {
+    // `/apps/run/<slug>` records the open in its own mount effect, which is why
+    // the `open` CTA has no onClick. The banner must match it: 0 here, 1 there.
+    // The control above proves this counter CAN observe a write, so these zeros
+    // are evidence rather than an absence of wiring.
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({})} canOpenPage />
+    );
+    await expect.element(within.getByTestId(HERO)).toBeInTheDocument();
+
+    const links = Array.from(
+      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app"]')
+    );
+    expect(links).toHaveLength(2);
+    const [heroEl, ctaEl] = links;
+    expect(heroEl.getAttribute('data-testid')).toBe(HERO); // the banner is first in the tree
+
+    await withoutNavigating(async () => {
+      await userEvent.click(ctaEl);
+      const afterCta = mocks.recorded.length;
+      await userEvent.click(heroEl);
+      const afterHero = mocks.recorded.length;
+
+      expect(afterCta).toBe(0); // the CTA's own behaviour, re-measured not assumed
+      expect(afterHero - afterCta).toBe(0); // the banner adds nothing on top of it
+    });
   });
 });
