@@ -424,8 +424,33 @@ describe('apps.storage.set', () => {
     await vi.waitFor(() => expect(mockRecordScopeInvocation).toHaveBeenCalled());
     expect(mockRecordScopeInvocation.mock.calls[0][0]).toMatchObject({
       scope: 'apps:storage',
+      // BOUNDED aggregation key — the key must NOT be interpolated into it.
+      endpoint: 'storage:set',
       detail: { action: 'storage.set', key: 'lastPrompt', outcome: 'ok' },
     });
+  });
+
+  // 🔴 Cardinality: `block_scope_invocations.endpoint` is the GROUP BY key of
+  // the `topEndpoints` rollup, so a per-key endpoint made it unbounded (every
+  // bucket count 1). Two writes to DIFFERENT keys must collapse to one endpoint
+  // value; the key survives in `detail`, which is what the UI reads.
+  it('two different storage keys AGGREGATE to one endpoint value, keys kept in detail', async () => {
+    for (const key of ['alpha', 'beta']) {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await caller.storage.set({ blockToken: 't', key, value: 'v' });
+    }
+    await vi.waitFor(() =>
+      expect(mockRecordScopeInvocation.mock.calls.length).toBeGreaterThanOrEqual(2)
+    );
+    const calls = mockRecordScopeInvocation.mock.calls.map(
+      (c) => c[0] as { endpoint: string; detail?: { key?: string } }
+    );
+    expect(new Set(calls.map((c) => c.endpoint))).toEqual(new Set(['storage:set']));
+    expect(calls.map((c) => c.detail?.key)).toEqual(['alpha', 'beta']);
   });
 
   it('uses the net delta from an existing row to size the quota check', async () => {
@@ -481,6 +506,8 @@ describe('apps.storage.delete', () => {
     await vi.waitFor(() => expect(mockRecordScopeInvocation).toHaveBeenCalled());
     expect(mockRecordScopeInvocation.mock.calls[0][0]).toMatchObject({
       scope: 'apps:storage',
+      // BOUNDED aggregation key — the key must NOT be interpolated into it.
+      endpoint: 'storage:delete',
       detail: { action: 'storage.delete', key: 'k', outcome: 'ok' },
     });
   });

@@ -1098,7 +1098,15 @@ describe('blocks.submitWorkflow', () => {
     await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
     expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
       scope: 'ai:write:budgeted',
-      detail: { action: 'workflow.submit', amount: -25, outcome: 'ok' },
+      // BOUNDED endpoint — the workflow id must NOT be interpolated into the
+      // `topEndpoints` GROUP BY key; it rides in `detail.workflowId` instead.
+      endpoint: 'workflow:submit',
+      detail: {
+        action: 'workflow.submit',
+        amount: -25,
+        outcome: 'ok',
+        workflowId: 'wf_real',
+      },
     });
   });
 
@@ -5756,11 +5764,72 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         appBlockId: 'apb_test',
         blockInstanceId: 'bki_test',
         scope: 'ai:write:budgeted',
-        endpoint: 'workflow:submit:wf_cc_1',
+        // BOUNDED template — the workflow id must NOT be in the aggregation key.
+        endpoint: 'workflow:submit',
         statusCode: 200,
-        detail: { action: 'workflow.submit', outcome: 'ok' },
+        // …it rides in `detail` instead, so the Activity panel keeps its Detail cell.
+        detail: { action: 'workflow.submit', outcome: 'ok', workflowId: 'wf_cc_1' },
         dev: false, // non-dev page token
       });
+    });
+
+    // 🔴 Cardinality: `block_scope_invocations.endpoint` is the GROUP BY key of
+    // the `topEndpoints` rollup. It used to be `workflow:submit:<workflowId>`,
+    // so every row was its own bucket and the rollup was pure noise (measured:
+    // all five "top endpoints" for two production apps were count-1 workflow
+    // ids). Two DIFFERENT submits must now collapse to ONE endpoint value while
+    // keeping their distinct ids in `detail`.
+    it('two different workflows AGGREGATE to one endpoint value, ids kept in detail', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+
+      happyCcResources();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_aaa',
+        status: 'processing',
+        steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+        cost: { total: 0 },
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+
+      happyCcResources();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_bbb',
+        status: 'processing',
+        steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+        cost: { total: 0 },
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+
+      await vi.waitFor(() =>
+        expect(vi.mocked(recordScopeInvocation).mock.calls.length).toBeGreaterThanOrEqual(2)
+      );
+      const calls = vi.mocked(recordScopeInvocation).mock.calls.map((c) => c[0]);
+      // ONE bucket…
+      expect(new Set(calls.map((c) => c.endpoint))).toEqual(new Set(['workflow:submit']));
+      // …two distinct per-row payloads.
+      expect(calls.map((c) => (c.detail as { workflowId?: string } | null)?.workflowId)).toEqual([
+        'wf_aaa',
+        'wf_bbb',
+      ]);
+    });
+
+    it('a submit with NO workflow id still writes the SAME endpoint (no `:pending` variant)', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'processing',
+        steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+        cost: { total: 0 },
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+      const call = vi.mocked(recordScopeInvocation).mock.calls[0][0];
+      expect(call.endpoint).toBe('workflow:submit');
+      // No id to carry → the key is OMITTED rather than written as 'pending'.
+      expect((call.detail as { workflowId?: string } | null)?.workflowId).toBeUndefined();
     });
 
     it('routes the dev/ephemeral synthetic-app case via dev:true (service writes appBlockId:null + synthetic_app_id)', async () => {
@@ -6544,7 +6613,12 @@ describe("step-type registry bridge (kind: 'step')", () => {
           userId: 42,
           appBlockId: 'apb_test',
           scope: 'ai:write:budgeted',
-          endpoint: 'workflow:submit:wf_step_1',
+          // BOUNDED template; the id moves to `detail.workflowId`.
+          endpoint: 'workflow:submit',
+          detail: expect.objectContaining({
+            action: 'workflow.submit',
+            workflowId: 'wf_step_1',
+          }),
         })
       );
       expect(mockRecordSpendAttribution).toHaveBeenCalledWith(
