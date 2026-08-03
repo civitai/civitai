@@ -3,6 +3,8 @@ import type * as SubscriptionsService from '~/server/services/subscriptions.serv
 import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
+  MIN_OWNER_SHARE,
+  PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
   placementSurfaces,
 } from '~/shared/utils/placement';
@@ -83,6 +85,46 @@ describe('getPlacementConfig', () => {
       );
       expect(config.expiryHours('sticker')).toBe(PLACEMENT_SURFACES.sticker.expiryHours);
     }
+  });
+
+  // Shares that sum to 1 conserve perfectly and pay the space owner nothing,
+  // which passes every conservation test and defeats the premise of the feature.
+  it('never lets the approval shares squeeze the space owner below their floor', async () => {
+    const defaults = {
+      seller: PLACEMENT_SURFACES.sticker.defaultSellerShare,
+      platform: PLACEMENT_SURFACES.sticker.defaultPlatformShare,
+    };
+
+    for (const shares of [
+      { seller: 1, platform: 0 },
+      { seller: 0, platform: 1 },
+      { seller: 0.5, platform: 0.5 },
+      { seller: 0.4, platform: 0.3 },
+      { seller: -1, platform: 2 },
+    ]) {
+      storedConfig({ approvalShares: { sticker: shares } });
+      const emitted = (await getPlacementConfig()).approvalShares('sticker');
+
+      expect(emitted.seller + emitted.platform).toBeLessThanOrEqual(1 - MIN_OWNER_SHARE);
+      expect(emitted).toEqual(defaults);
+    }
+  });
+
+  it('accepts operator shares that leave the owner their floor', async () => {
+    storedConfig({ approvalShares: { sticker: { seller: 0.2, platform: 0.3 } } });
+    expect((await getPlacementConfig()).approvalShares('sticker')).toEqual({
+      seller: 0.2,
+      platform: 0.3,
+    });
+  });
+
+  it('refuses a fractional price cap, which would produce a non-integer amount', async () => {
+    storedConfig({
+      priceCapTiers: [{ minScore: 0, caps: { free: 50.5, bronze: 1, silver: 1, gold: 1 } }],
+    });
+    const config = await getPlacementConfig();
+
+    expect(config.priceCapTiers('sticker')).toBe(PLACEMENT_PRICE_CAP_TIERS);
   });
 
   it('survives the config read throwing', async () => {

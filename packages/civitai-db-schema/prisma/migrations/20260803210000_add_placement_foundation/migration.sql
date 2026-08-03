@@ -57,10 +57,24 @@ BEGIN
       FOREIGN KEY ("placerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 
+  -- A removed row that doesn't say who removed it is unsettleable: the two
+  -- removals refund opposite amounts, so nothing can decide, and expiry can't
+  -- reach it either because it is no longer pending. Its escrow would be frozen
+  -- with no path out, which is the exact state `expiresAt` exists to prevent —
+  -- so the state is made unrepresentable rather than guarded in code.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_removedBy_check') THEN
     ALTER TABLE "Placement"
       ADD CONSTRAINT "Placement_removedBy_check"
-      CHECK ("removedBy" IS NULL OR "removedBy" IN ('owner', 'moderator'));
+      CHECK (
+        ("status" <> 'removed' AND "removedBy" IS NULL) OR
+        ("status" =  'removed' AND "removedBy" IN ('owner', 'moderator'))
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_status_check') THEN
+    ALTER TABLE "Placement"
+      ADD CONSTRAINT "Placement_status_check"
+      CHECK ("status" IN ('pending', 'approved', 'declined', 'expired', 'removed'));
   END IF;
 END
 $$;

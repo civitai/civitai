@@ -4,6 +4,7 @@ import { getCapTier } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
+  clampApprovalShares,
   clampDeclineFeeRate,
   PLACEMENT_MIN_PRICE,
   PLACEMENT_PRICE_CAP_TIERS,
@@ -13,13 +14,18 @@ import {
 
 export const PLACEMENT_CONFIG_KEY = 'placement:config';
 
+// Buzz is integral. A fractional cap flows through the effective price into a
+// non-integer amount, which the split then refuses — on the money path, after
+// the hold has already been taken.
+const buzzAmount = z.number().int().min(0);
+
 const priceCapTierSchema = z.object({
-  minScore: z.number().min(0),
+  minScore: z.number().int().min(0),
   caps: z.object({
-    free: z.number().min(0),
-    bronze: z.number().min(0),
-    silver: z.number().min(0),
-    gold: z.number().min(0),
+    free: buzzAmount,
+    bronze: buzzAmount,
+    silver: buzzAmount,
+    gold: buzzAmount,
   }),
 });
 
@@ -29,12 +35,20 @@ const placementConfigSchema = z.object({
   priceCapTiers: z.array(priceCapTierSchema).min(1).optional(),
   /** Per-surface override, so stickers and galleries can be priced apart later. */
   priceCapTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
+  approvalShares: z
+    .record(
+      z.string(),
+      z.object({ seller: z.number().optional(), platform: z.number().optional() })
+    )
+    .optional(),
 });
 
 export type PlacementConfig = {
   declineFeeRate: (surface: PlacementSurface) => number;
   expiryHours: (surface: PlacementSurface) => number;
   priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** The only producer of the approved-placement shares. Nothing may pass its own. */
+  approvalShares: (surface: PlacementSurface) => { seller: number; platform: number };
 };
 
 /**
@@ -67,6 +81,11 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
       clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>
       usablePriceCapTiers(stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers),
+    approvalShares: (surface) =>
+      clampApprovalShares(stored.approvalShares?.[surface] ?? {}, {
+        seller: PLACEMENT_SURFACES[surface].defaultSellerShare,
+        platform: PLACEMENT_SURFACES[surface].defaultPlatformShare,
+      }),
   };
 }
 
@@ -87,9 +106,8 @@ export async function placementPriceRange(
   surface: PlacementSurface
 ): Promise<PlacementPriceRange> {
   const [scoreRow, capTier, config] = await Promise.all([
-    // Cast through `numeric`: `::int` on a stored value that isn't integer text
-    // raises rather than returning null, and this read shouldn't be able to fail
-    // on one malformed row.
+    // Cast through `numeric`: `::int` raises on a fractional stored total rather
+    // than truncating it. Text that isn't a number at all still raises.
     dbRead.$queryRaw<{ score: number | null }[]>`
       SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
       FROM "User" WHERE id = ${userId}

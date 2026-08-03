@@ -43,6 +43,8 @@ export const PLACEMENT_SURFACES = {
     targets: ['image'],
     defaultMode: 'off',
     defaultDeclineFeeRate: 0.3,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0.3,
     expiryHours: 48,
   },
   remixGallery: {
@@ -50,6 +52,8 @@ export const PLACEMENT_SURFACES = {
     targets: ['image'],
     defaultMode: 'off',
     defaultDeclineFeeRate: 0.3,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0.3,
     expiryHours: 48,
   },
 } as const satisfies Record<
@@ -59,6 +63,8 @@ export const PLACEMENT_SURFACES = {
     targets: readonly PlacementSpaceEntity[];
     defaultMode: PlacementSpaceMode;
     defaultDeclineFeeRate: number;
+    defaultSellerShare: number;
+    defaultPlatformShare: number;
     expiryHours: number;
   }
 >;
@@ -293,6 +299,28 @@ export function declineFeeAmount(amount: number, rate: number) {
  */
 export const MIN_DECLINE_FEE_RATE = 0.05;
 export const MAX_DECLINE_FEE_RATE = 0.5;
+
+/**
+ * The space owner's floor on an approved placement. `splitPlacementPayment`
+ * conserves at any shares that sum to 1, including ones that pay the owner
+ * nothing — which conserves perfectly and defeats the entire premise that a
+ * creator's space is worth something. The floor is structural rather than a
+ * convention the call site is trusted to keep.
+ */
+export const MIN_OWNER_SHARE = 0.5;
+
+export const clampApprovalShares = (
+  shares: { seller?: number | null; platform?: number | null },
+  fallback: { seller: number; platform: number }
+) => {
+  const usable = (value: number | null | undefined, spare: number) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : spare;
+
+  const seller = usable(shares.seller, fallback.seller);
+  const platform = usable(shares.platform, fallback.platform);
+
+  return seller + platform > 1 - MIN_OWNER_SHARE ? fallback : { seller, platform };
+};
 
 export const clampDeclineFeeRate = (rate: number | null | undefined, fallback: number) => {
   const value = typeof rate === 'number' && Number.isFinite(rate) ? rate : fallback;
