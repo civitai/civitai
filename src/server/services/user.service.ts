@@ -69,8 +69,9 @@ import { hasValidCreatorMembership } from '~/server/services/creator-program.ser
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import {
+  countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
-  unblockAccountDeletionImages,
+  recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { deleteImageById } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
@@ -1181,8 +1182,10 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     disarmAccountDeletionImagePurge(id),
   ]);
 
-  // After the deletedAt clear, so the drain job's gates can no longer re-hide what this unblocks.
-  const imagesRestored = await unblockAccountDeletionImages(id);
+  // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
+  // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.
+  const imagesPendingRestore = await countPendingAccountDeletionImageRestores(id);
+  if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -1197,7 +1200,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     email,
     modelsRestored,
     modelIds: restoredModelIds,
-    imagesRestored: imagesRestored.unblocked,
+    imagesPendingRestore,
   };
 };
 
