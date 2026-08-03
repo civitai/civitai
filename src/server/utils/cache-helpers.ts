@@ -1,6 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { createCacheBuilders } from '@civitai/redis';
+// `prefixCacheKey` comes from the package rather than the `~/server/redis/client` shim on
+// purpose: it is a pure helper with no client state, and importing it through the shim would
+// force every suite that mocks the shim to add it to its mock factory.
+import { createCacheBuilders, prefixCacheKey } from '@civitai/redis';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -38,10 +41,13 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
     if (options?.ttl === 0) return db.$queryRaw<T>(query);
 
-    // this typing is not quite right, as we're creating redis keys on the fly here
-    const cacheKey = [key, version, hashifyObject(query).toString()]
-      .filter(isDefined)
-      .join(':') as RedisKeyTemplateCache;
+    // this typing is not quite right, as we're creating redis keys on the fly here.
+    // These keys are minted from a free-form `key` rather than derived from REDIS_KEYS, so they
+    // don't inherit the environment prefix from the key table — apply it explicitly. Without
+    // this, previews would share these entries with production. No-op in production.
+    const cacheKey = prefixCacheKey(
+      [key, version, hashifyObject(query).toString()].filter(isDefined).join(':')
+    ) as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
     if (cachedData && options?.ttl !== 0) {
       cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
@@ -67,10 +73,11 @@ export function queryCacheRaw(executor: RawQueryExecutor, key: string, version?:
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
     if (options?.ttl === 0) return (await executor<T[number]>(query)) as unknown as T;
 
-    // this typing is not quite right, as we're creating redis keys on the fly here
-    const cacheKey = [key, version, hashifyObject(query).toString()]
-      .filter(isDefined)
-      .join(':') as RedisKeyTemplateCache;
+    // this typing is not quite right, as we're creating redis keys on the fly here.
+    // Same on-the-fly minting as queryCache above — apply the environment prefix explicitly.
+    const cacheKey = prefixCacheKey(
+      [key, version, hashifyObject(query).toString()].filter(isDefined).join(':')
+    ) as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
     if (cachedData && options?.ttl !== 0) {
       cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
