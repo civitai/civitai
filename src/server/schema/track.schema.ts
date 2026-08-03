@@ -121,7 +121,8 @@ export const blockRenderSchema = z.object({
   //
   // Bounds: every leg is a non-negative millisecond count. `max` is a coarse
   // sanity bound only — the REAL gate is `launchSampleSeconds` server-side
-  // (>0 and <= 30s, DROPPED not clamped), which the client mirrors.
+  // (>0 and <= MAX_APP_BLOCK_LAUNCH_SECONDS, DROPPED not clamped), which the
+  // client mirrors.
   //
   // 🔴 `.catch(undefined)` IS LOAD-BEARING, NOT DEFENSIVE CLUTTER. Without it a
   // malformed `timings` (a client bug producing a NaN, a stale field name, a
@@ -134,7 +135,6 @@ export const blockRenderSchema = z.object({
     .object({
       totalMs: z.number().finite().nonnegative().max(600_000),
       tokenMintMs: z.number().finite().nonnegative().max(600_000).optional(),
-      frameFetchMs: z.number().finite().nonnegative().max(600_000).optional(),
       initWaitMs: z.number().finite().nonnegative().max(600_000).optional(),
     })
     .optional()

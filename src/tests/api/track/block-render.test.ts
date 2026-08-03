@@ -478,7 +478,7 @@ async function histCount(name: string, labels: Record<string, string>): Promise<
 
 const LAUNCH_TOTAL = 'civitai_app_block_launch_total_seconds';
 const LAUNCH_PHASE = 'civitai_app_block_launch_phase_seconds';
-const timings = { totalMs: 1_100, tokenMintMs: 180, frameFetchMs: 320, initWaitMs: 700 };
+const timings = { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 };
 
 describe('POST /api/track/block-render — launch-latency histograms', () => {
   beforeEach(() => {

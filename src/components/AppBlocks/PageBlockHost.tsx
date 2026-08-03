@@ -39,8 +39,8 @@ import {
   createLaunchMarks,
   isDocumentHidden,
   nowMs,
-  readIframeResourceTiming,
   resetLaunchMarks,
+  shouldResetLaunchMarks,
   type LaunchMarks,
 } from './launchTimings';
 import {
@@ -435,6 +435,12 @@ export function PageBlockHost({
   const launchMarksRef = useRef<LaunchMarks | null>(null);
   if (launchMarksRef.current === null)
     launchMarksRef.current = createLaunchMarks(nowMs(), isDocumentHidden());
+  // Which instance the marks above currently describe. Seeded at RENDER time
+  // with the first `blockInstanceId`, so the `[blockInstanceId]` effect below can
+  // tell "first mount" (no reset — that would throw away the render-time t0)
+  // from "soft nav to another app" (reset).
+  const launchInstanceRef = useRef<string | null>(null);
+  if (launchInstanceRef.current === null) launchInstanceRef.current = blockInstanceId;
 
   // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
   //
@@ -492,7 +498,18 @@ export function PageBlockHost({
     // genuine `ready` after a soft nav — `shouldStartInit` refuses a non-'loading'
     // status — so this is belt-and-braces against the pre-existing host-reuse
     // bug being fixed later, not a live defect.)
-    if (launchMarksRef.current) resetLaunchMarks(launchMarksRef.current, nowMs(), isDocumentHidden());
+    //
+    // 🔴 BUT NOT ON FIRST MOUNT. This effect runs on mount as well as on change,
+    // and `mountedAt` was deliberately taken at RENDER time — the commit in which
+    // the iframe actually mounts. Resetting here unconditionally would overwrite
+    // it with a post-commit timestamp and silently shorten EVERY `total` by the
+    // render->effect gap, discarding exactly the window t0 exists to capture, in
+    // the flattering direction. `shouldResetLaunchMarks` is unit-tested.
+    if (shouldResetLaunchMarks(launchInstanceRef.current, blockInstanceId)) {
+      if (launchMarksRef.current)
+        resetLaunchMarks(launchMarksRef.current, nowMs(), isDocumentHidden());
+    }
+    launchInstanceRef.current = blockInstanceId;
   }, [blockInstanceId]);
 
   // 🔴 HIDDEN-TAB LATCH — sticky from mount until the beacon reads it.
@@ -893,9 +910,7 @@ export function PageBlockHost({
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
     const marks = launchMarksRef.current;
-    const timings = marks
-      ? computeLaunchTimings(marks, readIframeResourceTiming(iframeSrc))
-      : null;
+    const timings = marks ? computeLaunchTimings(marks) : null;
     // Fire-and-forget beacon — failures are a no-op.
     sendBlockRender({
       appBlockId,
@@ -903,7 +918,7 @@ export function PageBlockHost({
       slotId: 'app.page',
       ...(timings ? { timings } : {}),
     });
-  }, [status, appBlockId, blockInstanceId, iframeSrc]);
+  }, [status, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {

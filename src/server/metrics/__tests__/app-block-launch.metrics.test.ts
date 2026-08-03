@@ -96,9 +96,25 @@ describe('launchSampleSeconds — the shared sample gate', () => {
     expect(launchSampleSeconds(MAX_APP_BLOCK_LAUNCH_SECONDS * 1000)).toBe(
       MAX_APP_BLOCK_LAUNCH_SECONDS
     );
-    // One millisecond past the bound → dropped. A clamp would return 30 here.
+    // One millisecond past the bound → dropped. A clamp would return
+    // MAX_APP_BLOCK_LAUNCH_SECONDS here.
     expect(launchSampleSeconds(MAX_APP_BLOCK_LAUNCH_SECONDS * 1000 + 1)).toBe(null);
     expect(launchSampleSeconds(9_999_999)).toBe(null);
+  });
+
+  /**
+   * 🔴 THE BOUND MUST CLEAR THE AUTO-RETRY WORST CASE.
+   *
+   * The host emits ONE `ok` for the whole bounded auto-retry sequence, whichever
+   * attempt produced it, so a legitimate success can be ~47s (15 no_token + 2
+   * backoff + 15 no_token + 5 backoff + ~10 ready). The previous 30s bound
+   * dropped those, and the drop was slowness-correlated — it trimmed exactly the
+   * tail the metric exists to show. A value pin: red if the bound is lowered back.
+   */
+  it('🔴 accepts a slow auto-retry success (~47s), which the old 30s bound dropped', () => {
+    expect(launchSampleSeconds(47_000)).toBeCloseTo(47, 6);
+    expect(launchSampleSeconds(30_001)).toBeCloseTo(30.001, 6);
+    expect(MAX_APP_BLOCK_LAUNCH_SECONDS).toBeGreaterThan(47);
   });
 
   it('rejects non-finite and non-numeric input (the body is client-supplied)', () => {
@@ -121,20 +137,38 @@ describe('observeAppBlockLaunch', () => {
     const app = 'apb_launch_ok';
     const beforeTotal = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
     const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
-    const beforeFrame = await readHist(PHASE_METRIC, '_count', { phase: 'frame_fetch' });
     const beforeInit = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' });
 
-    observeAppBlockLaunch(app, {
-      totalMs: 1_100,
-      tokenMintMs: 180,
-      frameFetchMs: 320,
-      initWaitMs: 700,
-    });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 });
 
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal + 1);
     expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'frame_fetch' })).toBe(beforeFrame + 1);
     expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' })).toBe(beforeInit + 1);
+  });
+
+  /**
+   * 🔴 THE CROSS-ORIGIN PHASE IS DELIBERATELY ABSENT, and a stray client field
+   * must not resurrect it. `frame_fetch` was designed, built, and dropped:
+   * without `Timing-Allow-Origin` the parent's `responseEnd` for a subframe is
+   * the frame's LOAD event, not the document response, so it measures roughly
+   * what `total` already measures — and the entry frequently does not exist yet
+   * when the beacon fires, which biases the missing data toward slow apps.
+   *
+   * The phase label is code-owned, so an old or hand-rolled client sending
+   * `frameFetchMs` must produce NO series at all rather than a fourth phase.
+   */
+  it('🔴 ignores a client-sent frameFetchMs — no frame_fetch series is created', async () => {
+    const app = 'apb_launch_no_frame';
+    observeAppBlockLaunch(app, {
+      totalMs: 1_100,
+      initWaitMs: 700,
+      frameFetchMs: 320,
+    } as never);
+
+    // Positive control first: the sample WAS accepted, so a zero below cannot be
+    // "nothing was observed at all".
+    expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(1);
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'frame_fetch' })).toBe(0);
   });
 
   it('records the total in SECONDS on _sum (not milliseconds)', async () => {
@@ -168,12 +202,12 @@ describe('observeAppBlockLaunch', () => {
   it('🔴 omits a ZERO phase while still recording the total', async () => {
     const app = 'apb_launch_zero_phase';
     const beforeTotal = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
-    const beforeFrame = await readHist(PHASE_METRIC, '_count', { phase: 'frame_fetch' });
+    const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
 
-    observeAppBlockLaunch(app, { totalMs: 1_100, frameFetchMs: 0 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 0 });
 
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'frame_fetch' })).toBe(beforeFrame);
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken);
   });
 
   it('🔴 DROPS an out-of-range phase rather than clamping it onto the top bucket', async () => {
@@ -181,10 +215,10 @@ describe('observeAppBlockLaunch', () => {
     const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
     const beforeSum = await readHist(PHASE_METRIC, '_sum', { phase: 'token_mint' });
 
-    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 31_000 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 61_000 });
 
     expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken);
-    // The thing a clamp would break: _sum must be untouched, not +30.
+    // The thing a clamp would break: _sum must be untouched, not +60.
     expect(await readHist(PHASE_METRIC, '_sum', { phase: 'token_mint' })).toBeCloseTo(beforeSum, 6);
   });
 
@@ -241,14 +275,32 @@ describe('launch histogram bucket boundaries', () => {
     expect(await readBucket(TOTAL_METRIC, '0.6', { app_block_id: app })).toBe(before06 + 2);
   });
 
-  it('places a >10s total above the le=10 edge (structurally impossible on the success path, so a bug signal)', async () => {
-    const app = 'apb_launch_impossible';
-    const before10 = await readBucket(TOTAL_METRIC, '10', { app_block_id: app });
+  /**
+   * 🔴 A SLOW AUTO-RETRY SUCCESS IS REAL DATA, NOT A BUG SIGNAL.
+   *
+   * An earlier revision of this test asserted that a >10s total was
+   * "structurally impossible on the success path" because BLOCK_READY_TIMEOUT_MS
+   * fires first. That is true of ONE ATTEMPT and false of a LAUNCH: the host
+   * emits one `ok` for the whole bounded auto-retry sequence, so 12-47s `ok`
+   * samples are reachable. They must be COUNTED (above the top bucket), never
+   * dropped and never read as an emitter fault.
+   */
+  it('🔴 counts a slow auto-retry success above the top bucket instead of dropping it', async () => {
+    const app = 'apb_launch_slow_retry';
+    const before15 = await readBucket(TOTAL_METRIC, '15', { app_block_id: app });
     const beforeCount = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
+    const beforeSum = await readHist(TOTAL_METRIC, '_sum', { app_block_id: app });
 
-    observeAppBlockLaunch(app, { totalMs: 12_000 });
+    // A success on attempt 3 of the bounded sequence.
+    observeAppBlockLaunch(app, { totalMs: 28_000 });
 
-    expect(await readBucket(TOTAL_METRIC, '10', { app_block_id: app })).toBe(before10);
+    // Above every finite edge…
+    expect(await readBucket(TOTAL_METRIC, '15', { app_block_id: app })).toBe(before15);
+    // …but counted, and contributing its REAL value to _sum (not a clamp).
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeCount + 1);
+    expect(await readHist(TOTAL_METRIC, '_sum', { app_block_id: app })).toBeCloseTo(
+      beforeSum + 28,
+      6
+    );
   });
 });

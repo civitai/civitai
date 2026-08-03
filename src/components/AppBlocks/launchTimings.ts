@@ -2,14 +2,14 @@
 // beacon payload.
 //
 // WHY THIS IS A SEPARATE MODULE AND NOT INLINE IN PageBlockHost:
-// every rule below (never-emit-a-zero, drop-don't-clamp, the hidden-tab drop)
-// is a correctness rule whose failure mode is a *plausible wrong number* rather
-// than a crash. Those need node-runnable tests, and the browser (`component`)
-// Vitest project is not run in CI — only the `unit` project is. So the math
-// lives here, and the host only records marks.
+// every rule below (never-emit-a-zero, drop-don't-clamp, the hidden-tab drop,
+// the host-reuse reset) is a correctness rule whose failure mode is a *plausible
+// wrong number* rather than a crash. Those need node-runnable tests, and the
+// browser (`component`) Vitest project is not run in CI — only the `unit`
+// project is. So the math lives here, and the host only records marks.
 //
 // ─── The launch chain this measures ───────────────────────────────────────────
-// Design + measurements: datapacket-talos
+// Design: datapacket-talos
 // claudedocs/app-blocks-launch-latency-instrumentation-and-preload-2026-08-02.md
 //
 // 🔴 THE TOKEN MINT AND THE CROSS-ORIGIN FRAME LOAD RUN IN PARALLEL.
@@ -19,54 +19,48 @@
 // waits on `max(token, block-listener-attached)`, then the BLOCK_INIT re-post
 // cadence, then the block's own render-to-ready.
 //
-// So `token_mint + frame_fetch + init_wait !== total`, BY CONSTRUCTION, and any
-// consumer that sums the phases is reading a fiction. They are three
-// independent legs of one race; `total` is the only end-to-end number.
+// So `token_mint + init_wait !== total`, BY CONSTRUCTION, and any consumer that
+// sums the phases is reading a fiction. They are two independent legs of one
+// race; `total` is the only end-to-end number.
 
-/** Code-owned phase enum. Mirrored server-side in app-block-runtime.metrics. */
-export const LAUNCH_PHASES = ['token_mint', 'frame_fetch', 'init_wait'] as const;
+/**
+ * Code-owned phase enum. Mirrored server-side in app-block-runtime.metrics.
+ *
+ * 🔴 THERE IS DELIBERATELY NO CROSS-ORIGIN `frame_fetch` PHASE — see the
+ * DEFERRED note at the bottom of this file. It is not an oversight, and it is
+ * not cheap to add back: the quantity a naive implementation measures is not the
+ * one its name would claim.
+ */
+export const LAUNCH_PHASES = ['token_mint', 'init_wait'] as const;
 export type LaunchPhase = (typeof LAUNCH_PHASES)[number];
 
 /**
  * Upper sanity bound on any single launch sample, in milliseconds.
  *
- * 30 s sits comfortably above `TOKEN_WAIT_TIMEOUT_MS` (15 s), the longest leg
- * that can legitimately complete — a `total` above 10 s is already structurally
- * impossible on the success path (`BLOCK_READY_TIMEOUT_MS` fires first and no
- * `ok` beacon is sent). Anything past 30 s is a suspended tab, a clock anomaly,
- * or a bug.
+ * 🔴 60 s IS DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED. An earlier draft used
+ * 30 s, justified as "comfortably above TOKEN_WAIT_TIMEOUT_MS (15 s), the longest
+ * leg that can legitimately complete". That justification was WRONG, because a
+ * successful launch is not one attempt: `MAX_AUTO_RETRIES = 2` means the host
+ * emits ONE `ok` for the whole bounded sequence, whichever attempt produced it.
+ * Worst reachable success:
+ *
+ *     15 s (attempt 1 -> no_token at TOKEN_WAIT_TIMEOUT_MS)
+ *   +  2 s (AUTO_RETRY_BACKOFF_MS[0])
+ *   + 15 s (attempt 2 -> no_token)
+ *   +  5 s (AUTO_RETRY_BACKOFF_MS[1])
+ *   + ~10 s (attempt 3 finally reaches BLOCK_READY)
+ *   = ~47 s
+ *
+ * A 30 s cap therefore DROPPED real slow successes — and the drop was
+ * slowness-correlated, i.e. it silently trimmed exactly the tail the metric
+ * exists to show. 60 s clears the computed bound with margin while still
+ * rejecting a clock anomaly or a `performance.now()` discontinuity.
  *
  * 🔴 DROPPED, NEVER CLAMPED — mirrors `observeCustomComfyWallclockSeconds`. A
  * clamp folds junk onto the `+Inf` edge and poisons `_sum` and every tail
  * quantile with a value that was never real.
  */
-export const MAX_LAUNCH_SAMPLE_MS = 30_000;
-
-/**
- * The iframe-document fetch, as read from the PARENT's resource timeline.
- *
- * ✅ MEASURED (Chromium 151.0.7922.71, two-port loopback harness, 2026-08-03):
- * a cross-origin iframe document navigation DOES appear in the parent's
- * `performance.getEntriesByType('resource')` with `initiatorType: 'iframe'`, and
- * **without `Timing-Allow-Origin` the entry still carries real, non-zero
- * `startTime`, `responseEnd` and `duration`.** Only the DECOMPOSITION is zeroed
- * (`domainLookupStart/End`, `connectStart/End`, `requestStart`, `responseStart`,
- * `transferSize`, `encodedBodySize`, empty `nextHopProtocol`). Controls: a
- * cross-origin `<img>` shows the identical zeroing (so it is the standard
- * cross-origin TAO restriction, not iframe-specific), and a same-origin iframe
- * has every field in both runs (so it is genuinely cross-origin, not "iframes
- * never get timings").
- *
- * 🔴 CONSEQUENCE: `frame_fetch` is available at **100% coverage today**, on every
- * app, with no TAO header and no fleet rebuild. Earlier drafts of the design gated
- * this phase on `connectEnd > 0` and carried a `tao: present|absent` coverage
- * label; the measurement retired both. See the SUB-PHASE SEAM note at the bottom
- * of this file for what TAO would still buy and why it is deferred.
- */
-export type LaunchFrameTiming = {
-  /** `responseEnd - startTime` for the iframe document. */
-  durationMs: number;
-};
+export const MAX_LAUNCH_SAMPLE_MS = 60_000;
 
 /** Mutable per-mount marks, all `performance.now()` values. */
 export type LaunchMarks = {
@@ -91,7 +85,6 @@ export type LaunchMarks = {
 export type LaunchTimingsPayload = {
   totalMs: number;
   tokenMintMs?: number;
-  frameFetchMs?: number;
   initWaitMs?: number;
 };
 
@@ -114,10 +107,32 @@ export function resetLaunchMarks(marks: LaunchMarks, now: number | null, hidden:
 }
 
 /**
+ * 🔴 MUST THE MARKS BE RE-ARMED? Only when the block INSTANCE actually changed.
+ *
+ * This is a named predicate rather than an inline `!==` because getting it wrong
+ * is invisible. An effect keyed on `[blockInstanceId]` ALSO RUNS ON FIRST MOUNT,
+ * so resetting unconditionally overwrites the render-time `mountedAt` with a
+ * post-commit timestamp: nothing breaks, no test goes red, and every `total` is
+ * silently short by the render->effect gap — i.e. it discards precisely the
+ * hydration/first-commit window t0 exists to capture, in the flattering
+ * direction.
+ *
+ * That gap is a few milliseconds in a test harness and much larger on a real
+ * cold page load, so a browser test cannot discriminate it by magnitude. This
+ * predicate is where the rule is pinned instead.
+ */
+export function shouldResetLaunchMarks(
+  previousInstanceId: string | null,
+  nextInstanceId: string
+): boolean {
+  return previousInstanceId !== null && previousInstanceId !== nextInstanceId;
+}
+
+/**
  * A bounded, strictly-positive millisecond delta, or `undefined`.
  *
  * 🔴 THE `> 0` IS THE "NEVER EMIT A ZERO" RULE, and it is why this is one
- * function rather than three inline subtractions. A zero is indistinguishable
+ * function rather than several inline subtractions. A zero is indistinguishable
  * from an instant leg, so emitting one for a leg that simply was not observed
  * drags every percentile down — silently, and in the reassuring direction.
  */
@@ -137,63 +152,6 @@ export function boundedDurationMs(raw: number | null | undefined): number | unde
   if (!(ms > 0)) return undefined;
   if (ms > MAX_LAUNCH_SAMPLE_MS) return undefined;
   return ms;
-}
-
-function normalizeUrl(raw: string): string | null {
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return raw;
-  }
-}
-
-function numberOrZero(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-/**
- * Find the parent's `PerformanceResourceTiming` entry for the block iframe.
- *
- * Matched by URL only, deliberately: the parent document has no other reason to
- * fetch `https://<slug>.civit.ai/`, and `initiatorType` for a subframe document
- * is browser-dependent (measured as `iframe` in Chromium 151; Safari has
- * historically not surfaced subframe navigations in the parent timeline at all).
- * Filtering on it would turn a browser quirk into a silently missing phase.
- * Last match wins — a re-keyed iframe (the manual Retry path) adds a second
- * entry.
- *
- * Prefers the entry's own `duration`; falls back to `responseEnd - startTime`
- * (identical by spec) for an entry-like object that only carries the endpoints.
- *
- * Returns `null` when nothing matches — a fully supported state (e.g. the
- * ~250-entry resource buffer overflowed on a heavy page). The caller then emits
- * no `frame_fetch` sample; `token_mint` / `init_wait` / `total` are unaffected.
- */
-export function matchIframeResourceEntry(
-  src: string,
-  entries: ReadonlyArray<{
-    name?: unknown;
-    duration?: unknown;
-    startTime?: unknown;
-    responseEnd?: unknown;
-  }>
-): LaunchFrameTiming | null {
-  const target = normalizeUrl(src);
-  if (!target) return null;
-  let match: LaunchFrameTiming | null = null;
-  for (const entry of entries) {
-    if (typeof entry?.name !== 'string') continue;
-    if (normalizeUrl(entry.name) !== target) continue;
-    const duration =
-      typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0
-        ? entry.duration
-        : numberOrZero(entry.responseEnd) - numberOrZero(entry.startTime);
-    match = { durationMs: duration };
-  }
-  return match;
 }
 
 /**
@@ -219,20 +177,9 @@ export function isDocumentHidden(): boolean {
   }
 }
 
-/** Browser-side wrapper. Never throws; returns `null` outside a DOM. */
-export function readIframeResourceTiming(src: string): LaunchFrameTiming | null {
-  try {
-    if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function')
-      return null;
-    return matchIframeResourceEntry(src, performance.getEntriesByType('resource'));
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Turn the marks + the (optional) iframe resource entry into the beacon's
- * `timings` object, or `null` when this launch must not be observed at all.
+ * Turn the marks into the beacon's `timings` object, or `null` when this launch
+ * must not be observed at all.
  *
  * 🔴 RETURNS null (no sample) WHEN:
  *   - the tab was ever hidden during the launch window — throttled timers, zero
@@ -248,10 +195,7 @@ export function readIframeResourceTiming(src: string): LaunchFrameTiming | null 
  * nothing to be interpreted against, so the whole sample is dropped rather than
  * emitting orphan phases.
  */
-export function computeLaunchTimings(
-  marks: LaunchMarks,
-  frame: LaunchFrameTiming | null
-): LaunchTimingsPayload | null {
+export function computeLaunchTimings(marks: LaunchMarks): LaunchTimingsPayload | null {
   if (marks.wasHidden) return null;
 
   const totalMs = boundedDeltaMs(marks.mountedAt, marks.readyAt);
@@ -259,34 +203,55 @@ export function computeLaunchTimings(
 
   const tokenMintMs = boundedDeltaMs(marks.mountedAt, marks.tokenAt);
   const initWaitMs = boundedDeltaMs(marks.initSentAt, marks.readyAt);
-  const frameFetchMs = frame ? boundedDurationMs(frame.durationMs) : undefined;
 
   return {
     totalMs,
     ...(tokenMintMs !== undefined ? { tokenMintMs } : {}),
-    ...(frameFetchMs !== undefined ? { frameFetchMs } : {}),
     ...(initWaitMs !== undefined ? { initWaitMs } : {}),
   };
 }
 
-// ─── DEFERRED: the sub-phase (DNS / connect / TTFB) breakdown ─────────────────
+// ─── 🔴 DEFERRED: a cross-origin `frame_fetch` phase ──────────────────────────
 //
-// `frame_fetch` above is the TOTAL iframe-document fetch. Splitting it into
-// DNS vs TCP+TLS vs TTFB needs `domainLookupStart/End`, `connectStart/End` and
-// `responseStart`, which a cross-origin response only discloses when it sends
-// `Timing-Allow-Origin` — and TAO is baked into each block's IMAGE at build
-// time, so it would take a ~20-app rebuild (20 pushes + 20 moderator approvals;
-// `blocks.retriggerBuild` refuses a `live` deploy state outright).
+// An earlier revision of this change shipped a `frame_fetch` phase read from the
+// parent's `PerformanceResourceTiming` entry for the block iframe. IT WAS
+// REMOVED, and not because it needed polish — the number it produced was not the
+// number its name claimed.
 //
-// 🔴 THAT REBUILD IS CANCELLED, deliberately. The decision TAO was meant to
-// serve is "is `preconnect` worth shipping?", and that needs the TOTAL, not the
-// split: ship preconnect and A/B this `frame_fetch` distribution. TAO is
-// explanatory, not decisive.
+// 1. WITHOUT `Timing-Allow-Origin`, `responseEnd` FOR A CROSS-ORIGIN SUBFRAME IS
+//    THE FRAME'S `load` EVENT, NOT THE DOCUMENT RESPONSE. The HTML spec's iframe
+//    load steps set the fallback "response end time" to the current time when the
+//    subframe's load event fires, and the TAO check is what selects between that
+//    fallback and the real document timing. So the SAME field carries two
+//    different quantities depending on a header we do not send: with TAO (or
+//    same-origin) it is document-response completion; without, it is the whole
+//    subframe load, including the block's own JS, CSS, fonts and images.
+//    Measured on Chromium 144 and 150 against a child page holding one
+//    subresource: the no-TAO duration tracked the delay 1:1 (657 / 2053 /
+//    5066 ms for 500 / 2000 / 5000 ms held) while TAO and same-origin stayed at
+//    3-9 ms. Practical effect on a real block: the phase reads close to `total`,
+//    seconds not milliseconds, and visually dominates any phase panel while
+//    measuring roughly what `total` already measures.
 //
-// If the breakdown is ever wanted, the seam is small and lives entirely in this
-// file plus the histogram's label set: read the extra fields in
-// `matchIframeResourceEntry`, gate each sub-phase on `connectEnd > 0` (the
-// direct observable for "this response carried TAO" — a zero there means "not
-// disclosed", never "instant", so it must be DROPPED and never emitted as 0),
-// and carry a `tao: present|absent` label so the coverage denominator is visible
-// on the panel rather than a biased subset being quoted fleet-wide.
+// 2. AND IT IS NOT 100% OBSERVABLE ANYWAY. The entry does not exist until the
+//    subframe's load event fires. An SPA block that posts BLOCK_READY at
+//    app-mount — the normal case, with fonts and images still in flight —
+//    produces NO entry at the moment the beacon reads it, so the phase silently
+//    vanishes. Heavier apps drop out more often, which makes the missing data
+//    slowness-correlated: exactly the bias that makes a percentile lie in the
+//    reassuring direction.
+//
+// Together those leave three honest options: (a) send TAO and measure the
+// document response, (b) measure from inside the block via the SDK, or (c) don't
+// ship the phase. This change takes (c). The `Timing-Allow-Origin` question is
+// being reopened separately and is NOT merely explanatory — because the header
+// changes WHICH QUANTITY the field carries, it may be a genuine prerequisite
+// rather than a nice-to-have.
+//
+// If the phase comes back, the seam is small: add the literal to LAUNCH_PHASES
+// here and to APP_BLOCK_LAUNCH_PHASES server-side, add one optional
+// `frameFetchMs` number to the beacon schema, and populate it in
+// `computeLaunchTimings`. Nothing else in this module is shaped around its
+// absence. Whatever is added must state plainly WHICH of the two quantities it
+// measures, and must publish its own coverage denominator rather than being
+// quoted as a fleet number.

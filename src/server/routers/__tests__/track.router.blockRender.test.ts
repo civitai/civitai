@@ -185,7 +185,7 @@ describe('track.blockRender', () => {
     const caller = trackRouter.createCaller(fakeCtx({ id: 5 }) as never);
     await caller.blockRender({
       ...validInput(),
-      timings: { totalMs: 1_100, tokenMintMs: 180, frameFetchMs: 320, initWaitMs: 700 },
+      timings: { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 },
     } as never);
 
     expect(mockBlockRender).toHaveBeenCalledTimes(1);
