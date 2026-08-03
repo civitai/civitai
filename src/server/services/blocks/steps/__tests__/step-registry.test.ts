@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
@@ -24,6 +25,7 @@ import {
   type AnyBlockStep,
   type BlockStep,
   type StepBillingMode,
+  type StepModerationPosture,
 } from '~/server/services/blocks/steps';
 import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 
@@ -79,7 +81,21 @@ function makeFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
       ),
     canonicalOutputFor: (): unknown => FIXTURE_OUTPUT_STEP,
   } satisfies BlockStep<FixtureParams>;
-  return { ...base, ...overrides } as AnyBlockStep;
+  const merged = { ...base, ...overrides } as AnyBlockStep;
+  // 🔴 THE FIXTURE MUST BE INTERNALLY CONSISTENT. Clause 7a requires
+  // `buildStep().$type === orchestratorType`, and most tests below vary
+  // `orchestratorType` alone to exercise the $type-keyed clauses (1b, 9). With
+  // a hardcoded built `$type` those fixtures would all die to 7a instead —
+  // testing nothing they claim to test. So the built type FOLLOWS the declared
+  // one unless a test overrides `buildStep` explicitly, which is precisely what
+  // the clause-7a tests do.
+  if (!('buildStep' in overrides)) {
+    merged.buildStep = (p: unknown) => ({
+      $type: merged.orchestratorType,
+      input: { value: (p as FixtureParams).value },
+    });
+  }
+  return merged;
 }
 
 /**
@@ -886,18 +902,58 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     ).toThrow(/has no implemented handler/);
   });
 
-  it('accepts EITHER acceptable posture for a multi-valued type, and rejects the others', () => {
-    // textToSpeech takes free text IN and emits audio, so promptAudit is the
-    // floor rather than the only answer.
+  it('rejects a text-producing $type declaring promptAudit — the input-only answer', () => {
+    // The whole shape this clause exists for: auditing the input while the
+    // output ships unscanned.
     expect(() =>
       assertStepInvariants(
         'fixture-step',
-        makeAuditedFixtureStep({ orchestratorType: 'textToSpeech' })
+        makeAuditedFixtureStep({ orchestratorType: 'promptEnhancement' })
       )
-    ).not.toThrow();
-    expect(() =>
-      assertStepInvariants('fixture-step', makeFixtureStep({ orchestratorType: 'textToSpeech' }))
-    ).toThrow(/requires moderationPosture 'promptAudit' or 'textOutput'/);
+    ).toThrow(/requires moderationPosture 'textOutput'/);
+  });
+
+  it('EVERY entry is single-valued — the map must encode no posture subsumption', () => {
+    // 🔴 Pins the inclusion criterion (free-text OUTPUT only). A multi-valued
+    // entry would mean some type accepts two postures, which is the ladder
+    // claim the map's own doc-comment disclaims — and it is exactly what a
+    // `textToSpeech: ['promptAudit','textOutput']` entry did before review
+    // caught it. If a future type genuinely needs two, that is a design
+    // decision that must change the doc-comment, not slip in under this test.
+    for (const [type, postures] of Object.entries(STEP_TYPE_ACCEPTABLE_POSTURES)) {
+      expect(postures, `${type} is multi-valued`).toEqual(['textOutput']);
+    }
+  });
+
+  it('the posture ARRAYS are frozen, not just the map — freeze is shallow', () => {
+    // 🔴 Without freezing the values, `readonly` is compile-time-only and
+    // `arr.push('none')` at runtime makes a chatCompletion entry declaring
+    // 'none' register cleanly. Demonstrated by execution in review.
+    for (const [type, postures] of Object.entries(STEP_TYPE_ACCEPTABLE_POSTURES)) {
+      expect(Object.isFrozen(postures), `${type} postures not frozen`).toBe(true);
+      expect(() => (postures as StepModerationPosture[]).push('none')).toThrow();
+    }
+    expect(Object.isFrozen(STEP_TYPE_ACCEPTABLE_POSTURES)).toBe(true);
+  });
+
+  it('every map KEY is a real orchestrator $type in the generated client', () => {
+    // 🔴 `satisfies Record<string, …>` constrains the VALUES, not the keys — a
+    // typo'd key (`chatCompletions`) compiles clean and constrains nothing,
+    // silently covering no type at all. The generated client is the
+    // authoritative enumeration; this is the only thing that can catch it.
+    const generated = readFileSync(
+      require.resolve('@civitai/client/dist/generated/types.gen.d.ts'),
+      'utf8'
+    );
+    const declared = new Set(
+      [...generated.matchAll(/\$type\??: '([A-Za-z0-9_]+)'/g)].map((m) => m[1])
+    );
+    expect(declared.size, 'parsed no $type literals — the regex or the file moved').toBeGreaterThan(
+      10
+    );
+    for (const key of Object.keys(STEP_TYPE_ACCEPTABLE_POSTURES)) {
+      expect(declared, `'${key}' is not a $type in the generated client`).toContain(key);
+    }
   });
 
   it('a non-own key reads as UNCONSTRAINED, not as data (prototype seam)', () => {
@@ -931,13 +987,79 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     }
   });
 
-  it('every SHIPPED entry satisfies the constraint for its own $type', () => {
+  // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so nobody counts
+  // it as the latter. Today the sole entry (`convertImage`) carries an
+  // unconstrained `$type`, so the loop body `continue`s and this test survives
+  // deleting clause 1b entirely. It earns its place only for the day a
+  // constrained entry is registered.
+  it('every SHIPPED entry satisfies the constraint for its own $type (vacuous today)', () => {
     for (const [id, step] of listRegisteredSteps()) {
       const acceptable = acceptablePosturesFor(step.orchestratorType);
       if (acceptable === undefined) continue;
       expect(acceptable, `${id} declares ${step.moderationPosture}`).toContain(
         step.moderationPosture
       );
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clause 7a — the declared `$type` must be the one `buildStep()` actually emits.
+//
+// 🔴 THIS IS WHAT MAKES CLAUSE 1b A CONTROL. `orchestratorType` is author-
+// declared and the router submits `buildStep(...).$type`, so without 7a an
+// entry declares a benign type, builds `chatCompletion`, and the posture
+// constraint reads the wrong axis. Review demonstrated that bypass by
+// execution before this clause existed.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('block step registry — declared $type vs built $type (clause 7a)', () => {
+  it('REACHABILITY: rejects an entry whose buildStep emits a DIFFERENT $type', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          buildStep: () => ({ $type: 'somethingElse', input: {} }),
+        })
+      )
+    ).toThrow(/declares orchestratorType 'fixtureType' but buildStep\(\) emits 'somethingElse'/);
+  });
+
+  it('THE BYPASS IT CLOSES: benign declared type + chatCompletion built type', () => {
+    // Before 7a this registered cleanly with moderationPosture 'none' and the
+    // router submitted a chatCompletion step.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          orchestratorType: 'fixtureType',
+          moderationPosture: 'none',
+          buildStep: () => ({ $type: 'chatCompletion', input: {} }),
+        })
+      )
+    ).toThrow(/but buildStep\(\) emits 'chatCompletion'/);
+  });
+
+  it('also closes the clause-9 variant — declaring benign while building a native $type', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ buildStep: () => ({ $type: 'textToImage', input: {} }) })
+      )
+    ).toThrow(/but buildStep\(\) emits 'textToImage'/);
+  });
+
+  it('NEGATIVE CONTROL: an agreeing entry passes', () => {
+    expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
+  });
+
+  it('every SHIPPED entry agrees, on every variant', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+        expect(step.buildStep(params).$type, `${id} variant '${variant}'`).toBe(
+          step.orchestratorType
+        );
+      }
     }
   });
 });
