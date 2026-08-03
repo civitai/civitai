@@ -120,33 +120,32 @@ describe('the gate is scoped to off-site, and delegates rather than re-deriving'
       }
     }
     // 🔴 ANTI-VACUITY: without these the loop passes if the gate blocked
-    // everything, or nothing. 10 cases = 5 URL shapes x 2 client values.
+    // everything, or nothing. 10 cases = 5 URL shapes x 2 client values; exactly the
+    // 2 https rows (one per client value) are navigable.
     expect(blocked + allowed).toBe(10);
-    expect(allowed).toBeGreaterThanOrEqual(1);
-    // The 4 no-destination URL shapes x 2 client values are non-actionable under
-    // ANY version of the view-model — a listing with no reachable address cannot
-    // become navigable. Bounded rather than pinned exactly because the connect +
-    // https case is the one #3585 moves (see the dedicated test below); pinning
-    // `allowed` to today's value would turn this suite red the moment that lands.
-    expect(blocked).toBeGreaterThanOrEqual(8);
+    expect(allowed).toBe(2);
+    expect(blocked).toBe(8);
   });
 
-  it('connect + https: the gate agrees with the view-model in BOTH #3585 worlds', () => {
-    // 🔴 The case the CTA fix (#3585) changes, and the reason this suite asserts a
-    // relationship instead of a value.
-    //   - pre-#3585  the connect arm returns the stub unconditionally → no href →
-    //                the gate BLOCKS, which is correct: on this code such a listing
-    //                genuinely renders a dead button, exactly the three that shipped.
-    //   - post-#3585 the destination decides → Visit ↗ → the gate ALLOWS.
-    // Either way the gate must return whatever the store would actually render, so
-    // that is what is asserted. This test is deliberately version-agnostic and must
-    // stay green across the merge in both orders.
-    const listing = offsite({ externalUrl: 'https://demo.app', connectClientId: 'client-123' });
-    const action = getDetailPrimaryAction(
-      { slug: listing.slug, kind: 'offsite', kindData: expectedKindData(listing) },
-      { canOpenPage: true }
+  it('🔴 connect + https → ALLOWED: a linked OAuth client does not remove the address', () => {
+    // The positive case at the heart of the incident. #3585 made the DESTINATION
+    // decide the action, so a connect listing with a real address is navigable and
+    // must publish. Pinned explicitly because the inverse — a gate that blocks every
+    // connect listing — would be indistinguishable from a working gate if only the
+    // refusal cases were asserted, while quietly making connect apps unpublishable.
+    const result = checkOffsiteListingActionable(
+      offsite({ externalUrl: 'https://demo.app', connectClientId: 'client-123' })
     );
-    expect(checkOffsiteListingActionable(listing).ok).toBe(!!action.href);
+    expect(result.ok).toBe(true);
+    expect(result.action?.href).toBe('https://demo.app');
+  });
+
+  it('connect and external-link with the SAME address get the SAME verdict', () => {
+    // Structural: the gate must not reintroduce a sub-kind branch of its own.
+    const url = 'https://demo.app';
+    expect(checkOffsiteListingActionable(offsite({ externalUrl: url })).ok).toBe(
+      checkOffsiteListingActionable(offsite({ externalUrl: url, connectClientId: 'c1' })).ok
+    );
   });
 
   it('canOpenPage is unread on every off-site branch, so the gate may hardcode it', () => {
