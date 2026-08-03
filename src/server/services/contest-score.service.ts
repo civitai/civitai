@@ -383,17 +383,6 @@ async function resolveWindow(
     );
   const metadata = parsed.data;
 
-  const start = input.start ?? metadata.submissionStartDate;
-  const end = input.end ?? metadata.submissionEndDate ?? metadata.endsAt;
-  if (!start)
-    throw new ContestScoringError(
-      `Collection ${collectionId} has no submissionStartDate and no explicit window start was given.`
-    );
-  if (!end)
-    throw new ContestScoringError(
-      `Collection ${collectionId} has neither submissionEndDate nor endsAt, and no explicit window end was given.`
-    );
-
   // The contest's own bounds, and NEVER the display window: these decide the age gate
   // and which versions qualify, so letting them fall back to the date pickers would
   // hand eligibility to whoever is looking at the screen. The two bounds resolve
@@ -419,6 +408,14 @@ async function resolveWindow(
     throw new ContestScoringError(
       `Collection ${collectionId} has neither submissionEndDate nor endsAt, so there is no trustworthy end for deciding which versions qualify. An explicit window end only narrows the view; it cannot define the contest.`
     );
+
+  // The display window defaults to the whole contest. Resolved AFTER the bounds above
+  // and from them, so a contest carrying only an `endsAt` scores without a moderator
+  // having to invent a start date — one that no longer affects eligibility and so would
+  // be asking them to supply a number that changes nothing.
+  const start = input.start ?? contestStart;
+  const end = input.end ?? contestEnd;
+
   const ageCutoff = new Date(contestStart.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
 
   // Belt and braces behind the schema's `nonnegative()`: a row written before that

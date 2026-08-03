@@ -42,6 +42,7 @@ import type {
   ContestScoreCategory,
   ContestScoreEntry,
 } from '~/server/services/contest-score.service';
+import { CONTEST_SCORE_CODE_VERSION } from '~/server/services/contest-score.service';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -55,6 +56,27 @@ const signalLabels: Record<ContestScoreSignal, string> = {
   collectors: 'Collects',
 };
 
+/**
+ * A stored snapshot is whatever the code that took it wrote. Nothing parses, migrates
+ * or backfills it on read, so every field added since the first snapshot is genuinely
+ * absent on older ones — and the types below say so, because the payload types do not.
+ *
+ * Treating them as present is how a display bug becomes a dead panel: dereferencing one
+ * missing field above the tables takes down the whole artifact we keep to settle a
+ * disputed placement. Render what is missing as missing, never as zero.
+ */
+type StoredEntry = Omit<ContestScoreEntry, 'qualifyingVersionCount'> & {
+  qualifyingVersionCount?: number;
+};
+type StoredCategory = Omit<ContestScoreCategory, 'entries'> & { entries: StoredEntry[] };
+type StoredScore = Omit<ContestCommunityScoreResult, 'eligibility' | 'categories'> & {
+  eligibility?: ContestCommunityScoreResult['eligibility'];
+  categories: StoredCategory[];
+};
+
+/** Version scoping landed here; anything older counted every version of the model. */
+const VERSION_SCOPING_CODE_VERSION = 3;
+
 // Display-only banding for the qualification gap. Purely how loudly a row asks for
 // staff eyes — it is not a scoring input and nothing is disqualified automatically.
 function disqualifiedColor(share: number) {
@@ -66,7 +88,7 @@ function disqualifiedColor(share: number) {
 type SortColumn = 'rank' | 'entry' | 'total' | 'gap' | 'score' | ContestScoreSignal;
 type Sort = { column: SortColumn; desc: boolean };
 
-const sortValue = (entry: ContestScoreEntry, column: SortColumn) => {
+const sortValue = (entry: StoredEntry, column: SortColumn) => {
   switch (column) {
     case 'rank':
       return entry.rank ?? Number.MAX_SAFE_INTEGER;
@@ -88,7 +110,7 @@ const sortValue = (entry: ContestScoreEntry, column: SortColumn) => {
  * client-side reorder — no refetch, and the server never learns which column a
  * moderator is looking at.
  */
-function sortEntries(entries: ContestScoreEntry[], sort: Sort) {
+function sortEntries(entries: StoredEntry[], sort: Sort) {
   return [...entries].sort((a, b) => {
     const left = sortValue(a, sort.column);
     const right = sortValue(b, sort.column);
@@ -130,7 +152,7 @@ function CategoryTable({
   category,
   signalSources,
 }: {
-  category: ContestScoreCategory;
+  category: StoredCategory;
   signalSources: Record<ContestScoreSignal, string>;
 }) {
   const [sort, setSort] = useState<Sort>({ column: 'rank', desc: false });
@@ -243,17 +265,30 @@ function CategoryTable({
                             by {entry.creatorUsername}
                           </Text>
                         )}
-                        <Tooltip
-                          label="Versions created during the contest window on a qualifying base model. Only these are counted."
-                          withArrow
-                          multiline
-                          w={260}
-                        >
-                          <Text size="xs" c="dimmed" w="fit-content">
-                            {entry.qualifyingVersionCount}{' '}
-                            {entry.qualifyingVersionCount === 1 ? 'version' : 'versions'}
-                          </Text>
-                        </Tooltip>
+                        {entry.qualifyingVersionCount === undefined ? (
+                          <Tooltip
+                            label="This run predates version scoping, so it counted every version of the model."
+                            withArrow
+                            multiline
+                            w={260}
+                          >
+                            <Text size="xs" c="dimmed" fs="italic" w="fit-content">
+                              versions not recorded
+                            </Text>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip
+                            label="Versions created during the contest window on a qualifying base model. Only these are counted."
+                            withArrow
+                            multiline
+                            w={260}
+                          >
+                            <Text size="xs" c="dimmed" w="fit-content">
+                              {entry.qualifyingVersionCount}{' '}
+                              {entry.qualifyingVersionCount === 1 ? 'version' : 'versions'}
+                            </Text>
+                          </Tooltip>
+                        )}
                         {entry.ineligibleReason && (
                           <Badge
                             color="red"
@@ -334,20 +369,34 @@ const boundSourceLabels: Record<ContestCommunityScoreResult['eligibility']['star
  * the pickers — narrowing them changes only what was counted — so the header says it
  * outright rather than leaving a moderator to assume the one they set is both.
  */
-function WindowSummary({ score }: { score: ContestCommunityScoreResult }) {
+function WindowSummary({ score }: { score: StoredScore }) {
+  const eligibility = score.eligibility;
   return (
     <Group gap="xl">
       <Stack gap={0}>
         <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
           Eligibility window
         </Text>
-        <Text size="sm">
-          {formatDate(score.eligibility.start)} – {formatDate(score.eligibility.end)}
-        </Text>
-        <Text size="xs" c="dimmed">
-          Versions created here qualify · from {boundSourceLabels[score.eligibility.startSource]} to{' '}
-          {boundSourceLabels[score.eligibility.endSource]}
-        </Text>
+        {eligibility ? (
+          <>
+            <Text size="sm">
+              {formatDate(eligibility.start)} – {formatDate(eligibility.end)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Versions created here qualify · from {boundSourceLabels[eligibility.startSource]} to{' '}
+              {boundSourceLabels[eligibility.endSource]}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text size="sm" fs="italic" c="dimmed">
+              Not recorded
+            </Text>
+            <Text size="xs" c="dimmed">
+              This run predates the eligibility window being tracked
+            </Text>
+          </>
+        )}
       </Stack>
       <Stack gap={0}>
         <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
@@ -364,9 +413,33 @@ function WindowSummary({ score }: { score: ContestCommunityScoreResult }) {
   );
 }
 
-function ScoreBody({ score }: { score: ContestCommunityScoreResult }) {
+/**
+ * `codeVersion` is only passed for a STORED snapshot — a live result is current by
+ * definition. It is the one thing that distinguishes a snapshot which counted every
+ * version of a model from one that did not, and until now it was stored and shown
+ * nowhere.
+ */
+function ScoreBody({ score, codeVersion }: { score: StoredScore; codeVersion?: number }) {
+  const stale = codeVersion !== undefined && codeVersion < CONTEST_SCORE_CODE_VERSION;
+  const preVersionScoping = codeVersion !== undefined && codeVersion < VERSION_SCOPING_CODE_VERSION;
+
   return (
     <Stack gap="lg">
+      {stale && (
+        <Alert
+          color={preVersionScoping ? 'red' : 'yellow'}
+          title={
+            preVersionScoping
+              ? 'Taken before the version-scoping fix'
+              : 'Taken by an older version of the scorer'
+          }
+        >
+          {preVersionScoping
+            ? 'Counts here include every version of each model, not only versions created during the contest on a qualifying base model. Entries carrying an older, unrelated version are overstated. Do not compare these standings to a current run.'
+            : 'Scoring has changed since this snapshot was taken, so its standings are not directly comparable to a current run.'}{' '}
+          (scorer v{codeVersion}, current v{CONTEST_SCORE_CODE_VERSION})
+        </Alert>
+      )}
       <WindowSummary score={score} />
       {/* Driven by the score itself, not by the live query, so a snapshot taken
           mid-contest carries the same warning as the live view it came from. */}
@@ -643,9 +716,16 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                       Partial
                     </Badge>
                   )}
+                  {snapshot.codeVersion < CONTEST_SCORE_CODE_VERSION && (
+                    <Tooltip label="Scoring has changed since this snapshot was taken" withArrow>
+                      <Badge color="red" variant="light" size="xs">
+                        Scorer v{snapshot.codeVersion}
+                      </Badge>
+                    </Tooltip>
+                  )}
                   {snapshot.note && <Badge variant="light">{snapshot.note}</Badge>}
                 </Group>
-                <ScoreBody score={snapshot.score} />
+                <ScoreBody score={snapshot.score} codeVersion={snapshot.codeVersion} />
               </>
             )}
           </Stack>
