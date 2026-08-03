@@ -51,6 +51,7 @@ import type {
   GetAllModelsOutput,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
+  GetModelTemplateFieldsInput,
   GetModelVersionsSchema,
   GetMyTrainingModelsSchema,
   GetSimpleModelsInfiniteSchema,
@@ -1881,11 +1882,12 @@ export async function getModelTemplateFieldsHandler({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: GetModelTemplateFieldsInput;
   ctx: ProtectedContext;
 }) {
   try {
     const { id: userId } = ctx.user;
+    const omit = new Set(input.omit);
 
     const model = await getModel({
       id: input.id,
@@ -1927,11 +1929,17 @@ export async function getModelTemplateFieldsHandler({
 
     return {
       ...restModel,
+      description: omit.has('description') ? null : restModel.description,
       status: ModelStatus.Draft,
       uploadType: ModelUploadType.Created,
-      tagsOnModels: restModel.tagsOnModels
-        .filter(({ tag }) => !tag.unlisted)
-        .map(({ tag }) => ({ ...tag, isCategory: modelCategories.some((c) => c.id === tag.id) })),
+      tagsOnModels: omit.has('tags')
+        ? []
+        : restModel.tagsOnModels
+            .filter(({ tag }) => !tag.unlisted)
+            .map(({ tag }) => ({
+              ...tag,
+              isCategory: modelCategories.some((c) => c.id === tag.id),
+            })),
       version: version
         ? {
             ...version,
