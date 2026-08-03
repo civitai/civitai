@@ -183,8 +183,15 @@ export function postureRequiresAuditableText(posture: StepModerationPosture): bo
  *      whose text member types `extractOutput?: never`. A text entry cannot
  *      even WRITE a media extractor, which is what makes the url-smuggle
  *      structurally impossible rather than merely guarded.
- *   2. AT REGISTRY LOAD — clauses 8/8a below, for the `as`-cast escape hatch a
- *      type cannot close.
+ *   2. AT REGISTRY LOAD — for the `as`-cast escape hatch a type cannot close.
+ *      🔴 NAME THE RIGHT CLAUSES: an earlier revision of this line said
+ *      "clauses 8/8a", which is wrong in both directions and would send someone
+ *      auditing the XOR to the wrong code. The runtime XOR is clause **8-i**
+ *      (a media posture MUST declare `extractOutput`) and clause **8-ii** (a
+ *      text posture MUST NOT) on the `extractOutput` axis, plus clause **1c**
+ *      (both directions) on the `extractText` axis. Clause **8a** is NOT an XOR
+ *      clause at all — it is the non-vacuity probe that a declared `extractText`
+ *      actually returns text.
  *   3. AT THE READ PATH — `snapshotFromWorkflow` / `projectAppWorkflow` consult
  *      THIS predicate before calling `extractOutput`, so a media extractor that
  *      somehow existed on a text entry would still contribute nothing.
@@ -1255,9 +1262,26 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // commitment. Adding it later is one file plus one line here — which is the
 // entire point of the registry.
 // ─────────────────────────────────────────────────────────────────────────────
-const stepRegistry = {
-  'convert-image': convertImageStep,
-};
+// 🔴 FROZEN, FOR THE SAME REASON `STEP_TYPE_ACCEPTABLE_POSTURES` IS — and BE
+// PRECISE ABOUT WHAT THAT BUYS, because it is less than the freeze above buys.
+// Neither post-load mutation direction is a HOLE today: adding an entry here
+// after load does not make it submittable (`REGISTERED_STEP_IDS` was already
+// snapshotted into `blockStepBodySchema`'s enum, so the id is rejected at the
+// union), and flipping a live entry's `moderationPosture` to `'none'` fails
+// CLOSED at the read path (a text entry has no `extractOutput`, so the media
+// branch yields nothing and the `'none'` dispatch releases an empty list). So
+// this is CONSISTENCY on the discriminant all three enforcement layers read,
+// not a closed vulnerability — recorded as such rather than dressed up.
+//
+// SHALLOW ON PURPOSE, BOTH LEVELS. Freezing the container blocks entry
+// addition/replacement; freezing each entry blocks `entry.moderationPosture =
+// …`, which is the assignment that would matter. It deliberately does NOT
+// recurse into an entry's nested values — those include zod schemas, which
+// populate internal caches lazily and must stay mutable. A deep freeze here
+// would trade a consistency nicety for a runtime failure mode.
+const stepRegistry = Object.freeze({
+  'convert-image': Object.freeze(convertImageStep),
+});
 
 export type RegisteredStepId = keyof typeof stepRegistry & string;
 

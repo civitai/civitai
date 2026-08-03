@@ -161,7 +161,7 @@ export type TextOutputScanVerdict = {
   /**
    * 🔴 REQUESTED labels the scan did NOT come back with a result for. NON-EMPTY
    * FORCES A WITHHOLD, regardless of what did come back. See
-   * `assertEveryRequestedLabelEvaluated`.
+   * {@link missingRequestedLabels}.
    */
   missingLabels: string[];
 };
@@ -195,6 +195,39 @@ export type TextOutputScanVerdict = {
  *
  * Compared on the NORMALIZED key, so a casing difference between what we send
  * and what comes back is not mistaken for a drop.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 🔴 PRE-ADOPTION GATE — RUN ONE LIVE PROBE BEFORE THE FIRST `'textOutput'`
+ * ENTRY REGISTERS. Do not skip this because the tests are green, and do not
+ * weaken the guard to hedge it.
+ *
+ * THE ASSUMPTION: that the deployed scanner returns a `results[]` entry for
+ * EVERY requested label — including the ones that did NOT trigger. The whole
+ * guard rests on it, because "requested but absent from `results[]`" is read
+ * here as drift.
+ *
+ * WHY IT IS NOT YET EVIDENCE: the only thing that currently exhibits the shape
+ * is this file's own test fixture, which builds `results[]` by mapping over
+ * `TEXT_OUTPUT_SCAN_LABELS` — i.e. the fake encodes the same assumption the code
+ * does, so the suite cannot disagree with it. That is a both-wrong-blind pair,
+ * not a verification.
+ *
+ * WHAT HAPPENS IF THE ASSUMPTION IS WRONG: if the scanner returns only
+ * TRIGGERED labels, then every clean scan comes back with an empty (or partial)
+ * `results[]`, every clean scan reads as total drift, and the first adopting
+ * entry withholds 100% of its output. That is loud, safe and fail-closed — but
+ * it is a day-one capability outage, and it will present as "the feature does
+ * not work" rather than as a scanner problem.
+ *
+ * THE PROBE (one call, before registering an entry): submit a text scan through
+ * `createXGuardModerationRequest` with `labels: [...TEXT_OUTPUT_SCAN_LABELS]`
+ * over benign content that triggers NOTHING, and read the returned step's
+ * `output.results`. Expect 15 entries with `triggered: false`. If instead it
+ * comes back empty or short, the drift guard needs a different signal for
+ * "evaluated" — the fix is to find one the scanner actually emits, NOT to
+ * loosen the withhold. The posture is dormant until then, which is why this is a
+ * gate note rather than a defect.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function missingRequestedLabels(
   output: XGuardScanOutputLike | null | undefined,
@@ -351,7 +384,14 @@ export const MAX_SCANNED_CONTENT_CHARS = 50_000;
  * SAME text is rescanned tens of times per generation.
  */
 const VERDICT_CACHE_TTL_MS = 5 * 60_000;
-const VERDICT_CACHE_MAX_ENTRIES = 1_000;
+/**
+ * The memory ceiling on the memo, in entries.
+ *
+ * EXPORTED ONLY so the eviction bound can be pinned by a test. It was
+ * unpinned — raising it (or collapsing it to 1, which disables the memo
+ * entirely) changed nothing any test could see.
+ */
+export const VERDICT_CACHE_MAX_ENTRIES = 1_000;
 
 export type TextOutputScreenResult =
   | { released: true; texts: string[] }
@@ -435,10 +475,31 @@ export async function screenGeneratedText(opts: {
   //     and including them would defeat the memo across the poll loop of a
   //     multi-tab viewer for no safety gain. Nothing leaks: a hit requires
   //     presenting the identical content, which the caller already holds.
-  // Only DECIDED verdicts are stored — never an error, timeout or missing
-  // output. Caching those would be fail-closed but would also pin a withhold
-  // through a scanner recovery, turning a blip into a five-minute outage of the
-  // capability.
+  // Only CONTENT verdicts are stored — never an error, timeout, missing output
+  // or label drift. Caching those would be fail-closed but would also pin a
+  // withhold through a recovery, turning a blip into a five-minute outage of the
+  // capability. (The drift case is the one that was inconsistent until the
+  // ordering fix below; see the `stage: 'label-drift'` branch.)
+  //
+  // 🔴 KNOWN COST OF THE KEY, RECORDED RATHER THAN LEFT FOR SOMEONE TO
+  // DISCOVER: dropping `appId` also drops PER-APP TELEMETRY on a hit. A hit logs
+  // NOTHING, so if a second app presents byte-identical withheld content within
+  // the TTL, on the same pod, its withhold produces no `stage: 'withheld'` line
+  // — and per-app trigger RATE is the signal this posture's design names as the
+  // one that matters. The blindness is real; it is accepted here because the
+  // obvious fix is worse, not because it is small:
+  //   - Logging on EVERY hit would make the emitted rate a function of the poll
+  //     CADENCE, which untrusted block code chooses. A skew an attacker sets is
+  //     worse for a rate signal than an undercount.
+  //   - Undercounting is bounded and one-directional: the first observation of
+  //     any distinct content always logs, so an app whose outputs trigger at all
+  //     still shows up; only the DUPLICATE of another app's identical text is
+  //     lost, and only within one pod's 5-minute window.
+  // If cross-app attribution ever has to be exact, the shape of the fix is to
+  // store `appId` (plus the labels/scores) in the entry as a PAYLOAD — never in
+  // the key — and log on a hit only when the stored `appId` differs. That keeps
+  // the memo intact and the poll loop silent. Not built today: no `'textOutput'`
+  // entry is registered yet, so the rate has no data to be wrong about.
   const cacheKey = verdictCacheKey(content, opts.isGreen);
   const cached = readCachedVerdict(cacheKey);
   if (cached !== undefined) {
@@ -496,17 +557,40 @@ export async function screenGeneratedText(opts: {
     // drift from the request.
     requestedLabels: TEXT_OUTPUT_SCAN_LABELS,
   });
-  writeCachedVerdict(cacheKey, verdict.released);
-  if (verdict.released) return { released: true, texts };
 
-  // 🔴 LABEL DRIFT GETS ITS OWN STAGE. A withhold caused by "we asked for a
-  // label the scanner never answered on" is an OPERATIONAL fault in this file's
-  // own constant, not a content hit — the two need different responses and must
-  // not be aggregated together in the trigger rates.
+  // 🔴 LABEL DRIFT GETS ITS OWN STAGE, AND IS DELIBERATELY *NOT* MEMOIZED —
+  // CHECKED BEFORE `writeCachedVerdict`, NOT AFTER. A withhold caused by "we
+  // asked for a label the scanner never answered on" is an OPERATIONAL fault in
+  // this file's own constant, not a content hit; the two need different
+  // responses and must not be aggregated together in the trigger rates.
+  //
+  // 🔴 THE CALL, AND WHY. An earlier revision wrote the cache BEFORE this
+  // branch, so a drift withhold WAS memoized for 5 minutes while a scanner
+  // error was not — two members of the same category treated differently, on no
+  // stated reasoning, and pinned by no test. Drift is now treated exactly like
+  // an error, for the identical reason given at the memo below: caching a
+  // withhold that an OPERATIONAL fix can clear pins it through the recovery,
+  // turning a blip into a five-minute outage of the capability. Drift is
+  // recoverable in precisely that way — a mid-deploy scanner fleet answering on
+  // some instances and not others, or an orchestrator-side label config being
+  // put back, clears on the very next call, and a memoized withhold would
+  // survive it. The cost of not caching is the same cost the error path already
+  // accepts (a rescan per poll while the fault lasts), bounded by
+  // `MAX_SCANNED_CONTENT_CHARS`.
+  //
+  // Second-order, and the reason this ordering is load-bearing rather than
+  // tidy: a memo HIT logs nothing at all, so caching drift would emit the
+  // `stage: 'label-drift'` line for the FIRST observation only and then go
+  // silent — which is exactly the "diagnosable in one query" property the drift
+  // guard's own comment claims. Not caching keeps one line per observation.
   if (verdict.missingLabels.length > 0) {
     logScan({ ...opts, stage: 'label-drift', missingLabels: verdict.missingLabels });
     return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
   }
+
+  // Only a CONTENT verdict — a release, or a policy-label withhold — is stored.
+  writeCachedVerdict(cacheKey, verdict.released);
+  if (verdict.released) return { released: true, texts };
 
   // 🔴 THE PER-APP TRIGGER LOG. `(userId, appBlockId, model, triggeredLabels,
   // scores)` per the approved policy, plus `appId` — the key trigger RATES are

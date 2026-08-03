@@ -3083,11 +3083,19 @@ export const blocksRouter = router({
       //
       // 🔴 IT IS NOT THE ONLY BLOCK-REACHABLE READ OF A WORKFLOW, and an earlier
       // revision of this comment said "the poll is the surface that matters",
-      // which is an overclaim a reviewer would stop checking at.
-      // `queryAppWorkflows` and `cancelAppWorkflow` also return orchestrator
-      // workflow data to a block, unwrapped. What makes THAT safe is stated at
-      // each of them (`AppWorkflow` carries no text field and its `images` are
-      // posture-gated), not this sentence.
+      // which is an overclaim a reviewer would stop checking at. THREE other
+      // procedures reach `projectAppWorkflow` unwrapped:
+      //   - `queryAppWorkflows` — returns up to 50 projections per call.
+      //   - `cancelAppWorkflow` — returns one.
+      //   - `publishGenerationOutputs` — the SHARPEST of the three, and the one
+      //     an enumeration is most likely to miss because it returns no
+      //     projection to the block at all: it reads `projectAppWorkflow(...)
+      //     .images`, then FETCHES each selected `url` server-side and uploads
+      //     it into a public civitai `Image` row. A smuggled url would not just
+      //     be displayed, it would be ingested.
+      // What makes all three safe is stated at each of them (`AppWorkflow`
+      // carries no text field and its `images` are posture-gated, so a text step
+      // contributes nothing — not even a url), not this sentence.
       const snapshot = await attachModeratedStepTextOutputs(
         snapshotFromWorkflow(workflow),
         workflow,
@@ -3544,6 +3552,19 @@ export const blocksRouter = router({
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
       // outputs with a non-null url are present (dead/pending blobs are dropped).
+      //
+      // 🔴 UNWRAPPED BY `attachModeratedStepTextOutputs`, and this is the
+      // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
+      // consumers (see the enumeration at `pollWorkflow`): the urls below are
+      // not merely returned, they are FETCHED and re-uploaded into public
+      // civitai `Image` rows. What makes it safe is the same posture gate the
+      // others rely on — `projectAppWorkflow` calls a registered entry's
+      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // text-posture entry may not declare one at all
+      // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
+      // `'textOutput'` step contributes NO url here to be ingested. If that gate
+      // ever loosens, THIS is the call site that turns a smuggled string into
+      // published content.
       const outputs = projectAppWorkflow(workflow).images;
       if (outputs.length === 0) {
         throw new TRPCError({

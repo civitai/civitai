@@ -49,6 +49,23 @@ vi.mock('~/server/logging/client', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
 }));
+// 🔴 NOT OPTIONAL, AND NOT COSMETIC — WITHOUT IT THIS FILE LIES VIA ITS EXIT
+// CODE. `workflow.service` (imported below for the two real read-path
+// projections) imports `~/server/db/client` at module scope, which instantiates
+// a real Prisma client. Nothing in this suite queries it, but the instantiation
+// rejects (`PrismaClientInitializationError`), vitest reports the unhandled
+// rejection as a file-level "Errors: 1", and the process EXITS 1 — while every
+// assertion passes and the summary reads `76 passed (76)`.
+//
+// That combination is the exact harness trap this repo has been bitten by: a
+// mutation sweep that reads `rc` sees a non-zero exit for the CONTROL and for
+// every mutant alike, and reports 100% of mutants killed while testing nothing.
+// The sibling suites all mock this module for the same reason. Read the
+// `Tests N failed | M passed` line, and keep this mock so `rc` agrees with it.
+vi.mock('~/server/db/client', () => ({
+  dbRead: {},
+  dbWrite: {},
+}));
 
 // 🔴 THE REGISTRY IS OVERRIDDEN FOR `getStepByOrchestratorType` ONLY, and it is
 // the minimum needed to test the read path today: the shipped registry has no
@@ -95,6 +112,7 @@ import {
   SFW_ONLY_WITHHOLD_LABELS,
   TEXT_OUTPUT_SCAN_LABELS,
   TEXT_OUTPUT_WITHHELD_MESSAGE,
+  VERDICT_CACHE_MAX_ENTRIES,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
 
@@ -959,6 +977,105 @@ describe('textOutput — the per-content verdict memo', () => {
     const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
     expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
     expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('🔴 a NO-VERDICT withhold is NOT memoized either — the OTHER uncached branch', async () => {
+    // The memo's comment claims errors, timeouts AND missing outputs are all
+    // excluded; only the error branch was pinned. These are TWO branches, not
+    // three: an error and a timeout both land in the same `catch` (the hard
+    // deadline rejects the same promise), while "the submit resolved but there
+    // is no xGuardModeration output" is its own `if (!output)` exit — and it was
+    // the unpinned one. A `writeCachedVerdict` moved above that exit would pin a
+    // transient no-verdict shut for five minutes.
+    mockCreateXGuardModerationRequest.mockResolvedValueOnce({
+      id: 'scan-wf',
+      status: 'processing',
+      steps: [],
+    });
+    const noVerdict = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(noVerdict).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+
+    scannerReturns(scanOutput([]));
+    const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('🔴 a LABEL-DRIFT withhold is NOT memoized — it is an operational fault, like an error', async () => {
+    // 🔴 THE DECISION THIS PINS. Drift is a fault in THIS file's own constant
+    // (or in the scanner's label config), not a content hit, and it clears the
+    // moment the fault does — a mid-deploy scanner fleet answering on some
+    // instances and not others, or a label config being put back. Memoizing it
+    // would pin the withhold through that recovery for five minutes, which is
+    // the exact reason the error branch is not cached. An earlier revision
+    // wrote the cache BEFORE the drift branch and so cached one and not the
+    // other, with nothing asserting either way.
+    const full = scanOutput([]);
+    mockCreateXGuardModerationRequest.mockResolvedValueOnce({
+      id: 'scan-wf',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'xGuardModeration',
+          output: { ...full, results: full.results.filter((r) => r.label !== 'Bestiality') },
+        },
+      ],
+    });
+    const drifted = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(drifted).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({ stage: 'label-drift' });
+
+    // The fault clears. The very next call must reach the scanner and release.
+    scannerReturns(full);
+    const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('🔴 CONTROL FOR THE PAIR ABOVE — a POLICY withhold on the same content IS memoized', async () => {
+    // Without this, "the second call rescanned" is what a memo that stores
+    // nothing at all also produces, and the two exclusions above would be green
+    // for the wrong reason. Same content, same TTL, only the withhold's CAUSE
+    // differs: a content hit is cached, an operational fault is not.
+    scannerReturns(scanOutput(['Young']));
+    await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('the entry cap is 1,000 — pinned LITERALLY', () => {
+    // 🔴 A VALUE PIN. The eviction bound was unpinned: collapsing it to 1
+    // disables the memo outright (every write evicts the previous entry) and
+    // nothing observed it, because every other memo test uses one or two
+    // distinct contents and fits inside any cap ≥ 2.
+    expect(VERDICT_CACHE_MAX_ENTRIES).toBe(1_000);
+  });
+
+  it('🔴 evicts the OLDEST entry at the cap, and only at the cap', async () => {
+    // The behavioural half of the pin above: it pins that eviction HAPPENS, at
+    // the cap, oldest-first. Deleting the eviction block kills it (measured).
+    //
+    // 🔴 IT DOES *NOT* PIN THE VALUE, and saying otherwise would be the same
+    // mistake the content-cap block records: this test derives its loop bound
+    // FROM the constant, so it moves with any change to it — a 1000 → 1 mutant
+    // (which disables the memo outright) leaves this test green and is caught
+    // ONLY by the literal pin above. Measured, not assumed. Keep both.
+    scannerReturns(scanOutput([]));
+    const OLDEST = 'reply number 0';
+    for (let i = 0; i < VERDICT_CACHE_MAX_ENTRIES; i++) {
+      await screenGeneratedText({ ...opts, texts: [`reply number ${i}`] });
+    }
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(VERDICT_CACHE_MAX_ENTRIES);
+
+    // Still cached AT the cap — a hit, so no new scan and no re-insertion.
+    await screenGeneratedText({ ...opts, texts: [OLDEST] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(VERDICT_CACHE_MAX_ENTRIES);
+
+    // One more distinct content pushes past the cap and evicts the oldest…
+    await screenGeneratedText({ ...opts, texts: ['one over the cap'] });
+    // …so the oldest now MISSES and is rescanned: 1000 + 1 (over-cap) + 1 (miss).
+    await screenGeneratedText({ ...opts, texts: [OLDEST] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(VERDICT_CACHE_MAX_ENTRIES + 2);
   });
 
   it('a memo HIT returns the CALLER’s own pieces, not the stored ones', async () => {
