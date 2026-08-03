@@ -365,8 +365,7 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
    * filtering inline, or if the fail-closed default flipped. The only test that
    * exercises the real menu lives in the browser (`component`) project, which
    * CI does not run — so the wiring is pinned HERE, structurally, in the suite
-   * that does run. Same shape of source-level gate as
-   * `appListingPreview.test.ts`'s `<iframe sandbox>` check.
+   * that does run.
    */
   describe('AppBlockChrome is actually WIRED to this gate', () => {
     const SRC = path.resolve(__dirname, '../../..');

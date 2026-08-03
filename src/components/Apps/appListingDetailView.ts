@@ -26,23 +26,15 @@
  *     W10 in-host page route; flag-gated on `appBlocksPages`). The raw-origin
  *     "Open live" action is HIDDEN here: the app opens properly in-page, so a
  *     second button shipping the viewer to `<slug>.civit.ai` is pure redundancy.
- *   - on-site + hasPage + !canOpenPage + a previewable liveUrl → **Open live ↗**
- *     to the raw `<slug>.civit.ai` origin, PLUS a note pointing at the in-page
- *     preview. 🔴 This escape hatch is deliberately RETAINED for exactly this
- *     state. With `appBlocksPages` dark (today's live posture) the in-page
- *     preview is the ONLY route to the app, and that preview is a 420px iframe
- *     with `sandbox="allow-scripts allow-same-origin"` — no `allow-forms`, no
- *     `allow-popups`, no `allow-downloads`. Any block that uses a form, a popup
- *     or a download is UNUSABLE inside it. The now-retired `/apps/[appBlockId]`
- *     page wrapped the same iframe in an unsandboxed "Open live" escape hatch,
- *     so dropping it here would make the canonical page strictly LESS capable
- *     than the page it replaced — that is a capability-parity argument about
- *     what the retired page OFFERED, not a claim that it still serves.
- *     (Widening the iframe sandbox is a separate security decision and
- *     explicitly NOT made here.) Both the action href and the
- *     preview derive from the SAME `kindData.liveUrl` + `safeExternalHref`
- *     guard, so "the note says there is a preview" and "the preview renders"
- *     cannot disagree. Pinned by tests in
+ *   - on-site + hasPage + !canOpenPage + an https liveUrl → **Open live ↗** to
+ *     the raw `<slug>.civit.ai` origin. 🔴 This escape hatch is deliberately
+ *     RETAINED for exactly this state: with `appBlocksPages` dark (today's live
+ *     posture) it is the ONLY route to the app from the store. The store detail
+ *     briefly also carried an in-page `<iframe>` preview; it was REMOVED because
+ *     nothing posted the framed block a `BLOCK_INIT`, so it never initialised
+ *     and only painted the block's pre-init light-theme shell. Its note used to
+ *     read "…You can also run it in the live preview below" — do not reinstate
+ *     that sentence without a real host bridge behind it. Pinned by tests in
  *     `__tests__/appListingDetailView.test.ts`.
  *   - on-site + !hasPage (model-slot app) → **informational** ("Runs on model
  *     pages"), TEXT ONLY — deliberately NO href. Install happens on a model
@@ -50,10 +42,10 @@
  *     to `/apps/<appBlockId>`; post-#3493 that is a circular self-link from the
  *     store detail (see the retirement note above). There is nothing to retarget
  *     it TO: `AppListingDetailBody` has no install surface at all, and building
- *     one is the tracked gap #3493 names, explicitly NOT done here. The viewer
- *     is still not stranded — the in-page live preview renders for this state
- *     (`getListingPreview` gates on kind + https `liveUrl`, not on `hasPage`) —
- *     and the branch is vacuous today: every approved on-site listing declares a
+ *     one is the tracked gap #3493 names, explicitly NOT done here. This state
+ *     therefore offers the viewer no navigable route at all — enumerated
+ *     explicitly in the "no on-site state strands the viewer" matrix test — but
+ *     the branch is vacuous today: every approved on-site listing declares a
  *     page, so nothing takes it.
  *   - off-site external-link (https) → **Visit ↗** → external anchor.
  *   - off-site external-link (missing / non-https) → **informational** (guarded
@@ -125,20 +117,18 @@ export function getDetailPrimaryAction(
     }
     if (kd.hasPage) {
       // Page app, but this viewer can't launch the in-host page (appBlocksPages
-      // dark). The in-page preview below IS the in-store way to run it — but it
-      // is a SANDBOXED 420px frame (`allow-scripts allow-same-origin` only), so
-      // a block that needs a form / popup / download cannot be used through it.
-      // The raw-origin "Open live" escape hatch therefore STAYS in this state,
-      // exactly as the legacy `/apps/[appBlockId]` page offered it; it is hidden
-      // only in the `canOpenPage` branch above, where the app opens properly
-      // in-page.
+      // dark). The raw-origin "Open live" escape hatch is then the ONLY way to
+      // run the app from the store, exactly as the legacy `/apps/[appBlockId]`
+      // page offered it; it is hidden only in the `canOpenPage` branch above,
+      // where the app opens properly in-page.
       //
-      // 🔴 The note must only claim a preview exists when one really will
-      // render. The href and the preview both derive from `kindData.liveUrl`
-      // through the SAME https guard (`safeExternalHref`, also used by
-      // `getListingPreview`), so they agree by construction. If the guard drops
-      // the URL there is neither an escape hatch nor a preview, and we fall
-      // through to the informational branch below rather than promising one.
+      // 🔴 The note must not promise a surface this page does not have. It used
+      // to end "…You can also run it in the live preview below", pointing at an
+      // in-page `<iframe>` that has been REMOVED — it was a bridge-less frame
+      // that never sent the block `BLOCK_INIT`, so it only ever painted the
+      // block's pre-init light-theme shell. Keep this copy about the link it is
+      // attached to; see the `AppListingDetailBody` docstring before adding any
+      // preview reference back.
       const live = safeExternalHref(kd.liveUrl);
       if (live) {
         return {
@@ -146,7 +136,7 @@ export function getDetailPrimaryAction(
           mode: 'visit',
           href: live,
           external: true,
-          note: 'Opens the app at its own address. You can also run it in the live preview below.',
+          note: 'Opens the app at its own address.',
         };
       }
     }

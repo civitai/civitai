@@ -5,7 +5,6 @@ import {
   getOwnerEditHref,
   isEditableListingStatus,
 } from '~/components/Apps/appListingDetailView';
-import { getListingPreview } from '~/components/Apps/appListingPreview';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -82,17 +81,21 @@ describe('getDetailPrimaryAction — on-site', () => {
       onsiteDetail({ hasPage: true, liveUrl: 'https://my-app.civit.ai' }),
       { canOpenPage: false }
     );
-    // With appBlocksPages dark the in-page preview is the only in-store route,
-    // and it is a sandboxed frame WITHOUT allow-forms / allow-popups /
-    // allow-downloads — so a block that needs any of those is unusable through
-    // it. The legacy /apps/[appBlockId] page kept an unsandboxed escape hatch;
-    // the canonical page must not be strictly less capable.
+    // With appBlocksPages dark this raw-origin link is the ONLY way to run the
+    // app from the store — the in-page `<iframe>` preview that used to sit below
+    // it has been removed (it was bridge-less: nothing posted the block
+    // `BLOCK_INIT`, so it only ever painted the pre-init light-theme shell). The
+    // legacy /apps/[appBlockId] page kept this escape hatch; the canonical page
+    // must not be strictly less capable.
+    //
+    // The note copy is pinned VERBATIM: its previous value promised "…You can
+    // also run it in the live preview below", which now points at nothing.
     expect(action).toEqual({
       label: 'Open live',
       mode: 'visit',
       href: 'https://my-app.civit.ai',
       external: true,
-      note: 'Opens the app at its own address. You can also run it in the live preview below.',
+      note: 'Opens the app at its own address.',
     });
   });
 
@@ -108,13 +111,19 @@ describe('getDetailPrimaryAction — on-site', () => {
 
   it('🔴 no on-site state strands the viewer (full matrix, no note-shaped escape)', () => {
     // The invariant the whole action matrix rests on: for every combination of
-    // hasPage × canOpenPage × liveUrl-validity × appBlockId-presence, the page
-    // offers either a REAL navigable route or a renderable in-page preview.
+    // hasPage × canOpenPage × liveUrl-validity × appBlockId-presence, does the
+    // page offer a REAL navigable route?
     //
     // "usable" deliberately does NOT count `action.note`. Every branch of
     // getDetailPrimaryAction sets an href OR a note, so allowing a note to
     // satisfy this made the assertion true by construction — it could not fail.
     // A note is prose; it is not a way to use the app.
+    //
+    // It no longer counts an in-page preview either: that surface was removed
+    // (a bridge-less `<iframe src={liveUrl}>` that never sent the block
+    // `BLOCK_INIT` and only painted its pre-init light-theme shell). Counting a
+    // dead-on-arrival iframe as "a way to use the app" was the same false-usable
+    // this matrix exists to catch, one level up.
     const stranded: string[] = [];
     for (const hasPage of [true, false]) {
       for (const canOpenPage of [true, false]) {
@@ -125,7 +134,6 @@ describe('getDetailPrimaryAction — on-site', () => {
             } appBlockId=${appBlockId ?? 'null'}`;
             const detail = onsiteDetail({ hasPage, liveUrl, appBlockId });
             const action = getDetailPrimaryAction(detail, { canOpenPage });
-            const preview = getListingPreview(detail);
 
             // Integrity of the action itself, asserted for EVERY combination.
             if (action.href !== undefined) expect(action.href, key).not.toBe('');
@@ -133,16 +141,16 @@ describe('getDetailPrimaryAction — on-site', () => {
             // https target (the safeExternalHref guard).
             expect(action.external, key).toBe(action.mode === 'visit');
             if (action.mode === 'visit') expect(action.href, key).toMatch(/^https:\/\//);
-            // If the copy promises a preview, one must actually render.
-            if (action.note?.includes('live preview')) {
-              expect(preview, `${key}: promised a preview that does not render`).not.toBeNull();
-            }
+            // 🔴 No copy may point the viewer at an in-page live preview — there
+            // is no such surface on `AppListingDetailBody` any more. Reachable
+            // and non-vacuous: this arm sees the real "Open live" note, which
+            // carried exactly that sentence until it was removed here.
+            expect(action.note ?? '', key).not.toMatch(/live preview/i);
 
             const usable =
               (action.mode === 'open' && !!action.href) ||
               (action.mode === 'visit' && !!action.href) ||
-              (action.mode === 'info' && !!action.href) ||
-              preview !== null;
+              (action.mode === 'info' && !!action.href);
             if (!usable) stranded.push(key);
           }
         }
@@ -153,34 +161,45 @@ describe('getDetailPrimaryAction — on-site', () => {
     // set identical or fails here — that is the point of enumerating it instead
     // of hiding it behind an `|| !!action.note`.
     //
-    // 🔴 This set GREW from 3 to 6 when the model-slot `info` href was removed
+    // 🔴 History of this set: 3 → 6 when the model-slot `info` href was removed
     // (#3493 retired `/apps/[appBlockId]`, so that href had become a redirect
     // back onto this very page — a circular self-link is not a way to use the
-    // app, and counting it as one is exactly the kind of false "usable" this
-    // matrix exists to catch). The three added entries are the `appBlockId`
-    // arms that the old href used to rescue.
+    // app). 6 → 10 now that the in-page `<iframe>` preview is gone. The four
+    // added entries are the `hasPage=false` × https-`liveUrl` rows that the
+    // preview used to "rescue" — and it never rescued them in reality: the
+    // frame was bridge-less, so it rendered the block's pre-init shell and
+    // nothing else. Removing it does not make a single listing less usable; it
+    // makes the count HONEST.
     //
-    // The invariant is now CLEANER, not weaker: all six share ONE degenerate
-    // shape — a non-https `liveUrl`, so the `safeExternalHref` guard drops both
-    // the "Open live" escape hatch AND the in-page preview. `appBlockId` no
-    // longer appears in the condition at all. Unreachable with real data:
-    // `liveUrl` is server-computed as `https://<slug>.<APPS_DOMAIN>`. Note what
-    // is NOT here — every `hasPage=false` (model-slot) row with an https
-    // `liveUrl` stays usable, because `getListingPreview` gates on kind + URL
-    // and not on `hasPage`, so the in-page preview still renders for it. What a
-    // model-slot app lacks on this page is an INSTALL surface, which is the gap
-    // #3493 tracks and which is deliberately not invented here.
+    // The remaining dead ends have exactly two shapes, and nothing else:
+    //   (a) a non-https `liveUrl` — `safeExternalHref` drops the "Open live"
+    //       escape hatch. Unreachable with real data: `liveUrl` is
+    //       server-computed as `https://<slug>.<APPS_DOMAIN>`.
+    //   (b) `hasPage=false` (a model-slot app) — it has no launch page by
+    //       definition, and this body has no INSTALL surface to send it to.
+    //       That is the gap #3493 tracks, deliberately not invented here.
     expect(stranded).toEqual([
       'hasPage=true canOpenPage=false liveUrl=http appBlockId=blk-1',
       'hasPage=true canOpenPage=false liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=true liveUrl=https appBlockId=blk-1',
+      'hasPage=false canOpenPage=true liveUrl=https appBlockId=null',
       'hasPage=false canOpenPage=true liveUrl=http appBlockId=blk-1',
       'hasPage=false canOpenPage=true liveUrl=http appBlockId=null',
+      'hasPage=false canOpenPage=false liveUrl=https appBlockId=blk-1',
+      'hasPage=false canOpenPage=false liveUrl=https appBlockId=null',
       'hasPage=false canOpenPage=false liveUrl=http appBlockId=blk-1',
       'hasPage=false canOpenPage=false liveUrl=http appBlockId=null',
     ]);
-    // Every dead end is a non-https liveUrl — asserted structurally so the list
-    // above cannot silently acquire an entry of a different shape.
-    for (const key of stranded) expect(key).toContain('liveUrl=http ');
+    // Structural restatement of (a)/(b) so the list above cannot silently
+    // acquire an entry of a THIRD shape — e.g. an `hasPage=true` + https row,
+    // which would be a real regression rather than a known gap.
+    for (const key of stranded) {
+      expect(key, key).toMatch(/liveUrl=http |hasPage=false /);
+    }
+    // Anti-vacuity: a `hasPage=true` app with an https liveUrl is ALWAYS usable,
+    // in both canOpenPage postures. That is the row the product actually ships.
+    expect(stranded.filter((k) => k.startsWith('hasPage=true canOpenPage=true'))).toEqual([]);
+    expect(stranded).not.toContain('hasPage=true canOpenPage=false liveUrl=https appBlockId=blk-1');
   });
   it('hasPage + !canOpenPage + non-https liveUrl → info fallback (guard drops it)', () => {
     const action = getDetailPrimaryAction(
