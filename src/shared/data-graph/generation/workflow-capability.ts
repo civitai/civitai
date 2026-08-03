@@ -32,9 +32,12 @@
  * a hot path pays it at most once per pair.
  */
 
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { generationGraph } from './generation-graph';
 import { getAllVersionIds, type VersionGroup, type VersionOption } from './common';
+import { getWorkflowsForEcosystem } from './config/workflows';
 import type { GenerationCtx } from './context';
+import type { ModelSubstitutionEvent, ModelSubstitutionReason } from './model-substitution';
 
 /**
  * Fixed capability-probe context. NOT a user's context — see the module note.
@@ -60,6 +63,15 @@ export type WorkflowCapability = {
   versions: VersionGroup | undefined;
   /** The version this (ecosystem, workflow) defaults to, when it has one. */
   defaultModelId: number | undefined;
+  /**
+   * Whether this (ecosystem, workflow) LOCKS the checkpoint — i.e. whether the
+   * `checkpointInputSchema` clamp in `common.ts` will silently rewrite an
+   * out-of-list version id to `defaultModelId` (issue #3520). Read from the same
+   * `model` node meta the form renders, so a caller enumerating "which
+   * ecosystems substitute?" derives it from the real config instead of keeping a
+   * hand-maintained list that goes stale the moment a new ecosystem ships.
+   */
+  modelLocked: boolean;
 };
 
 const capabilityCache = new Map<string, WorkflowCapability | undefined>();
@@ -87,11 +99,12 @@ export function getWorkflowCapability(
     const ctx = clone.ctx as { workflow?: string; ecosystem?: string };
     if (ctx.workflow === workflow && ctx.ecosystem === ecosystem) {
       const modelMeta = clone.getNodeMeta('model' as never) as
-        | { versions?: VersionGroup; defaultModelId?: number }
+        | { versions?: VersionGroup; defaultModelId?: number; modelLocked?: boolean }
         | undefined;
       capability = {
         versions: modelMeta?.versions,
         defaultModelId: modelMeta?.defaultModelId,
+        modelLocked: !!modelMeta?.modelLocked,
       };
     }
   } catch {
@@ -202,4 +215,54 @@ export function resolveVersionWorkflowScope(opts: {
     (index >= 0 ? targetOptions[index]?.value : undefined) ?? target?.defaultModelId;
 
   return { kind: 'wrong-workflow', offeredFor, suggestedVersionId };
+}
+
+/**
+ * Classify ONE silent checkpoint substitution (issue #3520, phase 1) into the
+ * reason recorded on `BlockWorkflowSnapshot` and used as the sole prom label of
+ * `civitai_generation_model_substitutions_total`.
+ *
+ * 🔴 REUSES `resolveVersionWorkflowScope` — it is deliberately NOT a second,
+ * parallel notion of "does this version belong to this workflow". That function
+ * already answers the question direction-agnostically, and the only reason the
+ * txt2img-direction guard in `blocks/workflow.service.ts` looks narrower is that
+ * it chooses to ACT on one verdict; the resolver itself never was. Generalising
+ * its use (any workflow, either direction) is the point of this call site.
+ *
+ * `candidateWorkflows` is EVERY workflow the ecosystem offers, not the App
+ * Blocks image subset — this runs on all server-side graph validations
+ * (on-site submit and bridge alike), so bounding it to the bridge's three
+ * workflows would misclassify a real `wrong-workflow` case as `unrecognized`
+ * the moment an ecosystem scopes versions across some other pair of workflows.
+ *
+ * The `supported` verdict maps to `gated`, and that mapping is the whole reason
+ * the third reason exists. The clamp tests `val.id` against `validVersionIds`,
+ * which is the GATE-FILTERED visible list; this resolver probes with an EMPTY
+ * `gateRules` (see PROBE_CTX). So "the config offers this version for this
+ * workflow, yet the clamp still replaced it" can only mean a gate rule
+ * applicable to this user hid it. Folding that into `unrecognized` would label
+ * an entitlement decision as a retired/unknown model.
+ *
+ * Never throws: `resolveVersionWorkflowScope` is probe-guarded internally, and
+ * an unknown ecosystem key simply yields no candidates (→ `unrecognized`), which
+ * is the honest verdict when the config has no opinion.
+ */
+export function classifyModelSubstitutionReason(
+  event: ModelSubstitutionEvent
+): ModelSubstitutionReason {
+  const ecosystem = ecosystemByKey.get(event.ecosystem);
+  const candidateWorkflows = ecosystem
+    ? getWorkflowsForEcosystem(ecosystem.id).map((w) => w.graphKey)
+    : [];
+
+  const scope = resolveVersionWorkflowScope({
+    ecosystem: event.ecosystem,
+    workflow: event.workflow,
+    candidateWorkflows,
+    versionId: event.requested,
+  });
+
+  if (scope.kind === 'wrong-workflow') return 'wrong-workflow';
+  if (scope.kind === 'supported') return 'gated';
+  return 'unrecognized';
 }

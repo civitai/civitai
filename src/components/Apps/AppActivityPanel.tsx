@@ -98,8 +98,11 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
-  if (endpoint?.startsWith('storage:set:')) return 'Wrote app-local storage';
-  if (endpoint?.startsWith('storage:delete:')) return 'Deleted app-local storage';
+  // Prefix (not `===`) so BOTH the bounded template written today
+  // (`storage:set`) and the historical per-key value (`storage:set:<key>`)
+  // resolve to the same label.
+  if (endpoint?.startsWith('storage:set')) return 'Wrote app-local storage';
+  if (endpoint?.startsWith('storage:delete')) return 'Deleted app-local storage';
   // Passive READS get a friendly label from the scope→label map (W13 — no
   // write-side change for reads). Fall through to the local write labels, then
   // the raw scope string for anything genuinely unknown.
@@ -107,17 +110,39 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
 }
 
 /**
- * Strip synthetic prefixes off endpoints so the Detail column shows the
- * meaningful tail (workflowId, storage key, etc.). REST endpoints pass
- * through unchanged.
+ * Render the Detail column for a scope-invocation row: the meaningful per-row
+ * ref (workflowId, storage key, …). REST endpoints pass through unchanged.
+ *
+ * 🔴 The per-row id comes from `detail`, NOT from the endpoint string. The
+ * writers now emit a BOUNDED endpoint template (`workflow:submit`,
+ * `storage:set`, `storage:delete`) because `endpoint` is the GROUP BY key of the
+ * `topEndpoints` rollup — a per-operation id there made it unbounded and every
+ * bucket count 1. This column was doing double duty as aggregation key AND UI
+ * payload; `detail` is the column documented for per-row ids, so that is where
+ * the id is read from.
+ *
+ * The legacy endpoint tail is still parsed as a FALLBACK: no data migration was
+ * run, so historical rows keep `workflow:submit:<id>` / `storage:set:<key>` (and
+ * a pre-W13 workflow row has no `detail` at all). Dropping the parse would have
+ * silently degraded every one of those rows to "(no workflow id)".
  */
-export function humaniseScopeEndpoint(endpoint: string): string {
-  const workflow = endpoint.match(/^workflow:submit:(.+)$/);
-  if (workflow) {
-    return workflow[1] === 'pending' ? '(no workflow id)' : `workflow ${workflow[1]}`;
+export function humaniseScopeEndpoint(
+  endpoint: string,
+  detail?: BlockActionDetail | null
+): string {
+  if (endpoint.startsWith('workflow:submit')) {
+    // Legacy tail (`workflow:submit:<id>`); 'pending' was the historical
+    // stand-in for "no id yet" and is not a real workflow id.
+    const legacy = endpoint.match(/^workflow:submit:(.+)$/);
+    const legacyId = legacy && legacy[1] !== 'pending' ? legacy[1] : undefined;
+    const workflowId = detail?.workflowId ?? legacyId;
+    return workflowId ? `workflow ${workflowId}` : '(no workflow id)';
   }
-  const storage = endpoint.match(/^storage:(set|delete):(.+)$/);
-  if (storage) return `key "${storage[2]}"`;
+  if (endpoint.startsWith('storage:set') || endpoint.startsWith('storage:delete')) {
+    const legacy = endpoint.match(/^storage:(?:set|delete):(.+)$/);
+    const key = detail?.key ?? legacy?.[1];
+    return key ? `key "${key}"` : endpoint;
+  }
   if (endpoint === 'user-settings:write') return '';
   return endpoint;
 }
@@ -376,8 +401,10 @@ export function AppActivityPanel({
                   >
                     {/* The Action cell carries the human sentence when a rich
                         detail is present; the Detail cell always shows the raw
-                        technical ref (workflow id / storage key / endpoint). */}
-                    {humaniseScopeEndpoint(item.endpoint)}
+                        technical ref (workflow id / storage key / endpoint) —
+                        read off `detail`, since the endpoint is now a bounded
+                        aggregation template. */}
+                    {humaniseScopeEndpoint(item.endpoint, item.detail)}
                   </Text>
                 )}
               </Table.Td>

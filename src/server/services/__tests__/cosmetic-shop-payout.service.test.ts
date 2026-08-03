@@ -1,6 +1,7 @@
 import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromClient from '~/server/prom/client';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -33,8 +34,9 @@ vi.mock('~/server/db/client', () => ({
       }),
   },
 }));
-// `importOriginal` keeps the rest of the prom surface real — the import graph
-// reaches several of its registrars transitively via ~/server/redis/caches.
+// `importOriginal` keeps the rest of the module real: this suite's import graph
+// reaches prom collectors it never names, and a hand-listed mock silently breaks
+// the moment that graph grows.
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   dbReadFallbackCounter: { inc: vi.fn() },

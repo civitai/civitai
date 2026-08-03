@@ -558,6 +558,63 @@ export const MAX_AUTO_REMINTS = 1;
  */
 export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
 
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`. Re-exported from `PageBlockHost` (its historical home) so existing
+ * importers are unaffected.
+ *
+ * 🔴 They live HERE, in the pure module, so a NODE test can import them: they are
+ * inputs to `worstReachableLaunchMs()` below, and importing them from the
+ * component would drag the whole React graph into the `unit` project.
+ */
+export const BLOCK_READY_TIMEOUT_MS = 10_000;
+export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+
+/**
+ * The longest wall-clock a SUCCESSFUL launch can legitimately take, derived from
+ * the constants above rather than asserted.
+ *
+ * 🔴 WHY THIS IS A FUNCTION AND NOT A COMMENT. The launch-latency histograms drop
+ * any sample past a fixed cap, and that cap has to clear this bound or it silently
+ * discards real slow successes — a slowness-correlated drop that trims exactly the
+ * tail the metric exists to show. Two earlier revisions got the arithmetic wrong in
+ * a comment (once by ~27s, once by ~10s) and nothing was red either time. A test
+ * now asserts both caps exceed this value, so widening any input below walks the
+ * bound up and fails loudly.
+ *
+ * 🔴 THE SEQUENCE, and why it is NOT `attempts x (token + ready)`:
+ *
+ *   attempt 1   no token at all -> `no_token` at TOKEN_WAIT_TIMEOUT_MS.
+ *               This is an AUTH terminal, so it spends the re-mint budget.
+ *   + backoff[0]
+ *   attempt 2   a re-mint is in flight, so this attempt can AGAIN pay the full
+ *               token wait; the ready timer only arms once `hasToken` lets
+ *               `shouldStartInit` pass, so the two windows are SERIAL within the
+ *               attempt: TOKEN_WAIT + BLOCK_READY_TIMEOUT -> `timeout`.
+ *               `timeout` is NON-auth, so it spends no re-mint and a third
+ *               attempt is still allowed.
+ *   + backoff[1]
+ *   attempt 3   the token from attempt 2 PERSISTS (nothing cleared it), so the
+ *               token wait cannot be paid again — this attempt is bounded by
+ *               BLOCK_READY_TIMEOUT alone, and ends in `ok`.
+ *
+ * Two consecutive `no_token`s are UNREACHABLE (`MAX_AUTO_REMINTS = 1` stops the
+ * second), and a post-`timeout` attempt cannot re-pay the token wait. Both of
+ * those are why the naive `3 x (15 + 10) + backoffs` = 82s over-states it, and
+ * why treating every attempt as ~15s under-states it.
+ */
+export function worstReachableLaunchMs(): number {
+  const backoffs = AUTO_RETRY_BACKOFF_MS.slice(0, MAX_AUTO_RETRIES).reduce((a, b) => a + b, 0);
+  // attempt 1: the auth terminal that costs the full token wait.
+  const first = TOKEN_WAIT_TIMEOUT_MS;
+  // The one attempt that can pay BOTH windows (a re-mint is in flight).
+  const remintedAttempt = TOKEN_WAIT_TIMEOUT_MS + BLOCK_READY_TIMEOUT_MS;
+  // Every later attempt already holds a token, so it is ready-bounded only.
+  const tokenHoldingAttempts = Math.max(0, MAX_AUTO_RETRIES - MAX_AUTO_REMINTS);
+  return first + remintedAttempt + tokenHoldingAttempts * BLOCK_READY_TIMEOUT_MS + backoffs;
+}
+
 /** Terminal statuses a bounded auto-retry may attempt to recover from. */
 export function isAutoRetryableStatus(status: PageHostStatus): boolean {
   return (

@@ -2,6 +2,12 @@ import * as z from 'zod';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
+import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import {
+  civitaiHostedImageUrlSchema,
+  SOURCE_IMAGE_URL_MAX,
+} from '~/server/schema/blocks/civitai-image-url';
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -89,87 +95,41 @@ const blockAdditionalResourceSchema = z.object({
 // ── img2img source image (App Blocks IMAGE bridge, Phase-2a) ─────────────────
 // The block body is UNTRUSTED iframe input, so an init/source image MUST NOT be
 // an arbitrary remote URL the generator would fetch (SSRF / arbitrary-fetch).
-// It is bounded to a Civitai-controlled host. An uploaded image resolves to an
-// `https://orchestration…civitai.com` URL, so this same bound covers the
-// "uploaded image" case WITHOUT widening to attacker-controlled origins.
+// It is bounded to a Civitai-controlled host by `civitaiHostedImageUrlSchema`.
 //
-// This is validated by parsed URL HOSTNAME (not a substring match), which is
-// intentionally tighter than the platform's server `sourceImageSchema`
-// (`.includes('image.civitai.com')`) — a substring check would accept
-// `https://evil.example/?x=image.civitai.com`; a hostname check rejects it and
-// also rejects non-https and userinfo. Kept LOCAL (rather than importing the
-// server orchestrator schema) so this module stays client-safe — it is
-// `import type`'d by a client component (failureSnapshot).
+// 🔴 That predicate MOVED — unchanged — to `~/server/schema/blocks/civitai-image-url`,
+// which is where its full reasoning now lives (hostname-not-substring, the two
+// WHATWG parser-differential classes it closes, and the canonicalize-what-you-
+// validate rule). It moved because the `kind: 'step'` registry needs the SAME
+// bound for every step type that takes an image URL (`convert-image` today) and
+// cannot import this module — this module imports the registry to derive its
+// wire enums, so it would be a cycle. One rule, one place.
 //
-// 🔴 A hostname check ALONE is not sufficient, because it validates a PARSED
-// url while the schema used to emit the ORIGINAL string. Every consumer
-// downstream (the graph's `imagesNode` is `url: z.string()` — no URL check —
-// so this schema is the only gate) then re-parses those original bytes, and a
-// parser that disagrees with WHATWG about them sees a DIFFERENT host than the
-// one we approved. Two concrete WHATWG-specific behaviours were being relied on
-// as security properties, both verified to pass the bare hostname check:
-//   - backslash-in-authority: WHATWG treats `\` as `/` for special schemes, so
-//     `https://civitai.com\@evil.com/x.png` parses with host `civitai.com`. A
-//     parser that splits the authority on the last `@` without treating `\` as
-//     a delimiter reads host = `evil.com`.
-//   - tab/CR/LF deletion: WHATWG strips `\t\r\n` from ANYWHERE in the url, so
-//     `https://evil.com\r\n.civitai.com/x.png` normalizes to the (nonexistent)
-//     subdomain `evil.com.civitai.com` and passes — while the raw string, CRLF
-//     intact, is what got forwarded. CRLF inside a value a consumer
-//     concatenates into a request line or header is a request-splitting /
-//     log-injection primitive.
-// So the bound is enforced in three layers, in this order:
-//   1. REJECT ambiguous bytes before parsing (below). No legitimate url carries
-//      a raw backslash or control byte — they must be percent-encoded — so this
-//      costs nothing, and it closes the differential class at the door rather
-//      than silently rewriting a plainly hostile input into an accepted one.
-//   2. Validate the parsed hostname (unchanged).
-//   3. CANONICALIZE to `URL.href`, so the bytes we emit are exactly the bytes
-//      we validated. This is the posture fix: it also covers normalization
-//      classes beyond the four bytes above (percent-encoding, default-port
-//      stripping, empty-path → `/`, host case-folding).
-const CIVITAI_IMAGE_HOSTS = ['civitai.com', 'civitai.red', 'civitai.green'] as const;
-// Backslash + C0 controls + DEL. Superset of the `\t\r\n` WHATWG deletes and
-// the leading/trailing C0 it strips, so no byte that the parser silently
-// removes or reinterprets can survive into the value we approve.
-const URL_AMBIGUOUS_BYTES = /[\\\u0000-\u001f\u007f]/;
-// Bound applies to BOTH the raw input and the canonicalized output: percent-
-// encoding can inflate a string ~9x (a 2048-char path of CJK canonicalizes to
-// 18272 chars), so the pre-transform cap does NOT bound what we emit.
-export const SOURCE_IMAGE_URL_MAX = 2048;
-function isCivitaiHostedImageUrl(raw: string): boolean {
-  if (URL_AMBIGUOUS_BYTES.test(raw)) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== 'https:') return false;
-  const host = parsed.hostname.toLowerCase();
-  return CIVITAI_IMAGE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-}
+// Re-exported here because `SOURCE_IMAGE_URL_MAX` was part of this module's
+// public surface before the move.
+export { SOURCE_IMAGE_URL_MAX };
 
 const blockSourceImageSchema = z.object({
-  // Order is load-bearing. A `.transform()` that THROWS propagates out of
-  // `safeParse` (it does not become a parse failure) — so `new URL()` here must
-  // be total. Zod skips the transform entirely when an earlier check on the
-  // same string failed (verified against zod 4), so by the time it runs, the
-  // refine above has already proven the string parses. Do not reorder these.
-  url: z
-    .string()
-    .max(SOURCE_IMAGE_URL_MAX)
-    .refine(isCivitaiHostedImageUrl, 'source image must be a Civitai-hosted https image URL')
-    .transform((raw) => new URL(raw).href)
-    .refine(
-      (href) => href.length <= SOURCE_IMAGE_URL_MAX,
-      'source image URL exceeds the maximum length once canonicalized'
-    ),
+  url: civitaiHostedImageUrlSchema,
   // Dimension hints for the graph's denoise/aspect derivation. Bounded to the
   // same block caps as params so an iframe can't send absurd dimensions.
   width: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
   height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
 });
+
+export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
+
+// ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
+// ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
+// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
+// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
+// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
+// Grok 7). This constant only stops an untrusted iframe from posting an
+// unbounded array before the body is even parsed — it is set ABOVE the largest
+// per-ecosystem cap on purpose so a future ecosystem raising its own limit is
+// not silently clamped here. Every element is validated individually against
+// `blockSourceImageSchema` (Civitai-host + dimension bounds), never just [0].
+export const BLOCK_SOURCE_IMAGES_WIRE_MAX = 10;
 
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
@@ -195,7 +155,34 @@ const blockTextToImageBodySchema = z.object({
   // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
   // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
   // never relying on the graph's safeParse auto-correction).
+  //
+  // 🔴 DEPRECATED ALIAS — kept working indefinitely. The published developer
+  // docs and `@civitai/app-sdk` both ship `sourceImage` today, so removing it
+  // would break every deployed block. `sourceImages` (below) is the current
+  // field; the server normalizes the singular into a 1-element array
+  // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
+  // Multi-image conditioning. The graph layer has always supported N images
+  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
+  // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
+  // per-image posture as the singular one, with no "first element only" gap.
+  //
+  // Bounds: `.min(1)` — an EMPTY array is REJECTED rather than silently treated
+  // as "no source image". A caller that sends `sourceImages: []` computed an
+  // empty list and meant to send images; quietly downgrading that to a txt2img
+  // generation would bill them for something they did not ask for, which is the
+  // silent-wrong-answer failure mode this bridge has already been bitten by.
+  // Omit the field entirely for txt2img. `.max()` is the absolute wire bound —
+  // the REAL cap is per-ecosystem and enforced in buildImageWorkflowInput.
+  //
+  // Supplying BOTH `sourceImage` and `sourceImages` is rejected as ambiguous
+  // (see the union-level check below) rather than picking a winner.
+  sourceImages: z
+    .array(blockSourceImageSchema)
+    .min(1, 'sourceImages must not be empty — omit the field for text-to-image')
+    .max(BLOCK_SOURCE_IMAGES_WIRE_MAX)
+    .optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
   // present, blocks.router moves it to the FRONT of the domain-allowed currency
@@ -232,6 +219,21 @@ const blockTextToImageBodySchema = z.object({
   }),
 });
 
+// Supplying BOTH the deprecated `sourceImage` and the current `sourceImages` is
+// AMBIGUOUS — we refuse rather than pick a winner. Silently preferring one is
+// exactly how a caller ends up conditioning on an image it thought it had
+// replaced. Enforced at the WIRE schema so both `estimateWorkflow` and
+// `submitWorkflow` inherit it from the single parse, with no way to reach the
+// translator holding both.
+const blockTextToImageBodySchemaChecked = blockTextToImageBodySchema.refine(
+  (body) => !(body.sourceImage && body.sourceImages),
+  {
+    path: ['sourceImages'],
+    message:
+      'send either `sourceImage` (deprecated) or `sourceImages`, not both — they are ambiguous together',
+  }
+);
+
 // App Blocks customComfy bridge (v1). Coarse fail-closed wire gate only:
 //  - `recipe` MUST be a REGISTERED recipe id (derived from the recipe registry
 //    keys) — an unregistered id is rejected at the union, before any translator
@@ -249,10 +251,57 @@ export const blockCustomComfyBodySchema = z
   })
   .strict();
 
+// ── App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1 ──
+//
+// The THIRD union member, added ALONGSIDE the existing two. `textToImage` and
+// `customComfy` are untouched: this member only ADDS a discriminant, so every
+// deployed block and every published `@civitai/app-sdk` body keeps parsing and
+// behaving exactly as before.
+//
+// Where the other two members each hand-wrote a capability, this one is
+// REGISTRY-BACKED: `step` must be a registered id (`REGISTERED_STEP_IDS`,
+// derived from the step-registry keys), and everything about the capability —
+// its bounded params, its billing mode, its moderation posture, its builder —
+// lives in that entry. Adding a capability is a registry entry, not a new union
+// member and not a router branch. That is the point: sibling union members are
+// what make consolidation a breaking change for every published app once the
+// wire contract is public.
+//
+// The wire gate here is deliberately COARSE, exactly mirroring `customComfy`:
+//  - `step` MUST be a REGISTERED id — an unregistered id is rejected AT THE
+//    UNION, before any translator, any spend reservation, or any orchestrator
+//    call. Fail-closed at the schema.
+//  - `params` is an opaque `Record<string, unknown>` here; the per-step
+//    `.strict()` param schema is applied by the handler, which is the single
+//    place a step's real param contract lives. That keeps the wire surface
+//    step-agnostic, so registering a step never edits this file.
+//  - `.strict()` rejects any extra top-level field on the body.
+//
+// 🔴 `customComfy` is NOT migrated behind the registry here. That is the RFC's
+// migration step 3 (with `kind: 'customComfy'` retained as a deprecated alias)
+// and is deliberately out of scope — step 1 is "land the registry alongside the
+// existing members; nothing breaks".
+//
+// Built through a FACTORY rather than inline so the "enum is derived from the
+// registry, not hardcoded" property is directly testable: a test can build the
+// same schema over a widened id list and assert the enum grew.
+export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
+  return z
+    .object({
+      kind: z.literal('step'),
+      step: z.enum(stepIds),
+      params: z.record(z.string(), z.unknown()),
+    })
+    .strict();
+}
+
+export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
-  blockTextToImageBodySchema,
+  blockTextToImageBodySchemaChecked,
   blockCustomComfyBodySchema,
+  blockStepBodySchema,
 ]);
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
@@ -279,4 +328,69 @@ export type BlockWorkflowSnapshot = {
     amount: number;
     accountType: 'yellow' | 'blue' | 'red' | 'green';
   };
+  /**
+   * Checkpoint versions the generation graph SILENTLY replaced (issue #3520).
+   *
+   * On a `modelLocked` ecosystem the graph swaps any version id that is not in
+   * the current workflow's visible list for that workflow's default, returns
+   * success, and bills the user. That is deliberate graceful degradation — it is
+   * what keeps an app pinned to a since-retired version working instead of
+   * hard-failing — but through this bridge the id was DELIBERATE and the
+   * correction was previously undetectable. `requested` is what the block asked
+   * for, `applied` is what actually ran.
+   *
+   * 🔴 BEHAVIOUR IS UNCHANGED: the same model runs as before; this field only
+   * reports it. OPTIONAL + additive, and OMITTED entirely when nothing was
+   * substituted, so every existing snapshot stays byte-identical and a consumer
+   * that does not read it is unaffected.
+   *
+   * WHERE IT APPEARS. 🔴 ON THE `kind: 'textToImage'` PATH ONLY. That is the
+   * only wire body whose handler resolves a checkpoint through the generation
+   * graph (`createBlockTextToImageStep` → `buildGenerationContext`), so it is
+   * the only one that can substitute anything. On that path: the submit reply,
+   * the `estimateWorkflow` reply, EVERY reply from `submitWorkflow` that quotes
+   * a cost without submitting (insufficient per-call budget, the per-user daily
+   * / review Buzz cap, the per-app aggregate spend+velocity cap, the dev-tunnel
+   * session cap), and — because the submit persists it on the orchestrator
+   * workflow's `metadata` — every subsequent `pollWorkflow` / `cancelWorkflow`
+   * read of that workflow. The poll is the one that matters in practice: it is
+   * the snapshot carrying `imageUrls`, i.e. the one a block actually renders
+   * from, so the record is present next to the images it describes rather than
+   * only on a reply the block may have discarded.
+   * The estimate reply is the exception — a whatIf creates no persisted workflow,
+   * so there the record exists only on that reply.
+   *
+   * 🔴 IT DOES **NOT** APPEAR ON `kind: 'customComfy'` OR `kind: 'step'`. Each of
+   * those has its own four cost-quoting exits, and none of the eight carries this
+   * field — correctly, because neither handler builds a generation context: a
+   * customComfy body binds a server-authored recipe and a registry step carries
+   * no model binding at all, so there is nothing to substitute and nothing to
+   * report.
+   *
+   * 🔴 IF YOU ARE EXTENDING A STEP TO RESOLVE A CHECKPOINT THROUGH THE GRAPH,
+   * READ THIS. The paragraph above is a statement about the txt2img handler's
+   * plumbing, NOT a property of the bridge — do not assume the field will flow
+   * on your path because it flows there. The READ half is kind-agnostic (the
+   * poll recovers the record from `workflow.metadata` for any workflow), but the
+   * WRITE half is per-handler: your handler must pass the request's collector to
+   * `snapshotFromWorkflow(..., { modelSubstitutions })` on the reply AND write
+   * `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY` into the submitted
+   * `body.metadata`, or the substitution stays exactly as unobservable as it was
+   * before #3520 — on the one surface #3520 exists to make observable.
+   * `submitStepWorkflow` does neither today. Pinned by
+   * `generation-surface-wiring.test.ts` (every `buildGenerationContext` call site
+   * enumerated from the tree and pinned to its ENCLOSING FUNCTION, so a new one
+   * inside a step handler fails there) and by the `kind:'step'` absence tests +
+   * their planted-metadata control in `blocks.router.workflow.test.ts`.
+   *
+   * 🔴 WIRE CONTRACT: this is an ADDITIVE field on the type
+   * `@civitai/app-sdk`'s `blocks/types.ts` mirrors. The SDK's inbound validator
+   * does not know it yet, so a block reads it only after the SDK type is widened
+   * in that repo — tracked separately; nothing here edits another repo.
+   */
+  modelSubstitutions?: Array<{
+    requested: number;
+    applied: number;
+    reason: ModelSubstitutionReason;
+  }>;
 };

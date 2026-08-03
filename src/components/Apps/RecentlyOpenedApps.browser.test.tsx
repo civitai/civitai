@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type { ResolvedRecentApp } from '~/components/Apps/recentAppsRail';
@@ -111,6 +111,17 @@ describe('RecentlyOpenedListingsView', () => {
     ...over,
   });
 
+  /** An off-site entry with a usable external target — the hardened new-tab path. */
+  const offsite = (over: Partial<ResolvedRecentApp> = {}): ResolvedRecentApp => ({
+    id: 'lst_1',
+    slug: 'ext-app',
+    kind: 'offsite',
+    hasPage: false,
+    externalUrl: 'https://ext.example/app',
+    name: 'Ext App',
+    ...over,
+  });
+
   test('empty entries → the whole rail is HIDDEN (no heading, no layout reserved)', async () => {
     renderWithProviders(
       <>
@@ -157,6 +168,199 @@ describe('RecentlyOpenedListingsView', () => {
     await expect
       .element(page.getByTestId('apps-recent-rail-item'))
       .toHaveAttribute('href', '/apps/store-preview/gen-matrix');
+  });
+
+  /**
+   * The tile's ICON CTA. Added alongside the tile link, which meant restructuring
+   * the tile: it used to be ONE big `<Anchor>` wrapping the card, and nesting a
+   * button or a second anchor inside an `<a>` is invalid HTML (the parser
+   * reparents it, breaking keyboard order and screen-reader announcement). It is
+   * now a `Card` positioning context + a stretched link overlay + a SIBLING
+   * `ActionIcon`. These tests pin the properties that restructure had to preserve.
+   */
+  describe('the icon CTA', () => {
+    /**
+     * 🔴 SWALLOW THE NAVIGATION. Both targets are REAL anchors with real hrefs
+     * and `next/link` degrades to a plain anchor outside a Next app, so a
+     * `userEvent.click` here actually navigates the test iframe to
+     * `/apps/run/gen-matrix`. Vitest then loses the iframe and the whole FILE
+     * dies with "Cannot connect to the iframe" — taking every later test with it
+     * and reporting them as failures that have nothing to do with the code.
+     * A capture-phase `preventDefault` cancels the default action while leaving
+     * the component's own handlers to run, which is exactly what is under test.
+     */
+    const swallowNavigation = (e: Event) => e.preventDefault();
+    beforeEach(() => document.addEventListener('click', swallowNavigation, true));
+    afterEach(() => document.removeEventListener('click', swallowNavigation, true));
+
+    test('is reachable and carries a REAL accessible name (not just a glyph)', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      // Named per-app, so a screen-reader user tabbing a six-tile rail hears which
+      // app each button belongs to rather than six identical "Open"s.
+      await expect
+        .element(page.getByRole('link', { name: 'Open Gen Matrix' }))
+        .toBeInTheDocument();
+    });
+
+    test('the two targets are SIBLINGS, not nested — no <a> inside an <a>', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      // Await FIRST: `render()` commits on a later task, so a synchronous
+      // `.element()` observes an empty container and throws (or, for a negative
+      // assertion, passes vacuously). Same trap as the RENDER_BARRIER note above.
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      const tileLink = page.getByTestId('apps-recent-rail-item').element();
+      const actionLink = page.getByTestId('apps-recent-rail-action').element();
+      // The exact thing the restructure exists to prevent. `contains` is true for
+      // an element and itself, so this also rejects "they are the same element".
+      expect(tileLink.contains(actionLink)).toBe(false);
+      expect(actionLink.contains(tileLink)).toBe(false);
+      // Neither may have an <a> ancestor other than itself.
+      expect(actionLink.parentElement?.closest('a')).toBeNull();
+      expect(tileLink.parentElement?.closest('a')).toBeNull();
+    });
+
+    test('KEYBOARD TAB ORDER reaches both, tile link first', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      const tileLink = page.getByTestId('apps-recent-rail-item').element() as HTMLElement;
+      const actionLink = page.getByTestId('apps-recent-rail-action').element() as HTMLElement;
+      // Document order IS tab order here: both are natively-focusable anchors with
+      // no tabindex, so nothing reorders them.
+      expect(tileLink.getAttribute('tabindex')).toBeNull();
+      expect(actionLink.getAttribute('tabindex')).toBeNull();
+      expect(
+        tileLink.compareDocumentPosition(actionLink) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      // …and both really take focus.
+      tileLink.focus();
+      expect(document.activeElement).toBe(tileLink);
+      actionLink.focus();
+      expect(document.activeElement).toBe(actionLink);
+    });
+
+    test('clicking the icon records the open ONCE — it does not also fire the tile link', async () => {
+      const onOpenRecent = vi.fn();
+      renderWithProviders(
+        <RecentlyOpenedListingsView entries={[onsite()]} canOpenPage onOpenRecent={onOpenRecent} />
+      );
+      await userEvent.click(page.getByTestId('apps-recent-rail-action'));
+      // Exactly one: the icon sits ABOVE the stretched overlay (z-index), so the
+      // overlay never sees the click. Two calls would mean a double navigation.
+      expect(onOpenRecent).toHaveBeenCalledTimes(1);
+      expect(onOpenRecent).toHaveBeenCalledWith(expect.objectContaining({ id: 'ab_1' }));
+    });
+
+    test('clicking the TILE still records the open (the off-site one-shot path)', async () => {
+      const onOpenRecent = vi.fn();
+      renderWithProviders(
+        <RecentlyOpenedListingsView entries={[onsite()]} canOpenPage onOpenRecent={onOpenRecent} />
+      );
+      await userEvent.click(page.getByTestId('apps-recent-rail-item'));
+      expect(onOpenRecent).toHaveBeenCalledTimes(1);
+    });
+
+    test('the icon and the tile point at the SAME target (the icon cannot drift)', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      await expect.element(page.getByTestId('apps-recent-rail-item')).toBeInTheDocument();
+      const href = page.getByTestId('apps-recent-rail-item').element().getAttribute('href');
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toHaveAttribute(
+        'href',
+        href as string
+      );
+    });
+
+    /**
+     * The ACTION must match the DESTINATION: a play glyph labelled "Open"
+     * pointing at a detail page would be a lie in the accessible name, not just
+     * a cosmetic mismatch — hence deriving both from the same
+     * `getRecentRailTarget` decision.
+     *
+     * Three separate mounts, NOT one mount with `rerender`. The rerender form
+     * was tried and the third case never resolved: swapping the `entries` array
+     * for a different-`id` entry remounts a keyed child, and the assertion raced
+     * that remount for the full 15s timeout. Three mounts is slower by
+     * milliseconds and cannot race. (The exhaustive kind × hasPage × canOpenPage
+     * × externalUrl matrix is pinned in the node suite,
+     * `__tests__/recentAppsRail.test.ts` — this is the wiring.)
+     */
+    test('a runnable on-site app → an "Open" action', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      await expect.element(page.getByRole('link', { name: 'Open Gen Matrix' })).toBeInTheDocument();
+    });
+
+    test('the pages flag dark → a "View details" action, matching the detail fallback', async () => {
+      renderWithProviders(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage={false} />);
+      await expect
+        .element(page.getByRole('link', { name: 'View details for Gen Matrix' }))
+        .toBeInTheDocument();
+    });
+
+    /**
+     * 🔴 THE ICON CTA'S OWN new-tab HARDENING.
+     *
+     * The only `rel`/`target` assertion in this file queried
+     * `apps-recent-rail-item` — the TILE link — and never the icon button. So
+     * deleting `target`/`rel` from the icon's external `renderRoot` branch left
+     * the suite 21/21 green. That is the SAME branch that shipped as a dead
+     * button and had to be fixed after the fact; the fix landed with a role
+     * assertion but no hardening assertion, which is how a second hole stayed
+     * open in exactly the place that had already failed once.
+     */
+    test('🔴 the off-site ICON CTA carries its own new-tab hardening', async () => {
+      renderWithProviders(
+        <RecentlyOpenedListingsView entries={[offsite()]} canOpenPage />
+      );
+      const action = page.getByTestId('apps-recent-rail-action');
+      await expect.element(action).toBeInTheDocument();
+      await expect.element(action).toHaveAttribute('href', 'https://ext.example/app');
+      await expect.element(action).toHaveAttribute('target', '_blank');
+      // `noopener` is the security half (denies the opened page `window.opener`);
+      // both are asserted because dropping either is a silent downgrade.
+      await expect.element(action).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+
+    /**
+     * `UnstyledButton` computes `type: 'button'` BEFORE `renderRoot` swaps the
+     * root element, and `Box` forwards it through — so without destructuring it
+     * out the icon CTA renders `<a type="button">`. On an anchor `type` is the
+     * MIME-type hint of the linked resource and `"button"` is not a valid MIME
+     * type. Inert, but invalid HTML, and the same "props leaked into the wrong
+     * root element" family as the dead-button bug.
+     */
+    test('neither icon CTA root leaks `type="button"` onto its <a>', async () => {
+      const { rerender } = await renderWithProviders(
+        <RecentlyOpenedListingsView entries={[offsite()]} canOpenPage />
+      );
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      expect(
+        (page.getByTestId('apps-recent-rail-action').element() as HTMLElement).getAttribute('type')
+      ).toBeNull();
+
+      await rerender(<RecentlyOpenedListingsView entries={[onsite()]} canOpenPage />);
+      await expect.element(page.getByTestId('apps-recent-rail-action')).toBeInTheDocument();
+      expect(
+        (page.getByTestId('apps-recent-rail-action').element() as HTMLElement).getAttribute('type')
+      ).toBeNull();
+    });
+
+    test('an off-site entry → a "Visit" action', async () => {
+      renderWithProviders(
+        <RecentlyOpenedListingsView
+          entries={[
+            {
+              id: 'lst_1',
+              slug: 'ext-app',
+              kind: 'offsite',
+              hasPage: false,
+              externalUrl: 'https://ext.example/app',
+              name: 'Ext App',
+            },
+          ]}
+          canOpenPage
+        />
+      );
+      await expect.element(page.getByRole('link', { name: 'Visit Ext App' })).toBeInTheDocument();
+    });
   });
 
   test('an off-site entry links out as a hardened new-tab anchor', async () => {

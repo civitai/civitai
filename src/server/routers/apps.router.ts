@@ -422,7 +422,11 @@ export const appsStorageRouter = router({
           appBlockId,
           blockInstanceId,
           scope: 'apps:storage',
-          endpoint: `storage:set:${input.key}`,
+          // Templated, NOT `storage:set:<key>` — `endpoint` is the GROUP BY key
+          // of the `topEndpoints` rollup, so a per-key value makes the column
+          // unbounded and every bucket count 1. The key is already carried as
+          // the per-row payload in `detail` below, so nothing is lost.
+          endpoint: 'storage:set',
           statusCode: 200,
           // W13 richer detail — structured ref for the render-time sentence.
           detail: { action: 'storage.set', key: input.key, outcome: 'ok' },
@@ -486,7 +490,9 @@ export const appsStorageRouter = router({
                 appBlockId,
                 blockInstanceId,
                 scope: 'apps:storage',
-                endpoint: `storage:delete:${input.key}`,
+                // Templated, NOT `storage:delete:<key>` — bounded aggregation
+                // key; the key itself rides in `detail` below (see set above).
+                endpoint: 'storage:delete',
                 statusCode: 200,
                 // W13 richer detail — structured ref for the render-time sentence.
                 detail: { action: 'storage.delete', key: input.key, outcome: 'ok' },

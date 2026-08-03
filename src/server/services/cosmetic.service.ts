@@ -30,6 +30,10 @@ import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import {
+  getCosmeticArtworkUrl,
+  queueCosmeticPerceptualHash,
+} from '~/server/services/cosmetic-phash.service';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -485,6 +489,10 @@ export async function isStickerSlugAvailable({
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
   await validateStickerCosmetic({ type: data.type, data: data.data });
   const cosmetic = await dbWrite.cosmetic.create({ data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url) queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+
   return cosmetic;
 }
 
@@ -505,7 +513,14 @@ export async function updateCosmetic({
     data: data.data ?? existing?.data,
   });
 
+  const previous = data.data !== undefined ? await getCosmeticDetail({ id }) : undefined;
   const cosmetic = await dbWrite.cosmetic.update({ where: { id }, data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
+    queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+  }
+
   return cosmetic;
 }
 

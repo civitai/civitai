@@ -127,16 +127,43 @@ import {
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
+  formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
 import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
+// The step registry is the code-reviewed trust root, exactly as the recipe
+// registry is. `estimateStepBuzz` / `planStepSpend` dispatch on the entry's
+// declared `billingMode` — this router contains NO per-step and NO per-mode
+// branch, which is what makes adding a capability additive.
+// `containsAirReference` is the SAME deep scan the registry's load-time clause 7
+// runs; imported (not re-implemented) so the request-time re-assertion below can
+// never drift from the load-time one — one rule, one place.
+import {
+  containsAirReference,
+  estimateStepBuzz,
+  getStep,
+  planStepSpend,
+  resolveStepVariant,
+} from '~/server/services/blocks/steps';
+// Moderation dispatch for the same registry. A SEPARATE module because it pulls
+// `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
+// itself is imported by `workflow.schema` for the wire enum, which must stay
+// import-light. Dispatches on the entry's declared `moderationPosture`, so this
+// router keeps no per-posture branch either.
+import { runStepModeration } from '~/server/services/blocks/steps/moderation';
+// Instrument-only: records EVERY prepaidFixed step price check at submit —
+// `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
+// from a detector that never ran. Never throws.
+import { recordStepPriceCheck } from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
 // terminal poll/cancel hook. Static import (both are light) — the heavy
@@ -970,10 +997,16 @@ async function createBlockTextToImageStep(opts: {
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
-  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
-    id: opts.user.id,
-    isModerator: opts.user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    opts.user.tier ?? 'free',
+    undefined,
+    { id: opts.user.id, isModerator: opts.user.isModerator },
+    // #3520: the App Blocks bridge — the surface the issue is actually about.
+    // Here the checkpoint version id was written by an app author (deliberate),
+    // and until this PR the correction was undetectable by the caller. This is
+    // the population phase 3's reject/degrade decision has to be measured on.
+    'block'
+  );
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
@@ -999,7 +1032,40 @@ async function createBlockTextToImageStep(opts: {
   // resources). It is `undefined` on whatIf calls (the graph omits it then), so
   // callers can attach it to the REAL submit body only — mirroring the normal
   // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
-  return { step, workflowMetadata };
+  //
+  // `modelSubstitutions` (issue #3520): checkpoint versions the graph SILENTLY
+  // replaced during the validation just performed. Read from the per-request
+  // collector on the `externalCtx` built two lines above — never a shared/cached
+  // object — so it describes THIS submit and no one else's. Behaviour is
+  // unchanged; the caller folds this into the snapshot so the block can detect
+  // that it was billed for a model it did not ask for.
+  const modelSubstitutions = externalCtx.modelSubstitutions
+    ?.list()
+    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+
+  // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
+  // A block renders from the TERMINAL POLL (the only snapshot carrying
+  // `imageUrls`), and `pollWorkflow` rebuilds its snapshot from a freshly
+  // fetched Workflow with none of this request's context — so a reply-only field
+  // is gone before there is anything to show beside it, and `block_workflows`
+  // does not retain the submitted body to recover it from. Riding on the
+  // orchestrator metadata the submit body already carries makes it readable on
+  // EVERY later read, with no schema/DB change. See
+  // `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY`.
+  //
+  // Byte-identical when nothing was substituted (the overwhelmingly common
+  // case): the key is only added when there is something to add, and
+  // `workflowMetadata` is `undefined` on whatIf — where there is no persisted
+  // workflow to read back from anyway, so the estimate reply carries the record
+  // directly instead.
+  return {
+    step,
+    workflowMetadata:
+      workflowMetadata && modelSubstitutions?.length
+        ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
+        : workflowMetadata,
+    modelSubstitutions,
+  };
 }
 
 export const blocksRouter = router({
@@ -1162,9 +1228,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { withdrawRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { withdrawRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
       try {
         await withdrawRequest({
@@ -1510,9 +1574,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1539,9 +1601,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1579,9 +1639,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1637,9 +1695,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1675,15 +1731,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
-      const { getAgentReport } = await import(
-        '~/server/services/blocks/app-review-report.service'
-      );
+      const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
       return getAgentReport(input.publishRequestId);
     }),
 
@@ -1708,9 +1760,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1744,9 +1794,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1763,27 +1811,23 @@ export const blocksRouter = router({
    * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
    * flag gate as previewRequest; no input.
    */
-  listActivePreviews: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Review previews are restricted to civitai team');
-      }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
-      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('The review sandbox is not enabled');
-      }
-      const { listActiveReviewPreviews } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
-      try {
-        return await listActiveReviewPreviews();
-      } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
-      }
-    }),
+  listActivePreviews: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Review previews are restricted to civitai team');
+    }
+    const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+      throw throwAuthorizationError('The review sandbox is not enabled');
+    }
+    const { listActiveReviewPreviews } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    try {
+      return await listActiveReviewPreviews();
+    } catch (err) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+    }
+  }),
 
   /**
    * Approve a pending publish request: pre-creates the OauthClient +
@@ -1795,9 +1839,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(approveRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { approveRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Approving publish requests is restricted to civitai team');
       }
@@ -1941,9 +1983,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(rejectRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { rejectRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { rejectRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Rejecting publish requests is restricted to civitai team');
       }
@@ -2001,8 +2041,8 @@ export const blocksRouter = router({
             : serviceCode === 'RATE_LIMITED'
             ? 'TOO_MANY_REQUESTS'
             : // A build-service outage is OUR fault, not a malformed request —
-              // reporting it as a 400 mislabels an incident as user error (and
-              // keeps it off the server-fault error board).
+            // reporting it as a 400 mislabels an incident as user error (and
+            // keeps it off the server-fault error board).
             serviceCode === 'TRIGGER_FAILED'
             ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
@@ -2016,195 +2056,193 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user) return [];
-      const rows = await dbRead.appBlockPublishRequest.findMany({
-        where: { submittedByUserId: ctx.user.id },
-        orderBy: { submittedAt: 'desc' },
-        take: 100,
+  listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const rows = await dbRead.appBlockPublishRequest.findMany({
+      where: { submittedByUserId: ctx.user.id },
+      orderBy: { submittedAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        appBlockId: true,
+        slug: true,
+        version: true,
+        status: true,
+        submittedAt: true,
+        reviewedAt: true,
+        rejectionReason: true,
+        approvalNotes: true,
+        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+        deployState: true,
+        deployDetail: true,
+        deployUpdatedAt: true,
+        fileSummary: true,
+        manifestDiffSummary: true,
+        appBlock: {
+          select: {
+            id: true,
+            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+            // declare a launchable page). PUBLIC subset only — never the raw manifest.
+            manifest: true,
+            _count: { select: { userSubscriptions: true } },
+          },
+        },
+      },
+    });
+    // Flatten _count onto each row so the UI doesn't have to dig through
+    // the relation. Pending-first-version + withdrawn-first-version rows
+    // have no appBlock (FK is set on approve) — surface null so the UI
+    // can render "—".
+    //
+    // Post kill_per_model_installs: model installs are subscription rows
+    // with target_model_ids populated. Compute the pinned-install count
+    // via a second targeted query rather than over-fetching subs.
+    type RawRow = (typeof rows)[number];
+    const appBlockIds = rows
+      .map((r: RawRow) => r.appBlock?.id)
+      .filter((id: string | undefined): id is string => !!id);
+    const pinnedCounts = appBlockIds.length
+      ? (
+          (await dbRead.blockUserSubscription.groupBy({
+            by: ['appBlockId'],
+            where: {
+              appBlockId: { in: appBlockIds },
+              scope: 'publisher_all_my_models',
+              slotId: { not: null },
+            },
+            _count: { _all: true },
+          })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
+        ).reduce<Record<string, number>>((acc, row) => {
+          acc[row.appBlockId] = row._count._all;
+          return acc;
+        }, {})
+      : {};
+
+    // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
+    // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
+    // live/removed listing state. A publish request stays `approved` after an owner
+    // unpublish, so the request status alone can't tell live from owner-hidden. One
+    // batched findMany (NOT per-row) keyed by appBlockId.
+    // Additive projection (advisory listing-completeness warning on
+    // /apps/my-submissions): the asset ids + key text fields + a screenshot
+    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
+    // helper below. Purely additive — the owner-controls fields are unchanged.
+    const listingByBlockId = new Map<
+      string,
+      {
+        id: string;
+        status: string;
+        iconId: number | null;
+        coverId: number | null;
+        description: string | null;
+        tagline: string | null;
+        category: string | null;
+        screenshotCount: number;
+      }
+    >();
+    if (appBlockIds.length) {
+      const listings = await dbRead.appListing.findMany({
+        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
         select: {
           id: true,
           appBlockId: true,
-          slug: true,
-          version: true,
           status: true,
-          submittedAt: true,
-          reviewedAt: true,
-          rejectionReason: true,
-          approvalNotes: true,
-          // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-          deployState: true,
-          deployDetail: true,
-          deployUpdatedAt: true,
-          fileSummary: true,
-          manifestDiffSummary: true,
-          appBlock: {
-            select: {
-              id: true,
-              // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-              // declare a launchable page). PUBLIC subset only — never the raw manifest.
-              manifest: true,
-              _count: { select: { userSubscriptions: true } },
-            },
-          },
+          iconId: true,
+          coverId: true,
+          description: true,
+          tagline: true,
+          category: true,
+          // Filtered COUNT — only screenshots whose Image is still live. A row
+          // whose Image was deleted (imageId → null via onDelete: SetNull) has
+          // no displayable asset, so it must not inflate the count, else the
+          // `no-screenshots` warning is a false-negative. Matches the
+          // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+          // in app-listing-assets.service.ts (buildAssetStatus).
+          _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
         },
       });
-      // Flatten _count onto each row so the UI doesn't have to dig through
-      // the relation. Pending-first-version + withdrawn-first-version rows
-      // have no appBlock (FK is set on approve) — surface null so the UI
-      // can render "—".
-      //
-      // Post kill_per_model_installs: model installs are subscription rows
-      // with target_model_ids populated. Compute the pinned-install count
-      // via a second targeted query rather than over-fetching subs.
-      type RawRow = (typeof rows)[number];
-      const appBlockIds = rows
-        .map((r: RawRow) => r.appBlock?.id)
-        .filter((id: string | undefined): id is string => !!id);
-      const pinnedCounts = appBlockIds.length
-        ? (
-            (await dbRead.blockUserSubscription.groupBy({
-              by: ['appBlockId'],
-              where: {
-                appBlockId: { in: appBlockIds },
-                scope: 'publisher_all_my_models',
-                slotId: { not: null },
-              },
-              _count: { _all: true },
-            })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
-          ).reduce<Record<string, number>>((acc, row) => {
-            acc[row.appBlockId] = row._count._all;
-            return acc;
-          }, {})
-        : {};
-
-      // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
-      // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
-      // live/removed listing state. A publish request stays `approved` after an owner
-      // unpublish, so the request status alone can't tell live from owner-hidden. One
-      // batched findMany (NOT per-row) keyed by appBlockId.
-      // Additive projection (advisory listing-completeness warning on
-      // /apps/my-submissions): the asset ids + key text fields + a screenshot
-      // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-      // helper below. Purely additive — the owner-controls fields are unchanged.
-      const listingByBlockId = new Map<
-        string,
-        {
-          id: string;
-          status: string;
-          iconId: number | null;
-          coverId: number | null;
-          description: string | null;
-          tagline: string | null;
-          category: string | null;
-          screenshotCount: number;
-        }
-      >();
-      if (appBlockIds.length) {
-        const listings = await dbRead.appListing.findMany({
-          where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-          select: {
-            id: true,
-            appBlockId: true,
-            status: true,
-            iconId: true,
-            coverId: true,
-            description: true,
-            tagline: true,
-            category: true,
-            // Filtered COUNT — only screenshots whose Image is still live. A row
-            // whose Image was deleted (imageId → null via onDelete: SetNull) has
-            // no displayable asset, so it must not inflate the count, else the
-            // `no-screenshots` warning is a false-negative. Matches the
-            // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
-            // in app-listing-assets.service.ts (buildAssetStatus).
-            _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
-          },
-        });
-        for (const l of listings) {
-          if (l.appBlockId)
-            listingByBlockId.set(l.appBlockId, {
-              id: l.id,
-              status: l.status,
-              iconId: l.iconId,
-              coverId: l.coverId,
-              description: l.description,
-              tagline: l.tagline,
-              category: l.category,
-              screenshotCount: l._count.screenshots,
-            });
-        }
+      for (const l of listings) {
+        if (l.appBlockId)
+          listingByBlockId.set(l.appBlockId, {
+            id: l.id,
+            status: l.status,
+            iconId: l.iconId,
+            coverId: l.coverId,
+            description: l.description,
+            tagline: l.tagline,
+            category: l.category,
+            screenshotCount: l._count.screenshots,
+          });
       }
+    }
 
-      // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
-      // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
-      // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
-      // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
-      // `orderBy desc` (ONE query, latest per listing), only over removed listings —
-      // mirrors the off-site `listMySubmissions` approach.
-      const removedListingIds = [...listingByBlockId.values()]
-        .filter((l) => l.status === 'removed')
-        .map((l) => l.id);
-      const lastEvents = removedListingIds.length
-        ? await dbRead.appListingModerationEvent.findMany({
-            where: { appListingId: { in: removedListingIds } },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            distinct: ['appListingId'],
-            select: { appListingId: true, action: true },
-          })
-        : [];
-      const lastActionByListingId = new Map(
-        lastEvents
-          .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
-          .map((e) => [e.appListingId, e.action])
-      );
+    // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
+    // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
+    // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
+    // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
+    // `orderBy desc` (ONE query, latest per listing), only over removed listings —
+    // mirrors the off-site `listMySubmissions` approach.
+    const removedListingIds = [...listingByBlockId.values()]
+      .filter((l) => l.status === 'removed')
+      .map((l) => l.id);
+    const lastEvents = removedListingIds.length
+      ? await dbRead.appListingModerationEvent.findMany({
+          where: { appListingId: { in: removedListingIds } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : [];
+    const lastActionByListingId = new Map(
+      lastEvents
+        .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+        .map((e) => [e.appListingId, e.action])
+    );
 
-      type RowWithCount = (typeof rows)[number];
-      return rows.map((r: RowWithCount) => {
-        const counts = r.appBlock?._count;
-        const appBlockId = r.appBlock?.id;
-        const manifest = r.appBlock?.manifest;
-        const { appBlock: _drop, ...rest } = r;
-        // userSubscriptionCount keeps the historical meaning ("blanket +
-        // pinned subscriptions for this app"); modelInstallCount is the
-        // pinned-subscription subset, mirroring what the pre-migration
-        // model_block_installs row count meant.
-        const totalSubs = counts?.userSubscriptions ?? null;
-        const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
-        const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
-        return {
-          ...rest,
-          modelInstallCount: pinnedCount,
-          userSubscriptionCount: totalSubs,
-          // The backing on-site listing id (owner unpublish/republish/history target)
-          // + its TRUE lifecycle status, and — for a removed listing — the last mod
-          // action (owner-hidden vs mod-removed). Null when no backing listing exists
-          // (e.g. a pending first-version request, or a pre-W13 backfill gap).
-          appListingId: listing?.id ?? null,
-          listingStatus: listing?.status ?? null,
-          lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
-          // Advisory listing-completeness problems (missing assets + empty key
-          // fields). Empty when there's no backing listing yet (a pending first
-          // version) — nothing to flag until a listing row exists.
-          problems: listing
-            ? computeListingProblems({
-                iconId: listing.iconId,
-                coverId: listing.coverId,
-                screenshotCount: listing.screenshotCount,
-                description: listing.description,
-                tagline: listing.tagline,
-                category: listing.category,
-              }).problems
-            : [],
-          // Whether the manifest declares a launchable page (drives the Open-live →
-          // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
-          // subset only.
-          hasPage: !!toPublicBlockManifest(manifest).hasPage,
-        };
-      });
-    }),
+    type RowWithCount = (typeof rows)[number];
+    return rows.map((r: RowWithCount) => {
+      const counts = r.appBlock?._count;
+      const appBlockId = r.appBlock?.id;
+      const manifest = r.appBlock?.manifest;
+      const { appBlock: _drop, ...rest } = r;
+      // userSubscriptionCount keeps the historical meaning ("blanket +
+      // pinned subscriptions for this app"); modelInstallCount is the
+      // pinned-subscription subset, mirroring what the pre-migration
+      // model_block_installs row count meant.
+      const totalSubs = counts?.userSubscriptions ?? null;
+      const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
+      const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
+      return {
+        ...rest,
+        modelInstallCount: pinnedCount,
+        userSubscriptionCount: totalSubs,
+        // The backing on-site listing id (owner unpublish/republish/history target)
+        // + its TRUE lifecycle status, and — for a removed listing — the last mod
+        // action (owner-hidden vs mod-removed). Null when no backing listing exists
+        // (e.g. a pending first-version request, or a pre-W13 backfill gap).
+        appListingId: listing?.id ?? null,
+        listingStatus: listing?.status ?? null,
+        lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+        // Advisory listing-completeness problems (missing assets + empty key
+        // fields). Empty when there's no backing listing yet (a pending first
+        // version) — nothing to flag until a listing row exists.
+        problems: listing
+          ? computeListingProblems({
+              iconId: listing.iconId,
+              coverId: listing.coverId,
+              screenshotCount: listing.screenshotCount,
+              description: listing.description,
+              tagline: listing.tagline,
+              category: listing.category,
+            }).problems
+          : [],
+        // Whether the manifest declares a launchable page (drives the Open-live →
+        // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
+        // subset only.
+        hasPage: !!toPublicBlockManifest(manifest).hasPage,
+      };
+    });
+  }),
 
   /**
    * W5 v0 — reflection surface for /apps/installed. One row per app the
@@ -2216,16 +2254,12 @@ export const blocksRouter = router({
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
   // /apps/installed page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
-  listMyScopeGrants: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      if (!ctx.user) return [];
-      const { listMyScopeGrants } = await import(
-        '~/server/services/blocks/user-app-surface.service'
-      );
-      return listMyScopeGrants(ctx.user.id);
-    }),
+  listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    if (!ctx.user) return [];
+    const { listMyScopeGrants } = await import('~/server/services/blocks/user-app-surface.service');
+    return listMyScopeGrants(ctx.user.id);
+  }),
 
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
@@ -2344,9 +2378,9 @@ export const blocksRouter = router({
       // Ceiling = manifest.scopes ∩ approvedScopes. The user may only consent
       // to scopes inside that ceiling; anything else is dropped.
       const manifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
-        ? ((block.manifest as { scopes: unknown[] }).scopes.filter(
+        ? (block.manifest as { scopes: unknown[] }).scopes.filter(
             (s): s is string => typeof s === 'string'
-          ))
+          )
         : [];
       const approved = new Set(block.approvedScopes ?? []);
       const ceiling = new Set(manifestScopes.filter((s) => approved.has(s)));
@@ -2407,12 +2441,10 @@ export const blocksRouter = router({
    */
   // GA-relax (gotcha #66): returns only the caller's own subscriptions
   // (listUserSubscriptions(ctx.user.id)). moderator→protected + flag below.
-  listMySubscriptions: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      return BlockRegistry.listUserSubscriptions(ctx.user!.id);
-    }),
+  listMySubscriptions: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    return BlockRegistry.listUserSubscriptions(ctx.user!.id);
+  }),
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
@@ -2430,41 +2462,39 @@ export const blocksRouter = router({
    * `ctx.user.id`; returns the all-false shape when the flag is dark so
    * the sub-nav degrades to just the always-on tabs.
    */
-  getNavSummary: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const allFalse = {
-        hasInstalls: false,
-        hasSubmissions: false,
-        hasApprovedApps: false,
-        isReviewer: false,
-      };
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
-      const user = ctx.user;
-      if (!user) return allFalse;
+  getNavSummary: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const allFalse = {
+      hasInstalls: false,
+      hasSubmissions: false,
+      hasApprovedApps: false,
+      isReviewer: false,
+    };
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+    const user = ctx.user;
+    if (!user) return allFalse;
 
-      const [install, submission, approvedApp] = await Promise.all([
-        dbRead.blockUserSubscription.findFirst({
-          where: { userId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlockPublishRequest.findFirst({
-          where: { submittedByUserId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlock.findFirst({
-          where: { app: { userId: user.id }, status: 'approved' },
-          select: { id: true },
-        }),
-      ]);
+    const [install, submission, approvedApp] = await Promise.all([
+      dbRead.blockUserSubscription.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlockPublishRequest.findFirst({
+        where: { submittedByUserId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlock.findFirst({
+        where: { app: { userId: user.id }, status: 'approved' },
+        select: { id: true },
+      }),
+    ]);
 
-      return {
-        hasInstalls: install !== null,
-        hasSubmissions: submission !== null,
-        hasApprovedApps: approvedApp !== null,
-        isReviewer: isAppReviewer(user),
-      };
-    }),
+    return {
+      hasInstalls: install !== null,
+      hasSubmissions: submission !== null,
+      hasApprovedApps: approvedApp !== null,
+      isReviewer: isAppReviewer(user),
+    };
+  }),
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
@@ -3604,6 +3634,12 @@ export const blocksRouter = router({
       if (input.body.kind === 'customComfy') {
         return await estimateCustomComfyWorkflow({ claims, body: input.body });
       }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
+      // step's cost comes from its declared billing mode, not a whatIf. The
+      // textToImage path below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await estimateStepWorkflow({ claims, body: input.body });
+      }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
       // lets the viewer pick a model, so the modelId match is SKIPPED and
@@ -3633,11 +3669,15 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is a PAGE-ONLY
+        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
         // feature. Custom Generators is a page app; model-bound img2img is out
         // of scope and unvetted for 2a, so reject it fail-closed on the model
         // path (mirrors the additionalResources guard above).
-        if (input.body.sourceImage) {
+        //
+        // BOTH wire shapes are gated identically — the deprecated singular
+        // `sourceImage` AND the array `sourceImages`. Gating only one would
+        // leave a model-bound token a way in through the other.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3730,7 +3770,11 @@ export const blocksRouter = router({
       // whatIf: no `metadata` on the body — matches the normal path
       // (`generateFromGraph` builds workflowMetadata only for real submits) and
       // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      const { step, modelSubstitutions } = await createBlockTextToImageStep({
+        input: generateInput,
+        user,
+        whatIf: true,
+      });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -3741,7 +3785,10 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+      // cost for model A and is silently priced for model B has the same
+      // detectability problem as the submit, one step earlier.
+      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
     }),
 
   /**
@@ -3792,6 +3839,19 @@ export const blocksRouter = router({
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
         return await submitCustomComfyWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
+      }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
+      // path. Branch to the registry-backed handler, which runs the same
+      // developer/page gates and the SAME cap belt (per-user daily +
+      // `reserveAppSpend` per-app aggregate + dev-session) the other kinds use.
+      // The textToImage path below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await submitStepWorkflow({
           ctx,
           claims,
           body: input.body,
@@ -3853,10 +3913,12 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is PAGE-ONLY.
+        // IMAGE bridge (Phase-2a): img2img via source images is PAGE-ONLY.
         // Reject it fail-closed on the model path (see estimateWorkflow for the
-        // same guard). Custom Generators is a page app.
-        if (input.body.sourceImage) {
+        // same guard). Custom Generators is a page app. BOTH wire shapes — the
+        // deprecated singular `sourceImage` and the array `sourceImages` — are
+        // gated identically; gating only one would leave a way in.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3974,11 +4036,36 @@ export const blocksRouter = router({
       // resources/params the real submit uses.
       // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
       // it on whatIf), and the whatif body never carries `metadata` anyway.
-      const { step: stepForCostCheck } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
+      //
+      // #3520 — the preflight's OWN substitutions. This validation is what
+      // produces the cost the budget check below is made against, so if the graph
+      // swapped the checkpoint here, the quote the block is judged on is priced
+      // for a model it did not ask for. On the SUCCESS path the real submit
+      // re-validates the same input and its record is what the snapshot carries
+      // (identical by construction, and tied to a real workflow id), so a second
+      // copy there would be redundant.
+      //
+      // THE RULE: every exit that quotes a cost WITHOUT submitting carries this
+      // record. There are FOUR below, all returning this same whatIf `cost` and
+      // no workflow id the caller could poll to learn the answer later:
+      //
+      //   1. insufficient per-call budget            (`cost > claims.buzzBudget`)
+      //   2. per-user daily / review-session Buzz cap (`total > buzzCap`)
+      //   3. per-app aggregate spend + velocity cap   (G8, `!appSpend.allowed`)
+      //   4. dev-tunnel per-session spend backstop    (F4, `!reserved.allowed`)
+      //
+      // 2–4 sit after the idempotency claim, but every one of them RELEASEs it
+      // rather than finalizing, so none of these snapshots is ever cached and
+      // replayed — each is produced fresh from this request's own preflight.
+      // Adding the field leaks nothing the caller does not already own: it is
+      // the caller's own requested id and the id that would have run, never any
+      // cap value (exit 3's message stays deliberately number-free).
+      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
+        await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          whatIf: true,
+        });
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
@@ -4002,6 +4089,12 @@ export const blocksRouter = router({
             status: 'failed' as const,
             cost: { total: cost },
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+            // Additive + omitted when empty, exactly like every other snapshot
+            // site, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -4086,13 +4179,20 @@ export const blocksRouter = router({
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error: claims.reviewRunForReal === true
-              ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
-                `spent this review session, this generation costs ${cost}, ` +
-                `session cap is ${buzzCap}`
-              : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
-                `across your installed apps, this generation costs ${cost}, ` +
-                `daily cap is ${buzzCap}`,
+            error:
+              claims.reviewRunForReal === true
+                ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
+                  `spent this review session, this generation costs ${cost}, ` +
+                  `session cap is ${buzzCap}`
+                : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+                  `across your installed apps, this generation costs ${cost}, ` +
+                  `daily cap is ${buzzCap}`,
+            // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
+            // when empty, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -4143,7 +4243,13 @@ export const blocksRouter = router({
                   ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
                   : appSpend.reason === 'unavailable'
                   ? 'generation temporarily unavailable — please retry shortly'
-                  : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+                  : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+              // #3520 exit 3 — quotes `cost` with no workflow. Carries only the
+              // caller's own requested/applied version ids, so it does NOT
+              // weaken the deliberately number-free message above.
+              ...(preflightSubstitutions?.length
+                ? { modelSubstitutions: preflightSubstitutions }
+                : {}),
             },
           };
         }
@@ -4205,6 +4311,12 @@ export const blocksRouter = router({
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
                   `session cap is ${devTunnel.spendCapBuzz}`,
+                // #3520 exit 4 — quotes `cost` with no workflow. This is the
+                // path an app AUTHOR iterating locally hits, i.e. exactly the
+                // audience that needs to see a substituted checkpoint.
+                ...(preflightSubstitutions?.length
+                  ? { modelSubstitutions: preflightSubstitutions }
+                  : {}),
               },
             };
           }
@@ -4249,7 +4361,7 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata } = await createBlockTextToImageStep({
+        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
           input: generateInput,
           user,
           isGreen,
@@ -4273,7 +4385,9 @@ export const blocksRouter = router({
             externalId: blockExternalId,
           },
         });
-        snapshot = snapshotFromWorkflow(submitted);
+        // #3520: fold in any checkpoint the graph silently swapped during the
+        // validation inside `createBlockTextToImageStep` above.
+        snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
@@ -4284,9 +4398,7 @@ export const blocksRouter = router({
         // failed submit doesn't permanently burn the app's daily ceiling.
         // Best-effort; present only for non-dev tokens.
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
         // F4 — mirror the daily refund for the dev-session reservation so a failed
@@ -4326,6 +4438,13 @@ export const blocksRouter = router({
       // workflow:submit is a synthetic endpoint string (this path is
       // tRPC, not REST) — the UI's Activity panel humanises it via the
       // 'ai:write:budgeted' scope to "Generated an image".
+      //
+      // 🔴 The endpoint is a TEMPLATE, never `workflow:submit:<workflowId>`.
+      // `endpoint` is the GROUP BY key of the `topEndpoints` rollup
+      // (app-analytics.service), so a per-submit id makes the column unbounded
+      // and every bucket count 1 — the rollup becomes pure noise. Same
+      // cardinality reasoning as `boundAppBlockIdLabel`. The workflow id is the
+      // per-ROW payload and goes in `detail.workflowId` instead.
       void (async () => {
         const { recordScopeInvocation } = await import(
           '~/server/services/blocks/user-app-surface.service'
@@ -4335,17 +4454,20 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           blockInstanceId: claims.blockInstanceId,
           scope: 'ai:write:budgeted',
-          endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+          endpoint: 'workflow:submit',
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
           // W13 richer detail — the buzz SPEND (negative) + terminal outcome so
           // the activity row reads "Generated an image (spent N Buzz)". `cost`
-          // is the reserved/charged budget for this submit.
+          // is the reserved/charged budget for this submit. `workflowId` is the
+          // per-row id the Activity panel's Detail column renders (it used to be
+          // parsed back out of the endpoint string).
           detail: {
             action: 'workflow.submit',
             amount: typeof cost === 'number' ? -Math.abs(cost) : undefined,
             outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+            ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
           },
           // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
           // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
@@ -4492,9 +4614,7 @@ export const blocksRouter = router({
           const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
           // `isPayoutEligibleBuzz` already narrowed accountType to green|yellow,
           // both valid `BuzzSpendType`s; size===1 ⇒ every paid entry shares it.
-          const paidType = hasPaidDebit
-            ? (paidEntries[0].accountType as BuzzSpendType)
-            : undefined;
+          const paidType = hasPaidDebit ? (paidEntries[0].accountType as BuzzSpendType) : undefined;
 
           // paidType is set iff hasPaidDebit; otherwise fall to the conservative
           // free floor (getBlockAllowedAccountTypes[0] === 'blue' in both branches).
@@ -4625,16 +4745,14 @@ export const blocksRouter = router({
    * spendable types PLUS the creator payout pools the spendable-only
    * getMyBuzzBalance omits). MUTATION + `buzz:read:self` consent, self-bound.
    */
-  getMyBuzzAccounts: publicProcedure
-    .input(getMyBuzzAccountsInput)
-    .mutation(async ({ input }) => {
-      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
-      const accounts = await getUserBuzzAccount({
-        accountId: userId, // SELF-BOUND — never client input.
-        accountTypes: [...blockBuzzAccountTypes],
-      });
-      return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
-    }),
+  getMyBuzzAccounts: publicProcedure.input(getMyBuzzAccountsInput).mutation(async ({ input }) => {
+    const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+    const accounts = await getUserBuzzAccount({
+      accountId: userId, // SELF-BOUND — never client input.
+      accountTypes: [...blockBuzzAccountTypes],
+    });
+    return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
+  }),
 
   /**
    * HOST-MEDIATED per-modelVersion generation-compensation read for the
@@ -5041,10 +5159,12 @@ export const blocksRouter = router({
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
-      // marks the ctx → return the zeroed analytics shape (with the resolved
-      // range, so the UI still has a window) WITHOUT running any aggregate.
+      // marks the ctx → return the zeroed shape WITHOUT running any aggregate.
+      // It MUST carry `unavailable` (and the fail-closed `notOwned`) or the
+      // all-zero counters are indistinguishable from a real app with no
+      // activity, and clients render fabricated zeros as a measurement.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
-        return emptyAnalytics(resolveRange({ from, to }), false);
+        return emptyAnalytics(resolveRange({ from, to }), true, 'notEntitled');
       }
       const user = ctx.user as SessionUser;
       return getMyAppAnalytics({
@@ -5060,68 +5180,66 @@ export const blocksRouter = router({
    * the per-app dropdown on /apps/revenue. OauthClient.userId is the
    * single source of truth for app ownership in v1.
    */
-  getMyApps: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const user = ctx.user as SessionUser;
-      const apps = await dbRead.appBlock.findMany({
-        where: { app: { userId: user.id } },
-        select: {
-          id: true,
-          blockId: true,
-          appId: true,
-          status: true,
-          manifest: true,
-          app: { select: { name: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+  getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const user = ctx.user as SessionUser;
+    const apps = await dbRead.appBlock.findMany({
+      where: { app: { userId: user.id } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        app: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-      // One groupBy across all of the user's apps so the request
-      // doesn't N+1 against the attribution table. Skip when there
-      // are no apps — pointless query.
-      const lifetimeByApp = apps.length
-        ? await dbRead.blockBuzzAttribution.groupBy({
-            by: ['appBlockId'],
-            where: {
-              appOwnerUserId: user.id,
-              status: { in: ['confirmed', 'paid_out'] },
-            },
-            _sum: { appOwnerShareCents: true },
-            _count: true,
-          })
-        : [];
-      type LifetimeRow = {
-        appBlockId: string;
-        _sum: { appOwnerShareCents: number | null };
-        _count: number;
-      };
-      const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
-        (lifetimeByApp as LifetimeRow[]).map((r) => [
-          r.appBlockId,
-          { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
-        ])
-      );
+    // One groupBy across all of the user's apps so the request
+    // doesn't N+1 against the attribution table. Skip when there
+    // are no apps — pointless query.
+    const lifetimeByApp = apps.length
+      ? await dbRead.blockBuzzAttribution.groupBy({
+          by: ['appBlockId'],
+          where: {
+            appOwnerUserId: user.id,
+            status: { in: ['confirmed', 'paid_out'] },
+          },
+          _sum: { appOwnerShareCents: true },
+          _count: true,
+        })
+      : [];
+    type LifetimeRow = {
+      appBlockId: string;
+      _sum: { appOwnerShareCents: number | null };
+      _count: number;
+    };
+    const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
+      (lifetimeByApp as LifetimeRow[]).map((r) => [
+        r.appBlockId,
+        { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
+      ])
+    );
 
-      type AppRow = {
-        id: string;
-        blockId: string;
-        appId: string;
-        status: string;
-        manifest: unknown;
-        app: { name: string } | null;
-      };
-      return (apps as AppRow[]).map((a) => ({
-        id: a.id,
-        blockId: a.blockId,
-        appId: a.appId,
-        status: a.status,
-        appName: a.app?.name ?? null,
-        manifest: a.manifest as Record<string, unknown>,
-        lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
-        lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
-      }));
-    }),
+    type AppRow = {
+      id: string;
+      blockId: string;
+      appId: string;
+      status: string;
+      manifest: unknown;
+      app: { name: string } | null;
+    };
+    return (apps as AppRow[]).map((a) => ({
+      id: a.id,
+      blockId: a.blockId,
+      appId: a.appId,
+      status: a.status,
+      appName: a.app?.name ?? null,
+      manifest: a.manifest as Record<string, unknown>,
+      lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
+      lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
+    }));
+  }),
 
   /**
    * Phase 3 (git-push self-service) — return the developer's clone URL +
@@ -5208,7 +5326,9 @@ export const blocksRouter = router({
       // the embedded basic-auth credential, which Forgejo accepts for git).
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       const instructions = [
         `# Clone your app repo (credential is embedded in the URL):`,
@@ -5346,7 +5466,9 @@ export const blocksRouter = router({
             // BlockManifestValidator re-checks it below (keys must be declared
             // scopes, values non-empty ≤500 chars) — this bound is just a coarse
             // request-size guard.
-            scopeJustifications: z.record(z.string().min(1).max(128), z.string().max(500)).optional(),
+            scopeJustifications: z
+              .record(z.string().min(1).max(128), z.string().max(500))
+              .optional(),
             publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
             targets: z
               .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())
@@ -5623,7 +5745,9 @@ export const blocksRouter = router({
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       return {
         notYetAvailable: false as const,
@@ -5782,7 +5906,10 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   }
   const userId = parseSubjectUserId(claims.sub);
   if (userId == null) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'estimate requires authenticated viewer' });
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
@@ -5985,13 +6112,14 @@ async function submitCustomComfyWorkflow(opts: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error: claims.reviewRunForReal === true
-          ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
-            `spent this review session, this generation may cost up to ${ceiling}, ` +
-            `session cap is ${buzzCap}`
-          : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
-            `across your installed apps, this generation may cost up to ${ceiling}, ` +
-            `daily cap is ${buzzCap}`,
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
+              `spent this review session, this generation may cost up to ${ceiling}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+              `across your installed apps, this generation may cost up to ${ceiling}, ` +
+              `daily cap is ${buzzCap}`,
       },
     };
   }
@@ -6059,9 +6187,7 @@ async function submitCustomComfyWorkflow(opts: {
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
         await refundBlockBuzzSpend(buzzCapKey, ceiling);
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
         // No money moved → release the idempotency claim so a genuine retry runs.
@@ -6130,9 +6256,7 @@ async function submitCustomComfyWorkflow(opts: {
     // submit doesn't permanently burn the session ceiling. Best-effort; present
     // only when an active dev tunnel was reserved above.
     if (devSessionReserve) {
-      const { refundDevSessionBuzz } = await import(
-        '~/server/services/blocks/dev-tunnel.service'
-      );
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
       await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
     }
     // No resolved submit → no money moved; release the idempotency claim so a
@@ -6154,11 +6278,7 @@ async function submitCustomComfyWorkflow(opts: {
   // orchestrator id (never the failed/whatif sentinels). The dev-session id is
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
-  if (
-    snapshot.workflowId &&
-    snapshot.workflowId !== 'failed' &&
-    snapshot.workflowId !== 'whatif'
-  ) {
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
     await persistCustomComfySettle({
       workflowId: snapshot.workflowId,
       buzzCapKey,
@@ -6218,13 +6338,16 @@ async function submitCustomComfyWorkflow(opts: {
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
         scope: 'ai:write:budgeted',
-        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
         statusCode: snapshot.status === 'failed' ? 500 : 200,
         detail: {
           action: 'workflow.submit',
-          amount:
-            typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
         // + synthetic_app_id path so the pre-approval audit row persists.
@@ -6277,6 +6400,831 @@ async function submitCustomComfyWorkflow(opts: {
         // customComfy is recipe-based (no single user-picked model to attribute).
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — estimate + submit handlers.
+// RFC #3515 migration step 1.
+//
+// A `step` body carries `{ kind, step, params }` — NO model binding. Everything
+// the capability needs lives in its REGISTRY ENTRY
+// (`~/server/services/blocks/steps`): a bounded `.strict()` param schema, a pure
+// builder, a declared BILLING MODE, and a declared MODERATION POSTURE.
+//
+// 🔴 THE DISPATCH RULE. These two handlers contain NO per-step branch and NO
+// per-billing-mode branch. Estimate reads `estimateStepBuzz(entry, params)` and
+// submit reads `planStepSpend(entry, params)`; both dispatch on the entry's
+// declared `billingMode` inside the registry module. Registering a capability
+// touches one new file plus one registry line — never this router. If you find
+// yourself adding `if (step.id === …)` or `if (billingMode === …)` here, the
+// abstraction has been defeated and the RFC's whole premise with it.
+//
+// 🔴 THE MONEY RULE. A step submit runs the SAME cap belt every other spending
+// kind runs — the per-user daily cap, the per-app aggregate `reserveAppSpend`
+// (daily Buzz + velocity), and the dev-session backstop — reserved BEFORE the
+// orchestrator submit and refunded on every non-committed exit. `kind: 'step'`
+// must not be a money surface the guardrail cannot see; if it were, the
+// `civitai_app_block_spend_cap_rejections_total` counter would not fire for it
+// either, so the gap would also be invisible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type StepBody = Extract<BlockWorkflowBody, { kind: 'step' }>;
+
+/** Orchestrator step name stamped on a block step submission. */
+const BLOCK_STEP_NAME = 'block-step';
+
+/**
+ * Resolve the registry entry from the (schema-gated) `step` id. The wire
+ * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
+ * the union, so this never returns undefined for a schema-valid body — the
+ * guard is defense-in-depth against a registry/schema desync. Fail closed.
+ */
+function resolveBlockStep(body: StepBody) {
+  const step = getStep(body.step);
+  if (!step) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown step type' });
+  }
+  return step;
+}
+
+/**
+ * Parse a step's params against its own `.strict()` schema, as a CALLER error.
+ *
+ * 🔴 `paramSchema.parse()` throws a raw `ZodError` from inside the resolver, and
+ * tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR — verified by execution, not assumed. So an app author
+ * sending an out-of-range `targetWidth` got a 500. This surface is entirely
+ * app-author-driven: routine iteration against the param contract would have
+ * registered as a server-error rate, burying real 5xx in developer typos.
+ *
+ * `safeParse` + an explicit BAD_REQUEST makes the caller error a caller error.
+ * The zod message is included because the app author is the one who has to fix
+ * it, and the params are the app's OWN input — nothing server-side is disclosed.
+ */
+function parseStepParams(step: ReturnType<typeof resolveBlockStep>, raw: unknown) {
+  const parsed = step.paramSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `invalid params for step '${step.id}': ${parsed.error.message}`,
+    });
+  }
+  return parsed.data;
+}
+
+/**
+ * The gates every step request passes before anything else happens, in the same
+ * order and with the same fail-closed posture as the customComfy handlers.
+ * Shared by estimate and submit so the two can never drift — a gate that holds
+ * on submit but not on estimate lets a caller probe what it may not run.
+ *
+ * PAGE-ONLY in v1, mirroring `customComfy`. A registry step carries no model
+ * binding, so a MODEL token has nothing to bind it to; rejecting it is the
+ * conservative direction and widening later is not a wire change.
+ */
+async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'registry steps are page-only' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+  return userId;
+}
+
+/**
+ * STEP ESTIMATE. Returns the registry's DECLARED, deterministic estimate — no
+ * orchestrator round-trip. For `prepaidFixed`, registry load enforces that this
+ * number equals the entry's declared price (`estimateBuzz === priceForVariant`),
+ * so the estimate and the declared price can never disagree with each other.
+ *
+ * 🔴 THE ESTIMATE AND THE SUBMIT CAN DIVERGE, and that is deliberate. Submit no
+ * longer trusts the declared price as the ceiling: it runs a real `whatif:true`
+ * quote against the orchestrator and gates + reserves `max(declared, quoted)`
+ * (see the ORCHESTRATOR QUOTE section in `submitStepWorkflow`). So when the
+ * orchestrator's live price is ABOVE the declared one — a rate-card move — the
+ * block is shown the declared number here and the submit enforces the higher
+ * one. Concretely, at a live price of 40 against a declared 1: this returns
+ * `cost.total: 1`, and the submit either returns
+ * `insufficient buzz budget: step price 40 exceeds budget <n>` or reserves 40
+ * against every cap.
+ *
+ * That is fail-closed and correct — the caller is never billed more than the
+ * caps it reserved against, and the divergence is counted as
+ * `civitai_app_block_step_price_check_total{outcome="over"}`. But do NOT read
+ * this estimate as a binding quote: it is the declared floor, not the enforced
+ * ceiling. (This comment previously asserted the inverse — that an estimate can
+ * never quote a different number than the submit bills. That was true before the
+ * quote-backed gate existed and is now false.)
+ *
+ * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
+ * exactly as submit does — the same `.strict()` schema runs on both paths.
+ *
+ * 🔴 AND fail-closed on an out-of-set VARIANT, which it previously was not.
+ * `estimateStepBuzz` resolves through `resolveStepVariant` before dispatching, so
+ * a resolution outside the entry's declared `variants` throws here exactly as it
+ * does on submit. Before that bound existed the two paths disagreed: for an entry
+ * whose variant is its model, an out-of-set model returned HTTP 200 with
+ * `cost: { total: undefined }` here while the submit threw — estimate/submit
+ * drift on the surface whose entire job is to predict the submit.
+ */
+async function estimateStepWorkflow(opts: { claims: BlockClaims; body: StepBody }) {
+  const { claims, body } = opts;
+  await assertStepRequestAllowed(claims);
+  const step = resolveBlockStep(body);
+  const params = parseStepParams(step, body.params);
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: estimateStepBuzz(step, params) },
+    },
+  };
+}
+
+/**
+ * STEP SUBMIT. Order: gates → per-step `.strict()` param parse → moderation
+ * posture → spend plan (dispatched on billing mode) → static budget gate →
+ * idempotency claim → reserve on the per-user cap → reserve on the PER-APP cap
+ * → reserve on the dev-session cap → build + submit → settle bookkeeping →
+ * durable audit + attribution.
+ *
+ * Over-cap / rejections return a failed-shape snapshot (recoverable by the
+ * block); a throw AFTER reserving refunds every reservation.
+ */
+async function submitStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: StepBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  // Namespaced idempotency externalId — ALWAYS SET, same as the other kinds: a
+  // server-minted `bls<uuid>` when the block sends no key, so `submitWorkflow`'s
+  // own 3× retry of the real submit can never create (and charge for) a second
+  // workflow after a 502/504. Minted ONCE here — the body built below is the
+  // object the retry wrapper reuses across attempts.
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+  // The outer proc already gated this, but re-narrow here (defense-in-depth) so
+  // `buzzBudget` is a positive number the static gate can compare against.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+
+  const step = resolveBlockStep(body);
+  // The registry entry's OWN `.strict()` schema is the real param contract (the
+  // wire schema only gated the `step` id). An unknown param is REJECTED here,
+  // never silently dropped — enforced for every registered entry at registry
+  // load. An invalid param is a BAD_REQUEST → fail-closed.
+  const params = parseStepParams(step, body.params);
+
+  // NOTE: no UNCONDITIONAL `getBlockSessionUser` call here. A registry step
+  // carries no model binding, no checkpoint resolution and no entitlement belt,
+  // so a `'none'`-posture step reads nothing about the session user — fetching
+  // one cost a `getUserById` per submit for a value that was never used. A
+  // posture that DOES audit needs `isModerator`, so it is passed below as a
+  // THUNK: only a handler that reads it pays for the round-trip, and this
+  // function keeps no per-posture branch.
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // A registry step has no `accountType` field on its wire body (params are the
+  // step's own bounded contract), so currency selection is Auto — the
+  // domain-allowed set, drained blue-first.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  // ── MODERATION POSTURE — dispatched on the entry's DECLARED posture, the same
+  // way spend dispatches on its declared billing mode. No per-step and no
+  // per-posture branch here; `runStepModeration` owns the table.
+  //
+  // 🔴 HOST-SIDE, AND BEFORE SUBMISSION. The audit cannot live on the block
+  // side: a block is untrusted sandboxed code that can decline to call it or
+  // ignore its verdict, and `extModeration` being fail-soft does not make the
+  // call optional. Placed here it runs before the orchestrator quote and before
+  // every spend reservation — so a rejection costs no orchestrator call and has
+  // nothing to refund, matching where `textToImage` and `customComfy` put theirs.
+  //
+  // 🔴 `isGreen` IS THE TOKEN'S MATURITY CLAIM, not a request field and not a
+  // constant. It comes from `resolveBlockMaturity(claims)` above — the same
+  // server-minted `maxBrowsingLevel` ceiling `allowMatureContent` is derived
+  // from — so a SFW-domain (green/blue) block gets the stricter SFW audit even
+  // if its own code is wrong or malicious. Byte-identical derivation to the two
+  // existing kinds.
+  await runStepModeration({
+    step,
+    params,
+    userId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  });
+
+  const token = await getOrchestratorToken(userId, ctx);
+
+  // ── THE RESOLVED VARIANT — derived ONCE, HERE, before any reservation exists.
+  //
+  // 🔴 WHY IT IS HOISTED RATHER THAN CALLED AT EACH USE. Three consumers key off
+  // this value (the price lookup below, the settle `engine`, and the usage audit
+  // row), and it used to be re-derived at each of them — against the registry's
+  // own stated invariant that there is a SINGLE source of truth for "which
+  // variant did this submit resolve to?". Re-deriving is not merely wasteful: a
+  // resolver that is not a pure function of `params` could answer differently at
+  // each site, so the row would record a variant the caller was not charged for.
+  //
+  // 🔴 AND WHY THE POSITION MATTERS. `resolveStepVariant` THROWS on an out-of-set
+  // resolution. Resolved here, that throw lands before the orchestrator quote and
+  // before every reservation — nothing to refund. The audit-row derivation it
+  // replaces sits inside a `void (async () => …)().catch(() => {})` AFTER the
+  // submit is billed, where the same throw would have been silently swallowed
+  // with the money already committed.
+  //
+  // Order-preserving: `planStepSpend` resolved this internally, as its first act,
+  // at exactly this point in the sequence.
+  const variant = resolveStepVariant(step, params);
+
+  // ── SPEND PLAN — dispatched on the entry's declared BILLING MODE. This is the
+  // single place the money shape is decided; the rest of this function is
+  // mode-agnostic and never re-inspects `billingMode`.
+  const plan = planStepSpend(step, params, variant);
+  const declaredBuzz = Math.ceil(plan.reserveBuzz);
+
+  // Built ONCE, then used for the quote and the real submit, so the two can
+  // never price different things. `timeout` is stamped ONLY for a billing mode
+  // whose cap IS a timeout (`timeBounded`); `prepaidFixed` returns null, because
+  // a timeout on a fixed-price step would be a liveness knob and stamping one
+  // here would imply a Buzz-cap relationship that does not exist.
+  const built = step.buildStep(params);
+
+  // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
+  // submitted. Same shape and same reason as the entitlement re-assert below,
+  // on the axis every `$type`-keyed guard depends on.
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7a. The registry's load-time check
+  // asserts `buildStep(canonicalParamsFor(v)).$type === orchestratorType` for
+  // each variant — the CANONICAL params. A `buildStep` that switches its
+  // `$type` ON PARAMS therefore registers cleanly and diverges only at request
+  // time, when the untrusted iframe supplies the params that flip it. That is
+  // not hypothetical: it was demonstrated by execution in review against the
+  // load-time check alone.
+  //
+  // What that buys an attacker without this clause is the whole point:
+  // `runStepModeration` (above) dispatches on the DECLARED posture, so a step
+  // declaring `'none'` that builds a text-producing `$type` reaches the
+  // orchestrator with no audit — the exact shape the registry's posture gate
+  // exists to prevent. Load time proved a property of one fixed input; this
+  // proves it of THIS input.
+  //
+  // Placed before the quote and before every reservation, so a rejection costs
+  // no orchestrator call and has nothing to refund.
+  if (built.$type !== step.orchestratorType) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares orchestratorType '${step.orchestratorType}' but the ` +
+        `submitted step is '${built.$type}' — every $type-keyed guard, including the ` +
+        'moderation-posture constraint, was evaluated against a type this step does not submit',
+    });
+  }
+
+  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
+  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
+  // this PR's own triage named as the real risk (`imageUpscaler` was
+  // disqualified precisely because its `model` field takes an arbitrary AIR
+  // URN).
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
+  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+  // params therefore registers cleanly, and at request time `buildStep` forwards
+  // whatever the untrusted iframe sent straight into the submitted input. Load
+  // time proved a property of one fixed input; this proves it of THIS input.
+  // Without it, `resourcePolicy` was enforced at registry load only — a
+  // review-process guard, not a runtime one — while `moderationPosture` was
+  // enforced at both.
+  //
+  // Placed before the quote and before every reservation, so a rejection here
+  // costs no orchestrator call and has nothing to refund.
+  //
+  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
+  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
+  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
+  // too. That is a false positive, and it is the direction we want — refusing a
+  // pathological url costs a caller one bounced request; forwarding an
+  // unentitled AIR costs the entitlement belt.
+  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step carries an ` +
+        'AIR reference — a step that reaches an AIR resource bypasses the generation-graph ' +
+        'entitlement belt',
+    });
+  }
+
+  const orchestratorStep = {
+    $type: built.$type,
+    name: BLOCK_STEP_NAME,
+    ...(plan.stepTimeoutSeconds !== null
+      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
+      : {}),
+    input: built.input,
+  };
+  // Parameterized tags: emit the step id as both the workflow-type tag and the
+  // `baseModel` slot (a registry step has no base model), preserving the
+  // `app-block:*` provenance tags the per-app subqueue read depends on.
+  const tags = buildWorkflowTags(claims, step.id, 'step');
+
+  // ── (0) ORCHESTRATOR QUOTE — a real `whatif:true` submit, BEFORE the per-call
+  // budget gate.
+  //
+  // 🔴 WHY THE DECLARED PRICE CANNOT BE THE CEILING. Before this, the per-call
+  // `buzzBudget` gate compared the token's budget against a number Civitai had
+  // simply asserted in the registry. That made this the FIRST block spend path
+  // whose per-call ceiling rested on nothing the platform enforces:
+  // `textToImage` submit gates on a real `whatif` quote from the orchestrator,
+  // and `customComfy` stamps a step `timeout` the orchestrator physically
+  // enforces as the Buzz ceiling. A `prepaidFixed` step does neither —
+  // `stepTimeoutSeconds` is deliberately `null` — so if the declared price were
+  // ever below the real one, EVERY submit would exceed `buzzBudget` by the
+  // overage, forever, until a human read a counter and shipped code. The
+  // downstream divergence correction adjusts the CAP COUNTERS; it never touched
+  // the declared price or this gate, so it was never a backstop for it.
+  //
+  // 🔴 `prepaidFixed` means "cost knowable before execution" — which is exactly
+  // what `whatif:true` returns. Asking the orchestrator is therefore not a
+  // workaround for the mode, it is the mode's own premise made enforceable.
+  //
+  // No `externalId` on the quote (mirrors the txt2img whatIf preflight): the
+  // idempotency key belongs to the REAL submit only.
+  //
+  // Cost of this: one extra orchestrator round-trip per step submit — the same
+  // one the txt2img path already pays. A throw here propagates BEFORE any
+  // reservation exists, so there is nothing to refund.
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      steps: [orchestratorStep as any],
+      tags,
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  const quotedTotal = whatIfResult.cost?.total;
+  const quotedBuzz =
+    typeof quotedTotal === 'number' && Number.isFinite(quotedTotal) ? Math.ceil(quotedTotal) : null;
+
+  // Fail CLOSED on an unquotable step. A missing quote means the mode's premise
+  // ("cost knowable before execution") did not hold for this submit, which puts
+  // the ceiling back on the unenforced declared constant — the exact state this
+  // gate exists to remove. Reported as a recoverable failed-shape snapshot (the
+  // same shape every other cap rejection returns) rather than a throw, and
+  // counted as `outcome: 'absent'` so it is visible rather than silent.
+  if (quotedBuzz === null) {
+    recordStepPriceCheck(step.id, 'absent');
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: declaredBuzz },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      },
+    };
+  }
+
+  // 🔴 The reservation is the LARGER of the two. The quote is what makes the
+  // ceiling real (a quote above the declared price must be gated and reserved at
+  // the real number, not the asserted one); the declared price is the floor
+  // because it is what `estimateBuzz` SHOWED the block, and the registry's
+  // load-time invariant forces those to agree. Over-reserving only makes a cap
+  // stricter.
+  const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
+
+  // (1) Pre-submit gate against the token's per-call budget — now enforced
+  // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
+  if (reserveBuzz > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — taken BEFORE the cap reservations + orchestrator
+  //    submit so two CONCURRENT same-key submits can't BOTH reserve + BOTH
+  //    charge, and a replay can't double-INCR the cap counters. Absent key → no
+  //    claim. Fail-CLOSED on a redis error; a resolved submit FINALIZEs, every
+  //    non-committed exit RELEASEs. The orchestrator externalId dedupe stays as
+  //    a 2nd layer.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // (2) Reserve against the per-user cumulative cap. THROWS fail-closed on a
+  // redis error; release the claim first.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, reserveBuzz);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
+              `spent this review session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - reserveBuzz} already spent today ` +
+              `across your installed apps, this step costs ${reserveBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
+  // This is the guardrail the per-user cap structurally cannot provide — it is
+  // keyed on `appBlockId` with the spender deliberately absent from the key, so
+  // a Sybil ring funnelling many accounts' spend through ONE app is bounded.
+  // Skipped ONLY for DEV tokens (synthetic non-FK appBlockId), matching every
+  // other kind.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz);
+    if (!appSpend.allowed) {
+      // Roll back the per-user reservation so a rejected submit doesn't burn the
+      // viewer's own daily ceiling for a spend that never happened.
+      await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+      // No money moved → release the idempotency claim so a genuine retry runs.
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: reserveBuzz },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: reserveBuzz };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop — mirror every other kind.
+  // Bounds cumulative spend within ONE dev session so a runaway LOCAL submit
+  // loop can't drain Buzz.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        reserveBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: reserveBuzz },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: reserveBuzz };
+    }
+  }
+
+  // ── Build + submit. On ANY throw AFTER reserving, refund on ALL reservation
+  // keys and re-throw (refund-on-throw).
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  // Hoisted out of the try so the post-submit spend-attribution closure can read
+  // the REALIZED per-account debit.
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  const submittedAt = Date.now();
+  try {
+    // `orchestratorStep` + `tags` were built above the quote — the SAME objects
+    // the whatif priced, so the quote and the charge can never describe
+    // different work.
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags,
+        currencies,
+        // Authoritative maturity clamp on the real submit — token-claim derived.
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+  } catch (e) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key so a lost-response retry replays it. Best-effort.
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  // ── PRICE CHECK + RESERVATION-OVERAGE CORRECTION.
+  //
+  // We reserved an EXACT amount on every cap. If the orchestrator billed MORE,
+  // those counters are short by the difference and the per-app abuse cap would
+  // be that much looser for every subsequent submit — the one direction a spend
+  // cap must never drift. Correct ALL THREE reservations for the overage (an
+  // accounting correction for money already spent, NOT a gate: every `charge*`
+  // helper deliberately has no deny path) and record the outcome.
+  //
+  // 🔴 GATED ON THE PLAN, NOT RUN UNCONDITIONALLY. This correction is
+  // `prepaidFixed`-shaped: it is only right when the reservation was an exact
+  // price. A future `timeBounded` entry reserves a CEILING, and a submit-time
+  // cost above it would be topped up here AND then settled ceiling→actual by the
+  // post-paid machinery off the un-topped-up ceiling. `plan.correctReservationOverage`
+  // is how the MODE decides, keeping this function mode-agnostic — the property
+  // the registry exists to guarantee.
+  //
+  // Under-billing needs no correction: over-reserving only makes the cap
+  // stricter, and an exact reservation is final by definition (there is no
+  // post-paid settle to refund it down).
+  if (plan.correctReservationOverage) {
+    const realizedCost = snapshot.cost?.total;
+    if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
+      const overage = Math.ceil(realizedCost) - reserveBuzz;
+      if (overage > 0) {
+        // 🔴 The declared price is wrong (or the rate card moved). Alert on this.
+        recordStepPriceCheck(step.id, 'over');
+        // Best-effort on ALL THREE keys; each guarded independently so one
+        // failing cannot skip the others, and none can break an already-billed
+        // submit.
+        //
+        // 🔴 THE DEV-SESSION KEY IS ONE OF THE THREE. The earlier version
+        // corrected the per-user and per-app counters only, while its own
+        // comment claimed "both cap counters" — there are three reservations, and
+        // a divergent submit inside a dev tunnel left that counter under-reading
+        // by the overage: precisely the drift direction the same comment forbids.
+        try {
+          await reserveBlockBuzzSpendForClaims(claims, userId, overage);
+        } catch {
+          /* best-effort correction — a lost one under-counts by the overage only */
+        }
+        if (appSpendReserve) {
+          try {
+            const { chargeAppSpendOverage } = await import(
+              '~/server/services/blocks/app-spend-cap.service'
+            );
+            await chargeAppSpendOverage(appSpendReserve.key, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+        if (devSessionReserve) {
+          try {
+            const { chargeDevSessionOverage } = await import(
+              '~/server/services/blocks/dev-tunnel.service'
+            );
+            await chargeDevSessionOverage(devSessionReserve.sessionId, overage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+      } else {
+        // Healthy — AND the proof that this check runs at all. Without this
+        // emit, a flat divergence line could not be told apart from a detector
+        // that never executed.
+        recordStepPriceCheck(step.id, 'exact');
+      }
+    } else {
+      // No numeric cost on the snapshot → nothing to compare. Distinguished from
+      // `exact` on purpose: this is the state in which the correction is inert.
+      recordStepPriceCheck(step.id, 'absent');
+    }
+  }
+
+  // ── Post-paid settle bookkeeping, driven by the PLAN — not by the kind and not
+  // by the step id. `prepaidFixed` sets `postPaidSettle: false`: the price is
+  // exact, the reservation is final, and the post-paid ceiling→actual settle
+  // machinery is never touched (no settle record is persisted, so the terminal
+  // poll/cancel hook has nothing to read and no refund is owed). A future
+  // `timeBounded` entry sets it true and reuses the same machinery customComfy
+  // does, with no change to this function's shape.
+  if (
+    plan.postPaidSettle &&
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif'
+  ) {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling: reserveBuzz,
+      // The ONE derivation hoisted to the top of this function — bounded to the
+      // entry's declared `variants` by `resolveStepVariant`, and the same value
+      // the reservation was priced from.
+      engine: variant,
+      recipe: step.id,
+      submittedAt,
+    });
+  }
+
+  // G6 — persistent output queue (best-effort, non-dev), so a step gen rebuilds
+  // in listMyWorkflows on reload. Same posture as every other kind.
+  if (
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif' &&
+    claims.dev !== true
+  ) {
+    const realWorkflowId = snapshot.workflowId;
+    void (async () => {
+      const { upsertBlockWorkflowOnSubmit } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      await upsertBlockWorkflowOnSubmit({
+        workflowId: realWorkflowId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        status: snapshot.status,
+      });
+    })().catch(() => {
+      /* best-effort: a failed queue write never breaks (or slows) submit */
+    });
+  }
+
+  // ── Durable audit + attribution (parity with the txt2img + customComfy paths).
+  // A step generation bills real Buzz, so it must leave the same durable trail:
+  // a per-user activity row and an author-bounty spend basis. Both are
+  // server-derived from the VERIFIED token claims (never client input), and both
+  // are fire-and-forget with their OWN try/catch so an audit failure can never
+  // add latency to — or break — the already-billed submit response.
+  {
+    const invocationCost = snapshot.cost?.total ?? reserveBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        // 🔴 THE TWO STEP DIMENSIONS. Everything else on this row is identical
+        // to what the txt2img path writes — same `scope`, and now the same
+        // BOUNDED `workflow:submit` endpoint (this PR templated it; the id moved
+        // to `detail.workflowId`, so the endpoint discriminates even less than
+        // it used to) — so WITHOUT these a step submit
+        // and a txt2img submit are indistinguishable in `block_scope_invocations`,
+        // and two different step types are indistinguishable from each other.
+        // That is the gap: per-(user, app, capability) usage was not answerable
+        // from the table that exists to answer it.
+        //
+        // 🔴 NO SCHEMA CHANGE. `detail` is a nullable JSON column, so these are
+        // additive keys on new rows; existing rows and every other writer are
+        // untouched, and `describeBlockAction` ignores keys it does not read.
+        //
+        // 🔴 NOT A PER-STEP BRANCH — this stays inside the dispatch rule at the
+        // top of this section. Both values are read off the registry entry
+        // generically (`step.id`, and the entry's own variant resolver); nothing
+        // here tests WHICH step it is.
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: step.id,
+          // 🔴 THE HOISTED VALUE, not a fresh resolution. Bounded to the entry's
+          // declared `variants` by `resolveStepVariant` — that wrapper, not the
+          // entry's promise, is what makes it safe to persist — and identical by
+          // construction to the one the reservation was priced from, which is the
+          // only thing that makes this row a usable billing dimension. Resolving
+          // it HERE would also put a throwing call inside this swallowed
+          // fire-and-forget block, after the submit is already billed. For an
+          // entry that makes its model its variant this IS the model; for
+          // `convert-image` it is always `'default'`.
+          variant,
+          // The per-ROW workflow id, moved here from the endpoint string by this
+          // PR (see the `endpoint` note above). Additive alongside the two step
+          // dimensions — same nullable JSON column, no schema change.
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? reserveBuzz
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // A registry step is not model-based (no user-picked model to attribute).
+        modelId: null,
+        // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
         sharedContentKey: null,
       });
     })().catch(() => {

@@ -141,10 +141,24 @@ describe('AppsSubmitEditView — routing', () => {
       error: null,
       refetch: vi.fn(),
     };
+    // 🔴 This test used to assert the loader is PRESENT before asserting the
+    // fall-through, with a 30ms ceiling — a race against its own fixture.
+    // `expect.element` polls on a 50ms INTERVAL with the first attempt
+    // immediate, so once that immediate poll missed React's commit, every
+    // subsequent poll was already past the 30ms ceiling and the loader was gone:
+    // unwinnable, and it burned the full ~14.9s budget before failing. That is
+    // what made `preview / component-tests` red — on machine load, not on code.
+    //
+    // The pre-ceiling assertion is DELETED rather than given a wider window,
+    // because widening only makes the race rarer. It was also redundant: the
+    // first test in this file asserts the loader renders at the PRODUCTION
+    // ceiling (15s), where it is safe because the loader is committed on the
+    // FIRST render — not merely because the window is wide. What this test
+    // uniquely owns is the FALL-THROUGH, and both assertions below only ever
+    // WAIT on an absorbing state (`isLoading` never toggles here), so a short
+    // ceiling makes them fast and deterministic.
     renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={30} />);
-    // Loader shows first…
-    await expect.element(page.getByTestId('apps-offsite-edit-loading')).toBeInTheDocument();
-    // …then the ceiling elapses and the recoverable alert takes over.
+    // The ceiling elapses and the recoverable alert takes over.
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });

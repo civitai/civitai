@@ -39,6 +39,7 @@ import type {
 } from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -192,7 +193,7 @@ export default function ReviewQueuePage() {
     <>
       <Meta title="App publish-request queue — Civitai" deIndex />
       <AppsPageLayout
-        size="xl"
+        size={APPS_PAGE_WIDTHS['/apps/review']}
         title="App publish-request queue"
         subtitle="Moderator review for Apps. On-site + external submissions share one queue per tab; Pending is oldest-first, history is newest-first."
       >

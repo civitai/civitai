@@ -69,6 +69,9 @@ const SCOPE_ITEMS = [
     appSlug: 'tip-app',
     blockInstanceId: 'bki_1',
     scope: 'ai:write:budgeted',
+    // LEGACY row shape — the per-workflow endpoint the writers emitted before it
+    // was bounded to a template. No backfill was run, so rows like this are still
+    // in the table: their Detail cell must keep resolving from the endpoint tail.
     endpoint: 'workflow:submit:wf_9',
     statusCode: 200,
     detail: null, // pre-W13 mutation row → historical scope · endpoint fallback
@@ -98,6 +101,61 @@ const SCOPE_ITEMS = [
     // Non-ModelVersion entity — the view names only ModelVersions, so this must
     // render a safe generic subject, never a crash or an empty "on ".
     detail: { action: 'tip', amount: 250, toUserId: 7, entityType: 'Image', entityId: 42, outcome: 'ok' },
+  },
+  // ── Bounded-endpoint rows (the shape the writers emit today). The endpoint is
+  // the aggregation TEMPLATE, so the Detail column must come off `detail`.
+  {
+    id: '7',
+    createdAt: new Date('2026-07-16T06:00:00Z'),
+    appBlockId: 'apb_1',
+    appName: 'Tip App',
+    appSlug: 'tip-app',
+    blockInstanceId: 'bki_1',
+    scope: 'ai:write:budgeted',
+    endpoint: 'workflow:submit',
+    statusCode: 200,
+    detail: { action: 'workflow.submit', amount: -120, outcome: 'ok', workflowId: 'wf_new' },
+  },
+  {
+    id: '8',
+    createdAt: new Date('2026-07-16T05:00:00Z'),
+    appBlockId: 'apb_1',
+    appName: 'Tip App',
+    appSlug: 'tip-app',
+    blockInstanceId: 'bki_1',
+    scope: 'ai:write:budgeted',
+    // Same TEMPLATE as row 7 — proves two different submits aggregate to one
+    // endpoint value while keeping distinct per-row detail. No id yet on this
+    // one (the old `workflow:submit:pending` case).
+    endpoint: 'workflow:submit',
+    statusCode: 200,
+    detail: { action: 'workflow.submit', amount: -7, outcome: 'ok' },
+  },
+  {
+    id: '9',
+    createdAt: new Date('2026-07-16T04:00:00Z'),
+    appBlockId: 'apb_1',
+    appName: 'Tip App',
+    appSlug: 'tip-app',
+    blockInstanceId: 'bki_1',
+    scope: 'apps:storage',
+    endpoint: 'storage:set',
+    statusCode: 200,
+    detail: { action: 'storage.set', key: 'prefs', outcome: 'ok' },
+  },
+  {
+    id: '10',
+    createdAt: new Date('2026-07-16T03:00:00Z'),
+    appBlockId: 'apb_1',
+    appName: 'Tip App',
+    appSlug: 'tip-app',
+    blockInstanceId: 'bki_1',
+    scope: 'apps:storage',
+    // LEGACY per-key storage endpoint + no detail — historical rows must keep
+    // rendering both the Action label and the key.
+    endpoint: 'storage:delete:legacy_key',
+    statusCode: 200,
+    detail: null,
   },
 ];
 
@@ -163,12 +221,68 @@ describe('AppActivityPanel — W13 action detail', () => {
 
   test('(c) null-detail mutation row falls back to the historical humanise path', async () => {
     renderWithProviders(<AppActivityPanel />);
-    // scope ai:write:budgeted + workflow:submit endpoint → legacy "Generated an image"
-    await expect.element(page.getByText('Generated an image')).toBeInTheDocument();
+    // scope ai:write:budgeted + workflow:submit endpoint → legacy "Generated an image".
+    // `exact` because getByText is substring-matching by default and the rich
+    // workflow rows below render "Generated an image (spent N Buzz)".
+    await expect
+      .element(page.getByText('Generated an image', { exact: true }))
+      .toBeInTheDocument();
   });
 
   test('(d) unknown action code renders a safe generic line', async () => {
     renderWithProviders(<AppActivityPanel />);
     await expect.element(page.getByText('Performed an app action')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Bounded `endpoint` + per-row `detail`. `block_scope_invocations.endpoint` is
+ * the GROUP BY key of the `topEndpoints` rollup, so the writers now emit a
+ * TEMPLATE (`workflow:submit`, `storage:set`, `storage:delete`) instead of
+ * embedding the workflow id / storage key. The Detail column used to parse that
+ * id back OUT of the endpoint string — these tests are the discriminating ones
+ * for that regression: without reading `detail`, every templated row degrades to
+ * "(no workflow id)" / a bare "storage:set", and no server-side unit test can
+ * see it.
+ */
+describe('AppActivityPanel — Detail column off a BOUNDED endpoint', () => {
+  test('templated workflow row renders the workflow id from detail.workflowId', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    // Row 7: endpoint 'workflow:submit' (no id in it) + detail.workflowId.
+    await expect.element(page.getByText('workflow wf_new')).toBeInTheDocument();
+  });
+
+  test('two submits share ONE endpoint value while keeping distinct detail (aggregation + per-row payload)', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    // Rows 7 and 8 both carry endpoint 'workflow:submit' — that constant must
+    // never leak into the Detail cell, and each row keeps its own Action
+    // sentence off its own detail.
+    await expect
+      .element(page.getByText('Generated an image (spent 120 Buzz)'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Generated an image (spent 7 Buzz)'))
+      .toBeInTheDocument();
+    expect(page.getByText('workflow:submit', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('templated workflow row with NO id renders the explicit "(no workflow id)"', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(page.getByText('(no workflow id)')).toBeInTheDocument();
+  });
+
+  test('templated storage row renders the key from detail.key', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    // Row 9: endpoint 'storage:set' + detail.key — the bare template must not show.
+    await expect.element(page.getByText('key "prefs"')).toBeInTheDocument();
+    expect(page.getByText('storage:set', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('LEGACY per-id rows (no backfill) still resolve from the endpoint tail', async () => {
+    renderWithProviders(<AppActivityPanel />);
+    // Row 4: 'workflow:submit:wf_9', detail null. Row 10: 'storage:delete:legacy_key'.
+    await expect.element(page.getByText('workflow wf_9')).toBeInTheDocument();
+    await expect.element(page.getByText('key "legacy_key"')).toBeInTheDocument();
+    await expect.element(page.getByText('Deleted app-local storage')).toBeInTheDocument();
   });
 });

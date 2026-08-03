@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BLOCK_SOURCE_IMAGES_WIRE_MAX,
+  DIM_MAX,
+  DIM_MIN,
   blockWorkflowBodySchema,
   LORA_STRENGTH_MAX,
   LORA_STRENGTH_MIN,
@@ -382,5 +385,101 @@ describe('blockWorkflowBodySchema — sourceImage URL canonicalization', () => {
       expect(raw.length).toBeLessThanOrEqual(SOURCE_IMAGE_URL_MAX);
       expect(emittedUrl(raw).length).toBeLessThanOrEqual(SOURCE_IMAGE_URL_MAX);
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sourceImages[] — multi-image conditioning
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `sourceImage` (singular) is a DEPRECATED ALIAS that must keep working — the
+// published developer docs and @civitai/app-sdk both ship it. `sourceImages` is
+// the current field. The security posture of the array form must be IDENTICAL
+// to the singular one, per element: a Civitai-hosted https URL and dimensions
+// inside DIM_MIN..DIM_MAX. Validating only `[0]` is the classic version of this
+// bug, so the host/dimension cases below deliberately put the BAD element LAST.
+describe('blockWorkflowBodySchema — sourceImages[] (multi-image conditioning)', () => {
+  const OK = 'https://image.civitai.com/abc/def.jpeg';
+  const img = (url = OK, over: Record<string, unknown> = {}) => ({
+    url,
+    width: 512,
+    height: 512,
+    ...over,
+  });
+  const parseImages = (sourceImages: unknown) =>
+    blockWorkflowBodySchema.parse(baseBody({ sourceImages }));
+
+  it('accepts an array and keeps every element', () => {
+    const parsed = parseImages([img(), img('https://orchestration.civitai.com/v2/x.jpeg')]);
+    const images = (parsed as { sourceImages?: Array<{ url: string }> }).sourceImages;
+    expect(images).toHaveLength(2);
+    expect(images?.[1].url).toBe('https://orchestration.civitai.com/v2/x.jpeg');
+  });
+
+  it('keeps the deprecated singular `sourceImage` working on its own', () => {
+    const parsed = blockWorkflowBodySchema.parse(baseBody({ sourceImage: img() }));
+    expect((parsed as { sourceImage?: { url: string } }).sourceImage?.url).toBe(OK);
+    expect((parsed as { sourceImages?: unknown }).sourceImages).toBeUndefined();
+  });
+
+  it('REJECTS supplying BOTH sourceImage and sourceImages (ambiguous)', () => {
+    expect(() =>
+      blockWorkflowBodySchema.parse(baseBody({ sourceImage: img(), sourceImages: [img()] }))
+    ).toThrow(/not both|ambiguous/i);
+  });
+
+  it('REJECTS an EMPTY sourceImages array rather than degrading to txt2img', () => {
+    // Explicit decision: `sourceImages: []` is a caller that computed an empty
+    // list and meant to send images. Silently generating txt2img would bill them
+    // for something they did not ask for. Omit the field for text-to-image.
+    expect(() => parseImages([])).toThrow(/must not be empty/i);
+  });
+
+  // ── HOST VALIDATION APPLIES TO EVERY ELEMENT ───────────────────────────────
+  it.each([
+    ['a non-Civitai host', 'https://evil.example/x.jpeg'],
+    ['a host-confusion URL containing the allowed host', 'https://evil.example/?x=image.civitai.com/a.jpeg'],
+    ['a non-https URL', 'http://image.civitai.com/x.jpeg'],
+    ['a URL with a lookalike suffix', 'https://image.civitai.com.evil.example/x.jpeg'],
+  ])('REJECTS %s in the LAST array element', (_label, badUrl) => {
+    expect(() => parseImages([img(), img(), img(badUrl)])).toThrow();
+  });
+
+  it('REJECTS a bad host in a MIDDLE element too', () => {
+    expect(() => parseImages([img(), img('https://evil.example/x.jpeg'), img()])).toThrow();
+  });
+
+  // ── DIMENSION BOUNDS APPLY TO EVERY ELEMENT ────────────────────────────────
+  it.each([
+    ['width below DIM_MIN', { width: DIM_MIN - 1 }],
+    ['width above DIM_MAX', { width: DIM_MAX + 1 }],
+    ['height below DIM_MIN', { height: DIM_MIN - 1 }],
+    ['height above DIM_MAX', { height: DIM_MAX + 1 }],
+  ])('REJECTS %s in the LAST array element', (_label, over) => {
+    expect(() => parseImages([img(), img(OK, over)])).toThrow();
+  });
+
+  it('accepts dimensions exactly at the bounds in every element', () => {
+    expect(() =>
+      parseImages([img(OK, { width: DIM_MIN, height: DIM_MIN }), img(OK, { width: DIM_MAX, height: DIM_MAX })])
+    ).not.toThrow();
+  });
+
+  // ── ABSOLUTE WIRE BOUND (not the real cap — that is per-ecosystem) ─────────
+  it('accepts exactly BLOCK_SOURCE_IMAGES_WIRE_MAX elements', () => {
+    const many = Array.from({ length: BLOCK_SOURCE_IMAGES_WIRE_MAX }, () => img());
+    expect(() => parseImages(many)).not.toThrow();
+  });
+
+  it('REJECTS more than BLOCK_SOURCE_IMAGES_WIRE_MAX elements', () => {
+    const tooMany = Array.from({ length: BLOCK_SOURCE_IMAGES_WIRE_MAX + 1 }, () => img());
+    expect(() => parseImages(tooMany)).toThrow();
+  });
+
+  it('is set ABOVE the largest per-ecosystem cap so no ecosystem is clamped here', () => {
+    // The wire bound exists to stop an unbounded array reaching the parser, not
+    // to be the product limit. If a future ecosystem raises its imagesNode max
+    // past this, the wire bound would start silently under-allowing it.
+    expect(BLOCK_SOURCE_IMAGES_WIRE_MAX).toBeGreaterThan(7);
   });
 });

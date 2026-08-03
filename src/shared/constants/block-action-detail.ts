@@ -50,8 +50,54 @@ export type BlockActionDetail = {
   entityType?: string;
   /** Storage key (already scoped to the user's own namespace). */
   key?: string;
+  /**
+   * Orchestrator workflow id for a `workflow.submit`. Lives HERE, not in the
+   * `endpoint` column: `endpoint` is an AGGREGATION key (the `topEndpoints`
+   * rollup groups on it), so embedding a per-submit id there makes the column
+   * unbounded and every rollup bucket count 1 — the same cardinality reasoning
+   * `boundAppBlockIdLabel` applies to the prom `app_block_id` label. `detail` is
+   * the per-row payload ("stores IDS, not display names"), so the Activity
+   * panel's Detail column reads the id from here instead of parsing it back out
+   * of the endpoint string. Absent when the submit had no id yet (was
+   * `workflow:submit:pending`).
+   */
+  workflowId?: string;
   /** Terminal outcome of the action. */
   outcome?: 'ok' | 'failed';
+  /**
+   * The App Blocks STEP-TYPE registry id this `workflow.submit` ran
+   * (`~/server/services/blocks/steps`) — e.g. `'convert-image'`. Written ONLY by
+   * the `kind: 'step'` submit path; ABSENT on a `textToImage` / `customComfy`
+   * submit, which is what distinguishes them in the row.
+   *
+   * 🔴 WHY IT IS HERE AND NOT DERIVED. Nothing else on the row carries it:
+   * `scope` is `'ai:write:budgeted'` for every spending kind and `endpoint` is
+   * `workflow:submit:<workflowId>`, so before this field a step submit and a
+   * txt2img submit were INDISTINGUISHABLE in `block_scope_invocations`, and two
+   * different step types were indistinguishable from each other. Per-(user, app,
+   * capability) usage accounting was therefore not answerable from this table at
+   * all.
+   *
+   * Bounded by construction: the value is a registry KEY, which the wire schema
+   * derives its `step` enum from (`REGISTERED_STEP_IDS`) — never client text.
+   */
+  step?: string;
+  /**
+   * The variant that `workflow.submit` resolved to, for a `kind: 'step'` submit.
+   *
+   * Bounded to the entry's declared `variants` by `resolveStepVariant` — that
+   * wrapper is what makes this safe to persist, not a promise from the entry.
+   *
+   * 🔴 WHAT THIS IS AND IS NOT, because the obvious reading over-claims. It is
+   * the registry's "which variant did this resolve to?" value. It is the MODEL
+   * only for an entry that makes its model its variant — the shape recommended
+   * for a model-allowlisted entry, and the one per-model pricing forces anyway,
+   * but NOT something this field can guarantee about an arbitrary future entry.
+   * For `convert-image` today it is always `'default'` and carries no
+   * information; it is recorded uniformly so the dimension exists on every step
+   * row rather than appearing only once some entry opts in.
+   */
+  variant?: string;
 };
 
 /**

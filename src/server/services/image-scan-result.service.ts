@@ -3,6 +3,7 @@ import { getWorkflow, type MediaRatingOutput, type WorkflowEvent } from '@civita
 import type { NextApiRequest } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
@@ -274,7 +275,44 @@ export async function processImageScanWorkflow({
     return;
   }
 
-  const { wdTags, mediaRating, mediaHash } = parseScanSteps({ steps, workflowId });
+  // A workflow can succeed and still carry nothing usable — most often a video whose frame
+  // extraction returned zero frames. Record it like any other scan failure so the retry
+  // ceiling can terminalize it, and ACK: the workflow is terminal, so redelivering it would
+  // only reproduce the same parse failure.
+  let parsed: ReturnType<typeof parseScanSteps>;
+  try {
+    parsed = parseScanSteps({ steps, workflowId });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    const { retryCount, mediaType, failureClass } = await markImageScanError({
+      workflowId,
+      imageId,
+      status,
+      failureType: 'unusable-result',
+      failedSteps: extractFailedSteps(steps),
+      reason,
+    });
+    logToAxiom(
+      {
+        name: 'image-scan-result',
+        type: 'warning',
+        message: 'succeeded workflow had no usable result',
+        source: 'image-scan-result.service',
+        failureType: 'unusable-result',
+        reason,
+        failureClass,
+        imageId,
+        mediaType,
+        workflowId,
+        retryCount,
+      },
+      'webhooks'
+    ).catch(() => null);
+    if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
+    return;
+  }
+
+  const { wdTags, mediaRating, mediaHash } = parsed;
   const pHash = computePerceptualHash(mediaHash?.hashes?.perceptual);
 
   // Log (don't act on) perceptual-hash matches against known-blocked content.
@@ -374,15 +412,12 @@ function parseScanSteps({ steps, workflowId }: { steps: ScanResultStep[]; workfl
       `Incomplete workflow: ${workflowId}. Missing steps: ${missingSteps.join(', ')}`
     );
 
+  // Not "invalid media…" — that substring reads as a permanently-bad file to
+  // classifyImageScanFailure, and an 'na' rating arrives in bursts, so it is recoverable.
   if (mediaRating?.nsfwLevel === 'na')
-    throw new Error(`invalid media rating for workflow: ${workflowId}`);
+    throw new Error(`media rating unavailable for workflow: ${workflowId}`);
 
   return { wdTags: wdTagging!.tags, mediaRating: mediaRating!, mediaHash };
-}
-
-function computePerceptualHash(perceptual?: string) {
-  if (!perceptual) return undefined;
-  return BigInt.asIntN(64, BigInt('0x' + perceptual));
 }
 
 // All-or-nothing, not a filter: nsfwLevel aggregates as a max and isBlocked as an OR, so

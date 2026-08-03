@@ -1,3 +1,5 @@
+import type { LaunchTimingsPayload } from './launchTimings';
+
 // App Blocks Analytics Phase 2 — block render/impression beacon (client side).
 //
 // Fire a block render/impression at the lightweight /api/track/block-render
@@ -51,6 +53,31 @@ export type BlockRenderBeaconInput = {
   // impossible to de-duplicate later. Omit (or false) for a mount's FIRST
   // beacon, including a launch failure, which must still be recorded.
   secondary?: boolean;
+  // 🔴 OPTIONAL LAUNCH TIMINGS — rides the EXISTING beacon, never a second one.
+  //
+  // There is exactly ONE beacon per host mount (`blockRenderEmittedRef`, with
+  // ok/error mutually exclusive). Adding a second beacon for timing would write
+  // a second `blockRenders` ClickHouse row for one mount — byte-identical to the
+  // first, therefore undedupable — inflating every impression figure. So these
+  // ride along as optional fields: same beacon count, same row count, same
+  // `renders_total` increments.
+  //
+  // Attach ONLY on the `ok` (BLOCK_READY) beacon. A failure beacon never reached
+  // BLOCK_READY and a `secondary` beacon is a teardown; the server enforces the
+  // same rule, but do not rely on that.
+  //
+  // Server-side these drive `civitai_app_block_launch_total_seconds{app_block_id}`
+  // and `civitai_app_block_launch_phase_seconds{phase}` — and, like
+  // status/errorClass/secondary, they are STRIPPED from the ClickHouse insert by
+  // BOTH writers (`blockRenderTrackerPayload`).
+  //
+  // 🔴 NUMBERS ONLY. The `phase` label is code-owned and mapped server-side from
+  // these field NAMES; nothing here is ever used as a label value, so a public
+  // beacon body cannot touch cardinality. (An earlier draft of this comment
+  // advertised `{phase,conn,tao}`. Those labels never shipped — they belonged to
+  // a TAO-gated frame-fetch phase that was designed and then dropped; see the
+  // DEFERRED note in launchTimings.ts.)
+  timings?: LaunchTimingsPayload;
 };
 
 export function sendBlockRender(input: BlockRenderBeaconInput) {

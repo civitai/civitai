@@ -154,6 +154,47 @@ describe('shapeSessionUser — tier / subscriptions', () => {
   });
 });
 
+describe('shapeSessionUser — membership override', () => {
+  const withOverride = (overrideTier: string, subscriptionRows: ProducerSubscriptionRow[] = []) =>
+    shapeSessionUser({
+      row: baseRow(),
+      subscriptionRows,
+      permissions: [],
+      roles: [],
+      overrideTier,
+      tierKey: 'tier',
+    });
+
+  it('grants the tier to a user with no subscription', () => {
+    const u = withOverride('silver');
+    expect(u.tier).toBe('silver');
+    expect(u.allowAds).toBe(false);
+  });
+
+  it('leaves subscriptions and subscriptionId empty — there is no billing row behind it', () => {
+    const u = withOverride('gold');
+    expect(u.subscriptions).toEqual({});
+    expect(u.subscriptionId).toBeUndefined();
+  });
+
+  it('raises a lower paid tier', () => {
+    const u = withOverride('gold', [sub({ id: 'a', product: { metadata: { tier: 'bronze' } } })]);
+    expect(u.tier).toBe('gold');
+    expect(u.subscriptionId).toBe('a');
+  });
+
+  it('never lowers a higher paid tier', () => {
+    const u = withOverride('bronze', [sub({ id: 'a', product: { metadata: { tier: 'founder' } } })]);
+    expect(u.tier).toBe('founder');
+  });
+
+  it('ignores a "free" override', () => {
+    const u = withOverride('free');
+    expect(u.tier).toBeUndefined();
+    expect(u.allowAds).toBe(true);
+  });
+});
+
 describe('shapeSessionUser — client-only fields (D parity)', () => {
   it('maps name / autoplayGifs / leaderboardShowcase / referral from the row', () => {
     const u = shape({

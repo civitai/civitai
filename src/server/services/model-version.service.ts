@@ -485,12 +485,28 @@ export const upsertModelVersion = async ({
     ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
     : 0;
 
-  // Versions with a license fee earn through that channel, so they opt out of
-  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
-  // doesn't strip it, since a creator may have set the bit independently.
+  // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
+  // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
+  // absent as cleared would wipe a creator's fee when a moderator declines a review.
+  const feeProvided = data.licensingFee !== undefined;
+  const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
+
+  // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
+  // read a stored 0 as "still has a fee".
+  if (feeProvided && !hasLicensingFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
+
+  // Versions with a license fee earn through that channel, so they opt out of tip + creator-comp
+  // payouts. This is the flag's only set site, so clearing the fee has to strip it — otherwise the
+  // version earns neither the fee nor payouts (CU 868kk4j2k).
   let flagsOverride: number | undefined;
-  if (data.licensingFee != null && data.licensingFee > 0) {
+  if (hasLicensingFee) {
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  } else if (feeProvided && Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
+    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
@@ -794,7 +810,9 @@ export const upsertModelVersion = async ({
           isModerator,
         }),
         systemFields:
-          flagsOverride !== undefined ? { flags: 'licensing-fee-disable-payout' } : undefined,
+          flagsOverride !== undefined
+            ? { flags: hasLicensingFee ? 'licensing-fee-disable-payout' : 'licensing-fee-cleared' }
+            : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }
@@ -803,6 +821,15 @@ export const upsertModelVersion = async ({
     ingestModelById({ id: version.modelId }).catch((error) =>
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
+
+    // The orchestrator caches fee + payoutEnabled per version, so a fee or flag change that doesn't
+    // invalidate it keeps pricing and paying against the old value. Never rejects: the write has
+    // already committed, and a failed bust must not surface as a failed save.
+    const feeBefore =
+      existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
+    const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
+    if (feeBefore !== feeAfter || flagsOverride !== undefined)
+      await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     return version;
   }

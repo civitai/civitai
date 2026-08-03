@@ -10,6 +10,8 @@ import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
+  BLOCK_READY_TIMEOUT_MS,
+  TOKEN_WAIT_TIMEOUT_MS,
   decideAutoRetry,
   advanceReviewConsentLatch,
   buildReviewConsentNotification,
@@ -34,6 +36,15 @@ import { BlockImageScanPoller } from './BlockImageScanPoller';
 import type { BlockImageScanResult } from './blockImageScanLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
+import {
+  computeLaunchTimings,
+  createLaunchMarks,
+  isDocumentHidden,
+  nowMs,
+  resetLaunchMarks,
+  shouldResetLaunchMarks,
+  type LaunchMarks,
+} from './launchTimings';
 import {
   classifyWildcardPackError,
   exceedsPreDownloadCap,
@@ -135,8 +146,24 @@ function storageErrorMessage(err: unknown): string {
  *     its page but can't push the host off to an arbitrary route.
  */
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
-const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`.
+ *
+ * 🔴 EXPORTED for the browser tests, which drive these windows on a VIRTUAL clock
+ * (`vi.useFakeTimers`) instead of sleeping through them in real time. Waiting them
+ * out for real cost ~99s in one file and was the single largest contributor to the
+ * component suite overrunning its CI budget; importing the real constants keeps the
+ * tests pinned to the host's actual windows rather than to copies that can drift.
+ *
+ * 🔴 They now LIVE in `pageBlockHostLogic` and are re-exported here. That module
+ * is plain TS with no React graph, so a NODE test can import them — which is what
+ * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
+ * windows instead of from a hard-coded literal in a comment. Importing them from
+ * this file would drag the whole component graph into the `unit` project.
+ */
+export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
@@ -399,6 +426,29 @@ export function PageBlockHost({
   // that ever launched has launched).
   const reachedReadyRef = useRef<boolean>(false);
 
+  // ── LAUNCH LATENCY marks ────────────────────────────────────────────────────
+  // Four `performance.now()` stamps + a sticky hidden-tab flag. All the math
+  // (and every correctness rule) lives in the pure, node-tested `launchTimings`
+  // module; the host only records.
+  //
+  // 🔴 t0 IS THE FIRST CLIENT RENDER, not a mount effect. The `<iframe src>` is
+  // an SSR prop rendered inside `showIframe` (true while status === 'loading',
+  // which is the INITIAL status), so the cross-origin frame load starts in this
+  // very commit — before any token exists. A t0 taken in a post-mount effect
+  // would start the clock after the thing it is timing. The lazy-ref pattern
+  // below is the React-blessed way to do once-per-instance work at render time,
+  // and it is SSR-safe (`performance` is undefined there → `mountedAt: null` →
+  // `computeLaunchTimings` returns null and nothing is reported).
+  const launchMarksRef = useRef<LaunchMarks | null>(null);
+  if (launchMarksRef.current === null)
+    launchMarksRef.current = createLaunchMarks(nowMs(), isDocumentHidden());
+  // Which instance the marks above currently describe. Seeded at RENDER time
+  // with the first `blockInstanceId`, so the `[blockInstanceId]` effect below can
+  // tell "first mount" (no reset — that would throw away the render-time t0)
+  // from "soft nav to another app" (reset).
+  const launchInstanceRef = useRef<string | null>(null);
+  if (launchInstanceRef.current === null) launchInstanceRef.current = blockInstanceId;
+
   // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
   //
   // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
@@ -449,7 +499,53 @@ export function PageBlockHost({
   useEffect(() => {
     reachedReadyRef.current = false;
     midSessionLossEmittedRef.current = false;
+    // Same reasoning for the launch marks: under host reuse app A's `mountedAt`
+    // would be attributed to app B's launch, producing a `total` that includes
+    // however long the user spent in app A. (Today app B can never earn a
+    // genuine `ready` after a soft nav — `shouldStartInit` refuses a non-'loading'
+    // status — so this is belt-and-braces against the pre-existing host-reuse
+    // bug being fixed later, not a live defect.)
+    //
+    // 🔴 BUT NOT ON FIRST MOUNT. This effect runs on mount as well as on change,
+    // and `mountedAt` was deliberately taken at RENDER time — the commit in which
+    // the iframe actually mounts. Resetting here unconditionally would overwrite
+    // it with a post-commit timestamp and silently shorten EVERY `total` by the
+    // render->effect gap, discarding exactly the window t0 exists to capture, in
+    // the flattering direction. `shouldResetLaunchMarks` is unit-tested.
+    if (shouldResetLaunchMarks(launchInstanceRef.current, blockInstanceId)) {
+      if (launchMarksRef.current)
+        resetLaunchMarks(launchMarksRef.current, nowMs(), isDocumentHidden());
+    }
+    launchInstanceRef.current = blockInstanceId;
   }, [blockInstanceId]);
+
+  // 🔴 HIDDEN-TAB LATCH — sticky from mount until the beacon reads it.
+  //
+  // A run page opened in a background tab (cmd-click, session restore, a tab
+  // group reopened) gets throttled timers and reports a BLOCK_READY seconds late
+  // at ZERO user-felt cost. Without this the p95 measures tab-switching.
+  //
+  // Deliberately NOT the existing visibilitychange listener further down: that
+  // one is gated on `status === 'ready'`, i.e. it starts listening only AFTER
+  // the launch window it would need to observe has closed. This one is
+  // unconditional and mount-scoped.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks) return;
+    const handler = () => {
+      if (isDocumentHidden()) marks.wasHidden = true;
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
+  // Launch mark: the END of the token-mint leg (first non-null token). The leg
+  // races the frame load; it does not precede it.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks || !token || marks.tokenAt !== null) return;
+    marks.tokenAt = nowMs();
+  }, [token]);
 
   // Keep statusRef tracking the live status so handleRetry can branch on the
   // prior terminal state without reading it inside the setStatus updater.
@@ -617,6 +713,11 @@ export function PageBlockHost({
 
   const sendInitOnce = useCallback(() => {
     initSentRef.current = true;
+    // Launch mark: the FIRST BLOCK_INIT post. The controller re-posts every
+    // INIT_RETRY_INTERVAL_MS until acked, so only the first stamp is kept —
+    // `init_wait` is meant to include the re-post quantization, not exclude it.
+    const marks = launchMarksRef.current;
+    if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
@@ -761,6 +862,12 @@ export function PageBlockHost({
   // BLOCK_READY → ready.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', () => {
+      // Launch mark: stamped HERE, in the message handler, not in the beacon
+      // effect. The beacon fires on the committed `status`, which is a React
+      // commit later — timing it there would fold an arbitrary amount of React
+      // scheduling into every sample.
+      const marks = launchMarksRef.current;
+      if (marks && marks.readyAt === null) marks.readyAt = nowMs();
       setStatus((current) => (current === 'loading' ? 'ready' : current));
       // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
       // timeout. Called UNCONDITIONALLY (not behind a "did this ack win the
@@ -793,12 +900,31 @@ export function PageBlockHost({
   // was reproduced deterministically the moment the launch-reveal work added one
   // more post-mount state update. Keying off the COMMITTED `status` is immune to
   // batching. Mirrors the failure-beacon effect immediately below.
+  //
+  // 🔴 LAUNCH TIMINGS RIDE THIS BEACON — no second beacon, no second call site,
+  // no second ClickHouse row. `blockRenderEmittedRef` is untouched, `secondary`
+  // is untouched, `error_class` is untouched, and the impression count is
+  // provably unchanged: this is the same one-per-mount emit it always was, with
+  // an optional field attached.
+  //
+  // `timings` is null (and omitted) whenever the sample must not be observed —
+  // a hidden tab, a missing mark, an out-of-range delta. The launch is still
+  // reported as an impression; only the latency observation is skipped. That is
+  // the right asymmetry: an under-counted histogram is honest, a histogram
+  // padded with zeros is not.
   useEffect(() => {
     if (status !== 'ready') return;
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
+    const marks = launchMarksRef.current;
+    const timings = marks ? computeLaunchTimings(marks) : null;
     // Fire-and-forget beacon — failures are a no-op.
-    sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      ...(timings ? { timings } : {}),
+    });
   }, [status, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.

@@ -268,9 +268,16 @@ The optional chaining stops the `TypeError`, but a zero-frame video still ends a
 the signature re-labels. The message now carries the `workflowId`, which the `TypeError` did
 not, so the failures become attributable.
 
-To actually retire the alert, zero-frame extraction needs to route through `markImageScanError`
-with a permanent-ish `failureClass` so the row is stamped and the capped-retry machinery
-terminalizes it — the same shape as the submit-failure fix below. Not done yet.
+**Resolved 2026-08-01.** `parseScanSteps` is now wrapped: a succeeded workflow carrying nothing
+usable stamps the row via `markImageScanError` (`failureType: 'unusable-result'`) and ACKs with
+200 instead of throwing a 400. The workflow is terminal, so redelivering it would only reproduce
+the same parse failure; the `ingest-images` retry ceiling terminalizes the image instead.
+
+Both parse failures classify `Unknown` (ceiling 9) — bounded, but forgiving enough not to discard
+a video over a transient extraction blip. Item 3's message was renamed from `invalid media rating`
+to `media rating unavailable`: the old wording matched the `'invalid media'` permanent pattern by
+accident and would have terminalized on the first attempt, which is wrong for a failure that
+arrives in bursts.
 
 Aggregation over a repeat now requires **every** frame sub-step to have an `output`. `output` is
 optional on every orchestrator step (`@civitai/client` `types.gen.d.ts`), while the local types

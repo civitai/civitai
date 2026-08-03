@@ -18,11 +18,8 @@ import {
 import {
   IconApps,
   IconArrowLeft,
-  IconExternalLink,
   IconInfoCircle,
   IconPencil,
-  IconPlayerPlay,
-  IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -33,18 +30,14 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
+  type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
-import {
-  getListingPreview,
-  LISTING_PREVIEW_HEIGHT,
-  LISTING_PREVIEW_SANDBOX,
-  shouldMountPreviewIframe,
-} from '~/components/Apps/appListingPreview';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { RelatedListings } from '~/components/Apps/RelatedListings';
@@ -91,6 +84,29 @@ import type {
  * than opening a page — has nowhere on the store detail to install from. Vacuous
  * today (every approved on-site listing declares a page).
  *
+ * 🔴 THERE IS NO IN-PAGE LIVE PREVIEW HERE, AND ONE MUST NOT BE RE-ADDED AS A
+ * BARE `<iframe src={liveUrl}>`. This body used to mount exactly that (inherited
+ * verbatim from the retired `/apps/[appBlockId]` page, whose own docstring
+ * already named the defect). A block at `<slug>.civit.ai` does not boot from its
+ * URL alone — it waits for a host to post `BLOCK_INIT` over the block bridge.
+ * Nothing posted it to that frame, so the frame only ever painted the block's
+ * pre-init LIGHT-theme shell (`#FEFEFE`) inside a dark listing page. Neither
+ * escape hatch fires from inside a frame either: the build-recipe edge redirect
+ * keys on `Sec-Fetch-Dest: document` (an iframe sends `iframe`) and the SDK
+ * `<BlockGate>` landing keys on `window.self === window.top` (false in a frame).
+ * A future preview here needs a real host bridge — the moderator review surface
+ * (`ReviewBlockPreviewHost`) is the working reference — not another raw iframe.
+ * To run an on-site app from this page the viewer takes the kind-aware primary
+ * action (`getDetailPrimaryAction`): today that is `Open` → `/apps/run/<slug>`
+ * for every viewer who can reach this page — see the flag note on
+ * `appListingDetailView`. The hero banner is a SECOND affordance for that same
+ * action and nothing more: a plain `<a href>` to the identical route (see
+ * `HeroCover`). It is not, and must not become, an embedded runtime.
+ *
+ * Structurally pinned in the node `unit` project
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"),
+ * because CI does not run the browser `component` suite.
+ *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
  * noreferrer" target="_blank"; the markdown description goes through the shared
@@ -116,22 +132,52 @@ function categoryIcon(category: string): Icon {
  * gradient (shared with the server-generated cover SVG — see
  * `~/shared/constants/app-listing-placeholder.constants`) when absent OR the
  * image 404s (a coverUrl derived from a first-screenshot fallback can dangle) —
- * never a broken `<img>`. Decorative (aria-hidden placeholder).
+ * never a broken `<img>`. The art itself is decorative (aria-hidden placeholder).
+ *
+ * CLICK-TO-LAUNCH (`launchHref`): when the caller supplies a launch target the
+ * WHOLE banner becomes a real anchor to it — the same destination as the primary
+ * `Open` CTA. It wraps BOTH branches: a listing with no cover art gets the
+ * affordance over its seeded-gradient placeholder exactly like one with a cover,
+ * because "has no art yet" is not a reason to lose the way in. The caller
+ * decides WHEN there is a target (see `heroLaunchHref` in the body) — this
+ * component only decides how it renders.
+ *
+ * 🔴 It is an `<a href>`, never a `<div onClick>`. The banner has to be
+ * tab-reachable, Enter-activatable and middle-/modifier-clickable like any other
+ * link, and it has to expose an accessible NAME — which neither branch can
+ * supply on its own: the cover `alt` describes the PICTURE ("<app> cover image")
+ * and the placeholder is `aria-hidden` with no text at all. Hence the explicit
+ * `aria-label`, worded to match the CTA it mirrors. Nothing inside the banner is
+ * interactive, so this nests no controls.
+ *
+ * 🔴 NO recents side effect here, DELIBERATELY — verified against the CTA rather
+ * than assumed. `/apps/run/<slug>` records the open itself, in a mount effect
+ * (`recordRecentlyOpenedApp` in the run page), which is exactly why the `open`
+ * branch of `PrimaryAction` carries no `onClick` either; only the off-site
+ * `visit` branch records, because following that link leaves the SPA and nothing
+ * downstream could. An `onClick` here would therefore write the entry TWICE per
+ * launch — once from the listing DTO, once from the run page — and silently
+ * diverge the banner from the button it is meant to mirror. Pinned, against a
+ * positive control, in `AppListingDetailBody.browser.test.tsx`.
  */
 function HeroCover({
   coverUrl,
   category,
   name,
   slug,
+  launchHref = null,
 }: {
   coverUrl: string | null;
   category: string | null;
   name: string;
   slug: string;
+  /** Internal launch target; `null` → the banner stays decorative + inert. */
+  launchHref?: string | null;
 }) {
   const [broken, setBroken] = useState(false);
-  if (coverUrl && !broken) {
-    return (
+  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  const art =
+    coverUrl && !broken ? (
       <Image
         src={coverUrl}
         alt={`${name} cover image`}
@@ -140,24 +186,56 @@ function HeroCover({
         radius="md"
         onError={() => setBroken(true)}
       />
+    ) : (
+      // Per-app SEEDED gradient — same seed/stops as the generated cover SVG and
+      // the store card, so one listing reads as one identity across every surface.
+      <Box
+        aria-hidden
+        h={260}
+        className="flex items-center justify-center"
+        data-listing-cover-placeholder=""
+        style={{
+          borderRadius: 'var(--mantine-radius-md)',
+          background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
+        }}
+      >
+        <PlaceholderIcon size={72} className="opacity-60" />
+      </Box>
     );
-  }
-  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
-  // Per-app SEEDED gradient — same seed/stops as the generated cover SVG and the
-  // store card, so one listing reads as one identity across every surface.
+
+  if (!launchHref) return art;
+
   return (
-    <Box
-      aria-hidden
-      h={260}
-      className="flex items-center justify-center"
-      data-listing-cover-placeholder=""
-      style={{
-        borderRadius: 'var(--mantine-radius-md)',
-        background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
-      }}
+    <Anchor
+      component={Link}
+      href={launchHref}
+      aria-label={`Open ${name}`}
+      data-testid="apps-listing-hero-launch"
+      underline="never"
+      // 🔴 `c="inherit"` is load-bearing, not cosmetic. Mantine's Anchor root sets
+      // `color: var(--mantine-color-anchor)` (blue-4 `#4DABF7` in dark scheme), and
+      // Tabler icons stroke with `currentColor` — so without this the no-cover
+      // placeholder's 72px category glyph turns link-blue instead of staying the
+      // page's grey `--mantine-color-text`. The cover-IMAGE branch is unaffected
+      // (an `<img>` ignores `color`), which is exactly why this is easy to miss:
+      // it only shows on listings with no cover. `CreatorChip` in AppListingCard
+      // carries `c="dimmed"` for the same reason.
+      // Not covered by the component suite — it loads no CSS (vitest.config.mts
+      // registers only the process shim and component-setup), so every visual
+      // claim here is reasoning, not measurement.
+      c="inherit"
+      // Minimal, card-idiom affordance: pointer + a small hover dim + the
+      // site's `focus-visible:ring` pattern, so the banner reads as pressable
+      // without becoming a redesign. `focus:outline-none` is paired with a ring
+      // (never bare), so keyboard focus stays VISIBLE.
+      className="block transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-5"
+      // 🔴 Mantine's `md` radius (8px), not Tailwind's `rounded-md` (6px) — the
+      // inner cover `<Image radius="md">` and the placeholder Box both use the
+      // Mantine token, and mixing the two `md`s leaves a visible corner seam.
+      style={{ display: 'block', borderRadius: 'var(--mantine-radius-md)', overflow: 'hidden' }}
     >
-      <PlaceholderIcon size={72} className="opacity-60" />
-    </Box>
+      {art}
+    </Anchor>
   );
 }
 
@@ -242,143 +320,36 @@ function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryS
   );
 }
 
-/**
- * In-page LIVE PREVIEW — poster first, iframe only on click.
- *
- * 🔴 The `<iframe>` is NOT in the tree until the viewer activates it. Booting a
- * third-party app frame on page load would make every shopper pay that app's
- * full JS/network cost just to read the listing, on every listing. Before the
- * click we show a static poster (the listing's own cover → first screenshot →
- * a neutral placeholder) with an explicit activate affordance.
- *
- * "No poster available" is a normal case (several approved listings ship neither
- * a cover nor screenshots) — the placeholder still activates, so a listing
- * without art never loses its preview.
- *
- * SANDBOX/REFERRER PARITY with the preview on the now-retired
- * `/apps/[appBlockId]` page. The block is served from its OWN `<slug>.civit.ai`
- * origin, so `allow-same-origin` grants the frame ITS OWN origin — not
- * civitai.com's — which is what lets the block use its own storage. See
- * `appListingPreview.ts` for the full note; the token list itself is
- * single-sourced there.
- *
- * 🔴 NOT an HTTP-caching change. Block HTML is deliberately `Cache-Control:
- * no-store` at the platform layer so CSP/CORS changes propagate; "cache the
- * preview" here means poster-then-activate and nothing else.
- */
-function LivePreview({ detail }: { detail: ListingDetail }) {
-  const [activated, setActivated] = useState(false);
-  const preview = getListingPreview(detail);
-  if (!preview) return null;
-  const mounted = shouldMountPreviewIframe({ preview, activated });
-
-  return (
-    <>
-      <Divider />
-      <Stack gap="xs" data-testid="apps-listing-preview">
-        <Title order={4}>Live preview</Title>
-        <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
-          {mounted ? (
-            <iframe
-              src={preview.liveUrl}
-              title={preview.frameTitle}
-              sandbox={LISTING_PREVIEW_SANDBOX}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              data-testid="apps-listing-preview-frame"
-              style={{
-                width: '100%',
-                height: LISTING_PREVIEW_HEIGHT,
-                border: 0,
-                display: 'block',
-              }}
-            />
-          ) : (
-            <Box
-              component="button"
-              type="button"
-              onClick={() => setActivated(true)}
-              aria-label={`Start the live preview of ${detail.name}`}
-              data-testid="apps-listing-preview-activate"
-              style={{
-                position: 'relative',
-                display: 'block',
-                width: '100%',
-                height: LISTING_PREVIEW_HEIGHT,
-                padding: 0,
-                border: 0,
-                cursor: 'pointer',
-                // No poster → the listing's own seeded gradient (same identity
-                // the cover/icon placeholders use), never a blank grey box.
-                background: preview.posterUrl
-                  ? undefined
-                  : listingPlaceholderGradient({
-                      slug: detail.slug,
-                      category: detail.category,
-                      surface: 'cover',
-                    }),
-              }}
-            >
-              {preview.posterUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={preview.posterUrl}
-                  alt=""
-                  aria-hidden
-                  loading="lazy"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }}
-                />
-              )}
-              {/* Activate affordance, above the poster. */}
-              <Group
-                justify="center"
-                style={{ position: 'relative', height: '100%' }}
-                data-testid="apps-listing-preview-poster"
-              >
-                <Group
-                  gap={8}
-                  wrap="nowrap"
-                  px="md"
-                  py="xs"
-                  style={{
-                    borderRadius: 'var(--mantine-radius-xl)',
-                    background: 'rgba(0,0,0,0.65)',
-                    color: 'var(--mantine-color-white)',
-                  }}
-                >
-                  <IconPlayerPlay size={18} />
-                  <Text size="sm" fw={600} c="white">
-                    Run live preview
-                  </Text>
-                </Group>
-              </Group>
-            </Box>
-          )}
-        </Card>
-      </Stack>
-    </>
-  );
-}
-
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
 
+  // 🔴 Resolve the glyph INSIDE each branch, from the mode that branch has
+  // already established — never once up front from `action.mode`. `href` is
+  // optional on `DetailPrimaryAction`, so an `open`/`visit` action without one
+  // falls through to the informational return at the bottom; a single hoisted
+  // lookup would paint a launch icon there. Not reachable from today's
+  // `getDetailPrimaryAction`, which is exactly why it is worth making
+  // structurally impossible rather than relying on that staying true.
+  //
+  // `open` (in-site nav to /apps/run/<slug>, no target) and `visit` (external
+  // new tab) used to share `IconExternalLink`, which left the CTA carrying no
+  // on-site/off-site signal at all — the signal #3391 removed the kind badges on
+  // the grounds that the CTA already carried. Mapping pinned in
+  // `__tests__/appListingActionGlyph.test.ts`.
+  const glyphFor = (mode: DetailActionMode) => ACTION_GLYPH_ICONS[detailActionGlyph(mode)];
+
   if (action.mode === 'open' && action.href) {
+    const GlyphIcon = glyphFor('open');
     return (
-      <Button component={Link} href={action.href} leftSection={<IconExternalLink size={16} />}>
+      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />}>
         {action.label}
       </Button>
     );
   }
 
   if (action.mode === 'visit' && action.href) {
+    const GlyphIcon = glyphFor('visit');
     return (
       <Stack gap={4} align="flex-end">
         <Button
@@ -386,7 +357,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           href={action.href}
           target="_blank"
           rel="noopener noreferrer"
-          leftSection={<IconExternalLink size={16} />}
+          leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
           // whose viewer can't open the in-host route ("Open live" — the
@@ -410,9 +381,10 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   if (action.mode === 'connect') {
     // Honest stub — no derivable OAuth authorize URL from the public DTO. Inert
     // button + a note so the affordance is never a dead 404 link.
+    const GlyphIcon = glyphFor('connect');
     return (
       <Stack gap={4}>
-        <Button variant="default" leftSection={<IconPlugConnected size={16} />} disabled>
+        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled>
           {action.label}
         </Button>
         {action.note && (
@@ -429,15 +401,21 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   // `info` today (the only such target was the retired `/apps/[appBlockId]`),
   // so the text-only arm is the live one; the link arm is kept as the type's
   // optional-href contract, NOT as a place to reinstate a circular self-link.
+  //
+  // 🔴 Hard-coded to the `info` glyph, NOT `action.mode`. This is the fallthrough
+  // — an `open`/`visit` action that lost its href lands here, and it must wear
+  // the informational icon it is actually rendering, not the launch icon its
+  // mode still claims.
+  const GlyphIcon = glyphFor('info');
   return (
     <Stack gap={4}>
       {action.href ? (
-        <Button component={Link} href={action.href} variant="default" leftSection={<IconInfoCircle size={16} />}>
+        <Button component={Link} href={action.href} variant="default" leftSection={<GlyphIcon size={16} />}>
           {action.label}
         </Button>
       ) : (
         <Group gap={6} c="dimmed">
-          <IconInfoCircle size={16} />
+          <GlyphIcon size={16} />
           <Text size="sm">{action.label}</Text>
         </Group>
       )}
@@ -483,6 +461,29 @@ export function AppListingDetailBody({
   const editHref = getOwnerEditHref(detail.kindData, detail.id);
   const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
 
+  // Hero click-to-launch — the banner is an affordance for the SAME destination
+  // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
+  // than by re-deriving the kind matrix, so the two cannot drift apart.
+  //
+  // 🔴 ON-SITE `open` ONLY. Three deliberate exclusions, each a decision:
+  //   - `visit` — both the off-site listing AND the on-site raw-origin "Open
+  //     live" escape hatch. Silently shipping a viewer off-platform from what
+  //     reads as decorative art is a surprise; an off-site destination deserves
+  //     the labelled, new-tab "Visit ↗" button, so the banner stays inert. The
+  //     `!external` guard says the same thing structurally, in case a future
+  //     `open` ever carries `external: true`.
+  //   - no href (`info` model-slot / `connect` stub) — nothing to launch, and
+  //     `DetailPrimaryAction.href` is optional, so this is a real branch.
+  //   - `preview` — the moderator listing-media review renders this body
+  //     READ-ONLY and omits the entire action column. A clickable banner there
+  //     would put a live launch back onto an UNAPPROVED shadow listing, which is
+  //     precisely what that posture exists to prevent.
+  const primaryAction = getDetailPrimaryAction(detail, { canOpenPage });
+  const heroLaunchHref =
+    !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
+      ? primaryAction.href
+      : null;
+
   return (
     <Stack gap="lg">
       {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
@@ -500,6 +501,7 @@ export function AppListingDetailBody({
         category={detail.category}
         name={detail.name}
         slug={detail.slug}
+        launchHref={heroLaunchHref}
       />
 
       {/* Header: icon + name + tagline + creator + content-rating badge + action. */}
@@ -601,12 +603,6 @@ export function AppListingDetailBody({
           <AppListingReviews appListingId={detail.id} />
         </>
       )}
-
-      {/* IN-PAGE LIVE PREVIEW (poster → click to activate). Placed above the
-          screenshot gallery: a runnable app outranks static stills. Omitted in
-          read-only mod preview along with every other live surface — a shadow
-          listing's block may not even be deployed. */}
-      {!preview && <LivePreview detail={detail} />}
 
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 

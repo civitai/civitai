@@ -74,10 +74,10 @@ import {
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import {
-  createImage,
   enqueueImageIngestion,
   imagesForModelVersionsCache,
 } from '~/server/services/image.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   amIBlockedByUser,
   getCosmeticsForUsers,
@@ -1307,16 +1307,9 @@ export async function upsertChallenge({
   // misconfigured judge must not leave an orphaned cover Image behind.
   const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
-  // Handle cover image - create Image record if needed (like Article does)
-  let coverImageId: number;
-  if (coverImage.id) {
-    // Use existing image ID
-    coverImageId = coverImage.id;
-  } else {
-    // Create new Image record from uploaded file
-    const result = await createImage({ ...coverImage, userId });
-    coverImageId = result.id;
-  }
+  // Handle cover image - reuse the supplied id, else reuse/verify-then-create (like Article
+  // does). No ownership check here: this is the moderator path, as before.
+  const coverImageId = await resolveCoverImageId({ coverImage, userId });
 
   // Helper: resolve judging config and generate theme elements.
   async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
@@ -1417,9 +1410,15 @@ export async function upsertChallenge({
 
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
-      // Update the challenge
-      const updated = await tx.challenge.update({
-        where: { id },
+      // Conditional on the status we VALIDATED, for the same reason as the Scheduled-only edit
+      // path below: the findUnique above ran on the read replica, and `tryGenerateThemeElements`
+      // can spend seconds in an LLM call before we get here. `claimChallengeForCompletion` may
+      // have flipped the challenge to Completing in that window. An unconditional update would
+      // then write `data.status` (pinned back to the pre-read Active) and the stale metadata
+      // snapshot over the fresh claim — un-claiming a challenge mid-completion and dropping the
+      // completingClaimedAt stamp the stuck-challenge reset keys off.
+      const { count } = await tx.challenge.updateMany({
+        where: { id, status: challenge.status },
         data: {
           ...data,
           nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
@@ -1433,11 +1432,45 @@ export async function upsertChallenge({
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           judgingCategories: effectiveJudgingCategories,
+          // 🔴 REMAINING WORK: this is still a stale full-column replace. `existingMetadata` comes
+          // from the REPLICA read above, so any SAME-status write that commits between that read
+          // and this one is silently dropped — notably the `reviewedAt` watermark, whose loss
+          // rewinds incremental review to the challenge start and re-judges the whole backlog at
+          // LLM cost. The status predicate on this updateMany does NOT cover that; only converting
+          // this to the jsonb `||` merge used by backfill-theme-elements.ts does.
+          //
+          // Two branches reach here, with very different windows — do not conflate them:
+          //   - themeElements supplied by the caller (the edit form pre-fills them, so this is the
+          //     common save): NO LLM call, window is replica lag plus the request itself.
+          //   - auto-generate (theme set, no stored elements): `tryGenerateThemeElements` puts a
+          //     multi-second LLM call in the window. Rarer, but far wider.
+          // See the long note in server/prom/challenge.metrics.ts.
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),
         },
       });
+      if (count === 0) {
+        // Rare by construction, so log it — otherwise there is no way to tell whether this guard
+        // has ever fired, or to distinguish a genuine race from replica lag (below).
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-upsert-status-precondition-failed',
+          challengeId: id,
+          message: `upsertChallenge aborted: challenge ${id} was no longer '${challenge.status}' at write time`,
+          readStatus: challenge.status,
+        }).catch(() => undefined);
+        // Deliberately NOT "reload and try again": `challenge.status` came from the read REPLICA,
+        // so this also fires when a transition already committed on the primary and has not
+        // replicated yet — a reload re-reads the same lagging replica and cannot clear it. It also
+        // fires when the row was deleted outright, where "status changed" is the wrong diagnosis.
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'This challenge changed while you were saving (it may have started, been completed, or been cancelled). Re-open it in a moment to see its current state.',
+        });
+      }
+      const updated = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       // Sync collection metadata if challenge has a collection
       if (challenge.collectionId) {
@@ -1639,20 +1672,20 @@ export async function upsertUserChallenge({
   // A reused id must belong to the caller — otherwise anyone could surface another user's
   // (possibly unpublished/blocked) image on a public challenge card, and the challenge scan
   // only covers text.
-  let coverImageId: number;
-  if (coverImage.id != null) {
-    // Regular users must own the reused image. Moderators skip the ownership check entirely
-    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
-    const ownedImage = await dbRead.image.findFirst({
-      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
-      select: { id: true },
-    });
-    if (!ownedImage)
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
-    coverImageId = ownedImage.id;
-  } else {
-    coverImageId = (await createImage({ ...coverImage, userId })).id;
-  }
+  const coverImageId = await resolveCoverImageId({
+    coverImage,
+    userId,
+    assertOwnership: async (imageId) => {
+      // Regular users must own the reused image. Moderators skip the ownership check entirely
+      // (trusted role — typically re-saving the creator's existing cover during a mod edit).
+      const ownedImage = await dbRead.image.findFirst({
+        where: isModerator ? { id: imageId } : { id: imageId, userId },
+        select: { id: true },
+      });
+      if (!ownedImage)
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
+    },
+  });
 
   // Fields shared by create + update. Entry-fee funded pools are modeled with the existing
   // Dynamic prize machinery: pool grows by `buzzPerAction` (net of the house cut) per entry.
@@ -3418,7 +3451,7 @@ export async function upsertChallengeEvent({
   let coverImageId: number | null | undefined;
   if (coverImage === null) coverImageId = null;
   else if (coverImage) {
-    coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+    coverImageId = await resolveCoverImageId({ coverImage, userId });
   }
 
   return dbWrite.$transaction(async (tx) => {

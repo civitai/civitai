@@ -37,6 +37,15 @@ export type AppAnalytics = {
   range: { from: Date; to: Date; granularity: 'day' | 'week' };
   /** True when the caller does not own `appBlockId` — all metrics are zeroed. */
   notOwned: boolean;
+  /**
+   * Present ONLY when the zeroed counters are a placeholder rather than a
+   * measurement: `notEntitled` (the appBlocks flag is off for this caller, so
+   * nothing was queried) or `notOwned`. A genuinely-measured result omits it
+   * even when every counter is 0 — without this a real "no activity yet" app
+   * and a never-queried one are byte-identical, and a client renders fabricated
+   * zeros as data.
+   */
+  unavailable?: 'notEntitled' | 'notOwned';
   installs: {
     /** All-time installs for this app (subscription rows ever created). */
     total: number;
@@ -83,10 +92,15 @@ export type AppAnalytics = {
   };
 };
 
-export function emptyAnalytics(range: AppAnalytics['range'], notOwned: boolean): AppAnalytics {
+export function emptyAnalytics(
+  range: AppAnalytics['range'],
+  notOwned: boolean,
+  unavailable: AppAnalytics['unavailable'] = notOwned ? 'notOwned' : undefined
+): AppAnalytics {
   return {
     range,
     notOwned,
+    ...(unavailable ? { unavailable } : {}),
     installs: { total: 0, active: 0, series: [] },
     runs: { count: 0, buzzSpent: 0, series: [] },
     buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },

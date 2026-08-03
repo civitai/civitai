@@ -178,6 +178,61 @@ module.exports = {
         'local-rules/no-module-scope-cache': 'error',
       },
     },
+    {
+      // Browser-mode component tests must not use an http(s) URL as an image
+      // source. Nothing serves it to the test browser, so the <img> fires a real
+      // `error` event a few ms after mount and the component's own onError
+      // fallback destroys it — Mantine 7.17.8's Avatar is `useState(!src)` +
+      // `onError -> setError(true)`, measured at ~11 ms from mount to swap. Any
+      // "the <img> exists" assertion against such a fixture is racing that
+      // window: green locally, intermittently red on a loaded CI box. It sat red
+      // on `main` across five PRs before #3551, and the data: URI that fixed it
+      // was a second copy of one another test file already had — the convention
+      // existed and was invisible. Hence a rule, and hence the single shared
+      // `LOADABLE_IMAGE_DATA_URI` in test/component-setup.tsx.
+      //
+      // 'error', matching no-wholesale-module-mock / no-module-scope-cache and
+      // for the same reason spelled out above: the only BLOCKING ESLint step in
+      // .github/workflows/lint.yml ("ESLint (added files)") runs without
+      // --max-warnings, so at 'warn' this would gate nothing — and a brand-new
+      // browser test is exactly the authoring path the rule exists to close.
+      //
+      // Blast radius on the existing tree is bounded and, by lint.yml's split,
+      // zero in the blocking step TODAY — with two named caveats, because
+      // "zero" is not the same as "permanently zero":
+      //   1. `--diff-filter=A` classifies a rename-with-heavy-edit as ADDED, so
+      //      MOVING one of the 5 backlog files lands it in the BLOCKING step.
+      //      Same caveat the sibling rule documents at the top of this file.
+      //   2. lint.yml's own header records that the report-only steps are
+      //      planned to flip to blocking once the backlog clears. On that day
+      //      these 16 sites block anyone touching those 5 files. The debt is
+      //      small and mechanical (9 distinct URLs, nearly all
+      //      'https://cdn/x.png' -> LOADABLE_IMAGE_DATA_URI).
+      // Population measured by instrumenting all 117
+      // *.browser.test.tsx files with a document-level capture listener for
+      // <img> `error` events: 14 distinct external image URLs really do mount as
+      // broken images today, across 6 files. The rule reports 16 sites in 5
+      // files, ALL pre-existing, so a PR touching one reaches only the
+      // report-only modified-files step. (The 6th file, AppListingCard, is fixed
+      // in this change: its positive assertion uses the shared fixture and its
+      // deliberate broken-cover test carries a disable comment with a reason.)
+      // They are latent, not harmless — each becomes a flake the moment someone
+      // adds an <img> assertion beside it, which is what happened to
+      // AppBlockChrome.
+      //
+      // Scope is deliberately narrow so it cannot reach a non-image URL: the
+      // literal must be http(s) AND sit in an image-source position, where the
+      // ambiguous `src` additionally has to prove it is an image (file
+      // extension, or an <img>-family JSX element). That is what keeps
+      // OnsiteReviewModal's `iframe: { src: 'https://example.com/block' }` and
+      // AgentReviewChat's markdown `![tracking](https://example.com/pixel.png)`
+      // clean — neither can mount an <img> from a fixture. Full reasoning, the
+      // key list, and the escape hatch are in eslint-local-rules.js.
+      files: ['**/*.browser.test.tsx'],
+      rules: {
+        'local-rules/no-unloadable-image-fixture': 'error',
+      },
+    },
   ],
 
   // No type-aware linting: `parserOptions.project` costs ~40s of program build plus

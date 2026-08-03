@@ -19,7 +19,7 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 // eslint-disable-next-line import/first
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 
 // H2: the host-rendered "trust frame" around an in-model app block must NAME the
 // app (host-side, spoof-proof) — not just carry it in the invisible iframe
@@ -314,7 +314,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
       id: 'other',
       blockId: 'other-block',
       name: 'Other App',
-      iconUrl: 'https://cdn.example/icon.png',
+      iconUrl: LOADABLE_IMAGE_DATA_URI,
     });
 
     renderWithProviders(
@@ -336,7 +336,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     expect(other.getAttribute('href')).toBe('/apps/run/other-block');
     const otherImg = other.querySelector('img');
     expect(otherImg).not.toBeNull();
-    expect(otherImg?.getAttribute('src')).toBe('https://cdn.example/icon.png');
+    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
 
     // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
     const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;

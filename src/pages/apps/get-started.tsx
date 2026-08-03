@@ -1,4 +1,5 @@
 import { Container } from '@mantine/core';
+import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { resolveGetStartedAccess } from '~/components/Apps/resolveGetStartedAccess';
@@ -51,7 +52,7 @@ export default function AppsGetStartedPage() {
         description="Build small web apps that run inside Civitai. Install the Civitai CLI and runtime SDK, scaffold an app, and test it locally."
         deIndex
       />
-      <Container size="md" py="xl">
+      <Container size={APPS_PAGE_WIDTHS['/apps/get-started']} py="xl">
         <GetStartedBody />
       </Container>
     </>

@@ -3,3 +3,4 @@
 // shared primitives as their own modules and re-export them below.
 export * from './flags';
 export * from './browsing-levels';
+export * from './model-version-flags.constants';

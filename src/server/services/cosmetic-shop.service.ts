@@ -37,6 +37,10 @@ import {
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import {
+  getCosmeticArtworkUrl,
+  queueCosmeticPerceptualHash,
+} from '~/server/services/cosmetic-phash.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -117,7 +121,9 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
       data: data ?? existing?.data,
     });
 
-    return dbWrite.cosmetic.update({
+    const previous =
+      data !== undefined ? await dbRead.cosmetic.findUnique({ where: { id } }) : null;
+    const cosmetic = await dbWrite.cosmetic.update({
       where: { id },
       data: {
         videoUrl,
@@ -129,6 +135,13 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
         ...(data !== undefined ? { data: data as Prisma.InputJsonValue } : {}),
       },
     });
+
+    const url = getCosmeticArtworkUrl(cosmetic.data);
+    if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
+      queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+    }
+
+    return cosmetic;
   }
 
   // Create — schema-level refinement guarantees these are present.
@@ -138,7 +151,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
 
   await validateStickerCosmetic({ type, data });
 
-  return dbWrite.cosmetic.create({
+  const cosmetic = await dbWrite.cosmetic.create({
     data: {
       name,
       description: description ?? null,
@@ -149,6 +162,11 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
       videoUrl: videoUrl ?? null,
     },
   });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url) queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+
+  return cosmetic;
 };
 
 export const upsertCosmeticShopItem = async ({

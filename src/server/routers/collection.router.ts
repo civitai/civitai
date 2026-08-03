@@ -40,8 +40,13 @@ import {
   updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
   upsertCollectionInput,
+  setCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
-import { getCollectionEntryCount } from '~/server/services/collection.service';
+import {
+  getCollectionAiReview,
+  getCollectionEntryCount,
+  setCollectionAiReview,
+} from '~/server/services/collection.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -134,6 +139,18 @@ export const collectionRouter = router({
     .input(updateCollectionItemsStatusInput)
     .use(isFlagProtected('collections'))
     .mutation(updateCollectionItemsStatusHandler),
+  // Moderator-only rather than collection MANAGE: the prompt becomes an LLM system prompt, and
+  // reviews cost us money.
+  setAiReview: moderatorProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(setCollectionAiReviewInput)
+    .use(isFlagProtected('collectionAiReview'))
+    .mutation(({ input }) => setCollectionAiReview(input)),
+  getAiReview: moderatorProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getByIdSchema)
+    .use(isFlagProtected('collectionAiReview'))
+    .query(({ input }) => getCollectionAiReview(input.id)),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)

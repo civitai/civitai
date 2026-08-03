@@ -54,6 +54,7 @@ import {
   getDownloadSchema,
   getModelByIdSchema,
   getModelsWithCategoriesSchema,
+  getModelTemplateFieldsSchema,
   getModelVersionsSchema,
   getResourceSelectSchema,
   getMyTrainingModelsSchema,
@@ -295,7 +296,7 @@ export const modelRouter = router({
     .mutation(getModelByHashesHandler),
   getTemplateFields: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getByIdSchema)
+    .input(getModelTemplateFieldsSchema)
     .query(getModelTemplateFieldsHandler),
   getModelTemplateFieldsFromBounty: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

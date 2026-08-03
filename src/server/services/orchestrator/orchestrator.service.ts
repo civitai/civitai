@@ -1,4 +1,6 @@
 import type {
+  MediaHashStep,
+  MediaHashStepTemplate,
   Priority,
   WorkflowStepTemplate,
   WorkflowTemplate,
@@ -222,6 +224,88 @@ export async function createImageIngestionRequest({
   }
 
   return { data, body, error, status: response?.status };
+}
+
+const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
+// A `wait: 30` request still unanswered at 45s is a socket the orchestrator
+// accepted and abandoned; without this the promise never settles, leaking a
+// pending write-path hash and permanently occupying a backfill slot.
+const PERCEPTUAL_HASH_ABORT_MS = 45_000;
+
+export function computePerceptualHash(perceptual?: string) {
+  if (!perceptual) return undefined;
+  return BigInt.asIntN(64, BigInt('0x' + perceptual));
+}
+
+/**
+ * Perceptual hash for an arbitrary image, without creating an `Image` row.
+ *
+ * Submits a one-step `mediaHash` workflow and blocks for the result rather than
+ * routing through the scan-result webhook, which can only address images by id.
+ *
+ * Results are comparable ONLY to other hashes produced by this same `mediaHash`
+ * step. Most `Image.pHash` rows predate it and came from a different algorithm —
+ * comparing across the two yields ~32-bit Hamming distances (i.e. noise) with no
+ * error to signal it. Verified against prod: same-lane rows matched exactly,
+ * legacy rows were uncorrelated.
+ *
+ * Returns `undefined` on any failure — a hash is a signal, not a gate, so
+ * callers persist what they get and leave the rest for a backfill sweep. Note
+ * `0n` is a legitimate hash (a solid-colour image); test against `undefined`.
+ */
+export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
+  const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+
+  // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
+  // of failing, yielding a relative path the orchestrator can't fetch. Outside
+  // Next (a script importing this) that env can be unset, and every call would
+  // otherwise fail one orchestrator round-trip at a time with nothing to read.
+  if (!mediaUrl.startsWith('http')) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      message: `Refusing to hash a relative media url (${mediaUrl}) — NEXT_PUBLIC_IMAGE_LOCATION is unset`,
+      url,
+    }).catch(() => null);
+    console.error(
+      `[perceptual-hash] NEXT_PUBLIC_IMAGE_LOCATION is unset; resolved "${url}" to "${mediaUrl}"`
+    );
+    return undefined;
+  }
+
+  try {
+    const { data } = await submitWorkflow({
+      client: internalOrchestratorClient,
+      query: { wait: PERCEPTUAL_HASH_WAIT_SECONDS },
+      signal: AbortSignal.timeout(PERCEPTUAL_HASH_ABORT_MS),
+      body: {
+        tags: ['perceptual-hash'],
+        currencies: [],
+        steps: [
+          {
+            $type: 'mediaHash',
+            input: { mediaUrl, hashTypes: ['perceptual'] },
+          } as MediaHashStepTemplate,
+        ],
+      },
+    });
+
+    // A `wait` that elapses returns 202 with the workflow still running, so an
+    // unfinished step is indistinguishable from a failed one here — both are
+    // "no hash yet".
+    const step = data?.steps?.[0] as MediaHashStep | undefined;
+    if (data?.status !== 'succeeded' || step?.status !== 'succeeded') return undefined;
+
+    return computePerceptualHash(step.output?.hashes?.perceptual);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return undefined;
+  }
 }
 
 type XGuardModerationArgs = {

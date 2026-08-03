@@ -13,33 +13,103 @@ import { retryFlaky } from './preview-retry';
  * preselects a model, so we PREFER the on-load path (no interaction).
  *
  * Runs only under playwright.preview.config.ts (needs PREVIEW_URL + minted
- * storage states). Cost source of truth: superjson-wrapped, batched tRPC
- * response `[{ result: { data: { json: { cost: { total } } } } }]`
- * (see orchestration-new.service.ts ~L1452 and useWhatIfFromGraph.ts).
+ * storage states). Cost source of truth: the whatIf payload
+ * `{ allowMatureContent, transactions, cost: { …, total }, ready }` returned by
+ * `orchestration-new.service.ts:whatIfFromGraph` (see also useWhatIfFromGraph.ts).
+ * 🔴 That payload reaches the browser in THREE different wire shapes depending on
+ * whether the `trpcBatching` flag is on for the session — an unbatched envelope, a
+ * batched JSON array, or newline-delimited `application/jsonl` stream chunks. Both
+ * the URL matcher and the body parser below must handle all three; assuming the
+ * unbatched shape is what made this test fail 100% of the time once batching
+ * ramped (see the comments on `isWhatIfResponse` / `extractCostTotal`).
  */
 
 // Use the PAID member — passes the preview gate AND is a real generation user.
 test.describe('generation cost quote (gold)', () => {
   test.use({ storageState: storageStatePath('gold') });
 
-  const WHATIF_URL = '/api/trpc/orchestrator.whatIfFromGraph';
+  const WHATIF_PROCEDURE = 'orchestrator.whatIfFromGraph';
 
   /**
-   * Pull the first numeric `cost.total` out of a tRPC response body, tolerating:
-   *  - batched array vs single object
-   *  - superjson `{ json: ... }` unwrapping at the data layer
-   *  - the `{ result: { data: ... } }` envelope
-   * Returns a number, or null if not found. Walks defensively because the exact
-   * nesting depends on tRPC batch-link + superjson transformer versions.
+   * Does this response carry the whatIf query?
+   *
+   * 🔴 Do NOT go back to `url().includes('/api/trpc/orchestrator.whatIfFromGraph')`.
+   * With the `trpcBatching` flag on (`httpBatchStreamLink`, src/utils/trpc.ts), the
+   * client coalesces concurrent queries into ONE request whose path is the
+   * COMMA-JOINED procedure list, and whatIf is not first:
+   *   /api/trpc/content.get,challenge.getInfinite,generationPreset.getOwn,
+   *             wildcardSet.getMyUserSet,user.userRewardDetails,
+   *             orchestrator.whatIfFromGraph?batch=1&input=…
+   * That URL does not contain the `/api/trpc/<proc>` prefix, so a prefix match never
+   * fires and the wait times out on a request that DID happen and DID return 200.
+   * Batch membership varies run to run, so match the procedure inside the path list.
    */
-  function extractCostTotal(body: unknown): number | null {
-    const entries = Array.isArray(body) ? body : [body];
-    for (const entry of entries) {
-      // result.data, then optional superjson `.json`, then `.cost.total`.
-      const data = (entry as any)?.result?.data;
-      const payload = data?.json ?? data;
-      const total = payload?.cost?.total;
-      if (typeof total === 'number') return total;
+  function isWhatIfResponse(url: string): boolean {
+    let pathname: string;
+    try {
+      pathname = new URL(url).pathname;
+    } catch {
+      return false;
+    }
+    const prefix = '/api/trpc/';
+    if (!pathname.startsWith(prefix)) return false;
+    return pathname.slice(prefix.length).split(',').includes(WHATIF_PROCEDURE);
+  }
+
+  /**
+   * Pull the whatIf `cost.total` out of a raw tRPC response body.
+   *
+   * The body arrives in one of three wire shapes depending on link + batching, so
+   * parse the RAW TEXT rather than `response.json()` (which throws on the streamed
+   * one):
+   *  1. unbatched  `{"result":{"data":{"json":{…,"cost":{…},"ready":true}}}}`
+   *  2. batched    `[{…},…,{"result":{"data":{"json":{…}}}}]`
+   *  3. batched + streamed — `httpBatchStreamLink` sends `trpc-accept: application/jsonl`,
+   *     so the server answers with NEWLINE-DELIMITED JSON chunks that reference each
+   *     other by index; `JSON.parse` of the whole body fails, and the payload sits at a
+   *     different depth (`{"json":[17,0,[[{…,"cost":{…},"ready":true}]]]}`).
+   *
+   * The one thing stable across all three is the whatIf payload object itself, so find
+   * it structurally: an object with BOTH a numeric `cost.total` and a boolean `ready`.
+   * Requiring `ready` scopes the search to whatIf — the payload contract in
+   * `orchestration-new.service.ts:whatIfFromGraph` always returns both — so a sibling
+   * procedure sharing the batch can't satisfy the match and produce a false pass.
+   */
+  function extractCostTotal(raw: string): number | null {
+    const docs: unknown[] = [];
+    try {
+      docs.push(JSON.parse(raw));
+    } catch {
+      for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          docs.push(JSON.parse(trimmed));
+        } catch {
+          // A partial/among-chunks line: skip it, another chunk carries the payload.
+        }
+      }
+    }
+
+    const seen = new Set<unknown>();
+    const walk = (value: unknown): number | null => {
+      if (value === null || typeof value !== 'object') return null;
+      if (seen.has(value)) return null;
+      seen.add(value);
+      const node = value as any;
+      if (typeof node?.cost?.total === 'number' && typeof node?.ready === 'boolean') {
+        return node.cost.total;
+      }
+      for (const child of Object.values(node as Record<string, unknown>)) {
+        const hit = walk(child);
+        if (hit !== null) return hit;
+      }
+      return null;
+    };
+
+    for (const doc of docs) {
+      const hit = walk(doc);
+      if (hit !== null) return hit;
     }
     return null;
   }
@@ -53,16 +123,37 @@ test.describe('generation cost quote (gold)', () => {
     // must still pass; a sustained failure surfaces after the attempts). Extend the
     // per-test timeout to fit ~2 attempts of the 45s wait + navigation + backoff.
     test.setTimeout(200_000);
+
+    // 🔴 Buffer the whatIf body OURSELVES instead of reading `response.text()` later.
+    // Under `httpBatchStreamLink` the app reads the whole jsonl stream (cost included)
+    // and then abandons the still-open reader. Chromium reports that to Playwright as
+    // `net::ERR_ABORTED` and evicts the resource, so a later `response.text()` fails
+    // with "Protocol error (Network.getResponseBody): No data found for resource with
+    // given identifier" — measured on 4 of 8 /generate loads, i.e. a coin-flip flake
+    // that has nothing to do with the product. Routing the request lets Playwright do
+    // the fetch and hold the complete body, removing the race entirely.
+    let capturedBody: string | null = null;
+    await page.route(
+      (url) => isWhatIfResponse(url.toString()),
+      async (route) => {
+        const routed = await route.fetch();
+        const text = await routed.text();
+        if (routed.status() === 200 && capturedBody === null) capturedBody = text;
+        await route.fulfill({ response: routed, body: text });
+      }
+    );
+
     const { body } = await retryFlaky(
       'whatIf on /generate',
       async () => {
+        capturedBody = null;
         // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
         // 45s: whatIf is the heaviest client-side flow — page load + hydrate + form
         // init + resource resolve + orchestrator round-trip must complete before it
         // fires. The orchestrator itself is fast (~57ms), so when healthy this never
         // approaches 45s — the budget is for a cold-pod slow window.
         const whatIfResponse = page.waitForResponse(
-          (r) => r.url().includes(WHATIF_URL) && r.status() === 200,
+          (r) => isWhatIfResponse(r.url()) && r.status() === 200,
           { timeout: 45_000 }
         );
 
@@ -78,8 +169,22 @@ test.describe('generation cost quote (gold)', () => {
         // NOTE: relies on the default /generate form preselecting a valid model+workflow
         // so whatIf fires without interaction. If a future default ships with no model
         // preselected this will time out — see the UI-fallback note below.
-        const response = await whatIfResponse;
-        return { body: await response.json() };
+        await whatIfResponse;
+        // Read the body the route handler buffered, NOT `response.text()` (see above).
+        // Raw text, not `.json()`: under batching the body is newline-delimited JSON
+        // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
+        // A plain null-check rather than `expect(...).not.toBeNull()` plus a cast.
+        // `capturedBody` is assigned from inside the `page.route` closure, which
+        // TS control-flow analysis cannot see, so after the reset above it narrows
+        // to `null` here and `as string` is an illegal null->string conversion.
+        // Checking explicitly narrows it honestly, needs no cast, and fails with a
+        // message that says which half broke: the response was seen, the body wasn't.
+        if (capturedBody === null) {
+          throw new Error(
+            'whatIf response was observed but its body was not captured by the route handler'
+          );
+        }
+        return { body: capturedBody };
       },
       { attempts: 2 }
     );
