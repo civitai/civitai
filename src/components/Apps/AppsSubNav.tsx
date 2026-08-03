@@ -1,4 +1,4 @@
-import { Box, ScrollArea, Tabs } from '@mantine/core';
+import { Box, rem, ScrollArea, Tabs } from '@mantine/core';
 import {
   IconBuildingStore,
   IconCurrencyDollar,
@@ -135,7 +135,31 @@ export function AppsSubNavView({
   return (
     <Box component="nav" aria-label="App sections" w="100%">
       <ScrollArea type="never" w="100%">
-        <Tabs value={active} variant="default" w="100%" activateTabWithKeyboard={false}>
+        <Tabs
+          value={active}
+          variant="default"
+          w="100%"
+          activateTabWithKeyboard={false}
+          // VERTICAL padding only. Mantine's default Tab padding is the shorthand
+          // `var(--mantine-spacing-xs) var(--mantine-spacing-md)` = 10px block /
+          // 16px inline, giving a 37px tab row. `paddingBlock` overrides ONLY the
+          // block axis, so the 16px inline padding from that shorthand survives
+          // untouched and the tabs keep their horizontal hit area and rhythm.
+          // 6px → a 29px row (measured, 1440 render): still clears WCAG 2.5.8
+          // Target Size (Minimum, AA) — 24×24 CSS px — with the anchor's full
+          // width as the horizontal target.
+          //
+          // 🔴 This does NOT touch the grouping below the tabs. The separator is
+          // `Tabs.List::before` (a 2px bar pinned to the LIST's bottom edge — not
+          // the tab's own border-bottom, which is a transparent active-indicator
+          // slot). The list is exactly as tall as its tabs, so shrinking the tab
+          // shrinks the list and the rule travels UP with it, while
+          // `AppsPageLayout`'s `Stack gap="md"` holds the rule↔title gap at a
+          // fixed 16px. If anything it tightens the band: the tab LABEL sits 6px
+          // above the rule instead of 10px, so label↔title goes 26px → 22px
+          // against an unchanged 32px band↔body.
+          styles={{ tab: { paddingBlock: rem(6) } }}
+        >
           <Tabs.List style={{ flexWrap: 'nowrap' }}>
             {links.map((link) => {
               const Icon = link.icon;

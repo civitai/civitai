@@ -48,8 +48,14 @@ export function AppsPageLayout({
   children: ReactNode;
 }) {
   const hasHeader = Boolean(title || subtitle || actions);
+  // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
+  // directly under the global header instead of 16px below it; the BOTTOM pad
+  // stays because this Container is the outermost element on every apps page, so
+  // its `pb` is the only thing keeping the last grid row / table row off whatever
+  // follows. Horizontal padding is untouched (Container's own responsive gutter)
+  // — this pass is vertical-only, so `size` and the side gutters are unchanged.
   return (
-    <Container size={size} py="md">
+    <Container size={size} pb="md">
       {/* `xl` (32px), not `lg` (20px). With the band's own rule removed, the ONLY
           thing telling a viewer where the header ends and the page begins is the
           size of this gap relative to the `md` (16px) gap INSIDE the band. At
@@ -81,17 +87,26 @@ export function AppsPageLayout({
           thing separating the title from the page content, so dropping it alone
           would leave the title floating between the tab border and the body.
           The band is therefore held together by PROXIMITY instead of a rule:
-            - `pt="sm"` (was `py="sm"`): the bottom pad is gone, so the header
-              group hugs the tabs it belongs to rather than sitting equidistant.
+            - NO vertical padding of its own (was `pt="sm"`, and `py="sm"` before
+              that). 🔴 Neither pad ever participated in the grouping: `pt` sits
+              ABOVE the tabs, i.e. OUTSIDE the tabs↔title relationship entirely,
+              so it only pushed the whole band down the page. `pb` was already
+              removed because it DID matter — it sat between the title and the
+              body and made the title equidistant. Dropping `pt` therefore moves
+              the band up without touching what holds it together; measured on a
+              1440 render, the two gaps below are byte-identical before and after
+              (16px / 32px).
             - `gap="md"` (16px) INSIDE the band, vs the parent `Stack gap="xl"`
               (32px) from the band to the content — the title is measurably
               closer to the tabs than to the body, which is what makes them read
               as one unit without a second line. (See the note on that parent
-              Stack for why `lg` was not enough.)
+              Stack for why `lg` was not enough.) 🔴 THIS PAIR IS THE GROUPING.
+              Change either number and the title starts floating; the vertical
+              padding around the band is free to move, these two are not.
           A no-header page (the store) is unaffected apart from losing the
           duplicate rule.
         */}
-        <Stack gap="md" pt="sm">
+        <Stack gap="md">
           <AppsSubNav />
           {hasHeader && (
             <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">

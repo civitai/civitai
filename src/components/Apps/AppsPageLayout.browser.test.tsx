@@ -108,9 +108,18 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
     expect(band.style.getPropertyValue('--stack-gap')).toBe('var(--mantine-spacing-md)');
     expect(outer.style.getPropertyValue('--stack-gap')).toBe('var(--mantine-spacing-xl)');
 
-    // …and the band's own BOTTOM padding is gone, so the header group hugs the
-    // tabs it belongs to instead of sitting equidistant. (`pt="sm"`, no `pb`.)
-    expect(band.style.paddingTop).not.toBe('');
+    // …and the band carries NO vertical padding of its own, so the header group
+    // hugs the tabs it belongs to instead of sitting equidistant.
+    //
+    // UPDATED (vertical-padding pass): the first line used to be
+    // `expect(band.style.paddingTop).not.toBe('')`, pinning the `pt="sm"` that
+    // has now been deliberately removed. That pad sat ABOVE the tabs — outside
+    // the tabs↔title relationship — so it never contributed to the grouping this
+    // test is about; the two `--stack-gap` assertions above are the grouping, and
+    // they are untouched. The `paddingBottom` assertion is UNCHANGED in force: a
+    // bottom pad here would sit between the title and the body and re-centre the
+    // title, which is the exact float the removed rule left behind.
+    expect(band.style.paddingTop).toBe('');
     expect(band.style.paddingBottom).toBe('');
   });
 });

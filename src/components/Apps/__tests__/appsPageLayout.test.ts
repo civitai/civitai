@@ -47,16 +47,64 @@ describe('AppsPageLayout draws no rule of its own', () => {
     expect(layoutSrc()).toMatch(/export function AppsPageLayout/);
   });
 
-  it('the header band keeps its TOP padding and drops its bottom one', () => {
-    // The proximity grouping that replaced the rule: the header group hugs the
-    // tabs above it (`pt="sm"`, no `pb`) and the parent `Stack gap="xl"` supplies
-    // the larger separation to the page body. Reverting to `py="sm"` re-centres
-    // the title between the two and the band stops reading as a band.
+  it('the header band carries NO vertical padding of its own', () => {
+    // UPDATED (vertical-padding pass): this used to pin `pt="sm"` on the band.
+    // That pad was dropped deliberately — it sat ABOVE the tabs, i.e. outside the
+    // tabs↔title relationship, so it only pushed the band down the page and was
+    // never part of the grouping (measured: the two gaps below are identical at
+    // 16px/32px with and without it).
+    //
+    // The `pb` half of the original assertion is UNCHANGED in force and is what
+    // still matters: a `pb` sits BETWEEN the title and the body and would make
+    // the title equidistant, which is exactly the float the removed rule left
+    // behind. `py` would reintroduce it, so both are still banned.
     const src = layoutSrc();
-    expect(src).toMatch(/<Stack\s+gap="md"\s+pt="sm">/);
+    expect(src).toMatch(/<Stack\s+gap="md">/);
     // Scoped to a `<Stack …>` TAG, not the whole file — the prose above mentions
-    // the reverted form, and a whole-file regex would match its own explanation.
+    // the reverted forms, and a whole-file regex would match its own explanation.
     expect(src).not.toMatch(/<Stack[^>]*\bpy=/s);
+    expect(src).not.toMatch(/<Stack[^>]*\bpb=/s);
+  });
+
+  it('🔴 the PROXIMITY PAIR that groups the band is intact (16px in / 32px out)', () => {
+    // INVARIANT GUARD — passes both before and after the vertical-padding pass;
+    // it is NOT regression coverage for that change. It exists because the pair
+    // below is the ONLY thing grouping the header band since the duplicate rule
+    // was removed, and the padding pass deliberately moved everything AROUND it.
+    // Pinning it makes "the padding is free to move, these two are not" (the
+    // comment in AppsPageLayout) enforceable rather than advisory.
+    const src = layoutSrc();
+    // Band-internal gap: tabs -> title.
+    expect(src).toMatch(/<Stack\s+gap="md">/);
+    // Parent gap: band -> page body. Was `lg` once; 20-vs-16 grouped nothing.
+    expect(src).toMatch(/<Stack\s+gap="xl">/);
+    expect(src).not.toMatch(/<Stack\s+gap="lg">/);
+  });
+
+  it('the layout Container drops its TOP pad but keeps a bottom one', () => {
+    // Regression coverage for the vertical-padding pass: FAILS on pre-change
+    // source, which carried `py="md"` (a 16px top pad under the global header).
+    //
+    // `pb` is asserted PRESENT, not merely "no py": this Container is the
+    // outermost element on every `/apps/*` page, so its bottom pad is the only
+    // thing keeping the last grid/table row off whatever follows. Dropping to a
+    // bare `<Container size={size}>` would satisfy a "no py" check alone.
+    const src = layoutSrc();
+    expect(src).toMatch(/<Container\s+size=\{size\}\s+pb="md">/);
+    expect(src).not.toMatch(/<Container[^>]*\bpy=/s);
+    expect(src).not.toMatch(/<Container[^>]*\bpt=/s);
+  });
+
+  it('HORIZONTAL geometry is untouched by the vertical pass', () => {
+    // INVARIANT GUARD — green before and after. The pass was scoped to vertical
+    // padding; these pin the things it was explicitly not allowed to move, so a
+    // future "tighten the apps chrome" edit can't quietly take the side gutters
+    // or the container width with it.
+    const src = layoutSrc();
+    // Width still comes from the caller's `size` prop, not a hardcoded value.
+    expect(src).toMatch(/<Container\s+size=\{size\}/);
+    // No horizontal padding override of any kind on the Container.
+    expect(src).not.toMatch(/<Container[^>]*\b(px|pl|pr)=/s);
   });
 });
 
@@ -65,5 +113,31 @@ describe('the sub-nav still supplies the ONE remaining rule', () => {
     const src = subNavSrc();
     expect(src).toMatch(/<Tabs\b[^>]*variant="default"/s);
     expect(src).toMatch(/<Tabs\.List\b/);
+  });
+});
+
+describe('the sub-nav tab row is tightened on the BLOCK axis only', () => {
+  it('the tab padding override exists and is block-axis', () => {
+    // Regression coverage for the vertical-padding pass: FAILS on pre-change
+    // source, which had no `styles` prop on `<Tabs>` at all (the row ran at
+    // Mantine's default 10px block padding = a 37px row; it is 29px now).
+    const src = subNavSrc();
+    expect(src).toMatch(/styles=\{\{\s*tab:\s*\{\s*paddingBlock:/);
+  });
+
+  it('🔴 the tab override can NEVER touch the inline (horizontal) axis', () => {
+    // The load-bearing half. `paddingBlock` overrides only the block axis, so the
+    // 16px inline padding from Mantine's `padding: xs md` shorthand survives and
+    // the tabs keep their horizontal hit area. Swapping it for a `padding`
+    // shorthand — the single most natural "cleanup" edit here — would silently
+    // reset that inline padding to whatever the shorthand says and shrink every
+    // tab's click target. Measured: tab width 133.27px before AND after.
+    //
+    // Scoped to the `styles={{ tab: … }}` block so the surrounding prose (which
+    // names the shorthand it is warning about) can't satisfy or trip the check.
+    const styleBlock = subNavSrc().match(/styles=\{\{\s*tab:\s*\{([^}]*)\}/)?.[1];
+    expect(styleBlock).toBeTruthy();
+    expect(styleBlock).not.toMatch(/\bpadding\s*:/);
+    expect(styleBlock).not.toMatch(/paddingInline|paddingLeft|paddingRight/);
   });
 });
