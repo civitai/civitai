@@ -1,6 +1,7 @@
 import { CosmeticType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
 
 export type GetPaginatedCosmeticsInput = z.infer<typeof getPaginatedCosmeticsSchema>;
 export const getPaginatedCosmeticsSchema = paginationSchema.merge(
@@ -20,6 +21,17 @@ export const grantCosmeticsToUsersSchema = z.object({
 export type GetStickerCosmeticsInput = z.infer<typeof getStickerCosmeticsSchema>;
 export const getStickerCosmeticsSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+// Buying more uses of a sticker already owned. Keyed on the cosmetic rather than
+// a shop item: the per-use price belongs to the sticker, not to any one offer.
+export type PurchaseStickerUsesInput = z.infer<typeof purchaseStickerUsesSchema>;
+export const purchaseStickerUsesSchema = z.object({
+  cosmeticId: z.number().int().positive(),
+  quantity: z.number().int().positive().max(STICKER_TOPUP_MAX_QUANTITY),
+  // Same option the shop purchase takes; rejected server-side when the listing
+  // doesn't accept Blue Buzz.
+  payWith: z.enum(['default', 'blue-first']).optional(),
 });
 
 export type EquipCosmeticInput = z.infer<typeof equipCosmeticSchema>;

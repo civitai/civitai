@@ -63,6 +63,10 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     uses,
     setUses,
     usesError,
+    pricePerUse,
+    setPricePerUse,
+    pricePerUseError,
+    perUseFloor,
     name,
     description,
     price,
@@ -221,12 +225,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                         A use is spent when a buyer places your sticker in{' '}
                         {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
                         {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
-                        out they can buy the sticker again.
+                        out they can top up at the price you set below.
                       </Text>
                     </InfoPopover>
                   </Group>
                 }
-                description={`How many times a buyer can place this sticker. They buy more by buying it again. You'll receive ${numberWithCommas(
+                description={`How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
                   uses * CREATOR_GRANT_USES_MULTIPLIER
                 )} uses of your own once it's approved.`}
                 value={uses}
@@ -234,6 +238,30 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                 min={1}
                 step={10}
                 error={usesError}
+                withAsterisk
+              />
+            )}
+
+            {isSticker && (
+              <NumberInput
+                label={
+                  <Group gap={4} wrap="nowrap">
+                    <span>Price per extra use</span>
+                    <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                      <Text size="xs">
+                        What one more use costs a buyer who has run out. They&apos;re offered it
+                        where they run out rather than being sent back to the shop, and you keep the
+                        same share as a sale.
+                      </Text>
+                    </InfoPopover>
+                  </Group>
+                }
+                description={`At least ${perUseFloor} Buzz. This price belongs to the sticker, so it's the same wherever it was bought.`}
+                value={pricePerUse}
+                onChange={(v) => setPricePerUse(typeof v === 'number' ? v : perUseFloor)}
+                min={perUseFloor}
+                step={5}
+                error={pricePerUseError}
                 withAsterisk
               />
             )}

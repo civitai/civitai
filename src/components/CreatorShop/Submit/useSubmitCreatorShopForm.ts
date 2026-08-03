@@ -25,8 +25,13 @@ import {
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
+  stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
-import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
+import {
+  STICKER_SLUG_ERROR,
+  isValidStickerSlug,
+  stickerEconomicsFromCosmeticData,
+} from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
@@ -51,8 +56,10 @@ export function useSubmitCreatorShopForm({
       ? item.cosmetic.type
       : CosmeticType.Badge
   );
-  const [uses, setUses] = useState<number>(
-    ((item?.cosmetic.data as { uses?: number } | null)?.uses ?? STICKER_DEFAULT_USES) as number
+  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
+  const [uses, setUses] = useState<number>(existingEconomics.uses ?? STICKER_DEFAULT_USES);
+  const [pricePerUse, setPricePerUse] = useState<number>(
+    existingEconomics.pricePerUse ?? STICKER_MIN_BUZZ_PER_USE
   );
   const [slug, setSlug] = useState<string>(
     ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
@@ -107,6 +114,13 @@ export function useSubmitCreatorShopForm({
   const usesError =
     isSticker && price < usesFloor
       ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+      : null;
+  // The top-up price a buyer pays when they run dry. Its floor is per-use, not
+  // the listing floor — mirrors the server so the creator sees it before submit.
+  const perUseFloor = stickerPerUseFloor(type);
+  const pricePerUseError =
+    isSticker && pricePerUse < perUseFloor
+      ? `A single use must cost at least ${perUseFloor} Buzz`
       : null;
   // Same normalization the server applies, so what's validated here is what's saved.
   const normalizedSlug = slug.trim().toLowerCase();
@@ -205,7 +219,7 @@ export function useSubmitCreatorShopForm({
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
-    (!isSticker || (slugFormatOk && !slugTaken && !usesError));
+    (!isSticker || (slugFormatOk && !slugTaken && !usesError && !pricePerUseError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -249,6 +263,12 @@ export function useSubmitCreatorShopForm({
             normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
         )
           payload.slug = normalizedSlug;
+        // The economics were editable in this form but never sent, so changing
+        // them did nothing. Sent on any change, and on an artwork swap for the
+        // same reason as the slug.
+        if (isSticker && (artReplaced || uses !== existingEconomics.uses)) payload.uses = uses;
+        if (isSticker && (artReplaced || pricePerUse !== existingEconomics.pricePerUse))
+          payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
@@ -267,6 +287,7 @@ export function useSubmitCreatorShopForm({
           offsets: normalizedOffsets,
           slug: isSticker ? normalizedSlug : undefined,
           uses: isSticker ? uses : undefined,
+          pricePerUse: isSticker ? pricePerUse : undefined,
         });
       }
       resetFiles();
@@ -298,6 +319,10 @@ export function useSubmitCreatorShopForm({
     uses,
     setUses,
     usesError,
+    pricePerUse,
+    setPricePerUse,
+    pricePerUseError,
+    perUseFloor,
     slug,
     setSlug,
     slugError,
