@@ -19,7 +19,7 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 // eslint-disable-next-line import/first
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 
 // H2: the host-rendered "trust frame" around an in-model app block must NAME the
 // app (host-side, spoof-proof) — not just carry it in the invisible iframe
@@ -299,12 +299,6 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     clearRecentlyOpenedApps();
   });
 
-  // A data: URI that actually loads — an http URL fails in-browser (Mantine Avatar
-  // fires onError and swaps the <img> for a placeholder span ~11 ms after mount),
-  // making the `expect(img).not.toBeNull()` assertion race the error path.
-  const LOADABLE_ICON =
-    'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-
   // The platform-nav Menu mounts its dropdown lazily — open it first (its trigger
   // is "Apps menu", distinct from the ⋯ "App menu").
   async function openPlatformNav() {
@@ -320,7 +314,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
       id: 'other',
       blockId: 'other-block',
       name: 'Other App',
-      iconUrl: LOADABLE_ICON,
+      iconUrl: LOADABLE_IMAGE_DATA_URI,
     });
 
     renderWithProviders(
@@ -342,7 +336,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     expect(other.getAttribute('href')).toBe('/apps/run/other-block');
     const otherImg = other.querySelector('img');
     expect(otherImg).not.toBeNull();
-    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_ICON);
+    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
 
     // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
     const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;

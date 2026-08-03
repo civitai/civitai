@@ -946,8 +946,215 @@ const noModuleScopeCache = {
   },
 };
 
+/**
+ * no-unloadable-image-fixture
+ *
+ * Flags an http(s) URL string LITERAL used as an image source in a browser-mode
+ * component test (`*.browser.test.tsx`).
+ *
+ * Nothing serves an external URL to the test browser, so such an `<img>` never
+ * loads: the element's real `error` event fires a few milliseconds after mount
+ * and every image-rendering component in this codebase has an `onError` fallback
+ * that then DESTROYS the `<img>` and swaps in a placeholder. Mantine 7.17.8's
+ * `Avatar` is the sharpest case — `useState(!src)` + `onError -> setError(true)`,
+ * measured at ~11 ms from mount to swap. Any assertion that the `<img>` EXISTS is
+ * therefore racing that window: green on a fast local machine, intermittently red
+ * on a loaded CI box. That exact defect sat red on `main` across five PRs before
+ * #3551 fixed it, and the fixture it fixed was a duplicate of one that already
+ * existed in another test file — a convention nobody could see was not enough.
+ *
+ * Fix: use the shared `LOADABLE_IMAGE_DATA_URI` from `test/component-setup`. It
+ * is a 1x1 transparent PNG `data:` URI, so it resolves locally and synchronously
+ * and the `<img>` survives the whole test.
+ *
+ * Measured population at the time of writing (all 117 `*.browser.test.tsx`
+ * instrumented with a document-level capture listener that records every `<img>`
+ * firing a real `error` event with an http(s) src): 14 distinct external image
+ * URLs across 6 files really do mount as broken images today. They are latent,
+ * not theoretical — each becomes a flake the day someone adds an `<img>`
+ * assertion beside it, which is precisely what happened to AppBlockChrome.
+ *
+ * SCOPE / false-positive control. Two independent conditions must hold, so the
+ * rule cannot reach a non-image URL:
+ *   1. the literal must start `http://` or `https://`, AND
+ *   2. it must sit in an image-source position:
+ *      - a property / JSX attribute / variable named as an unambiguous image
+ *        source (`iconUrl`, `coverUrl`, `iconImageUrl`, `coverImageUrl`,
+ *        `imageUrl`, `avatarUrl`, `thumbnailUrl`, `logoUrl`, `posterUrl`,
+ *        `bannerUrl`, `backgroundImageUrl`) — these can only ever be an image; or
+ *      - the AMBIGUOUS `src`, which is additionally required to point at an
+ *        image file extension, or to sit on an `<img>`-family JSX element.
+ * `src` is gated that way on purpose: `iframe: { src: 'https://example.com/block' }`
+ * in OnsiteReviewModal.browser.test.tsx is an iframe document, not an image, and
+ * must not be reported. A URL that merely *appears* in a test (`liveUrl`,
+ * `externalUrl`, `reviewRepoUrl`, a markdown body such as AgentReviewChat's
+ * `![tracking](https://example.com/pixel.png)`) is likewise untouched — it is not
+ * in an image-source position, so it can never mount an `<img>` this way.
+ *
+ * Not covered, deliberately: a same-origin RELATIVE path that 404s
+ * (`/api/blocks/screenshot/app-1/0.png` in AppBlockCard / AppDetailsModal) is
+ * also unloadable, but "relative path that happens not to be served" is not
+ * decidable from the source text, and treating every relative image path as
+ * suspect would flag the many that a component genuinely renders from fixtures.
+ * The http(s) form is the one that is unloadable BY CONSTRUCTION.
+ *
+ * ESCAPE HATCH. An unloadable image is sometimes the point — testing an
+ * `onError` fallback needs a URL that really fails. Opt out per line, with a
+ * reason, matching the convention the repo's other local rules use:
+ *   // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- <reason>
+ * There is one such site in the repo today: the deliberate broken-cover test in
+ * AppListingCard.browser.test.tsx.
+ */
+const IMAGE_URL_KEYS = new Set([
+  'iconUrl',
+  'coverUrl',
+  'iconImageUrl',
+  'coverImageUrl',
+  'imageUrl',
+  'avatarUrl',
+  'thumbnailUrl',
+  'logoUrl',
+  'posterUrl',
+  'bannerUrl',
+  'backgroundImageUrl',
+]);
+
+/** Keys that MIGHT be an image but are also used for iframes/scripts/media. */
+const AMBIGUOUS_SRC_KEYS = new Set(['src']);
+
+/** JSX elements whose `src` is unambiguously an image. */
+const IMAGE_ELEMENTS = new Set(['img', 'Img', 'Image', 'Avatar', 'EdgeMedia']);
+
+const HTTP_URL_RE = /^https?:\/\//i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|apng|tiff?)(?:[?#]|$)/i;
+
+/** The literal's string value, or null if it isn't a plain string literal. */
+function plainStringValue(node) {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (
+    node.type === 'TemplateLiteral' &&
+    node.expressions.length === 0 &&
+    node.quasis.length === 1
+  ) {
+    return node.quasis[0].value.cooked;
+  }
+  return null;
+}
+
+/** Property / JSX-attribute / variable name a literal is bound to, plus its JSX element. */
+function bindingFor(node) {
+  const parent = node.parent;
+  if (!parent) return null;
+
+  // { iconUrl: 'https://…' }  /  { 'icon-url': 'https://…' }
+  if (parent.type === 'Property' && parent.value === node && !parent.computed) {
+    const key = parent.key;
+    const name =
+      key.type === 'Identifier' ? key.name : key.type === 'Literal' ? String(key.value) : null;
+    return name ? { name, element: null } : null;
+  }
+
+  // <img src="https://…" />  /  <Avatar src={'https://…'} />
+  let attr = null;
+  if (parent.type === 'JSXAttribute' && parent.value === node) attr = parent;
+  else if (
+    parent.type === 'JSXExpressionContainer' &&
+    parent.parent &&
+    parent.parent.type === 'JSXAttribute' &&
+    parent.parent.value === parent
+  ) {
+    attr = parent.parent;
+  }
+  if (attr && attr.name && attr.name.type === 'JSXIdentifier') {
+    const opening = attr.parent;
+    const elName =
+      opening && opening.name && opening.name.type === 'JSXIdentifier' ? opening.name.name : null;
+    return { name: attr.name.name, element: elName };
+  }
+
+  // const iconUrl = 'https://…'
+  if (
+    parent.type === 'VariableDeclarator' &&
+    parent.init === node &&
+    parent.id.type === 'Identifier'
+  ) {
+    return { name: parent.id.name, element: null };
+  }
+
+  // obj.iconUrl = 'https://…'
+  if (
+    parent.type === 'AssignmentExpression' &&
+    parent.right === node &&
+    parent.left.type === 'MemberExpression' &&
+    !parent.left.computed &&
+    parent.left.property.type === 'Identifier'
+  ) {
+    return { name: parent.left.property.name, element: null };
+  }
+
+  return null;
+}
+
+const noUnloadableImageFixture = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Disallow an http(s) URL literal as an image source in a *.browser.test.tsx fixture — nothing serves it to the test browser, so the <img> errors and every onError fallback in this codebase destroys it a few ms after mount, making any "the <img> exists" assertion an intermittent CI flake. Use LOADABLE_IMAGE_DATA_URI from test/component-setup.',
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          extraKeys: { type: 'array', items: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      unloadableImageFixture:
+        "`{{key}}: '{{url}}'` is an http(s) image source in a browser test — nothing serves it to the test browser, so the <img> fires a real `error` event a few ms after mount and the component's onError fallback replaces it with a placeholder (Mantine Avatar: measured ~11 ms). Any assertion that the <img> EXISTS then races that window — green locally, intermittently red on a loaded CI box. This exact defect sat red on `main` across five PRs (fixed in #3551). Use the shared fixture instead: `import { LOADABLE_IMAGE_DATA_URI } from '<relative>/test/component-setup';` — a 1x1 transparent PNG data: URI that resolves locally, so the <img> survives the whole test. If the image is MEANT to fail to load (you are testing the onError/placeholder path), say so explicitly: // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- <reason>",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const keys = new Set([...IMAGE_URL_KEYS, ...(options.extraKeys || [])]);
+
+    function check(node) {
+      const url = plainStringValue(node);
+      if (url === null || !HTTP_URL_RE.test(url)) return;
+
+      const binding = bindingFor(node);
+      if (!binding) return;
+
+      const { name, element } = binding;
+      if (!keys.has(name)) {
+        // `src` only counts when we can prove it is an image: either the URL
+        // names an image file, or the JSX element is an image component. That
+        // is what keeps `iframe: { src: 'https://example.com/block' }` clean.
+        if (!AMBIGUOUS_SRC_KEYS.has(name)) return;
+        const provablyImage = IMAGE_EXT_RE.test(url) || (element && IMAGE_ELEMENTS.has(element));
+        if (!provablyImage) return;
+      }
+
+      context.report({
+        node,
+        messageId: 'unloadableImageFixture',
+        data: { key: name, url },
+      });
+    }
+
+    return {
+      Literal: check,
+      TemplateLiteral: check,
+    };
+  },
+};
+
 module.exports = {
   'no-io-in-transaction': noIoInTransaction,
   'no-module-scope-cache': noModuleScopeCache,
+  'no-unloadable-image-fixture': noUnloadableImageFixture,
   'no-wholesale-module-mock': noWholesaleModuleMock,
 };

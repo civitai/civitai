@@ -38,7 +38,7 @@ import { page } from 'vitest/browser';
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -439,7 +439,7 @@ describe('AppListingCard', () => {
     mocks.currentUser = { id: 5, username: 'alice' };
     renderWithProviders(
       <AppListingCard
-        card={base({ iconUrl: 'https://edge/icon.png', coverUrl: 'https://edge/cover.png' })}
+        card={base({ iconUrl: LOADABLE_IMAGE_DATA_URI, coverUrl: LOADABLE_IMAGE_DATA_URI })}
         canOpenPage
       />
     );
@@ -474,14 +474,10 @@ describe('AppListingCard', () => {
   // art is inside it) rather than measured pixels — measured geometry would be
   // meaningless without the stylesheet.
 
-  // A 1x1 transparent PNG. A real (non-network) src that LOADS, so the <img>
-  // survives — any http(s) URL fails to fetch in the test browser and trips the
-  // component's own onError → placeholder path (exercised separately below).
-  const LOADABLE_PNG =
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-
   test('cover image renders INSIDE the 16:9 aspect box', async () => {
-    renderWithProviders(<AppListingCard card={base({ coverUrl: LOADABLE_PNG })} canOpenPage />);
+    renderWithProviders(
+      <AppListingCard card={base({ coverUrl: LOADABLE_IMAGE_DATA_URI })} canOpenPage />
+    );
     await expect.element(page.getByTestId('apps-listing-cover')).toBeInTheDocument();
     const box = page.getByTestId('apps-listing-cover').element() as HTMLElement;
     // 16:9 — this is what derives the box height from the fluid column width, so
@@ -492,7 +488,7 @@ describe('AppListingCard', () => {
     // it would not be bounded by the reserved geometry.
     const img = box.querySelector('img');
     expect(img).not.toBeNull();
-    expect(img?.getAttribute('src')).toBe(LOADABLE_PNG);
+    expect(img?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
     expect(img?.getAttribute('alt')).toBe('My App cover image');
     // Absolutely filling the box — NOT a percentage height, which would have to
     // resolve against a ratio-derived block size and could silently crop the art
@@ -525,9 +521,14 @@ describe('AppListingCard', () => {
 
   test('a BROKEN cover URL falls back to the placeholder in the SAME box (no reflow, still aria-hidden)', async () => {
     // An unfetchable URL — the browser fires the <img>'s real `error` event, which
-    // is the component's own onError → placeholder path.
+    // is the component's own onError → placeholder path. This is the ONE shape the
+    // shared LOADABLE_IMAGE_DATA_URI cannot express: the whole point is that the
+    // fetch must FAIL. Every assertion below is on the post-error state (guarded by
+    // a `vi.waitFor` on the placeholder), so nothing here races the swap the way an
+    // "<img> exists" assertion would.
     renderWithProviders(
       <AppListingCard
+        // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- testing the onError → placeholder path; this URL MUST fail to load
         card={base({ coverUrl: 'https://edge.invalid/does-not-exist.png' })}
         canOpenPage
       />
