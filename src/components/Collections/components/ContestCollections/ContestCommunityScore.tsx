@@ -321,9 +321,53 @@ function CategoryTable({
   );
 }
 
+const boundSourceLabels: Record<ContestCommunityScoreResult['eligibility']['startSource'], string> =
+  {
+    submissionStartDate: 'contest submission start',
+    submissionEndDate: 'contest submission end',
+    endsAt: 'contest end date',
+    collectionCreatedAt: 'collection creation date (no submission start is set)',
+  };
+
+/**
+ * The two windows, side by side. Which dates decided ELIGIBILITY is not inferable from
+ * the pickers — narrowing them changes only what was counted — so the header says it
+ * outright rather than leaving a moderator to assume the one they set is both.
+ */
+function WindowSummary({ score }: { score: ContestCommunityScoreResult }) {
+  return (
+    <Group gap="xl">
+      <Stack gap={0}>
+        <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+          Eligibility window
+        </Text>
+        <Text size="sm">
+          {formatDate(score.eligibility.start)} – {formatDate(score.eligibility.end)}
+        </Text>
+        <Text size="xs" c="dimmed">
+          Versions created here qualify · from {boundSourceLabels[score.eligibility.startSource]} to{' '}
+          {boundSourceLabels[score.eligibility.endSource]}
+        </Text>
+      </Stack>
+      <Stack gap={0}>
+        <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+          Counted window
+        </Text>
+        <Text size="sm">
+          {formatDate(score.window.start)} – {formatDate(score.window.effectiveEnd)}
+        </Text>
+        <Text size="xs" c="dimmed">
+          Traffic counted · narrowing this never changes eligibility
+        </Text>
+      </Stack>
+    </Group>
+  );
+}
+
 function ScoreBody({ score }: { score: ContestCommunityScoreResult }) {
   return (
     <Stack gap="lg">
+      <WindowSummary score={score} />
       {/* Driven by the score itself, not by the live query, so a snapshot taken
           mid-contest carries the same warning as the live view it came from. */}
       {score.partial && (

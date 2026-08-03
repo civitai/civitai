@@ -81,7 +81,7 @@ const nowUtc = Prisma.raw(`(NOW() AT TIME ZONE 'UTC')`);
  * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
  * a disputed result can be traced to the code that produced it.
  */
-export const CONTEST_SCORE_CODE_VERSION = 4;
+export const CONTEST_SCORE_CODE_VERSION = 5;
 
 /**
  * Comments and tips are deliberately unweighted: both are trivially launderable
@@ -339,9 +339,18 @@ export type ResolvedWindow = {
   ageCutoff: Date;
   contestStart: Date;
   contestEnd: Date;
+  contestStartSource: ContestBoundSource;
+  contestEndSource: ContestBoundSource;
   /** `Collection.metadata.baseModels` — the rule entrants were actually told. */
   declaredBaseModels: string[];
 };
+
+/** Which field an eligibility bound came from, so a run can say so rather than imply it. */
+export type ContestBoundSource =
+  | 'submissionStartDate'
+  | 'submissionEndDate'
+  | 'endsAt'
+  | 'collectionCreatedAt';
 
 /**
  * Derived from the collection's own contest metadata, never defaulted. An absent
@@ -355,14 +364,24 @@ async function resolveWindow(
 ): Promise<ResolvedWindow> {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, mode: true, metadata: true },
+    select: { id: true, mode: true, metadata: true, createdAt: true },
   });
   if (!collection) throw new ContestScoringError(`Collection ${collectionId} not found`);
   if (collection.mode !== CollectionMode.Contest)
     throw new ContestScoringError(`Collection ${collectionId} is not a contest collection`);
 
+  // A hard failure, never a silent `{}`. Eligibility reads two metadata fields, and a
+  // fallback shape would drop the contest start to the display window AND empty the
+  // declared base models — handing the rule back to the config row — with nothing on
+  // screen to say so. This is reachable: the schema refines `baseModels` against
+  // `basemodel.constants.ts`, so retiring a base model stops every contest naming it
+  // from parsing.
   const parsed = collectionMetadataSchema.safeParse(collection.metadata ?? {});
-  const metadata = parsed.success ? parsed.data : {};
+  if (!parsed.success)
+    throw new ContestScoringError(
+      `Collection ${collectionId} has contest metadata that no longer parses, so its contest window and base models cannot be trusted: ${parsed.error.message}`
+    );
+  const metadata = parsed.data;
 
   const start = input.start ?? metadata.submissionStartDate;
   const end = input.end ?? metadata.submissionEndDate ?? metadata.endsAt;
@@ -375,12 +394,31 @@ async function resolveWindow(
       `Collection ${collectionId} has neither submissionEndDate nor endsAt, and no explicit window end was given.`
     );
 
-  // Always the contest's own bounds, never a narrowed display window — otherwise
-  // zooming the view would drag the age gate and version eligibility along with it.
-  // They fall back to the resolved window only for a contest carrying no submission
-  // dates at all, where the caller's dates are the only definition available.
-  const contestStart = metadata.submissionStartDate ?? start;
-  const contestEnd = metadata.submissionEndDate ?? metadata.endsAt ?? end;
+  // The contest's own bounds, and NEVER the display window: these decide the age gate
+  // and which versions qualify, so letting them fall back to the date pickers would
+  // hand eligibility to whoever is looking at the screen. The two bounds resolve
+  // independently — the common `endsAt`-only shape satisfies the end while leaving the
+  // start with no submission date at all — so each carries its own fallback.
+  //
+  // `Collection.createdAt` is the backstop because it is structural and cannot be
+  // nudged: a contest's entries cannot predate the collection holding them. Where even
+  // that is unavailable the run refuses rather than scoring against an arbitrary line.
+  const contestStart = metadata.submissionStartDate ?? collection.createdAt;
+  const contestStartSource: ContestBoundSource = metadata.submissionStartDate
+    ? 'submissionStartDate'
+    : 'collectionCreatedAt';
+  const contestEnd = metadata.submissionEndDate ?? metadata.endsAt;
+  const contestEndSource: ContestBoundSource = metadata.submissionEndDate
+    ? 'submissionEndDate'
+    : 'endsAt';
+  if (!contestStart)
+    throw new ContestScoringError(
+      `Collection ${collectionId} has no submissionStartDate and no creation date, so there is no trustworthy start for deciding which versions qualify.`
+    );
+  if (!contestEnd)
+    throw new ContestScoringError(
+      `Collection ${collectionId} has neither submissionEndDate nor endsAt, so there is no trustworthy end for deciding which versions qualify. An explicit window end only narrows the view; it cannot define the contest.`
+    );
   const ageCutoff = new Date(contestStart.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
 
   // Belt and braces behind the schema's `nonnegative()`: a row written before that
@@ -402,6 +440,8 @@ async function resolveWindow(
     ageCutoff,
     contestStart,
     contestEnd,
+    contestStartSource,
+    contestEndSource,
     declaredBaseModels: metadata.baseModels?.filter(Boolean) ?? [],
   };
 }
@@ -1215,7 +1255,19 @@ export type ContestScoreCategory = {
 export type ContestCommunityScore = {
   collectionId: number;
   generatedAt: string;
+  /** The DISPLAY window — which traffic was counted. */
   window: { start: string; end: string; effectiveEnd: string };
+  /**
+   * The contest itself — which versions qualified, and therefore who was eligible.
+   * Distinct from `window` on purpose: a moderator narrowing the pickers changes the
+   * former and must never change the latter, and the header says which is which.
+   */
+  eligibility: {
+    start: string;
+    end: string;
+    startSource: ContestBoundSource;
+    endSource: ContestBoundSource;
+  };
   partial: boolean;
   statuses: CollectionItemStatus[];
   entryCount: number;
@@ -1289,6 +1341,12 @@ async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
       start: window.start.toISOString(),
       end: window.end.toISOString(),
       effectiveEnd: window.effectiveEnd.toISOString(),
+    },
+    eligibility: {
+      start: window.contestStart.toISOString(),
+      end: window.contestEnd.toISOString(),
+      startSource: window.contestStartSource,
+      endSource: window.contestEndSource,
     },
     partial: window.partial,
     statuses,
