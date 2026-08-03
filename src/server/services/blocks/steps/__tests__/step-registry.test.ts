@@ -118,6 +118,35 @@ function makeAuditedFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlock
   } as Partial<AnyBlockStep>);
 }
 
+/** The generated text the `'textOutput'` fixture's extractor reads. */
+const FIXTURE_TEXT_OUTPUT_STEP = {
+  $type: 'fixtureType',
+  output: {
+    blob: { url: 'https://blobs.example/fixture.webp', available: true, width: 4, height: 5 },
+    choices: [{ message: { content: 'a generated reply' } }],
+  },
+};
+
+/**
+ * A minimal VALID `'textOutput'` fixture — the same base, plus the two things
+ * that posture requires: an `extractText` declaration and a canonical output
+ * that actually carries text for it to find.
+ */
+function makeTextOutputFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+  return makeFixtureStep({
+    moderationPosture: 'textOutput',
+    canonicalOutputFor: (): unknown => FIXTURE_TEXT_OUTPUT_STEP,
+    extractText: (step: unknown) =>
+      (
+        (step as { output?: { choices?: Array<{ message?: { content?: string } }> } })?.output
+          ?.choices ?? []
+      )
+        .map((c) => c.message?.content ?? '')
+        .filter((t) => t.length > 0),
+    ...overrides,
+  } as Partial<AnyBlockStep>);
+}
+
 describe('block step registry — the shipped population', () => {
   it('registers at least one step and derives the wire ids from the registry keys', () => {
     const entries = listRegisteredSteps();
@@ -235,21 +264,29 @@ describe('block step registry — the shipped population', () => {
     expect(isBillingModeImplemented('tokenMetered')).toBe(false);
   });
 
-  it('free-text INPUT is implemented; free-text OUTPUT still is not', () => {
+  it('every declared posture now has an implemented handler', () => {
     // 🔴 The mechanism that makes a text-producing step impossible to register
     // without an explicit, reviewed policy answer in code.
     //
-    // `'promptAudit'` (free-text INPUT) is now implemented: #3527 answered that
-    // half — mature content is permitted for App Blocks, bounded by the token's
-    // server-minted maturity ceiling, so a free-text input needs the SAME
-    // `auditPromptServer` pass `textToImage`/`customComfy` run, not a new policy.
+    // `'promptAudit'` (free-text INPUT) was answered by #3527: mature content is
+    // permitted for App Blocks, bounded by the token's server-minted maturity
+    // ceiling, so a free-text input needs the SAME `auditPromptServer` pass
+    // `textToImage`/`customComfy` run, not a new policy.
     //
-    // `'textOutput'` is unchanged and deliberately so: generated text is scanned
-    // by nothing on any current path. If THAT ever flips to true, someone made a
-    // content-policy decision — make sure they meant to.
+    // `'textOutput'` (free-text OUTPUT) is now answered too: an owner-approved
+    // 15-label `xGuardModeration` text scan at the READ boundary, withholding on
+    // a hit in either policy tier and on any scanner failure. The policy lives
+    // in `steps/text-output-moderation`; the phase wiring in `steps/moderation`.
+    //
+    // 🔴 THIS ASSERTION NO LONGER CARRIES THE "un-registrable until someone
+    // answers" PROPERTY FOR ANY EXISTING POSTURE — all three are answered. What
+    // still carries it is `posturePhaseRequirements` + the phase table assert:
+    // a NEW posture added to the union with no handler in its required phase is
+    // still a load-time failure. Do not read a green here as proof that gate is
+    // intact; the phase-table tests are where that evidence lives.
     expect(isModerationPostureImplemented('none')).toBe(true);
     expect(isModerationPostureImplemented('promptAudit')).toBe(true);
-    expect(isModerationPostureImplemented('textOutput')).toBe(false);
+    expect(isModerationPostureImplemented('textOutput')).toBe(true);
   });
 
   // 🔴 LABELLED HONESTLY: an INVARIANT GUARD, not regression coverage. Every
@@ -313,9 +350,18 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
   });
 
   it('rejects a moderation posture with no implemented handler', () => {
+    // 🔴 THE FIXTURE POSTURE IS UNDECLARED ON PURPOSE. Every posture in the
+    // union now HAS a handler, so this clause is no longer reachable with a real
+    // posture value — and a guard nothing can reach is a guard nobody is
+    // testing. An off-union value is what the clause actually defends against
+    // now: a posture added to `StepModerationPosture` (or arriving from a
+    // non-literal source later) before its handler exists.
     expect(() =>
-      assertStepInvariants('fixture-step', makeFixtureStep({ moderationPosture: 'textOutput' }))
-    ).toThrow(/moderationPosture 'textOutput' has no implemented handler/);
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ moderationPosture: 'audioOutput' as StepModerationPosture })
+      )
+    ).toThrow(/moderationPosture 'audioOutput' has no implemented handler/);
   });
 
   // ── 🔴 THE `'promptAudit'` POSTURE — "audits nothing" must be impossible ────
@@ -399,6 +445,102 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
         } as unknown as Partial<AnyBlockStep>)
       )
     ).toThrow(/auditableText\(\) returned a non-string negativePrompt/);
+  });
+
+  // ── 🔴 THE `'textOutput'` POSTURE — clauses 1c + 8a ────────────────────────
+  //
+  // The OUTPUT-side twins of the two clauses above, guarding the same defect
+  // class one phase later. `extractText` is what the scan reads AND what a
+  // release publishes, so an entry that satisfies it vacuously is a step that
+  // charges Buzz, succeeds, and can never return a word — the MEDIA version of
+  // which this registry already shipped once (clause 8).
+
+  it('the textOutput fixture PASSES unmutated — every failure below is the mutation', () => {
+    // 🔴 REACHABILITY. Without this, each mutation below could be dying to a
+    // clause that rejects the whole `'textOutput'` shape rather than to the one
+    // named in its assertion.
+    expect(() => assertStepInvariants('fixture-step', makeTextOutputFixtureStep())).not.toThrow();
+  });
+
+  it("rejects a 'textOutput' entry that declares NO extractText (a posture with no output)", () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ moderationPosture: 'textOutput' } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(
+      /moderationPosture 'textOutput' requires an extractText\(\) declaration naming the generated text to scan/
+    );
+  });
+
+  it('rejects an entry that declares extractText under a posture that never scans it', () => {
+    // The reverse direction. An extractor that LOOKS like generated-text
+    // coverage and is never called — the read path only invokes it for a
+    // `'textOutput'` entry.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          moderationPosture: 'none',
+          extractText: () => ['a generated reply'],
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/declares extractText\(\) but moderationPosture 'none' never scans it/);
+  });
+
+  it('rejects extractText that returns an EMPTY array (the inert-capability case)', () => {
+    // 🔴 The `() => []` escape clause 8 exists for, on the text axis. Not a
+    // moderation hole — the read path publishes only what the extractor returns,
+    // so nothing unscanned escapes — but a capability that can never speak.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({ extractText: () => [] } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractText\(\) returned no text for canonicalOutputFor\(\)/);
+  });
+
+  it('rejects extractText that ignores its argument and returns a non-array', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({
+          extractText: () => 'a generated reply',
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractText\(\) returned no text for canonicalOutputFor\(\)/);
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['whitespace only', '  \n\t '],
+    ['a number', 42],
+    ['null', null],
+  ])('rejects extractText returning %s as an entry', (_label, value) => {
+    // Whitespace is as vacuous as empty here for the same reason it is on the
+    // input side — the scan filters blank text, so a whitespace-only "output"
+    // would be scanned by nothing while the entry reports coverage.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({
+          extractText: () => [value],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractText\(\) returned a non-string or empty entry/);
+  });
+
+  it('accepts extractText returning SEVERAL non-empty strings', () => {
+    // The negative control for the clause above: it must reject unusable
+    // entries, not multi-piece output.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({
+          extractText: () => ['first piece', 'second piece'],
+        } as Partial<AnyBlockStep>)
+      )
+    ).not.toThrow();
   });
 
   // ── 🔴 FIX 3 — the ENTITLEMENT axis ────────────────────────────────────────
@@ -1150,17 +1292,31 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     }
   });
 
-  it('the HONEST declaration still reports clause 1, not clause 1b', () => {
-    // `chatCompletion` + `'textOutput'` is the correct declaration; it cannot
-    // register because the posture has no handler yet. The author must see THAT
-    // reason, not a type mismatch — which is the whole point of ordering 1b
-    // after 1. If this flips, the honest entry gets a misleading error.
+  it('the HONEST declaration now REGISTERS — clause 1b does not stand in its way', () => {
+    // `chatCompletion` + `'textOutput'` is the correct declaration, and with the
+    // posture implemented it is a registrable entry rather than a load failure.
+    // 🔴 This is the assertion that would catch `ACCEPTABLE_POSTURES_BY_TYPE`
+    // being wrong about `chatCompletion`: before, a clause-1 rejection masked
+    // whatever clause 1b thought, so 1b was never actually exercised for the
+    // honest shape.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({ orchestratorType: 'chatCompletion' })
+      )
+    ).not.toThrow();
+  });
+
+  it('an INCOMPLETE textOutput declaration reports the missing extractor, not a type mismatch', () => {
+    // The author who declares the right posture on the right `$type` but forgets
+    // the extractor must be told THAT — the ordering property the previous test
+    // used to cover via clause 1.
     expect(() =>
       assertStepInvariants(
         'fixture-step',
         makeFixtureStep({ orchestratorType: 'chatCompletion', moderationPosture: 'textOutput' })
       )
-    ).toThrow(/has no implemented handler/);
+    ).toThrow(/requires an extractText\(\) declaration/);
   });
 
   it('rejects a text-producing $type declaring promptAudit — the input-only answer', () => {

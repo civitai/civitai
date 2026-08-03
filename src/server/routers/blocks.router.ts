@@ -159,7 +159,10 @@ import {
 // itself is imported by `workflow.schema` for the wire enum, which must stay
 // import-light. Dispatches on the entry's declared `moderationPosture`, so this
 // router keeps no per-posture branch either.
-import { runStepModeration } from '~/server/services/blocks/steps/moderation';
+import {
+  attachModeratedStepTextOutputs,
+  runStepModeration,
+} from '~/server/services/blocks/steps/moderation';
 // Instrument-only: records EVERY prepaidFixed step price check at submit —
 // `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
 // from a detector that never ran. Never throws.
@@ -3071,7 +3074,23 @@ export const blocksRouter = router({
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
+      // generated text (it reads `extractOutput`, which returns media), so this
+      // wrapper is the ONLY thing that can — and it scans before it does. The
+      // poll is the surface that matters: it is the snapshot a block renders a
+      // finished generation from.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          // 🔴 The token's server-minted maturity ceiling — same source the
+          // submit-phase prompt audit uses. Never a request-body field.
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          appBlockId: claims.blockId,
+        }
+      );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
       // The orchestrator completion callback (`workflow-completed.ts`) is not
       // wired to fire, so `block_workflows` rows otherwise stay `pending`
@@ -3203,7 +3222,19 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      // Same output-moderation boundary as `pollWorkflow`. A CANCEL still
+      // returns a snapshot of whatever the orchestrator had produced, so it is a
+      // real text-publishing surface and not a formality.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          appBlockId: claims.blockId,
+        }
+      );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
       // accrued cost (orchestrator-side, non-refundable), so settle refunds the
       // reserved CEILING down to that accrued `cost.total` on BOTH reservation

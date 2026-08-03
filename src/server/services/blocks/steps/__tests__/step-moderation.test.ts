@@ -23,9 +23,18 @@ import * as z from 'zod';
  * ClickHouse, the DB client and the notification service).
  */
 
-const { mockAuditPromptServer } = vi.hoisted(() => ({ mockAuditPromptServer: vi.fn() }));
+const { mockAuditPromptServer, mockCreateXGuardModerationRequest } = vi.hoisted(() => ({
+  mockAuditPromptServer: vi.fn(),
+  mockCreateXGuardModerationRequest: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: mockAuditPromptServer,
+}));
+// The OUTPUT phase reaches `createXGuardModerationRequest`, which pulls the
+// Prisma client and the orchestrator HTTP client at import time. Mocked at the
+// module boundary for the same reason `auditPromptServer` is.
+vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
+  createXGuardModerationRequest: mockCreateXGuardModerationRequest,
 }));
 
 import {
@@ -246,22 +255,26 @@ describe('step moderation — dispatch over the posture table', () => {
     expect(loadIsModerator).not.toHaveBeenCalled();
   });
 
-  it("the unimplemented 'textOutput' posture FAILS CLOSED with a named error", async () => {
-    // Never `undefined is not a function`: a deliberate, named 500 on the seam.
-    await expect(
-      runStepModeration(
-        request({
-          step: makeStep({
-            moderationPosture: 'textOutput',
-            auditableText: undefined,
-          } as Partial<AnyBlockStep>),
-        })
-      )
-    ).rejects.toMatchObject({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: "step 'fixture-step' declares an unimplemented moderation posture",
-    });
+  it("the 'textOutput' posture runs NOTHING at submit and does not resolve the viewer", async () => {
+    // 🔴 THE INERTNESS TRAP, ASSERTED FROM THE SUBMIT SIDE. `'textOutput'` scans
+    // GENERATED text, which does not exist at submit — the orchestrator has not
+    // been called. So the correct submit-phase behaviour is to do nothing, and
+    // the thing that makes that safe rather than inert is that the posture's
+    // REQUIRED phase is `output` (`posturePhaseRequirements`), asserted at module
+    // load. A submit-phase handler for this posture is a BUILD failure; see the
+    // phase-table suite below.
+    const loadIsModerator = vi.fn();
+    await runStepModeration(
+      request({
+        step: makeStep({
+          moderationPosture: 'textOutput',
+          auditableText: undefined,
+        } as Partial<AnyBlockStep>),
+        loadIsModerator,
+      })
+    );
     expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    expect(loadIsModerator).not.toHaveBeenCalled();
   });
 
   // 🔴 THE PROTOTYPE-KEY ATTACK. A plain object literal inherits from
@@ -339,45 +352,104 @@ describe('step moderation — dispatch over the posture table', () => {
       } catch (e) {
         error = e;
       }
-      if (posture === 'textOutput') {
-        expect(String((error as { message?: string })?.message)).toContain(
-          'unimplemented moderation posture'
-        );
-      } else {
-        expect(error, `posture '${posture}' should have an implemented handler`).toBeUndefined();
-      }
+      expect(error, `posture '${posture}' should have an implemented handler`).toBeUndefined();
     }
   });
 });
 
-describe('step moderation — the handler table cannot drift from the declaration', () => {
-  const noop = async () => undefined;
+describe('step moderation — the PHASE table cannot drift from the declaration', () => {
+  const submitNoop = async () => undefined;
+  const outputNoop = async () => ({ released: true as const, texts: [] });
 
-  it('the SHIPPED table passes (it is asserted at module load; this pins it)', () => {
-    expect(() =>
-      assertModerationHandlerTable({ none: noop, promptAudit: noop, textOutput: null })
-    ).not.toThrow();
+  /** The shape the shipped table has. Every case below mutates exactly one slot. */
+  const shipped = () => ({
+    none: { submit: null, output: null },
+    promptAudit: { submit: submitNoop, output: null },
+    textOutput: { submit: null, output: outputNoop },
   });
 
-  it('rejects an IMPLEMENTED posture whose handler is absent (a 500 on a spend path)', () => {
-    expect(() =>
-      assertModerationHandlerTable({ none: noop, promptAudit: null, textOutput: null })
-    ).toThrow(/posture 'promptAudit' is declared IMPLEMENTED but its handler is absent/);
+  it('the SHIPPED shape passes (it is asserted at module load; this pins it)', () => {
+    // 🔴 THE CONTROL. If this ever throws, every rejection below could be dying
+    // to a clause other than the one it names.
+    expect(() => assertModerationHandlerTable(shipped())).not.toThrow();
   });
 
-  it('rejects an UNIMPLEMENTED posture that has a handler (the gate would be a lie)', () => {
+  it('rejects a posture whose REQUIRED phase has no handler (a 500 on a spend path)', () => {
     expect(() =>
-      assertModerationHandlerTable({ none: noop, promptAudit: noop, textOutput: noop })
-    ).toThrow(/posture 'textOutput' is declared UNIMPLEMENTED but its handler is present/);
+      assertModerationHandlerTable({ ...shipped(), promptAudit: { submit: null, output: null } })
+    ).toThrow(/posture 'promptAudit' is declared IMPLEMENTED but its required phases are MISSING/);
+  });
+
+  it("rejects a 'textOutput' posture with no OUTPUT handler", () => {
+    expect(() =>
+      assertModerationHandlerTable({ ...shipped(), textOutput: { submit: null, output: null } })
+    ).toThrow(/posture 'textOutput' is declared IMPLEMENTED but its required phases are MISSING/);
+  });
+
+  // 🔴 THE CLAUSE THAT MAKES THE POSTURE UN-FAKEABLE, AND THE REASON THE TABLE
+  // IS KEYED BY PHASE AT ALL.
+  //
+  // This is the mutation that WOULD SHIP AN INERT FEATURE if the assert only
+  // counted handlers: `'textOutput'` satisfied by a SUBMIT-phase handler. That
+  // handler runs before the orchestrator call, so there is no generated text to
+  // look at — it scans an empty string, returns cleanly, and reports success.
+  // The registry gate would pass, the posture would read as implemented, and
+  // generated text would reach blocks unscanned.
+  //
+  // Note what the assertion pins: the SUBMIT-PHASE message specifically, not
+  // merely "it threw". A version of this test matching /textOutput/ alone would
+  // also pass against the required-phase clause above and prove nothing about
+  // this one.
+  it("REJECTS 'textOutput' satisfied by a SUBMIT handler — the inert-feature shape", () => {
+    expect(() =>
+      assertModerationHandlerTable({
+        ...shipped(),
+        textOutput: { submit: submitNoop, output: outputNoop },
+      })
+    ).toThrow(
+      /posture 'textOutput' declares a submit-phase handler, but its moderation surface is not in that phase/
+    );
+  });
+
+  it("REJECTS 'promptAudit' carrying an OUTPUT handler — the mirror image", () => {
+    // The same clause in the other direction, so it cannot be satisfied by a
+    // one-sided check. An output handler on an input-only posture is a scan that
+    // never runs, reading as generated-text coverage.
+    expect(() =>
+      assertModerationHandlerTable({
+        ...shipped(),
+        promptAudit: { submit: submitNoop, output: outputNoop },
+      })
+    ).toThrow(
+      /posture 'promptAudit' declares a output-phase handler, but its moderation surface is not in that phase/
+    );
+  });
+
+  it("REJECTS 'none' carrying a handler in either phase", () => {
+    expect(() =>
+      assertModerationHandlerTable({ ...shipped(), none: { submit: submitNoop, output: null } })
+    ).toThrow(/posture 'none' declares a submit-phase handler/);
+    expect(() =>
+      assertModerationHandlerTable({ ...shipped(), none: { submit: null, output: outputNoop } })
+    ).toThrow(/posture 'none' declares a output-phase handler/);
+  });
+
+  it('rejects a posture with NO phase entry at all', () => {
+    expect(() =>
+      assertModerationHandlerTable({
+        ...shipped(),
+        textOutput: undefined as unknown as { submit: null; output: null },
+      })
+    ).toThrow(/posture 'textOutput' has no phase entry/);
   });
 
   it('checks EVERY declared posture, not just the first', () => {
-    // A loop that broke early would pass the previous two tests and still miss a
+    // A loop that broke early would pass the cases above and still miss a
     // drifted posture further down the list.
     const postures = [...STEP_MODERATION_POSTURES] as StepModerationPosture[];
     expect(postures).toEqual(['none', 'promptAudit', 'textOutput']);
     expect(() =>
-      assertModerationHandlerTable({ none: null, promptAudit: noop, textOutput: null })
-    ).toThrow(/posture 'none' is declared IMPLEMENTED but its handler is absent/);
+      assertModerationHandlerTable({ ...shipped(), textOutput: { submit: null, output: null } })
+    ).toThrow(/posture 'textOutput'/);
   });
 });
