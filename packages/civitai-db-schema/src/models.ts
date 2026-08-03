@@ -656,6 +656,8 @@ export interface User {
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
   targetedAnnouncements?: AnnouncementUser[];
+  placementsReceived?: Placement[];
+  placementsMade?: Placement[];
 }
 
 export interface CustomerSubscription {
@@ -5132,6 +5134,37 @@ export interface Outbox {
   createdAt: Date | null;
   details: JsonValue | null;
   attempts: number | null;
+}
+
+export interface PlacementSpace {
+  id: number;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  price: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Placement {
+  id: number;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  owner?: User;
+  placerId: number;
+  placer?: User;
+  data: JsonValue;
+  status: string;
+  amount: number;
+  buzzTransactionId: string | null;
+  feeTransactionId: string | null;
+  createdAt: Date;
+  expiresAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedById: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

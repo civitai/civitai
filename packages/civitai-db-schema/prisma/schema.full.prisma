@@ -603,6 +603,8 @@ model User {
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
   targetedAnnouncements              AnnouncementUser[]
+  placementsReceived                 Placement[]                @relation("PlacementOwner")
+  placementsMade                     Placement[]                @relation("PlacementPlacer")
 
   @@index([deletedAt])
 }
@@ -7474,4 +7476,55 @@ model Outbox {
   createdAt  DateTime?    @default(now())
   details    Json?
   attempts   Int?
+}
+
+/// A creator-owned space someone pays to occupy. `surface` and the entity columns are
+/// TEXT rather than enums so a new surface is a code change instead of a DDL migration —
+/// the same reasoning `entityMetricEvents.entityType` already runs on. Absent rows are
+/// not "off": resolution cascades image -> post -> user -> the surface default.
+model PlacementSpace {
+  id         Int      @id @default(autoincrement())
+  surface    String
+  entityType String
+  entityId   Int
+  mode       String
+  /// What the owner asks. The charged price is min(price, cap) computed at read; a
+  /// stored effective price goes stale the moment a membership lapses.
+  price      Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([surface, entityType, entityId])
+  @@index([entityType, entityId])
+}
+
+/// One paid occupation of a space. `data` is opaque here on purpose — the sticker and
+/// remix surfaces own their own payload shape, and this layer never reads inside it.
+model Placement {
+  id                    Int       @id @default(autoincrement())
+  surface               String
+  targetType            String
+  targetId              Int
+  ownerId               Int
+  owner                 User      @relation("PlacementOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  placerId              Int
+  placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
+  data                  Json      @default("{}")
+  status                String
+  /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+  /// the space, whose price may move between placement and release.
+  amount                Int
+  buzzTransactionId     String?
+  /// Set when the decline fee is charged, so a retry after a partial failure cannot
+  /// charge twice.
+  feeTransactionId      String?
+  createdAt             DateTime  @default(now())
+  expiresAt             DateTime?
+  resolvedAt            DateTime?
+  resolvedById          Int?
+
+  @@index([surface, targetType, targetId, status])
+  @@index([ownerId, status])
+  @@index([placerId, status])
+  @@index([status, expiresAt])
 }

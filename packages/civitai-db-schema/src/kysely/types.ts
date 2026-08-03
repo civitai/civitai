@@ -2874,6 +2874,45 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type Placement = {
+  id: Generated<number>;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  placerId: number;
+  data: Generated<unknown>;
+  status: string;
+  /**
+   * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+   * the space, whose price may move between placement and release.
+   */
+  amount: number;
+  buzzTransactionId: string | null;
+  /**
+   * Set when the decline fee is charged, so a retry after a partial failure cannot
+   * charge twice.
+   */
+  feeTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp | null;
+  resolvedAt: Timestamp | null;
+  resolvedById: number | null;
+};
+export type PlacementSpace = {
+  id: Generated<number>;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  /**
+   * What the owner asks. The charged price is min(price, cap) computed at read; a
+   * stored effective price goes stale the moment a membership lapses.
+   */
+  price: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PlatformDefaultBlock = {
   app_block_id: string;
   slot_id: string;
@@ -4127,6 +4166,8 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  Placement: Placement;
+  PlacementSpace: PlacementSpace;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;
