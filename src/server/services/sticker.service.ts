@@ -334,24 +334,25 @@ export async function purchaseStickerUses({
     throw throwBadRequestError('Failed to buy sticker uses');
   }
 
-  // The top-up row's own balance is not the buyer's balance — a purchase and a
-  // creator grant are separate rows and the spend drains across all of them, so
-  // reporting the row would understate what they can actually place.
-  const remaining = (
-    await dbWrite.userCosmetic.findMany({
+  // Everything from here to the payout is bookkeeping on a purchase that has
+  // already committed. A throw in any of it would charge the buyer, grant the
+  // uses, and skip the creator's 70% — so the payout must be unreachable by
+  // throw from anything after the grant.
+  let remaining = topUpRowRemaining;
+  try {
+    // The top-up row's own balance is not the buyer's balance — a purchase and
+    // a creator grant are separate rows and the spend drains across all of
+    // them, so reporting the row alone would understate what they can place.
+    const holdingsAfter = await dbWrite.userCosmetic.findMany({
       where: { userId, cosmeticId },
       select: { remaining: true },
-    })
-  ).reduce((sum, h) => sum + (h.remaining ?? 0), 0);
-
-  // The buyer has their uses; a cache refresh that fails must not read as a
-  // failed purchase, and must not skip the creator's payout below.
-  try {
+    });
+    remaining = holdingsAfter.reduce((sum, h) => sum + (h.remaining ?? 0), 0);
     await refreshOwnedStickerCache([userId]);
   } catch (error) {
     logToAxiom({
       level: 'error',
-      message: 'Failed to refresh owned sticker cache after top-up',
+      message: 'Sticker top-up bookkeeping failed after the grant committed',
       data: { cosmeticId, userId, transactionId, error },
     });
   }

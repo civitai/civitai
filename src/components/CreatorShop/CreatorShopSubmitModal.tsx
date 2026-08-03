@@ -230,11 +230,19 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                     </InfoPopover>
                   </Group>
                 }
-                description={`How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
-                  uses * CREATOR_GRANT_USES_MULTIPLIER
-                )} uses of your own once it's approved.`}
-                value={uses}
-                onChange={(v) => setUses(typeof v === 'number' ? v : 1)}
+                description={
+                  uses
+                    ? `How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
+                        uses * CREATOR_GRANT_USES_MULTIPLIER
+                      )} uses of your own once it's approved.`
+                    : `How many times a buyer can place this sticker. You'll receive ${CREATOR_GRANT_USES_MULTIPLIER}x that many of your own once it's approved.`
+                }
+                placeholder="e.g. 100"
+                // Empty rather than defaulted: a prefilled number is
+                // indistinguishable from a chosen one, and this field decides
+                // what every buyer gets.
+                value={uses ?? ''}
+                onChange={(v) => setUses(typeof v === 'number' ? v : undefined)}
                 min={1}
                 step={10}
                 error={usesError}
@@ -257,8 +265,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                   </Group>
                 }
                 description={`At least ${perUseFloor} Buzz. This price belongs to the sticker, so it's the same wherever it was bought.`}
-                value={pricePerUse}
-                onChange={(v) => setPricePerUse(typeof v === 'number' ? v : perUseFloor)}
+                placeholder={`e.g. ${perUseFloor}`}
+                value={pricePerUse ?? ''}
+                onChange={(v) => setPricePerUse(typeof v === 'number' ? v : undefined)}
                 min={perUseFloor}
                 step={5}
                 error={pricePerUseError}

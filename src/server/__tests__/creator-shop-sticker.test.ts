@@ -283,6 +283,9 @@ describe('replacing sticker artwork keeps every economic field', () => {
   // back to the rebuild as one object. Everything below composes those two the
   // same way the service does, so a field that stops surviving a replace fails
   // here rather than in production.
+  // Every economic field is truthy here on purpose: `buildCosmeticData` omits
+  // falsy ones, so a fixture leaving one at 0 would drop it from the key check
+  // below and the guard would pass without guarding anything.
   const existingData = {
     url: 'old',
     slug: 'party_cat',

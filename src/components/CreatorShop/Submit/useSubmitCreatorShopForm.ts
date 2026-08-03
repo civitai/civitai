@@ -20,7 +20,6 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import {
   cosmeticPriceFloor,
-  STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
@@ -57,25 +56,13 @@ export function useSubmitCreatorShopForm({
       : CosmeticType.Badge
   );
   const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
-  // Both fields fall back to a default for display, so an untouched field is
-  // NOT evidence of intent: a sticker that predates per-use pricing shows the
-  // floor, and sending that on an unrelated edit would commit its creator to
-  // selling uses at 5 Buzz — and would make a cross-listing uneditable, since
-  // resellers may not change another creator's economics at all.
-  const [usesTouched, setUsesTouched] = useState(false);
-  const [pricePerUseTouched, setPricePerUseTouched] = useState(false);
-  const [uses, setUsesState] = useState<number>(existingEconomics.uses ?? STICKER_DEFAULT_USES);
-  const [pricePerUse, setPricePerUseState] = useState<number>(
-    existingEconomics.pricePerUse ?? STICKER_MIN_BUZZ_PER_USE
-  );
-  const setUses = (value: number) => {
-    setUsesTouched(true);
-    setUsesState(value);
-  };
-  const setPricePerUse = (value: number) => {
-    setPricePerUseTouched(true);
-    setPricePerUseState(value);
-  };
+  // Empty, never prefilled with a default. A prefilled field cannot express
+  // "unset": seeded to the floor it was indistinguishable from a creator who
+  // chose the floor, so an unrelated edit either wrote a price they never
+  // picked, or — gated on interaction instead — silently failed to write the
+  // one they agreed with. Undefined means unchosen, and unchosen blocks submit.
+  const [uses, setUses] = useState<number | undefined>(existingEconomics.uses);
+  const [pricePerUse, setPricePerUse] = useState<number | undefined>(existingEconomics.pricePerUse);
   const [slug, setSlug] = useState<string>(
     ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
   );
@@ -125,18 +112,28 @@ export function useSubmitCreatorShopForm({
 
   const isSticker = type === CosmeticType.Sticker;
   // Consumables must clear a per-use floor as well as the listing floor.
-  const usesFloor = isSticker ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
-  const usesError =
-    isSticker && price < usesFloor
-      ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
-      : null;
+  const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
+  // An unset economic field is an error the creator can see, not a field that
+  // quietly stays unset. Stickers damaged by the v1 artwork-replace bug reach
+  // this form with no `uses` at all, and they are exactly the ones that need
+  // repairing here.
+  const usesError = !isSticker
+    ? null
+    : uses === undefined
+    ? 'Set how many uses a purchase grants'
+    : price < usesFloor
+    ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    : null;
   // The top-up price a buyer pays when they run dry. Its floor is per-use, not
   // the listing floor — mirrors the server so the creator sees it before submit.
   const perUseFloor = stickerPerUseFloor(type);
-  const pricePerUseError =
-    isSticker && pricePerUse < perUseFloor
-      ? `A single use must cost at least ${perUseFloor} Buzz`
-      : null;
+  const pricePerUseError = !isSticker
+    ? null
+    : pricePerUse === undefined
+    ? 'Set what one extra use costs'
+    : pricePerUse < perUseFloor
+    ? `A single use must cost at least ${perUseFloor} Buzz`
+    : null;
   // Same normalization the server applies, so what's validated here is what's saved.
   const normalizedSlug = slug.trim().toLowerCase();
   // Matches the server rule: the slug is the token owners type, so it's fixed
@@ -279,12 +276,13 @@ export function useSubmitCreatorShopForm({
         )
           payload.slug = normalizedSlug;
         // The economics were editable in this form but never sent, so changing
-        // them did nothing. Sent only when the creator actually touched the
-        // field and moved it: unlike the slug, the server carries the stored
-        // economics forward through an artwork rebuild on its own, so an
-        // artwork swap is not a reason to send them.
-        if (isSticker && usesTouched && uses !== existingEconomics.uses) payload.uses = uses;
-        if (isSticker && pricePerUseTouched && pricePerUse !== existingEconomics.pricePerUse)
+        // them did nothing. Sent whenever the creator has a value that differs
+        // from what's stored — `undefined` is unchosen and blocks submit, so a
+        // value here was always chosen. Unlike the slug, the server carries the
+        // stored economics through an artwork rebuild on its own, so an artwork
+        // swap is not itself a reason to send them.
+        if (isSticker && uses !== undefined && uses !== existingEconomics.uses) payload.uses = uses;
+        if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);

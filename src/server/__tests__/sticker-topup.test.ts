@@ -192,10 +192,10 @@ describe('purchaseStickerUses', () => {
     expect(createMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(50);
   });
 
-  // Asserting the SQL *adds to* the stored value rather than replacing it, by
-  // executing the statement's shape against a fake row. A `toContain('COALESCE')`
-  // grep passes for `SET remaining = ${quantity}` too, which clobbers the
-  // balance a buyer already paid for.
+  // Reads the statement rather than running it — no database here — but reads
+  // it structurally: a bare `toContain('COALESCE')` also passes for
+  // `SET "remaining" = <quantity>`, which clobbers balance a buyer paid for.
+  // Mutation-tested: that clobber fails this test and only this test.
   it('adds to the stored balance rather than replacing it', async () => {
     await call({ quantity: 10 });
     const [strings, ...params] = queryRaw.mock.calls[0];
@@ -212,12 +212,13 @@ describe('purchaseStickerUses', () => {
   });
 
   it('reports the balance across every holding, not just the top-up row', async () => {
-    // A purchase row with 6 left plus the 10 just bought.
+    // Three rows summing to 19 — deliberately not `firstRead + quantity`, which
+    // 6 + 10 = 16 would satisfy without summing anything.
     findHoldings
       .mockResolvedValueOnce([{ remaining: 6 }])
-      .mockResolvedValueOnce([{ remaining: 6 }, { remaining: 10 }]);
+      .mockResolvedValueOnce([{ remaining: 6 }, { remaining: 10 }, { remaining: 3 }]);
     const result = await call({ quantity: 10 });
-    expect(result.remaining).toBe(16);
+    expect(result.remaining).toBe(19);
     expect(refreshOwnedStickerCache).toHaveBeenCalledWith([BUYER]);
   });
 
@@ -279,12 +280,29 @@ describe('purchaseStickerUses', () => {
     await expect(call({ expectedPricePerUse: 5 })).resolves.toBeTruthy();
   });
 
-  // A Redis blip must not read as a failed purchase, and must not swallow the
-  // creator's payout by short-circuiting the rest of the function.
+  // Everything between the grant committing and the payout is bookkeeping. Any
+  // of it throwing would charge the buyer, grant the uses, skip the creator's
+  // 70%, and surface as a failed purchase — so each step gets its own case.
   it('still pays the creator when the cache refresh throws', async () => {
     refreshOwnedStickerCache.mockRejectedValue(new Error('redis down'));
     await expect(call({ quantity: 10 })).resolves.toBeTruthy();
     expect(createBuzzTransaction).toHaveBeenCalled();
+  });
+
+  it('still pays the creator when the post-grant balance read throws', async () => {
+    findHoldings
+      .mockResolvedValueOnce([{ remaining: 0 }])
+      .mockRejectedValueOnce(new Error('pool timeout'));
+    await expect(call({ quantity: 10 })).resolves.toBeTruthy();
+    expect(createBuzzTransaction).toHaveBeenCalled();
+  });
+
+  it('falls back to the top-up row when the balance read fails', async () => {
+    findHoldings
+      .mockResolvedValueOnce([{ remaining: 0 }])
+      .mockRejectedValueOnce(new Error('pool timeout'));
+    const result = await call({ quantity: 10 });
+    expect(result.remaining).toBe(10);
   });
 
   // A creator topping up their own sticker would otherwise send 70% back to
