@@ -256,12 +256,19 @@ export async function purchaseStickerUses({
       throw throwBadRequestError('This sticker is no longer available');
   }
 
-  // An unlimited holding is inexhaustible, so there is nothing to top up and
-  // charging for one would be selling a balance that can never be spent.
-  const holdings = await dbRead.userCosmetic.findMany({
+  // Read on the writer: the replica can lag, and both checks below decide
+  // whether to charge.
+  const holdings = await dbWrite.userCosmetic.findMany({
     where: { userId, cosmeticId },
     select: { remaining: true },
   });
+  // A top-up refills; it does not acquire. Granting a holding to someone who
+  // owns none would sell the sticker itself outside the shop — past a sold-out
+  // `availableQuantity`, past the listing's own purchase guards.
+  if (!holdings.length)
+    throw throwBadRequestError('Buy this sticker before buying more uses of it');
+  // An unlimited holding is inexhaustible, so there is nothing to top up and
+  // charging for one would be selling a balance that can never be spent.
   if (holdings.some((h) => h.remaining === null))
     throw throwBadRequestError('You already have unlimited uses of this sticker');
 

@@ -16,9 +16,18 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     cosmetic: { findUnique: (...args: unknown[]) => findCosmetic(...args) },
     cosmeticShopItem: { findFirst: (...args: unknown[]) => findListing(...args) },
+    // Holdings decide whether to charge, so they must NOT be read here — a
+    // lagging replica would let a stale balance authorize a purchase.
+    userCosmetic: {
+      findMany: () => {
+        throw new Error('holdings must be read on the writer');
+      },
+    },
+  },
+  dbWrite: {
+    $queryRaw: (...args: unknown[]) => queryRaw(...args),
     userCosmetic: { findMany: (...args: unknown[]) => findHoldings(...args) },
   },
-  dbWrite: { $queryRaw: (...args: unknown[]) => queryRaw(...args) },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: (...args: unknown[]) =>
@@ -130,6 +139,15 @@ describe('purchaseStickerUses', () => {
     const where = findListing.mock.calls[0][0].where;
     expect(where.status).toBe('Published');
     expect(where).not.toHaveProperty('listed');
+  });
+
+  // Topping up refills; it does not acquire. Otherwise 5 Buzz buys ownership of
+  // a sticker whose listing is sold out, or whose purchase guards would refuse.
+  it('refuses to grant a holding to someone who owns none', async () => {
+    findHoldings.mockResolvedValue([]);
+    await expect(call()).rejects.toThrow(/Buy this sticker/i);
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it('refuses when the buyer already has an unlimited holding', async () => {
