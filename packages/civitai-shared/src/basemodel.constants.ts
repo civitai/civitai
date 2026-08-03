@@ -177,7 +177,7 @@ export const ECO = {
   Veo3: 44,
   SVD: 45,
   Vidu: 47,
-  MiniMax: 48,
+  MiniMaxH3: 48,
   Kling: 49,
   Haiper: 50,
   Lightricks: 51,
@@ -728,9 +728,9 @@ export const ecosystems: EcosystemRecord[] = [
     // txt2vid + img2vid (no vid2vid support currently)
   },
   {
-    id: ECO.MiniMax,
-    key: 'MiniMax',
-    displayName: 'Hailuo by MiniMax',
+    id: ECO.MiniMaxH3,
+    key: 'MiniMaxH3',
+    displayName: 'Hailuo H3 by MiniMax',
     sortOrder: 211,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -1059,8 +1059,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Vidu - checkpoint only
   { ecosystemId: ECO.Vidu, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MiniMax (Hailuo) - checkpoint only
-  { ecosystemId: ECO.MiniMax, supportType: 'generation', modelTypes: checkpointOnly },
+  // MiniMax H3 (Hailuo) - checkpoint only
+  { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1481,7 +1481,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
-    ecosystemId: ECO.MiniMax,
+    ecosystemId: ECO.MiniMaxH3,
     defaults: {
       model: { id: 3183239 },
       modelLocked: true,
@@ -2002,7 +2002,7 @@ export const BM = {
   ZImageTurbo: 66,
   ZImageBase: 71,
   Vidu: 67,
-  MiniMax: 68,
+  MiniMaxH3: 68,
   Kling: 69,
   Seedance: 70,
   Anima: 77,
@@ -3279,13 +3279,13 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 32,
   },
 
-  // Hailuo by MiniMax
+  // Hailuo H3 by MiniMax
   {
-    id: BM.MiniMax,
-    name: 'MiniMax',
+    id: BM.MiniMaxH3,
+    name: 'MiniMax H3',
     description: "MiniMax's video generation model with cinematic quality",
     type: 'video',
-    ecosystemId: ECO.MiniMax,
+    ecosystemId: ECO.MiniMaxH3,
     hidden: true,
     licenseId: 33,
   },
