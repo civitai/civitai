@@ -220,11 +220,14 @@ describe('AppListingCard', () => {
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  test('off-site connect → View details → unified detail (P2c)', async () => {
-    // P2c: cards route to the unified detail; the Connect action itself lives on
-    // the detail page (the connect flow needs a P2a authorize-URL DTO addition),
-    // so the card's CTA is "View details", not an inert Connect button. The
-    // former "Connect app" kind badge is gone — no longer asserted here.
+  test('off-site connect with NO external target → View details → unified detail', async () => {
+    // 🔴 `externalUrl: null` is what makes this the View-details case, NOT the
+    // sub-kind. The comment here used to say cards route connect listings to the
+    // detail because "the connect flow needs a P2a authorize-URL DTO addition" —
+    // that premise was wrong and produced a dead end (the detail's Connect
+    // affordance was an inert stub). A connect listing WITH an https
+    // `externalUrl` now gets a direct Visit ↗; see the test below. The former
+    // "Connect app" kind badge is gone — no longer asserted here.
     renderWithProviders(
       <AppListingCard
         card={base({
@@ -236,6 +239,27 @@ describe('AppListingCard', () => {
     );
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
+  });
+
+  test('🔴 off-site connect WITH an https externalUrl → Visit ↗ external anchor', async () => {
+    // The rendered counterpart of the view-model reversal: a linked OAuth client
+    // no longer strands the card on "View details". Asserted on the real anchor
+    // (href + target + rel), not just the label, because the whole defect was an
+    // affordance that looked present and went nowhere.
+    renderWithProviders(
+      <AppListingCard
+        card={base({
+          kind: 'offsite',
+          name: 'Connect App',
+          kindData: { kind: 'offsite', subKind: 'connect', externalUrl: 'https://connect.app' },
+        })}
+      />
+    );
+    await expect.element(page.getByRole('link', { name: 'View details' })).not.toBeInTheDocument();
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toHaveAttribute('href', 'https://connect.app');
+    await expect.element(visit).toHaveAttribute('target', '_blank');
+    await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   test('on-site page app WITHOUT canOpenPage → View details → unified detail (P2c)', async () => {
