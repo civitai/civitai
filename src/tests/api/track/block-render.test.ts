@@ -460,3 +460,233 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     expect(await renderCounterValue('apb_test', 'other', 'ok')).toBe(before + 1);
   });
 });
+
+// --- App Blocks LAUNCH LATENCY: the two launch histograms ---------------------
+type HistPoint = { metricName?: string; labels: Record<string, string>; value: number };
+
+async function histCount(name: string, labels: Record<string, string>): Promise<number> {
+  const metric = client.register.getSingleMetric(name);
+  if (!metric) return 0;
+  const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+  const point = data.values.find(
+    (v) =>
+      v.metricName === `${name}_count` &&
+      Object.entries(labels).every(([k, val]) => v.labels[k] === val)
+  );
+  return point?.value ?? 0;
+}
+
+const LAUNCH_TOTAL = 'civitai_app_block_launch_total_seconds';
+const LAUNCH_PHASE = 'civitai_app_block_launch_phase_seconds';
+const timings = { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 };
+
+describe('POST /api/track/block-render — launch-latency histograms', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    devStore.isDev = false;
+    sessionStore.session = null;
+  });
+
+  it('observes the launch on an `ok` beacon that carries timings', async () => {
+    const beforeTotal = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+    const beforeInit = await histCount(LAUNCH_PHASE, { phase: 'init_wait' });
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
+      makeRes()
+    );
+
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(beforeTotal + 1);
+    expect(await histCount(LAUNCH_PHASE, { phase: 'init_wait' })).toBe(beforeInit + 1);
+  });
+
+  /**
+   * 🔴 IMPRESSION ACCOUNTING IS UNCHANGED — the whole reason the timings ride the
+   * EXISTING beacon instead of a second one. One beacon in: exactly one
+   * `renders_total` increment, exactly one ClickHouse row, and now also exactly
+   * one launch observation. A `2` on any of these means the beacon contract
+   * broke.
+   */
+  it('🔴 one beacon still yields exactly ONE renders_total increment and ONE ClickHouse row', async () => {
+    const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+    const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
+      makeRes()
+    );
+
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(beforeLaunch + 1);
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 The CH payload must stay byte-identical. This is the REST half of the
+   * two-write-path pair (the tRPC half lives in
+   * src/server/routers/__tests__/track.router.blockRender.test.ts) — both writers
+   * go through the shared `blockRenderTrackerPayload` allowlist.
+   */
+  it('🔴 never forwards `timings` to the ClickHouse insert', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
+      makeRes()
+    );
+
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).not.toHaveProperty('timings');
+    expect(arg).toEqual({ ...validInput, isAnon: true });
+  });
+
+  /**
+   * 🔴 A LAUNCH FAILURE MUST NOT BE OBSERVED AS A LAUNCH. It never saw
+   * BLOCK_READY, so its "total" is meaningless — and a fast failure would be
+   * recorded as a FAST LAUNCH, biasing the distribution in exactly the direction
+   * that reads as healthy. Includes the positive control, because a zero delta
+   * here is otherwise indistinguishable from a metric wired to nothing.
+   */
+  it('🔴 does NOT observe a launch for an `error` beacon, even if timings are attached', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, status: 'error', errorClass: 'timeout', timings },
+      }) as any,
+      makeRes()
+    );
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before);
+
+    // POSITIVE CONTROL: the identical timings on an `ok` beacon DO move it by 1.
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
+      makeRes()
+    );
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before + 1);
+  });
+
+  it('🔴 does NOT observe a launch for a `secondary` teardown beacon', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: {
+          ...validInput,
+          status: 'error',
+          errorClass: 'token_lost_midsession',
+          secondary: true,
+          timings,
+        },
+      }) as any,
+      makeRes()
+    );
+
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before);
+  });
+
+  /**
+   * 🔴 THE `!secondary` HALF OF THE GATE, REACHED ON ITS OWN.
+   *
+   * The test above uses `status:'error'`, so `status === 'ok'` alone already
+   * rejects it — mutation-checked: deleting `&& !secondary` leaves that test
+   * GREEN, i.e. it proves nothing about this half. Today's only secondary beacon
+   * is an error, but the schema permits `secondary` with `status:'ok'` (a
+   * bearer/API-key caller, or a future follow-up that reports a non-error state
+   * change), and such a beacon is a TEARDOWN report minutes after the launch —
+   * its `total` would be pure noise. This case reaches the second half of the
+   * gate with an input the first half cannot reject.
+   */
+  it('🔴 does NOT observe a launch for a secondary beacon that is also `ok`', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, status: 'ok', secondary: true, timings },
+      }) as any,
+      makeRes()
+    );
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before);
+
+    // POSITIVE CONTROL: identical body minus `secondary` DOES move it by 1, so
+    // the zero above is the gate and not a dead metric.
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...validInput, status: 'ok', timings } }) as any,
+      makeRes()
+    );
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before + 1);
+  });
+
+  it('clamps an unknown app_block_id to "other" on the launch histogram too', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'other' });
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, appBlockId: 'apb_attacker_garbage_zz1', timings },
+      }) as any,
+      makeRes()
+    );
+
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'other' })).toBe(before + 1);
+  });
+
+  /**
+   * 🔴 MALFORMED TIMINGS MUST NOT COST THE IMPRESSION. `timings` carries
+   * `.catch(undefined)`, so a client bug (a NaN, a renamed field, a string)
+   * degrades to "no timings" instead of failing the whole
+   * `blockRenderSchema.safeParse` → 400 → a LOST impression. An observability
+   * add-on must be strictly subordinate to the analytics event it rides on.
+   */
+  it('🔴 a malformed `timings` still records the impression — it does not 400 the beacon', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+    const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+    const res = makeRes();
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, timings: { totalMs: 'not-a-number' } },
+      }) as any,
+      res
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    expect(mockBlockRender.mock.calls[0][0]).toEqual({ ...validInput, isAnon: true });
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+    // …but nothing junk reaches the histogram.
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(beforeLaunch);
+  });
+
+  /**
+   * The BACK-COMPAT case, and the reason `timings` is optional rather than
+   * required: IframeHost (the in-page slot host) and any client that has not
+   * been rebuilt send no `timings`. Those beacons must behave exactly as they
+   * did before — impression recorded, counter incremented, no launch sample and
+   * no error.
+   */
+  it('records the impression normally when the beacon carries NO timings at all', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
+    const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
+    const res = makeRes();
+
+    await handler(makeReq({ origin: 'https://civitai.com', body: validInput }) as any, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mockBlockRender).toHaveBeenCalledWith({ ...validInput, isAnon: true });
+    expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
+    expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(beforeLaunch);
+  });
+});

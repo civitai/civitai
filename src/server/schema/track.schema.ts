@@ -95,7 +95,81 @@ export const blockRenderSchema = z.object({
   // is a real attempted render). What is suppressed is specifically a second
   // beacon for a mount that already reported.
   secondary: z.boolean().optional().default(false),
+  // 🔴 OPTIONAL LAUNCH TIMINGS — carried on the EXISTING beacon, deliberately.
+  //
+  // There is exactly ONE /api/track/block-render beacon per host mount (guarded
+  // by `blockRenderEmittedRef`, with ok/error mutually exclusive). A second
+  // beacon for timing would break that contract and, more concretely, write a
+  // second `blockRenders` ClickHouse row for one mount — byte-identical to the
+  // first and therefore undedupable, inflating every impression figure. So the
+  // timings ride as optional fields on the beacon that already fires, and
+  // impression accounting is provably unchanged: same beacon count, same row
+  // count, same `renders_total` increments.
+  //
+  // 🔴 LIKE status/errorClass/secondary, THIS IS STRIPPED BY *BOTH* WRITERS
+  // BEFORE THE CLICKHOUSE INSERT — see `blockRenderTrackerPayload` below, which
+  // exists precisely so there is one place to strip rather than two that can
+  // drift. TypeScript cannot catch a missed strip here: `ctx.track.blockRender({
+  // ...renderData, isAnon })` spreads, and spread properties are exempt from
+  // excess-property checking, so an extra field compiles cleanly and lands in
+  // the insert payload.
+  //
+  // 🔴 NUMBERS ONLY — no client-supplied strings, so nothing here can become a
+  // prom LABEL. The `phase` label is code-owned: the server maps these three
+  // named fields onto its own three literals. That is what keeps a public,
+  // client-controlled beacon body from touching cardinality at all.
+  //
+  // Bounds: every leg is a non-negative millisecond count. `max` is a coarse
+  // sanity bound only — the REAL gate is `launchSampleSeconds` server-side
+  // (>0 and <= MAX_APP_BLOCK_LAUNCH_SECONDS, DROPPED not clamped), which the
+  // client mirrors.
+  //
+  // 🔴 `.catch(undefined)` IS LOAD-BEARING, NOT DEFENSIVE CLUTTER. Without it a
+  // malformed `timings` (a client bug producing a NaN, a stale field name, a
+  // future rename) fails the WHOLE `blockRenderSchema.safeParse`, the beacon
+  // route 400s, and the mount's IMPRESSION is lost — an observability add-on
+  // would have broken the analytics series it was bolted onto. With it, junk
+  // timings degrade to "no timings" and the impression is recorded exactly as
+  // before. The add-on must be strictly subordinate to the thing it rides on.
+  timings: z
+    .object({
+      totalMs: z.number().finite().nonnegative().max(600_000),
+      tokenMintMs: z.number().finite().nonnegative().max(600_000).optional(),
+      initWaitMs: z.number().finite().nonnegative().max(600_000).optional(),
+    })
+    .optional()
+    .catch(undefined),
 });
+
+/**
+ * 🔴 THE SINGLE STRIP POINT FOR THE `blockRenders` CLICKHOUSE PAYLOAD.
+ *
+ * There are TWO writers of that table — the REST beacon
+ * (`src/pages/api/track/block-render.ts`) and the `track.blockRender` tRPC
+ * procedure (`src/server/routers/track.router.ts`) — and every prom-only /
+ * observability field added to `blockRenderSchema` has to be removed on BOTH.
+ * Patching one is a SILENT half-fix: the field falls through the other's
+ * `...renderData` spread straight into the insert, and TypeScript does not
+ * complain because spread properties are exempt from excess-property checking.
+ *
+ * 🔴 IT IS AN ALLOWLIST, NOT A DESTRUCTURE-REST. Both writers previously did
+ * `const { status, errorClass, secondary, ...renderData } = input` — which is a
+ * DENYLIST: every field added to the schema is forwarded to ClickHouse by
+ * DEFAULT and stays silent until someone reads the CH payload. Naming the three
+ * real columns instead inverts that: a new schema field can never reach the
+ * insert, and adding a genuine new column is a deliberate edit here.
+ */
+export function blockRenderTrackerPayload(input: BlockRenderInput): {
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+} {
+  return {
+    appBlockId: input.appBlockId,
+    blockInstanceId: input.blockInstanceId,
+    slotId: input.slotId,
+  };
+}
 
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({

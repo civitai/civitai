@@ -161,6 +161,75 @@ describe('track.blockRender', () => {
     expect(arg).not.toHaveProperty('secondary');
   });
 
+  /**
+   * 🔴 THE TWO-WRITE-PATH HAZARD, PINNED ON THE PATH THAT IS EASY TO FORGET.
+   *
+   * `blockRenders` has TWO writers: the REST beacon (/api/track/block-render)
+   * and this tRPC procedure. The REST one is also the only PROM writer, which
+   * inverts the intuition: a new observability field added to the shared
+   * `blockRenderSchema` and stripped only in the REST handler does NOT get
+   * caught here by a missing metric — it falls straight through this
+   * procedure's spread into the ClickHouse insert.
+   *
+   * And TypeScript cannot catch it. `ctx.track.blockRender({ ...payload, isAnon })`
+   * is a SPREAD, and spread properties are exempt from excess-property checking,
+   * so an extra field compiles cleanly against `Tracker.blockRender`'s
+   * four-field parameter type.
+   *
+   * MUTATION-CHECKED: restoring this resolver's previous
+   * `const { status, errorClass, secondary, ...renderData } = input` — i.e.
+   * patching ONLY the REST path — makes this test fail with
+   * `expected { …, timings: {…} } to not have property "timings"`.
+   */
+  it('🔴 strips `timings` from the ClickHouse payload on the tRPC path too', async () => {
+    const caller = trackRouter.createCaller(fakeCtx({ id: 5 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      timings: { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 },
+    } as never);
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).not.toHaveProperty('timings');
+    // Byte-identical to a timing-less beacon: the CH row is unchanged.
+    expect(arg).toEqual({ ...validInput(), isAnon: false });
+  });
+
+  /**
+   * The companion assertion, and the one that makes the strip above meaningful:
+   * this procedure must ALSO not observe the launch histograms. It is a second
+   * ClickHouse writer, NOT a second metrics writer — only the REST beacon
+   * increments prom. If someone "fixes the asymmetry" by adding an emit here,
+   * every bearer/API-key caller starts contributing launch samples that no host
+   * measured, and the ok-only / non-secondary gating that lives in the REST
+   * route would be bypassed entirely.
+   */
+  it('🔴 does NOT observe the launch histograms (this path is a CH writer, not a metrics writer)', async () => {
+    const client = (await import('prom-client')).default;
+    const readCount = async () => {
+      const metric = client.register.getSingleMetric('civitai_app_block_launch_total_seconds');
+      if (!metric) return 0;
+      const data = await (
+        metric as unknown as {
+          get(): Promise<{
+            values: Array<{ metricName?: string; labels: Record<string, string>; value: number }>;
+          }>;
+        }
+      ).get();
+      return data.values
+        .filter((v) => v.metricName === 'civitai_app_block_launch_total_seconds_count')
+        .reduce((acc, v) => acc + v.value, 0);
+    };
+
+    const before = await readCount();
+    const caller = trackRouter.createCaller(fakeCtx({ id: 5 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      timings: { totalMs: 1_100 },
+    } as never);
+    expect(await readCount()).toBe(before);
+  });
+
   it('rejects a missing identifier with a BAD_REQUEST and no Tracker call', async () => {
     const caller = trackRouter.createCaller(fakeCtx({ id: 1 }) as never);
     await expect(

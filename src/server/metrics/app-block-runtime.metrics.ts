@@ -67,6 +67,20 @@ export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' 
 export type AppBlockRenderResult = 'ok' | 'error';
 
 /**
+ * LAUNCH-LATENCY phase enum. A mirror of the client-side union in
+ * `~/components/AppBlocks/launchTimings`, declared again here rather than
+ * imported so this module never pulls a client module into the server graph.
+ *
+ * 🔴 It is also the cardinality bound, and it is CODE-OWNED: the `phase` label
+ * is never taken from the beacon body. The client sends named numeric fields;
+ * this module maps them onto these literals. A client cannot invent a third —
+ * including by sending `frameFetchMs`, which is deliberately not mapped (see the
+ * DEFERRED note in launchTimings.ts) and is pinned by a test.
+ */
+export const APP_BLOCK_LAUNCH_PHASES = ['token_mint', 'init_wait'] as const;
+export type AppBlockLaunchPhase = (typeof APP_BLOCK_LAUNCH_PHASES)[number];
+
+/**
  * Why `resolveAppCapLimits` fell back to `STRICTEST_APP_CAP_LIMITS` instead of
  * resolving the app's real ceilings. The two mean DIFFERENT things and an
  * operator responds to them differently, which is the whole reason this is a
@@ -187,6 +201,35 @@ export function normalizeErrorClass(
  * into `forbidden` (auth/scope rejections — the middleware's own 403s land here
  * too); other 4xx → `client_error`; 5xx → `server_error`; else `success`.
  */
+/**
+ * Map one client-reported millisecond leg to a histogram sample in SECONDS, or
+ * `null` if it must not be observed.
+ *
+ * 🔴 THE TWO RULES THIS ENCODES, both of which produce a *plausible wrong
+ * number* rather than an error when violated:
+ *
+ *   1. NEVER OBSERVE A ZERO. A leg that was not measured — a mark never taken
+ *      (no token ever arrived, BLOCK_INIT never posted), a sub-millisecond delta
+ *      that rounds to 0, or a hand-rolled client sending 0 — arrives as 0 or
+ *      absent. A 0 in a latency histogram is indistinguishable from an instant
+ *      leg and drags every percentile toward the bottom bucket, in the
+ *      reassuring direction, which is why nobody notices.
+ *   2. DROP, NEVER CLAMP, AN OUT-OF-RANGE SAMPLE. Mirrors
+ *      `observeCustomComfyWallclockSeconds`: a clamp folds junk onto the `+Inf`
+ *      edge and pollutes `_sum` and the tail with a value that never happened.
+ *
+ * The client applies the same two gates (`boundedDeltaMs`), deliberately — the
+ * guarantee must not rest on either side alone, and this side is the one facing
+ * a public, client-controlled beacon body.
+ */
+export function launchSampleSeconds(ms: unknown): number | null {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
+  if (!(ms > 0)) return null;
+  const seconds = ms / 1000;
+  if (seconds > MAX_APP_BLOCK_LAUNCH_SECONDS) return null;
+  return seconds;
+}
+
 export function statusToRequestResult(status: number): AppBlockRequestResult {
   if (status >= 500) return 'server_error';
   if (status === 401 || status === 403) return 'forbidden';
@@ -235,7 +278,70 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
+  launchTotalSeconds: Histogram<string>;
+  launchPhaseSeconds: Histogram<string>;
 };
+
+// ── App Block LAUNCH latency ────────────────────────────────────────────────
+// Bucket edges chosen against the REAL constants of the launch path, not from a
+// generic ladder. prom-client's defaults are structurally unable to answer the
+// two questions this metric exists for: their top is 10s with nothing between 5
+// and 10, and they have no edge at 0.4.
+//
+//   0.25 — LAUNCH_REVEAL_MS (260ms, PageBlockHost). Below this edge the launch
+//          is already hidden behind the cross-fade: an "already optimal" bucket.
+//   0.4 / 0.8
+//        — exactly one and two INIT_RETRY_INTERVAL_MS ticks
+//          (iframeInitController). The first BLOCK_INIT is posted synchronously
+//          on start(); if the block's listener has not attached yet that post is
+//          dropped and the next is a FULL 400ms later. If that quantization is
+//          real it shows up as mass piling immediately above 0.4 — and a generic
+//          0.25→0.5→1 ladder would hide it completely.
+//   10   — BLOCK_READY_TIMEOUT_MS: the ceiling on ONE attempt's wait for
+//          BLOCK_READY once init has started.
+//   15   — TOKEN_WAIT_TIMEOUT_MS: the ceiling on ONE attempt's wait for a token.
+//
+// 🔴 A `launch_total` ABOVE 15s IS REACHABLE AND LEGITIMATE — do not read the
+// top bucket as a bug signal. An earlier revision of this comment claimed a
+// sample above 10s was "structurally impossible on the success path" because the
+// ready timeout fires first. That is true of ONE ATTEMPT and false of a LAUNCH:
+// the host emits exactly one `ok` for the whole bounded auto-retry sequence,
+// whichever attempt produced it, so a success can legitimately total up to
+// `worstReachableLaunchMs()` = 57s. `+Inf − le=15` therefore means "recovered
+// slowly", which is a real and interesting population, not a broken emitter.
+//
+// 🟡 KNOWN LIMITATION — the 15-60s tail is ONE undifferentiated bucket. Every
+// auto-retry-recovered launch lands in `+Inf` with no resolution between "16s"
+// and "57s", so the histogram can say THAT a launch was slow-recovered but not
+// how slow. Deliberate: extra edges up there would cost series on every app for
+// a population that is rare by construction (it takes two failed attempts), and
+// `_sum`/`_count` still give a usable mean for it. Revisit only if that bucket
+// turns out to carry real volume.
+const APP_BLOCK_LAUNCH_BUCKETS = [0.1, 0.25, 0.4, 0.6, 0.8, 1.2, 1.8, 2.5, 4, 6, 8, 10, 15];
+
+/**
+ * Upper sanity bound on a single launch sample, in seconds.
+ *
+ * 🔴 DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED — and the derivation is CODE,
+ * in `worstReachableLaunchMs()` (`~/components/AppBlocks/pageBlockHostLogic`), not
+ * this comment. A test asserts this cap exceeds it, so widening any of the five
+ * host constants it reads fails loudly instead of silently walking past the cap.
+ *
+ * The arithmetic has been wrong in a comment twice: first at 30s ("well above
+ * TOKEN_WAIT_TIMEOUT_MS (15s), the longest leg that can legitimately complete",
+ * which assumed a launch is ONE attempt — it is not, the host emits one `ok` for
+ * the whole bounded sequence), then at "~47s" (a sequence with two consecutive
+ * `no_token`s, which `MAX_AUTO_REMINTS = 1` makes unreachable). The real worst
+ * reachable success is 57s. 🔴 The margin here is therefore ~3s — deliberately
+ * tight and test-guarded rather than padded.
+ *
+ * The 30s cap was dropping real slow successes in a slowness-correlated way,
+ * trimming exactly the tail the metric exists to show. Mirrors
+ * `MAX_LAUNCH_SAMPLE_MS` client-side.
+ *
+ * DROPPED, not clamped (see `launchSampleSeconds`).
+ */
+export const MAX_APP_BLOCK_LAUNCH_SECONDS = 60;
 
 // ── customComfy per-engine runtime/cost buckets ──────────────────────────────
 // Sized for the 0–200 range that straddles the per-engine Buzz ceilings
@@ -417,6 +523,61 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['step', 'outcome']
   );
 
+  // ── LAUNCH LATENCY — TWO histograms, deliberately, not one ──────────────────
+  //
+  // 🔴 THE SPLIT IS THE CARDINALITY DESIGN, not a stylistic choice.
+  //
+  // Count a histogram label set as 16 SERIES, not 15: 13 finite bucket edges
+  // + `+Inf` + `_sum` + `_count`. And `app_block_id` spans ~52 values at A=50
+  // approved apps, because `boundAppBlockIdLabel` adds BOTH 'dev' and 'other'.
+  //
+  // A single combined {app_block_id, phase} histogram would then be
+  // 52 × 2 × 16 = 1,664 series PER POD, across ~130 scraped dp-prod pods — and
+  // prom-client retains every distinct label set in the Node heap forever (the
+  // --max-old-space-size exit-139 OOM class). Split as below it is
+  // 52 × 16 = 832 plus 2 × 16 = 32, i.e. ~864/pod at full app saturation
+  // (an earlier revision said 795 — it undercounted both factors), in line with
+  // the existing
+  // `civitai_app_block_request_duration_seconds{app_block_id, endpoint}`
+  // precedent rather than an order of magnitude past it.
+  //
+  // Per-app PHASE attribution is therefore NOT available from prom. That is the
+  // same alert-on-the-metric / attribute-from-the-log split the degrade and
+  // spend-cap counters above already make.
+  const launchTotalSeconds = getOrCreateHistogram(
+    reg,
+    'civitai_app_block_launch_total_seconds',
+    'App Block end-to-end launch seconds (host mount -> BLOCK_READY) by app. Successful launches only: a failure beacon has no BLOCK_READY, and a mid-session teardown (`secondary`) is not a launch. Answers "which app is slow".',
+    ['app_block_id'],
+    APP_BLOCK_LAUNCH_BUCKETS
+  );
+
+  // 🔴 NO app_block_id LABEL, deliberately (see the cardinality note above).
+  //
+  // 🔴 AND THE PHASES DO NOT SUM TO `launch_total`. The token mint and the
+  // cross-origin frame load run in PARALLEL — the iframe mounts on the first
+  // client render, before any token exists — so the launch waits on
+  // max(token, block-listener), not on a sum. Reading these as a serial
+  // breakdown is the single most likely misuse of this metric.
+  //
+  // 🔴 THERE IS NO CROSS-ORIGIN `frame_fetch` PHASE, DELIBERATELY. Both phases
+  // here are HOST-side, measured from the host's own marks, so both are observed
+  // for every successful launch on every app — no header dependency, no coverage
+  // denominator to publish, no biased subset. A phase for the block-frame fetch
+  // was designed and then dropped: without `Timing-Allow-Origin` the parent's
+  // `responseEnd` for a cross-origin subframe is the frame's LOAD event, not the
+  // document response, so it measures roughly what `total` already measures —
+  // and the entry does not exist at all until that load fires, which an SPA
+  // block posting BLOCK_READY at app-mount typically outruns. The full reasoning
+  // and the re-add seam are in launchTimings.ts.
+  const launchPhaseSeconds = getOrCreateHistogram(
+    reg,
+    'civitai_app_block_launch_phase_seconds',
+    'App Block launch PHASE seconds by phase (token_mint = host mount -> first token; init_wait = first BLOCK_INIT -> BLOCK_READY). Both are host-side, so both are observed for every successful launch. 🔴 The phases are PARALLEL legs of one race (the iframe mounts before any token exists) and do NOT sum to launch_total. There is deliberately no cross-origin frame-fetch phase — see launchTimings.ts.',
+    ['phase'],
+    APP_BLOCK_LAUNCH_BUCKETS
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
@@ -426,7 +587,64 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     stepPriceCheckTotal,
+    launchTotalSeconds,
+    launchPhaseSeconds,
   };
+}
+
+/**
+ * The client-reported launch timings, as they arrive on the block-render beacon
+ * (milliseconds; every field optional/unvalidated from this function's point of
+ * view — the zod schema bounds them, this clamps them again).
+ */
+export type AppBlockLaunchTimings = {
+  totalMs?: unknown;
+  tokenMintMs?: unknown;
+  initWaitMs?: unknown;
+};
+
+/**
+ * Fail-soft emit of ONE App Block launch observation.
+ *
+ * 🔴 CALL ONLY FOR A SUCCESSFUL, NON-SECONDARY RENDER BEACON. A launch-FAILURE
+ * beacon never saw BLOCK_READY, so its `total` is meaningless and observing it
+ * would record the failure as a *fast* launch; a `secondary` beacon describes a
+ * teardown minutes after a launch that already succeeded. Either one poisons the
+ * distribution in the direction that looks healthy.
+ *
+ * 🔴 `total` IS THE ANCHOR. If it does not survive `launchSampleSeconds`, NOTHING
+ * is observed — not even a phase that would have passed on its own. Orphan phase
+ * samples with no end-to-end number to interpret them against are worse than no
+ * samples: they still move the phase percentiles.
+ *
+ * 🔴 TOTAL (never throws), like every emitter in this module: it runs on a
+ * fire-and-forget public telemetry route, and a label/registry error must never
+ * turn a beacon into a 500.
+ */
+export function observeAppBlockLaunch(
+  appBlockIdLabel: string,
+  timings: AppBlockLaunchTimings | undefined
+): void {
+  try {
+    if (!timings) return;
+    const total = launchSampleSeconds(timings.totalMs);
+    if (total === null) return;
+
+    const { launchTotalSeconds, launchPhaseSeconds } = ensureRegisterAppBlockRuntimeMetrics();
+    launchTotalSeconds.observe({ app_block_id: appBlockIdLabel }, total);
+
+    const phases: Array<[AppBlockLaunchPhase, unknown]> = [
+      ['token_mint', timings.tokenMintMs],
+      ['init_wait', timings.initWaitMs],
+    ];
+    for (const [phase, ms] of phases) {
+      const seconds = launchSampleSeconds(ms);
+      if (seconds === null) continue;
+      launchPhaseSeconds.observe({ phase }, seconds);
+    }
+  } catch {
+    /* instrument-only — never let a metrics error touch the beacon response */
+  }
 }
 
 /**
