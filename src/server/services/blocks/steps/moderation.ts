@@ -436,14 +436,32 @@ export type ModeratedTextOutputFields = {
 /**
  * Attach a workflow's SCANNED generated text to a snapshot.
  *
- * 🔴 THIS FUNCTION IS THE SOLE PRODUCER OF `snapshot.textOutputs`, AND THAT IS
- * THE ENFORCEMENT MECHANISM — not a convention. `snapshotFromWorkflow` and
- * `projectAppWorkflow` are pure, synchronous, and structurally incapable of
- * emitting generated text: they read `extractOutput`, which returns MEDIA
- * (`{url,width,height,nsfwLevel}`) and cannot carry a string of prose. A scan is
- * an async network call, so it cannot live in either of them. The result is that
- * the only route from `step.output` to a block's `textOutputs` runs through the
- * scan below, and the withhold branch simply never writes the field.
+ * 🔴 THIS FUNCTION IS THE SOLE PRODUCER OF `snapshot.textOutputs`. BE EXACT
+ * ABOUT WHAT ENFORCES THAT — an earlier revision of this comment said
+ * `snapshotFromWorkflow` and `projectAppWorkflow` "read `extractOutput`, which
+ * returns MEDIA and cannot carry a string of prose", and that reasoning was
+ * WRONG: `StepOutputMedia.url` is a bare `string`, never URL-validated, and it
+ * reaches `snapshot.imageUrls` / `AppWorkflow.images[].url` without meeting this
+ * function. `extractOutput: () => [{ url: theModelsReply, … }]` would have
+ * published unscanned generated text with every gate green. It is recorded here
+ * rather than quietly corrected because in a code-reviewed trust root the
+ * comment IS the control.
+ *
+ * WHAT ACTUALLY HOLDS IT, all three off the one `stepOutputShape` predicate:
+ *   1. TYPE — `TextOutputSurface.extractOutput?: never`. A `'textOutput'` entry
+ *      cannot declare a media extractor.
+ *   2. LOAD — registry clause 8-ii rejects the declaration anyway, for the
+ *      `as`-cast path a type cannot close.
+ *   3. READ — both `workflow.service` extractors call `extractOutput` only when
+ *      `postureProducesMedia(entry.moderationPosture)`, so even a cast-in
+ *      extractor contributes nothing.
+ * Plus the original structural point, which does still stand on its own: a scan
+ * is an async network call and both projections are pure and synchronous, so
+ * neither could perform one even if it wanted to.
+ *
+ * The result is that the only route from `step.output` to a block's
+ * `textOutputs` runs through the scan below, and the withhold branch simply
+ * never writes the field.
  *
  * The incoming snapshot's own text fields are STRIPPED before merging, so a
  * caller that somehow arrived carrying text cannot smuggle it past the scan by

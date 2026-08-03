@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -27,6 +28,15 @@ import { logToAxiom } from '~/server/logging/client';
 // is itself gated on the entity fields) in one step. Verified against the
 // function's own branches: every EM/dedup branch is `if (entityType && entityId
 // !== undefined)`-gated.
+//
+// 🔴 SKIPPING THAT DEDUP HAS A COST, AND IT IS PAID BACK HERE RATHER THAN
+// IGNORED. `attachModeratedStepTextOutputs` runs on EVERY `pollWorkflow`, at a
+// cadence untrusted block code chooses, over content whose length the model
+// chooses — so with no dedup and no cap, one generation was an unbounded number
+// of unbounded scans. Both are bounded on THIS side now:
+// `MAX_SCANNED_CONTENT_CHARS` caps a single scan (fail-CLOSED above it), and the
+// in-process verdict memo at the bottom of this file collapses the poll loop's
+// repeated scans of identical content.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -148,7 +158,60 @@ export type TextOutputScanVerdict = {
   triggeredLabels: string[];
   /** Per-label scores, for the trigger log. */
   scores: Record<string, number>;
+  /**
+   * 🔴 REQUESTED labels the scan did NOT come back with a result for. NON-EMPTY
+   * FORCES A WITHHOLD, regardless of what did come back. See
+   * `assertEveryRequestedLabelEvaluated`.
+   */
+  missingLabels: string[];
 };
+
+/**
+ * The requested labels the scan produced NO `results[]` entry for.
+ *
+ * 🔴 THIS CLOSES A FAIL-OPEN THE GENERATED CLIENT DOCUMENTS IN SO MANY WORDS.
+ * `types.gen.d.ts` on `xGuardModeration`'s `labels` input: *"Labels not found in
+ * the defaults (or label overrides) are silently ignored."* So a renamed or
+ * mistyped entry in `TEXT_OUTPUT_SCAN_LABELS` — an orchestrator-side rename this
+ * codebase does not control, or a typo in a PR — is never evaluated, comes back
+ * absent rather than errored, produces a clean verdict, and RELEASES. There is
+ * no symptom: everything simply passes, which is the exact shape
+ * `normalizeLabel`'s own comment claims to have removed on the CASING axis and
+ * cannot remove on the RENAME axis.
+ *
+ * The only signal available is the one the scan returns: `results[]` carries one
+ * entry per label the scanner actually evaluated. If a label we asked for is not
+ * in there, we did not get the answer we asked for, and "no answer" must never
+ * read as "clean" — the same rule `screenGeneratedText` already applies to a
+ * missing scan output.
+ *
+ * 🔴 CONSEQUENCE, STATED PLAINLY BECAUSE IT IS SHARP: if the orchestrator ever
+ * stops returning per-label results for a label we request, this posture
+ * withholds EVERYTHING until someone updates the list. That is loud and
+ * fail-closed, which is the correct direction for generated model output on a
+ * trust root — and it is the opposite of the current behaviour, which is silent
+ * and fail-open. The `stage: 'label-drift'` trigger log is what makes it
+ * diagnosable in one query rather than a mystery.
+ *
+ * Compared on the NORMALIZED key, so a casing difference between what we send
+ * and what comes back is not mistaken for a drop.
+ */
+export function missingRequestedLabels(
+  output: XGuardScanOutputLike | null | undefined,
+  requestedLabels: readonly string[]
+): string[] {
+  const evaluated = new Set<string>();
+  const rawResults = output?.results;
+  if (Array.isArray(rawResults)) {
+    for (const entry of rawResults as XGuardLabelResultLike[]) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (typeof entry.label === 'string' && entry.label.trim().length > 0) {
+        evaluated.add(normalizeLabel(entry.label));
+      }
+    }
+  }
+  return requestedLabels.filter((label) => !evaluated.has(normalizeLabel(label)));
+}
 
 /**
  * The scan → verdict decision. PURE: no IO, no throws, fully mutation-testable
@@ -174,7 +237,17 @@ export type TextOutputScanVerdict = {
  */
 export function decideTextOutputVerdict(
   output: XGuardScanOutputLike | null | undefined,
-  opts: { isGreen: boolean }
+  opts: {
+    isGreen: boolean;
+    /**
+     * 🔴 The labels the scan was ASKED for. REQUIRED — deliberately not
+     * defaulted to `TEXT_OUTPUT_SCAN_LABELS`, because a default is precisely how
+     * a caller ends up checking a list it did not send. Every requested label
+     * must come back in `results[]` or the verdict withholds; see
+     * `missingRequestedLabels`.
+     */
+    requestedLabels: readonly string[];
+  }
 ): TextOutputScanVerdict {
   const triggered = new Set<string>();
   const scores: Record<string, number> = {};
@@ -207,11 +280,17 @@ export function decideTextOutputVerdict(
     return opts.isGreen && SFW_ONLY_WITHHOLD_KEYS.has(key);
   });
 
+  // 🔴 A LABEL WE ASKED FOR AND DID NOT GET AN ANSWER FOR WITHHOLDS, on its own,
+  // even when nothing triggered. This is the rename/typo fail-open the generated
+  // client documents ("silently ignored"); see `missingRequestedLabels`.
+  const missingLabels = missingRequestedLabels(output, opts.requestedLabels);
+
   return {
-    released: withholdingLabels.length === 0,
+    released: withholdingLabels.length === 0 && missingLabels.length === 0,
     withholdingLabels,
     triggeredLabels,
     scores,
+    missingLabels,
   };
 }
 
@@ -231,6 +310,48 @@ export const TEXT_OUTPUT_WITHHELD_MESSAGE =
  */
 export const SCAN_WAIT_SECONDS = 10;
 const HARD_DEADLINE_MS = 12_000;
+
+/**
+ * The maximum joined content, in characters, this posture will scan.
+ *
+ * 🔴 THE COST/LATENCY THIS BOUNDS IS CALLER-CONTROLLED IN THREE DIMENSIONS AT
+ * ONCE, which is why an unbounded scan on this path was a real defect and not a
+ * tidiness note. `attachModeratedStepTextOutputs` runs on EVERY `pollWorkflow`
+ * call; the poll CADENCE is chosen by untrusted block code; and the CONTENT
+ * length is whatever the model produced. Scan cost is ~1 unit per label per
+ * ~10k-char chunk over 15 labels, so a 200k-char reply was ~300 scan units and
+ * 370ms–12s of inline latency PER POLL, indefinitely.
+ *
+ * 🔴 THE VALUE, AND WHY THIS ONE. 50,000 characters ≈ 5 chunks × 15 labels ≈ 75
+ * scan units for the worst permitted single scan. It is ~12.5k tokens of
+ * generated text — comfortably above any realistic single `chatCompletion`
+ * reply, caption or short transcription, which is the population
+ * `ACCEPTABLE_POSTURES_BY_TYPE` currently licenses — while capping the tail at a
+ * number that will not surprise anyone reading a bill. It is a policy number,
+ * not a physical limit: raise it deliberately, with the ~1-unit-per-label-per-
+ * 10k-chars arithmetic in hand.
+ *
+ * 🔴 OVER THE CAP IS A WITHHOLD, NOT A TRUNCATION AND NOT A RELEASE. Truncating
+ * would scan a prefix and publish the whole thing — the worst option available,
+ * because it reports coverage it does not have. Releasing unscanned is the one
+ * outcome this posture exists to prevent. So the cap fails CLOSED, exactly like
+ * a scanner error, and an adopter that legitimately needs more has to come back
+ * and design chunked scanning rather than discover the limit as a silent gap.
+ */
+export const MAX_SCANNED_CONTENT_CHARS = 50_000;
+
+/**
+ * How long a decided verdict stays reusable for identical content, and how many
+ * such verdicts are held.
+ *
+ * 🔴 WHY MEMOIZE AT ALL: the dedup the orchestrator's own `contentHash` would
+ * give us is DELIBERATELY bypassed on this path (no `entityType`/`entityId` — see
+ * the header note), and the poll loop re-presents byte-identical content every
+ * couple of seconds until the block stops polling. Without a host-side memo the
+ * SAME text is rescanned tens of times per generation.
+ */
+const VERDICT_CACHE_TTL_MS = 5 * 60_000;
+const VERDICT_CACHE_MAX_ENTRIES = 1_000;
 
 export type TextOutputScreenResult =
   | { released: true; texts: string[] }
@@ -291,6 +412,45 @@ export async function screenGeneratedText(opts: {
   // while a single call has one latency hit instead of N.
   const content = texts.join('\n\n');
 
+  // 🔴 THE CAP, CHECKED BEFORE THE NETWORK CALL AND FAILING CLOSED. See
+  // `MAX_SCANNED_CONTENT_CHARS` for the value and the reasoning. Placed here,
+  // ahead of the cache lookup, so an over-cap payload can never be answered from
+  // a hit either.
+  if (content.length > MAX_SCANNED_CONTENT_CHARS) {
+    logScan({
+      ...opts,
+      stage: 'over-cap',
+      contentChars: content.length,
+      capChars: MAX_SCANNED_CONTENT_CHARS,
+    });
+    return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+  }
+
+  // 🔴 THE PER-CONTENT MEMO. Keyed on (content, isGreen) and NOTHING ELSE, which
+  // is both correct and deliberate:
+  //   - `isGreen` IS in the key because the verdict genuinely depends on it (the
+  //     SFW-only tier). Dropping it would let a mature-allowed host's release be
+  //     served to a SFW one.
+  //   - `userId` / `appId` are NOT, because the verdict does not depend on them
+  //     and including them would defeat the memo across the poll loop of a
+  //     multi-tab viewer for no safety gain. Nothing leaks: a hit requires
+  //     presenting the identical content, which the caller already holds.
+  // Only DECIDED verdicts are stored — never an error, timeout or missing
+  // output. Caching those would be fail-closed but would also pin a withhold
+  // through a scanner recovery, turning a blip into a five-minute outage of the
+  // capability.
+  const cacheKey = verdictCacheKey(content, opts.isGreen);
+  const cached = readCachedVerdict(cacheKey);
+  if (cached !== undefined) {
+    // 🔴 The caller's OWN `texts` are returned, never a stored copy. The key is
+    // the JOINED content, so two callers can share a hit while having split
+    // their pieces differently; replaying a stored array would hand one of them
+    // the other's segmentation.
+    return cached
+      ? { released: true, texts }
+      : { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+  }
+
   let output: XGuardScanOutputLike | null | undefined;
   try {
     output = await withHardDeadline(
@@ -330,8 +490,23 @@ export async function screenGeneratedText(opts: {
     return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
   }
 
-  const verdict = decideTextOutputVerdict(output, { isGreen: opts.isGreen });
+  const verdict = decideTextOutputVerdict(output, {
+    isGreen: opts.isGreen,
+    // The list actually SENT above — one expression, so the check can never
+    // drift from the request.
+    requestedLabels: TEXT_OUTPUT_SCAN_LABELS,
+  });
+  writeCachedVerdict(cacheKey, verdict.released);
   if (verdict.released) return { released: true, texts };
+
+  // 🔴 LABEL DRIFT GETS ITS OWN STAGE. A withhold caused by "we asked for a
+  // label the scanner never answered on" is an OPERATIONAL fault in this file's
+  // own constant, not a content hit — the two need different responses and must
+  // not be aggregated together in the trigger rates.
+  if (verdict.missingLabels.length > 0) {
+    logScan({ ...opts, stage: 'label-drift', missingLabels: verdict.missingLabels });
+    return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+  }
 
   // 🔴 THE PER-APP TRIGGER LOG. `(userId, appBlockId, model, triggeredLabels,
   // scores)` per the approved policy, plus `appId` — the key trigger RATES are
@@ -345,6 +520,65 @@ export async function screenGeneratedText(opts: {
     scores: verdict.scores,
   });
   return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE VERDICT MEMO — a bounded, TTL'd, in-process map.
+//
+// 🔴 IN-PROCESS AND NOT REDIS, ON PURPOSE. What this has to collapse is a poll
+// LOOP: the same viewer, the same workflow, the same bytes, every couple of
+// seconds, served by one pod for the life of that generation. An in-process map
+// catches essentially all of that for zero new dependencies and no new failure
+// mode on a read path — a Redis outage here would have to fail-closed to be
+// safe, i.e. it would take the capability down. Cross-pod reuse is the residual,
+// and it is worth strictly less than the failure mode it would buy.
+//
+// 🔴 NOT a `cache-helpers` cache (`createCachedObject` &co), which is what the
+// `no-module-scope-cache` lint rule governs — those are Redis-backed and
+// dereference `REDIS_KEYS` at module scope. This is a plain `Map` with no IO.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `released` per key, with the epoch-ms the entry expires at. */
+const verdictCache = new Map<string, { released: boolean; expiresAt: number }>();
+
+function verdictCacheKey(content: string, isGreen: boolean): string {
+  // 🔴 A HASH, NOT THE TEXT. Holding the full generated text in a
+  // process-lifetime map is a copy of the thing this posture may be about to
+  // WITHHOLD; the digest is enough to answer "same content?" and carries none of
+  // it back out. `sha256` (not a cheap non-cryptographic hash) because a
+  // collision here would serve one text's verdict for another's.
+  return `${isGreen ? 'g' : 'm'}:${createHash('sha256').update(content).digest('hex')}`;
+}
+
+function readCachedVerdict(key: string): boolean | undefined {
+  const hit = verdictCache.get(key);
+  if (!hit) return undefined;
+  if (hit.expiresAt <= Date.now()) {
+    verdictCache.delete(key);
+    return undefined;
+  }
+  return hit.released;
+}
+
+function writeCachedVerdict(key: string, released: boolean): void {
+  // Bounded by eviction of the OLDEST insertion — `Map` preserves insertion
+  // order, so the first key is the least recently WRITTEN. Not a true LRU, and
+  // it does not need to be: entries expire on a 5-minute TTL anyway, so the cap
+  // is a memory ceiling for a burst, not a hit-rate strategy.
+  if (verdictCache.size >= VERDICT_CACHE_MAX_ENTRIES) {
+    const oldest = verdictCache.keys().next();
+    if (!oldest.done) verdictCache.delete(oldest.value);
+  }
+  verdictCache.set(key, { released, expiresAt: Date.now() + VERDICT_CACHE_TTL_MS });
+}
+
+/**
+ * Drop every memoized verdict. TEST-ONLY seam: a module-lifetime cache would
+ * otherwise leak a verdict between test cases and make the second assertion in a
+ * pair a statement about the first one's scan.
+ */
+export function __clearTextOutputVerdictCacheForTests(): void {
+  verdictCache.clear();
 }
 
 function logScan(fields: Record<string, unknown>): void {

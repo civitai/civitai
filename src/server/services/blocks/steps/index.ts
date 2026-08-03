@@ -157,14 +157,86 @@ export function postureRequiresAuditableText(posture: StepModerationPosture): bo
 }
 
 /**
+ * WHAT SHAPE a posture's step publishes — MEDIA **XOR** TEXT. The single
+ * declaration every output-shape rule reads.
+ *
+ * 🔴 WHY THIS EXISTS, AND THE DEFECT IT CLOSES. `extractOutput` used to be
+ * unconditionally REQUIRED and clause 8 unconditionally demanded ≥1 media item
+ * with a non-empty `url` — for EVERY entry, with no posture gate, in contrast to
+ * clause 8a which was already gated. But `ACCEPTABLE_POSTURES_BY_TYPE` licenses
+ * `'textOutput'` only for `chatCompletion` / `mediaCaptioning` /
+ * `audioCaptioning` / `transcription` / `promptEnhancement` / `xGuardModeration`
+ * / `echo` — every one of them TEXT-producing and none of them media-producing.
+ * So the posture was UN-ADOPTABLE: an honest `chatCompletion` + `'textOutput'`
+ * entry hit a load-time wall it could not satisfy truthfully, and the obvious
+ * workaround — prose stuffed into a fabricated `media.url` — registered cleanly
+ * and shipped that prose UNSCANNED, because `StepOutputMedia.url` is a bare
+ * string that flows to `snapshot.imageUrls` and `AppWorkflow.images[].url`
+ * WITHOUT passing through `attachModeratedStepTextOutputs`. Proven by execution
+ * in review, both directions.
+ *
+ * 🔴 XOR, NOT "AT LEAST ONE", AND THAT IS DELIBERATE. A `'media'` entry declares
+ * `extractOutput` and MUST NOT declare `extractText`; a `'text'` entry declares
+ * `extractText` and MUST NOT declare `extractOutput`. Enforced three ways off
+ * THIS one predicate:
+ *   1. AT THE TYPE LEVEL — `BlockStep` intersects a `StepOutputSurface` union
+ *      whose text member types `extractOutput?: never`. A text entry cannot
+ *      even WRITE a media extractor, which is what makes the url-smuggle
+ *      structurally impossible rather than merely guarded.
+ *   2. AT REGISTRY LOAD — clauses 8/8a below, for the `as`-cast escape hatch a
+ *      type cannot close.
+ *   3. AT THE READ PATH — `snapshotFromWorkflow` / `projectAppWorkflow` consult
+ *      THIS predicate before calling `extractOutput`, so a media extractor that
+ *      somehow existed on a text entry would still contribute nothing.
+ *
+ * 🔴 HONEST LIMIT, STATED RATHER THAN PAPERED OVER. A future orchestrator step
+ * that emits BOTH media and free text cannot register at all under this rule —
+ * it fails at load rather than half-registering. That is the fail-closed
+ * direction and it is the intended answer for now: such an entry needs a real
+ * decision about whether its media is scanned too (the text scan here does not
+ * look at media at all), and it should be blocked until someone makes it, not
+ * admitted with one axis silently uncovered. Nothing in the currently-licensed
+ * `$type` set has that shape.
+ */
+export function stepOutputShape(posture: StepModerationPosture): 'media' | 'text' {
+  switch (posture) {
+    // No free-text output — whatever this step produces is media, extracted by
+    // the declared `extractOutput` and rated by the orchestrator's own blob
+    // `nsfwLevel` on the existing path.
+    case 'none':
+      return 'media';
+    // Input-side posture. Its RESULT is media (see `posturePhaseRequirements`'s
+    // `'promptAudit'` case: no output-phase surface).
+    case 'promptAudit':
+      return 'media';
+    // The only text-publishing posture, and the only one whose result reaches a
+    // block through the scan.
+    case 'textOutput':
+      return 'text';
+  }
+}
+
+/**
  * True iff the posture's handler needs the entry to declare `extractText`.
  *
- * The OUTPUT-side twin of `postureRequiresAuditableText`, and the same single
- * declaration: the load-time invariant, the read-path handler and the tests all
- * read THIS.
+ * The OUTPUT-side twin of `postureRequiresAuditableText`. 🔴 DERIVED FROM
+ * `stepOutputShape`, not a second copy of the rule: the load-time invariant, the
+ * read-path handler, the type-level surface union and the tests all bottom out
+ * in one predicate, so "which postures publish text" cannot drift between them.
  */
 export function postureRequiresTextExtraction(posture: StepModerationPosture): boolean {
-  return posture === 'textOutput';
+  return stepOutputShape(posture) === 'text';
+}
+
+/**
+ * True iff the posture's step publishes MEDIA — i.e. iff it declares (and the
+ * two `workflow.service` extractors may call) `extractOutput`.
+ *
+ * The exact complement of `postureRequiresTextExtraction`, off the same
+ * predicate.
+ */
+export function postureProducesMedia(posture: StepModerationPosture): boolean {
+  return stepOutputShape(posture) === 'media';
 }
 
 /**
@@ -552,7 +624,15 @@ interface BlockStepBase<P> {
   orchestratorType: string;
   /** 🔴 REQUIRED. Drives estimate/submit/settle dispatch. */
   billingMode: StepBillingMode;
-  /** 🔴 REQUIRED. See `StepModerationPosture`. */
+  /**
+   * 🔴 REQUIRED. See `StepModerationPosture`.
+   *
+   * 🔴 IT IS ALSO THE OUTPUT-SHAPE DISCRIMINANT. `BlockStep` intersects this
+   * base with the `StepOutputSurface` union below, which narrows this field to
+   * `'textOutput'` on the text member and to `'none' | 'promptAudit'` on the
+   * media member — so declaring the posture is the same act as declaring which
+   * extractor the entry supplies. See `stepOutputShape`.
+   */
   moderationPosture: StepModerationPosture;
   /**
    * 🔴 REQUIRED IFF `moderationPosture` requires it (`'promptAudit'`), and
@@ -580,31 +660,6 @@ interface BlockStepBase<P> {
    * reviewed declaration in a code-reviewed trust root.
    */
   auditableText?(params: P): StepAuditableText;
-  /**
-   * 🔴 REQUIRED IFF `moderationPosture` requires it (`'textOutput'`), and
-   * FORBIDDEN otherwise. PURE: the orchestrator's completed step → the generated
-   * FREE TEXT that must be scanned before it can reach the block.
-   *
-   * The OUTPUT-side twin of `auditableText`, and a declared field for the same
-   * reason `extractOutput` is: the output KEY is step-type-specific, so the
-   * entry NAMES its generated text rather than the registry sniffing for
-   * string-valued fields — which would scan a blob url and miss
-   * `choices[].message.content`.
-   *
-   * 🔴 AND IT IS THE OTHER HALF OF THE WITHHOLDING CONTRACT. Whatever this
-   * returns is what the scan sees AND what a release publishes: the read path
-   * emits exactly these strings, never `step.output` directly. So a piece of
-   * generated text this function does not return is a piece of text that is
-   * never scanned AND never published — the two properties move together by
-   * construction, which is what makes an under-inclusive extractor a missing
-   * feature rather than a silent moderation hole.
-   *
-   * MUST return non-empty strings for `canonicalOutputFor(variant)` — enforced
-   * at load (clause 8a), for the same reason `extractOutput` gets clause 8: a
-   * field satisfiable by `() => []` is a declared posture that scans nothing,
-   * publishes nothing, and reports success.
-   */
-  extractText?(step: unknown): string[];
   /**
    * 🔴 REQUIRED. See `StepResourcePolicy`. The entitlement axis — the one this
    * PR's own triage identified as the real bypass risk, and the one a
@@ -676,22 +731,6 @@ interface BlockStepBase<P> {
   /** The Buzz figure `estimateWorkflow` shows the block. */
   estimateBuzz(params: P): number;
   /**
-   * 🔴 REQUIRED. PURE extractor: the orchestrator's completed step object → the
-   * output media the caller gets back. Called by BOTH `snapshotFromWorkflow`
-   * (`imageUrls`) and `projectAppWorkflow` (`images`), so one declaration
-   * surfaces the result on both read surfaces.
-   *
-   * MUST apply the availability filter — use the shared `mediaFromBlobs` helper
-   * rather than reimplementing it.
-   *
-   * Takes the whole step (not `step.output`) because the output KEY is
-   * step-type-specific: `convertImage` returns `{ blob }`, `customComfy`
-   * returns `{ blobs }`, the image steps return `{ images }`. Typed `unknown`
-   * because the orchestrator step union is wider than any one entry knows;
-   * narrow it inside the entry.
-   */
-  extractOutput(step: unknown): StepOutputMedia[];
-  /**
    * A canonical, orchestrator-SHAPED completed step object for the given
    * variant, carrying at least one available output blob.
    *
@@ -704,9 +743,111 @@ interface BlockStepBase<P> {
    * 🔴 Populate it from a REAL observed orchestrator response, not from what the
    * extractor expects. A sample written to match the code proves only that the
    * code matches itself.
+   *
+   * REQUIRED for BOTH output shapes: it is the probe input for clause 8 (media)
+   * AND for clause 8a (text).
    */
   canonicalOutputFor(variant: string): unknown;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OUTPUT SURFACE — MEDIA **XOR** TEXT, discriminated on `moderationPosture`.
+//
+// 🔴 THIS IS WHERE "a text-posture entry cannot smuggle prose through
+// `media.url`" IS MADE STRUCTURAL RATHER THAN GUARDED. `extractOutput?: never`
+// on the text member means a `'textOutput'` entry cannot DECLARE a media
+// extractor at all — there is no field to put a fabricated url in, so there is
+// nothing for a runtime guard to catch. See `stepOutputShape` for the defect
+// this replaces (an honest text entry could not register; the dishonest
+// media-shaped one could, and its prose reached `snapshot.imageUrls` /
+// `AppWorkflow.images[].url` without ever passing the scan).
+//
+// 🔴 WHY `?: never` AND NOT AN OMITTED FIELD. Omitting `extractOutput` from the
+// text member would make an entry that declares one merely have an EXCESS
+// property — which TypeScript only rejects for a fresh object literal, and
+// silently allows through any variable, spread or `Partial<…>` widening. `never`
+// makes the field unassignable on every path (`satisfies`, a typed const, a
+// spread through a helper), which is the difference between a lint and a rule.
+//
+// 🔴 THE LOAD-TIME CLAUSES ARE NOT REDUNDANT WITH THIS. The registry is reached
+// through `AnyBlockStep` and `as` casts in several places (and a future entry
+// could be constructed dynamically), so clauses 8/8a re-assert the same XOR at
+// runtime, off the same `stepOutputShape` predicate. Type + load + read path,
+// one rule.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A step whose result is MEDIA — the pre-existing shape, unchanged. */
+type MediaOutputSurface = {
+  /** Narrowed from `BlockStepBase`: every posture whose shape is `'media'`. */
+  moderationPosture: Exclude<StepModerationPosture, 'textOutput'>;
+  /**
+   * 🔴 REQUIRED for a media entry. PURE extractor: the orchestrator's completed
+   * step object → the output media the caller gets back. Called by BOTH
+   * `snapshotFromWorkflow` (`imageUrls`) and `projectAppWorkflow` (`images`), so
+   * one declaration surfaces the result on both read surfaces.
+   *
+   * MUST apply the availability filter — use the shared `mediaFromBlobs` helper
+   * rather than reimplementing it.
+   *
+   * Takes the whole step (not `step.output`) because the output KEY is
+   * step-type-specific: `convertImage` returns `{ blob }`, `customComfy`
+   * returns `{ blobs }`, the image steps return `{ images }`. Typed `unknown`
+   * because the orchestrator step union is wider than any one entry knows;
+   * narrow it inside the entry.
+   */
+  extractOutput(step: unknown): StepOutputMedia[];
+  /**
+   * FORBIDDEN. A posture that never scans generated text must not carry an
+   * extractor that reads as generated-text coverage and is never called
+   * (clause 1c's reverse direction, at the type level).
+   */
+  extractText?: never;
+};
+
+/** A step whose result is generated FREE TEXT, published only through the scan. */
+type TextOutputSurface = {
+  /** Narrowed from `BlockStepBase`: the only posture whose shape is `'text'`. */
+  moderationPosture: 'textOutput';
+  /**
+   * 🔴 REQUIRED for a text entry. PURE: the orchestrator's completed step → the
+   * generated FREE TEXT that must be scanned before it can reach the block.
+   *
+   * The OUTPUT-side twin of `auditableText`, and a declared field for the same
+   * reason `extractOutput` is: the output KEY is step-type-specific, so the
+   * entry NAMES its generated text rather than the registry sniffing for
+   * string-valued fields — which would scan a blob url and miss
+   * `choices[].message.content`.
+   *
+   * 🔴 AND IT IS THE OTHER HALF OF THE WITHHOLDING CONTRACT. Whatever this
+   * returns is what the scan sees AND what a release publishes: the read path
+   * emits exactly these strings, never `step.output` directly. So a piece of
+   * generated text this function does not return is a piece of text that is
+   * never scanned AND never published — the two properties move together by
+   * construction, which is what makes an under-inclusive extractor a missing
+   * feature rather than a silent moderation hole.
+   *
+   * MUST return non-empty strings for `canonicalOutputFor(variant)` — enforced
+   * at load (clause 8a): a field satisfiable by `() => []` is a declared posture
+   * that scans nothing, publishes nothing, and reports success.
+   */
+  extractText(step: unknown): string[];
+  /**
+   * 🔴 FORBIDDEN, AND THIS IS THE ANTI-SMUGGLING CONTROL. `StepOutputMedia.url`
+   * is a bare `string` that is never URL-validated and flows straight to
+   * `snapshot.imageUrls` and `AppWorkflow.images[].url` WITHOUT passing through
+   * `attachModeratedStepTextOutputs`. If a text entry could declare a media
+   * extractor, `extractOutput: () => [{ url: theModelsReply, … }]` would publish
+   * unscanned generated text through the media channel while every moderation
+   * gate stayed green. `never` is what makes that unwritable.
+   */
+  extractOutput?: never;
+};
+
+/**
+ * The output surface a registered step declares. See the block comment above —
+ * MEDIA XOR TEXT, discriminated on `moderationPosture`.
+ */
+type StepOutputSurface = MediaOutputSurface | TextOutputSurface;
 
 /**
  * Deterministic cost, exactly knowable before execution.
@@ -764,8 +905,19 @@ interface TokenMeteredStep<P> extends BlockStepBase<P> {
  * a missing or unknown `billingMode` a COMPILE error rather than a runtime
  * surprise (no union member matches), and what gives each mode its own required
  * price/budget accessor.
+ *
+ * 🔴 INTERSECTED WITH `StepOutputSurface`, a SECOND discriminated union — on
+ * `moderationPosture` — that makes the output shape MEDIA XOR TEXT at compile
+ * time. The two axes are independent (any billing mode may publish either
+ * shape), so an intersection is the honest encoding; spelling out all six
+ * combinations by hand would be the same type with six places to forget.
  */
-export type BlockStep<P = unknown> = PrepaidFixedStep<P> | TimeBoundedStep<P> | TokenMeteredStep<P>;
+export type BlockStep<P = unknown> = (
+  | PrepaidFixedStep<P>
+  | TimeBoundedStep<P>
+  | TokenMeteredStep<P>
+) &
+  StepOutputSurface;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyBlockStep = BlockStep<any>;
@@ -1494,25 +1646,64 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       }
     }
 
-    // (8) OUTPUT EXTRACTION must actually surface something. A registered step
-    // whose output nothing can read is a capability the caller is CHARGED for
-    // and can never retrieve — it polls to `succeeded` with an empty result
-    // forever. That failure is invisible to every other invariant here, and it
-    // is exactly what shipped before this clause existed.
+    // (8) OUTPUT EXTRACTION must actually surface something — 🔴 POSTURE-GATED,
+    // on the SHAPE the entry declares (`stepOutputShape`), not unconditionally.
+    //
+    // 🔴 WHAT THE GATE FIXES. This clause used to demand ≥1 media item with a
+    // non-empty `url` from EVERY entry, with no posture gate — in deliberate
+    // contrast to clause 8a below, which was already gated. But every `$type`
+    // that `ACCEPTABLE_POSTURES_BY_TYPE` licenses for `'textOutput'` is
+    // TEXT-producing and none is media-producing, so an honest
+    // `chatCompletion` + `'textOutput'` entry could NOT register: it had no
+    // media to return. The workaround an author reaches for next — prose in a
+    // fabricated `media.url` — DID register, and shipped that prose unscanned
+    // (`snapshot.imageUrls` / `AppWorkflow.images[].url` never pass through
+    // `attachModeratedStepTextOutputs`). Both directions were proven by
+    // execution in review. So the requirement is now the entry's declared
+    // SHAPE, and the smuggling vector is closed at the type level as well
+    // (`TextOutputSurface.extractOutput?: never`).
     const sampleStep = step.canonicalOutputFor(variant);
-    const media = step.extractOutput(sampleStep);
-    if (!Array.isArray(media) || media.length === 0) {
-      throw new Error(
-        `${vWhere}: extractOutput() returned no media for canonicalOutputFor() — the step's ` +
-          'result would be unreachable on both the snapshot and the app-workflow projection'
-      );
-    }
-    for (const item of media) {
-      if (typeof item?.url !== 'string' || item.url.length === 0) {
+    if (postureProducesMedia(step.moderationPosture)) {
+      // 8-i. A media entry MUST declare the extractor. Enforced at runtime as
+      // well as in the type, because the registry is reached through
+      // `AnyBlockStep` and `as` casts — without this the failure would be a bare
+      // `TypeError: step.extractOutput is not a function` out of module load.
+      if (typeof step.extractOutput !== 'function') {
         throw new Error(
-          `${vWhere}: extractOutput() returned media with no url — a block would render a dead link`
+          `${vWhere}: moderationPosture '${step.moderationPosture}' publishes MEDIA and requires ` +
+            'an extractOutput() declaration — without it the step is charged for, reaches ' +
+            'succeeded, and its result is unreachable on both read surfaces'
         );
       }
+      const media = step.extractOutput(sampleStep);
+      if (!Array.isArray(media) || media.length === 0) {
+        throw new Error(
+          `${vWhere}: extractOutput() returned no media for canonicalOutputFor() — the step's ` +
+            'result would be unreachable on both the snapshot and the app-workflow projection'
+        );
+      }
+      for (const item of media) {
+        if (typeof item?.url !== 'string' || item.url.length === 0) {
+          throw new Error(
+            `${vWhere}: extractOutput() returned media with no url — a block would render a dead link`
+          );
+        }
+      }
+    } else if (step.extractOutput !== undefined) {
+      // 8-ii. 🔴 THE ANTI-SMUGGLING CLAUSE, and the runtime half of
+      // `TextOutputSurface.extractOutput?: never`. A text-posture entry that
+      // carries a media extractor has a channel to the block that the scan does
+      // NOT stand in front of: `StepOutputMedia.url` is a bare string, never
+      // URL-validated, and it reaches `snapshot.imageUrls` and
+      // `AppWorkflow.images[].url` directly. Rejecting the DECLARATION is what
+      // makes the channel non-existent rather than merely policed — there is no
+      // "but only if the url looks like prose" heuristic here to get wrong.
+      throw new Error(
+        `${vWhere}: declares extractOutput() but moderationPosture ` +
+          `'${step.moderationPosture}' publishes TEXT — a media extractor on a text step is an ` +
+          'unscanned channel to the block (media urls bypass the output scan entirely), so the ' +
+          'declaration is rejected rather than policed'
+      );
     }
 
     // (8a) THE NON-VACUITY PROBE for `extractText` — clause 8's twin on the

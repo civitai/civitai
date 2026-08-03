@@ -16,8 +16,11 @@ import {
   mediaFromBlobs,
   NATIVELY_EXTRACTED_STEP_TYPES,
   planStepSpend,
+  postureProducesMedia,
   postureRequiresAuditableText,
+  postureRequiresTextExtraction,
   REGISTERED_STEP_IDS,
+  stepOutputShape,
   resolveStepVariant,
   STEP_BILLING_MODES,
   STEP_MODERATION_POSTURES,
@@ -118,22 +121,37 @@ function makeAuditedFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlock
   } as Partial<AnyBlockStep>);
 }
 
-/** The generated text the `'textOutput'` fixture's extractor reads. */
+/**
+ * The generated text the `'textOutput'` fixture's extractor reads.
+ *
+ * 🔴 NO `blob` KEY, AND THAT IS THE POINT. Every `$type` licensed for
+ * `'textOutput'` is text-producing and none is media-producing, so a canonical
+ * output carrying an image blob would be a fixture no real adopter could
+ * produce — which is exactly the fiction the media-XOR-text fix removed. This
+ * sample is what a `chatCompletion`-shaped completed step actually looks like.
+ */
 const FIXTURE_TEXT_OUTPUT_STEP = {
   $type: 'fixtureType',
   output: {
-    blob: { url: 'https://blobs.example/fixture.webp', available: true, width: 4, height: 5 },
     choices: [{ message: { content: 'a generated reply' } }],
   },
 };
 
 /**
- * A minimal VALID `'textOutput'` fixture — the same base, plus the two things
- * that posture requires: an `extractText` declaration and a canonical output
- * that actually carries text for it to find.
+ * A minimal VALID `'textOutput'` fixture — the same base, plus what that posture
+ * requires (an `extractText` declaration and a canonical output carrying text)
+ * and MINUS what it forbids (`extractOutput`).
+ *
+ * 🔴 THE DELETE IS LOAD-BEARING, NOT TIDINESS. Registry clause 8-ii rejects a
+ * text-posture entry that declares a media extractor, because
+ * `StepOutputMedia.url` is a bare string that reaches `snapshot.imageUrls` and
+ * `AppWorkflow.images[].url` WITHOUT passing the output scan. A fixture that
+ * kept the base's `extractOutput` would not register — and before the fix, the
+ * inverse was true: an honest text entry could not register WITHOUT one, which
+ * is how the media-url smuggle became the path of least resistance.
  */
 function makeTextOutputFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
-  return makeFixtureStep({
+  const step = makeFixtureStep({
     moderationPosture: 'textOutput',
     canonicalOutputFor: (): unknown => FIXTURE_TEXT_OUTPUT_STEP,
     extractText: (step: unknown) =>
@@ -145,6 +163,11 @@ function makeTextOutputFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBl
         .filter((t) => t.length > 0),
     ...overrides,
   } as Partial<AnyBlockStep>);
+  // Genuinely absent, not present-and-undefined — the shape a real entry has.
+  if (!('extractOutput' in overrides)) {
+    delete (step as { extractOutput?: unknown }).extractOutput;
+  }
+  return step;
 }
 
 describe('block step registry — the shipped population', () => {
@@ -186,7 +209,7 @@ describe('block step registry — the shipped population', () => {
   // BOTH read surfaces. Run over `listRegisteredSteps()` so a step registered
   // tomorrow is covered by this test today — which is the whole reason output
   // extraction became a registry field instead of a fourth hardcoded branch.
-  it('every registered entry is resolvable by $type and surfaces media from its canonical output', () => {
+  it('every registered entry is resolvable by $type and surfaces its OWN declared output shape', () => {
     for (const [id, step] of listRegisteredSteps()) {
       expect(
         getStepByOrchestratorType(step.orchestratorType),
@@ -198,12 +221,30 @@ describe('block step registry — the shipped population', () => {
         `step '${id}' shadows a natively-extracted $type`
       ).not.toContain(step.orchestratorType);
       for (const variant of step.variants) {
-        const media = step.extractOutput(step.canonicalOutputFor(variant));
-        expect(
-          media.length,
-          `step '${id}' variant '${variant}' extracted no media`
-        ).toBeGreaterThan(0);
-        for (const item of media) expect(item.url.length).toBeGreaterThan(0);
+        const sample = step.canonicalOutputFor(variant);
+        // 🔴 POSTURE-GATED, mirroring the read path. A `'textOutput'` entry has
+        // no `extractOutput` at all (media XOR text), so asserting media for it
+        // would be asserting a shape the registry FORBIDS — and this loop runs
+        // over the live population, so it must stay correct for the first text
+        // entry registered.
+        if (postureProducesMedia(step.moderationPosture)) {
+          const media = step.extractOutput!(sample);
+          expect(
+            media.length,
+            `step '${id}' variant '${variant}' extracted no media`
+          ).toBeGreaterThan(0);
+          for (const item of media) expect(item.url.length).toBeGreaterThan(0);
+        } else {
+          expect(
+            step.extractOutput,
+            `step '${id}' publishes TEXT but declares a media extractor — an unscanned channel`
+          ).toBeUndefined();
+          const texts = step.extractText!(sample);
+          expect(
+            texts.length,
+            `step '${id}' variant '${variant}' extracted no text`
+          ).toBeGreaterThan(0);
+        }
       }
     }
   });
@@ -287,6 +328,32 @@ describe('block step registry — the shipped population', () => {
     expect(isModerationPostureImplemented('none')).toBe(true);
     expect(isModerationPostureImplemented('promptAudit')).toBe(true);
     expect(isModerationPostureImplemented('textOutput')).toBe(true);
+  });
+
+  it('🔴 stepOutputShape is TOTAL, and media/text genuinely PARTITION the postures', () => {
+    // 🔴 THE ONE PREDICATE THE WHOLE MEDIA-XOR-TEXT RULE BOTTOMS OUT IN — the
+    // type-level surface union, registry clauses 8/8a, and the posture gate on
+    // BOTH `workflow.service` extractors all read it. If it ever returned
+    // `undefined` for a posture (a new union member with no `case`), the media
+    // branch would silently stop firing and a text step's `extractOutput` would
+    // start reaching `imageUrls` again. Enumerated from the live posture list, so
+    // a posture added tomorrow fails this today.
+    for (const posture of STEP_MODERATION_POSTURES) {
+      const shape = stepOutputShape(posture);
+      expect(['media', 'text'], `posture '${posture}' has no declared output shape`).toContain(
+        shape
+      );
+      // Exact complements, not two independently-maintained lists.
+      expect(postureProducesMedia(posture)).toBe(shape === 'media');
+      expect(postureRequiresTextExtraction(posture)).toBe(shape === 'text');
+      expect(postureProducesMedia(posture)).not.toBe(postureRequiresTextExtraction(posture));
+    }
+    // The concrete assignment, pinned literally — a silent flip of `'textOutput'`
+    // to `'media'` would re-open the smuggling channel while every structural
+    // assertion above still passed.
+    expect(stepOutputShape('none')).toBe('media');
+    expect(stepOutputShape('promptAudit')).toBe('media');
+    expect(stepOutputShape('textOutput')).toBe('text');
   });
 
   // 🔴 LABELLED HONESTLY: an INVARIANT GUARD, not regression coverage. Every
@@ -541,6 +608,85 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
         } as Partial<AnyBlockStep>)
       )
     ).not.toThrow();
+  });
+
+  // ── 🔴 THE OUTPUT SHAPE IS MEDIA **XOR** TEXT (clause 8, posture-gated) ─────
+  //
+  // 🔴 THE DEFECT THESE PIN, BOTH HALVES OF IT. Clause 8 used to demand ≥1 media
+  // item with a non-empty `url` from EVERY entry with no posture gate — while
+  // `ACCEPTABLE_POSTURES_BY_TYPE` licenses `'textOutput'` only for
+  // TEXT-producing `$type`s. So:
+  //   (a) an honest `chatCompletion` + `'textOutput'` entry COULD NOT REGISTER,
+  //       and
+  //   (b) the workaround it pushed an author toward — prose in a fabricated
+  //       `media.url` — DID register and shipped that prose unscanned, because
+  //       `StepOutputMedia.url` is a bare string that reaches
+  //       `snapshot.imageUrls` / `AppWorkflow.images[].url` without ever meeting
+  //       `attachModeratedStepTextOutputs`.
+  // Both directions were reproduced by execution before the fix. (a) is pinned
+  // by the two adoptability tests, (b) by the two rejection tests.
+
+  it('🔴 ADOPTABILITY: a text entry registers with NO extractOutput and NO media at all', () => {
+    // The claim (a) above, stated as the property that failed: an entry whose
+    // canonical output carries text and NOTHING image-shaped is registrable.
+    const step = makeTextOutputFixtureStep();
+    expect(step.extractOutput, 'the fixture must not carry a media extractor').toBeUndefined();
+    expect(
+      JSON.stringify(step.canonicalOutputFor('default')),
+      'the canonical output must carry no blob — a chatCompletion step returns none'
+    ).not.toContain('blob');
+    expect(() => assertStepInvariants('fixture-step', step)).not.toThrow();
+  });
+
+  it('🔴 ADOPTABILITY, the pre-fix shape: the SAME entry with a media extractor is now REJECTED', () => {
+    // The negative control for the test above, and the reachability proof for
+    // clause 8-ii. Only `extractOutput` differs between the two.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({
+          extractOutput: () => [
+            { url: 'https://blobs.example/f.webp', width: null, height: null, nsfwLevel: null },
+          ],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/declares extractOutput\(\) but moderationPosture 'textOutput' publishes TEXT/);
+  });
+
+  it('🔴 THE SMUGGLE, CONCRETELY: prose in media.url on a text entry is rejected by clause 8-ii', () => {
+    // 🔴 THE EXACT SHAPE THE AUDIT DEMONSTRATED. Nothing validates `media.url`
+    // as a url, and this value reaches a block through `imageUrls` /
+    // `images[].url`, neither of which passes the output scan. The rejection
+    // must name the SMUGGLING clause — if it came from clause 8's "no media" or
+    // "media with no url" branch instead, a text entry could still ship a media
+    // extractor as long as it returned something url-shaped.
+    const prose = 'Sure — here is how you would go about that. First, ';
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeTextOutputFixtureStep({
+          extractOutput: () => [{ url: prose, width: null, height: null, nsfwLevel: null }],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/media extractor on a text step is an unscanned channel to the block/);
+  });
+
+  it('rejects a MEDIA-posture entry that declares NO extractOutput — a NAMED error, not a TypeError', () => {
+    // The other half of the XOR. Making `extractOutput` conditional must not
+    // make it OPTIONAL for a media entry: without it the step is charged for,
+    // reaches `succeeded`, and its result is unreachable on both read surfaces —
+    // the exact inert-capability failure clause 8 was added for. And the error
+    // has to be this clause's, not `step.extractOutput is not a function`.
+    const step = makeFixtureStep();
+    delete (step as { extractOutput?: unknown }).extractOutput;
+    expect(() => assertStepInvariants('fixture-step', step)).toThrow(
+      /publishes MEDIA and requires an extractOutput\(\) declaration/
+    );
+  });
+
+  it('NEGATIVE CONTROL: the same media fixture WITH its extractOutput passes', () => {
+    // Only the deleted field differs from the test above.
+    expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
   });
 
   // ── 🔴 FIX 3 — the ENTITLEMENT axis ────────────────────────────────────────

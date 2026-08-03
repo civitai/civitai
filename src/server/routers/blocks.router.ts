@@ -3075,10 +3075,19 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
-      // generated text (it reads `extractOutput`, which returns media), so this
-      // wrapper is the ONLY thing that can — and it scans before it does. The
-      // poll is the surface that matters: it is the snapshot a block renders a
-      // finished generation from.
+      // generated text: it publishes `imageUrls` off `extractOutput`, which a
+      // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
+      // never`, registry clause 8-ii, and the posture gate on the extractor call
+      // itself). So this wrapper is the only producer of `textOutputs`, and it
+      // scans before it produces.
+      //
+      // 🔴 IT IS NOT THE ONLY BLOCK-REACHABLE READ OF A WORKFLOW, and an earlier
+      // revision of this comment said "the poll is the surface that matters",
+      // which is an overclaim a reviewer would stop checking at.
+      // `queryAppWorkflows` and `cancelAppWorkflow` also return orchestrator
+      // workflow data to a block, unwrapped. What makes THAT safe is stated at
+      // each of them (`AppWorkflow` carries no text field and its `images` are
+      // posture-gated), not this sentence.
       const snapshot = await attachModeratedStepTextOutputs(
         snapshotFromWorkflow(workflow),
         workflow,
@@ -3326,6 +3335,26 @@ export const blocksRouter = router({
         cursor: input.cursor ?? undefined,
         hideMatureContent: false,
       });
+      // 🔴 DELIBERATELY *NOT* WRAPPED IN `attachModeratedStepTextOutputs`, and
+      // here is exactly what makes that safe — stated as what it is, so nobody
+      // reads a structural guarantee where there is a narrower one.
+      //
+      //   1. `AppWorkflow` HAS NO TEXT FIELD. The projection's return type is
+      //      `{ workflowId, status, images, cost, createdAt }` — there is no
+      //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
+      //      have nowhere to put a verdict. A block that wants a text step's
+      //      output polls `pollWorkflow`, which is wrapped.
+      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
+      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
+      //      text-posture entry cannot declare one at all
+      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
+      //      So a text step contributes NOTHING here — not even a url.
+      //
+      // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
+      // for symmetry": this returns up to 50 workflows per call, so wrapping
+      // would mean up to 50 inline xGuard scans on a rate-limited read path.
+      // If `AppWorkflow` ever GAINS a text field, wrapping stops being optional
+      // and the per-page fan-out has to be solved, not skipped.
       return {
         workflows: items.map(projectAppWorkflow),
         cursor: nextCursor ?? null,
@@ -3420,6 +3449,13 @@ export const blocksRouter = router({
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      // 🔴 UNWRAPPED, for the SAME two reasons `queryAppWorkflows` is (see the
+      // note there): `AppWorkflow` carries no text field, and its `images` are
+      // posture-gated so a text step contributes nothing. The cost argument does
+      // NOT apply here — this is one workflow, not a page — so if `AppWorkflow`
+      // ever gains a text field, THIS is the cheap one to wrap first. (The
+      // sibling `blocks.cancelWorkflow`, which returns a full snapshot rather
+      // than this projection, IS wrapped.)
       return { workflow: projectAppWorkflow(canceled) };
     }),
 

@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
-import { getStepByOrchestratorType } from './steps';
+import { getStepByOrchestratorType, postureProducesMedia } from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -148,8 +148,19 @@ export function snapshotFromWorkflow(
     // that used to fall through to `continue`.
     const registeredStep = getStepByOrchestratorType(step.$type);
     if (registeredStep) {
-      for (const media of registeredStep.extractOutput(step)) {
-        imageUrls.push(media.url);
+      // 🔴 POSTURE-GATED, and this is the THIRD enforcement of the one
+      // media-XOR-text rule (`stepOutputShape`), not a redundant null check. A
+      // text-posture step publishes through `attachModeratedStepTextOutputs`
+      // and ONLY through it; `StepOutputMedia.url` is a bare string that reaches
+      // this array without ever meeting the scan, so reading a media extractor
+      // off a text entry is exactly the smuggling channel the registry's
+      // clause 8-ii and `TextOutputSurface.extractOutput?: never` exist to
+      // close. Keying on the POSTURE rather than on `extractOutput != null`
+      // means this holds even if a future cast puts one there.
+      if (postureProducesMedia(registeredStep.moderationPosture)) {
+        for (const media of registeredStep.extractOutput?.(step) ?? []) {
+          imageUrls.push(media.url);
+        }
       }
       continue;
     }
@@ -288,7 +299,13 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     // additive and cannot shadow the native `$type`s below.
     const registeredStep = getStepByOrchestratorType(step.$type);
     if (registeredStep) {
-      for (const media of registeredStep.extractOutput(step)) {
+      // 🔴 Same posture gate as `snapshotFromWorkflow` — see the note there.
+      // This projection matters MORE, not less: `AppWorkflow` has no text field
+      // at all, so it is not wrapped by `attachModeratedStepTextOutputs`, and
+      // `images[].url` would be the only channel a text step could reach it
+      // through.
+      if (!postureProducesMedia(registeredStep.moderationPosture)) continue;
+      for (const media of registeredStep.extractOutput?.(step) ?? []) {
         images.push({
           url: media.url,
           width: media.width,

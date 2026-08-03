@@ -191,7 +191,11 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { assertStepInvariants, type AnyBlockStep } from '~/server/services/blocks/steps';
-import { TEXT_OUTPUT_WITHHELD_MESSAGE } from '~/server/services/blocks/steps/text-output-moderation';
+import {
+  TEXT_OUTPUT_SCAN_LABELS,
+  TEXT_OUTPUT_WITHHELD_MESSAGE,
+  __clearTextOutputVerdictCacheForTests,
+} from '~/server/services/blocks/steps/text-output-moderation';
 
 const CHAT_TYPE = 'fixtureChat';
 const GENERATED_TEXT = 'the model wrote this exact sentence';
@@ -209,9 +213,9 @@ const textStep: AnyBlockStep = {
   priceForVariant: () => 7,
   estimateBuzz: () => 7,
   buildStep: (p: { value: number }) => ({ $type: CHAT_TYPE, input: { value: p.value } }),
-  extractOutput: () => [
-    { url: 'https://blobs.example/f.webp', width: null, height: null, nsfwLevel: null },
-  ],
+  // 🔴 NO `extractOutput`. A `'textOutput'` entry may not declare one (registry
+  // clause 8-ii + `TextOutputSurface.extractOutput?: never`): `media.url` is a
+  // bare string that reaches `snapshot.imageUrls` without meeting the scan.
   canonicalOutputFor: () => ({
     $type: CHAT_TYPE,
     output: { choices: [{ message: { content: 'canonical reply' } }] },
@@ -256,12 +260,19 @@ function scanReturns(triggeredLabels: string[]) {
           // release everything here.
           blocked: false,
           triggeredLabels,
-          results: triggeredLabels.map((label) => ({
+          // 🔴 ONE `results[]` ENTRY PER REQUESTED LABEL, triggered or not —
+          // which is what the real scanner returns and what the label-drift
+          // guard requires. A fixture that emitted results only for the
+          // TRIGGERED labels would make every release in this file withhold for
+          // the wrong reason, and the positive controls would die without ever
+          // testing the policy. (That the fixture had to change is itself the
+          // reachability proof for that guard.)
+          results: TEXT_OUTPUT_SCAN_LABELS.map((label) => ({
             label,
             action: 'Scan',
             threshold: 0.5,
-            score: 0.98,
-            triggered: true,
+            score: triggeredLabels.includes(label) ? 0.98 : 0.02,
+            triggered: triggeredLabels.includes(label),
           })),
         },
       },
@@ -330,6 +341,13 @@ beforeEach(() => {
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   mockLogToAxiom.mockResolvedValue(undefined);
   mockCancelWorkflow.mockResolvedValue(undefined);
+  // 🔴 THE VERDICT MEMO IS MODULE-LIFETIME. Without this reset, a case that
+  // withholds `GENERATED_TEXT` would answer the NEXT case's identical content
+  // from cache — so the positive controls below would be asserting the previous
+  // test's scan, and a broken policy could pass. Every pair in this file uses the
+  // same fixture text on purpose (only the verdict differs), which is exactly
+  // the shape the memo would collapse.
+  __clearTextOutputVerdictCacheForTests();
   registryOverride.clear();
   registryOverride.set(CHAT_TYPE, textStep);
 });

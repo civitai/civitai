@@ -70,23 +70,32 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
 
 import {
   assertStepInvariants,
-  mediaFromBlobs,
   type AnyBlockStep,
   type BlockStep,
 } from '~/server/services/blocks/steps';
-import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 import {
   attachModeratedStepTextOutputs,
   runStepOutputModeration,
 } from '~/server/services/blocks/steps/moderation';
+// 🔴 The two REAL read-path projections, imported so the media-channel tests
+// below drive them rather than re-describing what they do. The registry mock
+// above applies to them too: `workflow.service` imports
+// `getStepByOrchestratorType` from the same module id.
+import {
+  projectAppWorkflow,
+  snapshotFromWorkflow,
+} from '~/server/services/blocks/workflow.service';
 import {
   ALWAYS_WITHHOLD_LABELS,
   decideTextOutputVerdict,
+  MAX_SCANNED_CONTENT_CHARS,
+  missingRequestedLabels,
   NOT_ACTED_ON_LABELS,
   screenGeneratedText,
   SFW_ONLY_WITHHOLD_LABELS,
   TEXT_OUTPUT_SCAN_LABELS,
   TEXT_OUTPUT_WITHHELD_MESSAGE,
+  __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,18 +136,15 @@ function makeTextStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
     priceForVariant: () => 7,
     estimateBuzz: () => 7,
     buildStep: (p: FixtureParams) => ({ $type: CHAT_TYPE, input: { value: p.value } }),
-    extractOutput: (step: unknown) =>
-      mediaFromBlobs(
-        (step as { output?: { blob?: OrchestratorBlobLike | null } } | null | undefined)?.output
-          ?.blob
-      ),
-    canonicalOutputFor: (): unknown => ({
-      ...chatStep(),
-      output: {
-        ...chatStep().output,
-        blob: { url: 'https://blobs.example/f.webp', available: true },
-      },
-    }),
+    // 🔴 NO `extractOutput`, AND NO FABRICATED BLOB IN `canonicalOutputFor`.
+    // Both used to be here, and they were the audit's exhibit: `extractOutput`
+    // was unconditionally required and clause 8 unconditionally demanded ≥1
+    // media item with a url, so the only way to write a `'textOutput'` fixture
+    // was to invent an image a real `chatCompletion` step never returns. A real
+    // adopter reaching for the same workaround would put the model's REPLY in
+    // that url — which reaches `snapshot.imageUrls` without meeting the scan.
+    // The registry now forbids the field on a text entry outright.
+    canonicalOutputFor: (): unknown => chatStep(),
     extractText: (step: unknown) =>
       (
         (step as { output?: { choices?: Array<{ message?: { content?: string } }> } })?.output
@@ -189,10 +195,33 @@ function scannerReturns(output: unknown) {
 
 const CTX = { userId: 42, isGreen: false, appId: 'app-1', appBlockId: 'blk-1' };
 
+/**
+ * `requestedLabels` for a verdict test.
+ *
+ * 🔴 TWO VALUES ON PURPOSE, and picking the wrong one makes a test pass for the
+ * wrong reason. `decideTextOutputVerdict` withholds when a REQUESTED label has
+ * no `results[]` entry (the rename fail-open the generated client documents), so
+ * a POLICY test must ask only for labels its fixture actually answered — else
+ * every assertion below would read `released: false` from label drift and the
+ * tier logic would never be exercised at all.
+ *   ALL  — with a `scanOutput(...)` fixture, which emits all 15 results.
+ *   NONE — with a hand-built minimal fixture (`{ triggeredLabels, results: [] }`),
+ *          where the drift check is deliberately vacuous.
+ * The drift guard gets its own describe block, with both controls.
+ */
+const ALL = TEXT_OUTPUT_SCAN_LABELS;
+const NONE: readonly string[] = [];
+
 beforeEach(() => {
   mockCreateXGuardModerationRequest.mockReset();
   mockLogToAxiom.mockReset();
   mockLogToAxiom.mockResolvedValue(undefined);
+  // 🔴 THE VERDICT MEMO IS MODULE-LIFETIME AND KEYED ON THE CONTENT. Nearly
+  // every case here scans the SAME `GENERATED_TEXT` and varies only the scanner
+  // response, which is precisely what the memo collapses — without this reset a
+  // withhold would be replayed for the next test's positive control and the pair
+  // would stop discriminating anything.
+  __clearTextOutputVerdictCacheForTests();
   registryOverride.clear();
   registryOverride.set(CHAT_TYPE, makeTextStep());
 });
@@ -462,7 +491,10 @@ describe('textOutput — the approved label policy', () => {
     (label) => {
       // The host-independent tier. `isGreen: false` == the ceiling permits mature
       // content, and these must still withhold.
-      const verdict = decideTextOutputVerdict(scanOutput([label]), { isGreen: false });
+      const verdict = decideTextOutputVerdict(scanOutput([label]), {
+        isGreen: false,
+        requestedLabels: ALL,
+      });
       expect(verdict.released).toBe(false);
       expect(verdict.withholdingLabels).toEqual([label]);
     }
@@ -474,8 +506,14 @@ describe('textOutput — the approved label policy', () => {
       // 🔴 BOTH DIRECTIONS ON THE SAME LABEL. A policy that hardcoded `isGreen`
       // either way passes exactly one of these two assertions and fails the
       // other; neither can pass both.
-      expect(decideTextOutputVerdict(scanOutput([label]), { isGreen: true }).released).toBe(false);
-      expect(decideTextOutputVerdict(scanOutput([label]), { isGreen: false }).released).toBe(true);
+      expect(
+        decideTextOutputVerdict(scanOutput([label]), { isGreen: true, requestedLabels: ALL })
+          .released
+      ).toBe(false);
+      expect(
+        decideTextOutputVerdict(scanOutput([label]), { isGreen: false, requestedLabels: ALL })
+          .released
+      ).toBe(true);
     }
   );
 
@@ -483,7 +521,10 @@ describe('textOutput — the approved label policy', () => {
     "'%s' is scanned and reported but never withholds, on EITHER host",
     (label) => {
       for (const isGreen of [true, false]) {
-        const verdict = decideTextOutputVerdict(scanOutput([label]), { isGreen });
+        const verdict = decideTextOutputVerdict(scanOutput([label]), {
+          isGreen,
+          requestedLabels: ALL,
+        });
         expect(verdict.released).toBe(true);
         // …and it is still REPORTED. Dropping these from the scan would lose the
         // telemetry the 15-label choice was made for.
@@ -493,7 +534,10 @@ describe('textOutput — the approved label policy', () => {
   );
 
   it('releases a completely benign scan (the negative control for every case above)', () => {
-    const verdict = decideTextOutputVerdict(scanOutput([]), { isGreen: true });
+    const verdict = decideTextOutputVerdict(scanOutput([]), {
+      isGreen: true,
+      requestedLabels: ALL,
+    });
     expect(verdict.released).toBe(true);
     expect(verdict.withholdingLabels).toEqual([]);
     expect(verdict.triggeredLabels).toEqual([]);
@@ -504,14 +548,18 @@ describe('textOutput — the approved label policy', () => {
     // `Scan`, so `blocked` stays false however high the score. A policy keyed on
     // `blocked` releases this. On a SFW ceiling it must not.
     const output = { ...scanOutput(['Explicit'], { Explicit: 0.99 }), blocked: false };
-    expect(decideTextOutputVerdict(output, { isGreen: true }).released).toBe(false);
+    expect(decideTextOutputVerdict(output, { isGreen: true, requestedLabels: ALL }).released).toBe(
+      false
+    );
   });
 
   it('🔴 IGNORES `blocked` in the other direction too', () => {
     // The complement: `blocked: true` with only a non-actioned label triggering
     // must NOT withhold. A policy that ORed `blocked` in would fail this.
     const output = { ...scanOutput(['Celebrity']), blocked: true };
-    expect(decideTextOutputVerdict(output, { isGreen: true }).released).toBe(true);
+    expect(decideTextOutputVerdict(output, { isGreen: true, requestedLabels: ALL }).released).toBe(
+      true
+    );
   });
 
   it('UNIONS the two trigger signals — either one alone withholds', () => {
@@ -522,8 +570,12 @@ describe('textOutput — the approved label policy', () => {
       triggeredLabels: [],
       results: [{ label: 'Young', score: 0.98, triggered: true }],
     };
-    expect(decideTextOutputVerdict(fromArrayOnly, { isGreen: false }).released).toBe(false);
-    expect(decideTextOutputVerdict(fromResultsOnly, { isGreen: false }).released).toBe(false);
+    expect(
+      decideTextOutputVerdict(fromArrayOnly, { isGreen: false, requestedLabels: NONE }).released
+    ).toBe(false);
+    expect(
+      decideTextOutputVerdict(fromResultsOnly, { isGreen: false, requestedLabels: NONE }).released
+    ).toBe(false);
   });
 
   it('matches labels CASE-INSENSITIVELY', () => {
@@ -532,8 +584,13 @@ describe('textOutput — the approved label policy', () => {
     // An exact-match policy would match nothing and release everything.
     for (const label of ['young', 'YOUNG', ' Young ']) {
       expect(
-        decideTextOutputVerdict({ triggeredLabels: [label], results: [] }, { isGreen: false })
-          .released
+        decideTextOutputVerdict(
+          { triggeredLabels: [label], results: [] },
+          {
+            isGreen: false,
+            requestedLabels: NONE,
+          }
+        ).released
       ).toBe(false);
     }
   });
@@ -541,6 +598,7 @@ describe('textOutput — the approved label policy', () => {
   it('reports per-label SCORES for the trigger log', () => {
     const verdict = decideTextOutputVerdict(scanOutput(['Young'], { Young: 0.96 }), {
       isGreen: false,
+      requestedLabels: ALL,
     });
     expect(verdict.scores.Young).toBe(0.96);
   });
@@ -554,7 +612,10 @@ describe('textOutput — the approved label policy', () => {
     // The DECISION is total. Fail-closed on a missing verdict is
     // `screenGeneratedText`'s job (asserted above) — this function's contract is
     // "never throw on a read path", and a throw here would become a 500 on poll.
-    const verdict = decideTextOutputVerdict(output as never, { isGreen: true });
+    const verdict = decideTextOutputVerdict(output as never, {
+      isGreen: true,
+      requestedLabels: NONE,
+    });
     expect(verdict.released).toBe(true);
   });
 });
@@ -663,4 +724,378 @@ describe('textOutput — the OUTPUT dispatch over the posture table', () => {
       expect(result).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
     }
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE MEDIA CHANNEL — a text step must reach NEITHER read surface through it.
+//
+// `StepOutputMedia.url` is a bare string that nothing validates as a url, and it
+// flows to `snapshot.imageUrls` and `AppWorkflow.images[].url` WITHOUT passing
+// through `attachModeratedStepTextOutputs`. Before the media-XOR-text fix,
+// `extractOutput` was unconditionally required of every entry — so an honest
+// `chatCompletion` + `'textOutput'` entry could not register at all, and the
+// workaround it pushed an author toward published the model's reply as a "url"
+// with every moderation gate green.
+//
+// The registry now rejects that declaration (clause 8-ii) and the type forbids
+// writing it (`TextOutputSurface.extractOutput?: never`). These tests cover the
+// THIRD layer: the read path itself keys on the POSTURE, so an extractor that
+// arrived through a cast still contributes nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — the media channel is closed at the READ path too', () => {
+  const PROSE = 'Sure — here is exactly how you would do that. Step one, ';
+
+  /** A text-posture entry with a media extractor forced on by a cast. */
+  function smugglingStep() {
+    return makeTextStep({
+      extractOutput: () => [{ url: PROSE, width: null, height: null, nsfwLevel: null }],
+    } as unknown as Partial<AnyBlockStep>);
+  }
+
+  /** The same extractor under a MEDIA posture — the positive control. */
+  function honestMediaStep() {
+    return makeTextStep({
+      moderationPosture: 'none',
+      extractText: undefined,
+      extractOutput: () => [
+        { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+      ],
+    } as unknown as Partial<AnyBlockStep>);
+  }
+
+  it('snapshotFromWorkflow.imageUrls carries NOTHING from a text-posture step', () => {
+    registryOverride.set(CHAT_TYPE, smugglingStep());
+    const snap = snapshotFromWorkflow(workflowWith(chatStep()));
+    expect(snap.imageUrls).toBeUndefined();
+    expect(JSON.stringify(snap)).not.toContain(PROSE);
+  });
+
+  it('projectAppWorkflow.images carries NOTHING from a text-posture step', () => {
+    // 🔴 This surface matters MORE: `queryAppWorkflows` / `cancelAppWorkflow`
+    // return `AppWorkflow` UNWRAPPED — there is no scan in front of it at all.
+    registryOverride.set(CHAT_TYPE, smugglingStep());
+    const projected = projectAppWorkflow(workflowWith(chatStep()));
+    expect(projected.images).toEqual([]);
+    expect(JSON.stringify(projected)).not.toContain(PROSE);
+  });
+
+  it('🔴 POSITIVE CONTROL — the IDENTICAL extractor under a media posture DOES reach both surfaces', () => {
+    // Without this, "images is empty" is exactly what a harness wired to nothing
+    // reports, and a `snapshotFromWorkflow` that had simply stopped consulting
+    // the registry would pass both tests above. ONLY `moderationPosture` (and
+    // the extractor's return url) differs.
+    registryOverride.set(CHAT_TYPE, honestMediaStep());
+    expect(snapshotFromWorkflow(workflowWith(chatStep())).imageUrls).toEqual([
+      'https://blobs.example/real.webp',
+    ]);
+    expect(projectAppWorkflow(workflowWith(chatStep())).images).toEqual([
+      { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE CONTENT CAP — bounded, and FAILING CLOSED above the bound.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — the content-length cap', () => {
+  function textOfLength(n: number) {
+    return 'x'.repeat(n);
+  }
+
+  it('the cap is 50,000 characters — pinned LITERALLY, not derived', () => {
+    // 🔴 A VALUE PIN, and it is the assertion that a cap RAISE has to walk past.
+    // Every other test in this block derives its input length FROM the constant,
+    // so all of them move with it — raising the cap to something effectively
+    // unbounded would leave them measuring the new number rather than failing.
+    // The cost/latency arithmetic behind this figure (~5 chunks × 15 labels ≈ 75
+    // scan units, ~12.5k tokens) is in the constant's own doc comment; changing
+    // it is a policy decision that must change this line too.
+    expect(MAX_SCANNED_CONTENT_CHARS).toBe(50_000);
+  });
+
+  it('WITHHOLDS over the cap, WITHOUT calling the scanner', async () => {
+    const result = await screenGeneratedText({
+      texts: [textOfLength(MAX_SCANNED_CONTENT_CHARS + 1)],
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(result).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+    // 🔴 Fails closed AND fails CHEAP — the point of the cap is that an
+    // over-large payload costs no scan units, so this assertion is the cap
+    // rather than merely the withhold.
+    expect(mockCreateXGuardModerationRequest).not.toHaveBeenCalled();
+  });
+
+  it('🔴 POSITIVE CONTROL — content EXACTLY at the cap is scanned and released', async () => {
+    // One character apart from the case above. Without this, "withheld" is
+    // indistinguishable from a `screenGeneratedText` that withholds everything,
+    // and a cap of 0 would pass the previous test.
+    scannerReturns(scanOutput([]));
+    const texts = [textOfLength(MAX_SCANNED_CONTENT_CHARS)];
+    const result = await screenGeneratedText({
+      texts,
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(result).toEqual({ released: true, texts });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('the cap applies to the JOINED content, not to any one piece', async () => {
+    // The scan is one call over `texts.join('\n\n')`, so N pieces each under the
+    // cap can still exceed it together. A per-piece check would let exactly the
+    // payload the cap exists to bound straight through.
+    const half = Math.ceil(MAX_SCANNED_CONTENT_CHARS / 2);
+    const result = await screenGeneratedText({
+      texts: [textOfLength(half), textOfLength(half)],
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(result.released).toBe(false);
+    expect(mockCreateXGuardModerationRequest).not.toHaveBeenCalled();
+  });
+
+  it('logs the over-cap withhold with its own stage, and never the text', async () => {
+    await screenGeneratedText({
+      texts: [textOfLength(MAX_SCANNED_CONTENT_CHARS + 1)],
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
+      stage: 'over-cap',
+      capChars: MAX_SCANNED_CONTENT_CHARS,
+    });
+    expect(JSON.stringify(mockLogToAxiom.mock.calls)).not.toContain('xxxxxxxxxx');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE VERDICT MEMO — the poll loop must not re-scan identical content.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — the per-content verdict memo', () => {
+  const opts = {
+    userId: 42,
+    isGreen: false,
+    appId: 'app-1',
+    stepId: 'fixture-chat',
+    model: CHAT_TYPE,
+  };
+
+  it('scans ONCE for repeated identical content, and the verdict is unchanged', async () => {
+    // 🔴 THE DEFECT: `attachModeratedStepTextOutputs` runs on EVERY
+    // `pollWorkflow`, at a cadence untrusted block code chooses, and the
+    // orchestrator's own contentHash dedup is deliberately bypassed on this path
+    // — so without a host-side memo one generation is an unbounded number of
+    // identical scans.
+    scannerReturns(scanOutput([]));
+    const first = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    const second = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(1);
+    expect(first).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    expect(second).toEqual(first);
+  });
+
+  it('🔴 POSITIVE CONTROL — DIFFERENT content scans again', async () => {
+    // Without this, "called once" is what a memo that returns a stale verdict
+    // for EVERYTHING also produces — which would be a moderation hole, not an
+    // optimization.
+    scannerReturns(scanOutput([]));
+    await screenGeneratedText({ ...opts, texts: ['first reply'] });
+    await screenGeneratedText({ ...opts, texts: ['a completely different reply'] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('🔴 the maturity ceiling is part of the key — a mature-host release is NOT reused for a SFW viewer', () => {
+    // `Suggestive` releases on a mature-allowed host and withholds on a SFW one.
+    // A memo keyed on content alone would serve the first verdict to the second
+    // viewer, which is the SFW tier silently disabled.
+    return (async () => {
+      scannerReturns(scanOutput(['Suggestive']));
+      const mature = await screenGeneratedText({
+        ...opts,
+        isGreen: false,
+        texts: [GENERATED_TEXT],
+      });
+      const sfw = await screenGeneratedText({ ...opts, isGreen: true, texts: [GENERATED_TEXT] });
+      expect(mature.released).toBe(true);
+      expect(sfw.released).toBe(false);
+      // Two scans, because the two viewers do not share a key.
+      expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+    })();
+  });
+
+  it('a WITHHELD verdict is memoized too — the expensive case is the one a block hammers', async () => {
+    scannerReturns(scanOutput(['Young']));
+    const first = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    const second = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(first.released).toBe(false);
+    expect(second).toEqual(first);
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 an ERROR is NOT memoized — a scanner recovery must not be pinned shut for 5 minutes', async () => {
+    // Fail-closed is right for the failing call; caching it would turn a blip
+    // into an outage of the capability, and would also mean a fixed scanner is
+    // never retried. So the second call must reach the scanner again — and
+    // succeed.
+    mockCreateXGuardModerationRequest.mockRejectedValueOnce(new Error('orchestrator 503'));
+    const failed = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(failed.released).toBe(false);
+
+    scannerReturns(scanOutput([]));
+    const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('a memo HIT returns the CALLER’s own pieces, not the stored ones', async () => {
+    // The key is the JOINED content, so two callers can share a hit having split
+    // their pieces differently. Replaying a stored array would hand one of them
+    // the other's segmentation.
+    scannerReturns(scanOutput([]));
+    const joined = 'alpha\n\nbeta';
+    await screenGeneratedText({ ...opts, texts: [joined] });
+    const split = await screenGeneratedText({ ...opts, texts: ['alpha', 'beta'] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(1);
+    expect(split).toEqual({ released: true, texts: ['alpha', 'beta'] });
+  });
+
+  it('the memo does not survive a reset (the seam these tests depend on works)', async () => {
+    // 🔴 VALIDATES THE HARNESS. Every pair above rests on `beforeEach` clearing
+    // the memo; if the reset were a no-op, the second half of each pair would be
+    // reading the first half's verdict and the whole block would be green for
+    // the wrong reason.
+    scannerReturns(scanOutput([]));
+    await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    __clearTextOutputVerdictCacheForTests();
+    await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 LABEL DRIFT — a label we ASKED for and did not get an answer on withholds.
+//
+// The generated client documents the fail-open in so many words
+// (`types.gen.d.ts`, `xGuardModeration.labels`): *"Labels not found in the
+// defaults (or label overrides) are silently ignored."* So a renamed or mistyped
+// entry in `TEXT_OUTPUT_SCAN_LABELS` is never evaluated, comes back absent
+// rather than errored, produces a clean verdict, and RELEASES — with no symptom
+// at all. `normalizeLabel` covers CASING and cannot cover RENAMES.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — a dropped label FAILS CLOSED', () => {
+  it('missingRequestedLabels names exactly the labels with no results[] entry', () => {
+    const output = {
+      triggeredLabels: [],
+      results: [{ label: 'Young', score: 0.01, triggered: false }],
+    };
+    expect(missingRequestedLabels(output, ['Young', 'Grooming', 'Extremism'])).toEqual([
+      'Grooming',
+      'Extremism',
+    ]);
+    expect(missingRequestedLabels(output, ['Young'])).toEqual([]);
+  });
+
+  it('matches on the NORMALIZED key — a casing difference is not a drop', () => {
+    // The two sides are orchestrator-side config this codebase does not control;
+    // treating `young` vs `Young` as a drop would withhold everything for a
+    // difference that is already handled elsewhere in this file.
+    const output = { results: [{ label: 'young', triggered: false }] };
+    expect(missingRequestedLabels(output, ['Young'])).toEqual([]);
+  });
+
+  it('WITHHOLDS a verdict that is otherwise clean when a requested label is missing', () => {
+    // 🔴 THE REACHABILITY CASE. Nothing triggered; the pre-fix policy released.
+    const output = scanOutput([]);
+    const dropped = {
+      ...output,
+      results: output.results.filter((r) => r.label !== 'Extremism'),
+    };
+    const verdict = decideTextOutputVerdict(dropped, { isGreen: false, requestedLabels: ALL });
+    expect(verdict.released).toBe(false);
+    expect(verdict.missingLabels).toEqual(['Extremism']);
+    // …and it is NOT reported as a content hit, which would poison the per-app
+    // trigger rates with an operational fault.
+    expect(verdict.withholdingLabels).toEqual([]);
+  });
+
+  it('🔴 POSITIVE CONTROL — the SAME scan with the full results[] releases', () => {
+    // ONLY the presence of the dropped label's result differs. Without this,
+    // "released: false" is what a policy that withholds everything also reports.
+    const verdict = decideTextOutputVerdict(scanOutput([]), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(true);
+    expect(verdict.missingLabels).toEqual([]);
+  });
+
+  it('an EMPTY results[] withholds even with an empty triggeredLabels (the total fail-open)', () => {
+    // The shape a wholesale label rename produces: the scanner ignores every
+    // label we sent, answers nothing, and the pre-fix policy read that as clean.
+    const verdict = decideTextOutputVerdict(
+      { triggeredLabels: [], results: [] },
+      { isGreen: false, requestedLabels: ALL }
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.missingLabels).toEqual([...ALL]);
+  });
+
+  it('end to end: a dropped label WITHHOLDS the text and logs stage "label-drift"', async () => {
+    const output = scanOutput([]);
+    scannerReturns({ ...output, results: output.results.filter((r) => r.label !== 'Bestiality') });
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+    expect(snapshot.textOutputs).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain(GENERATED_TEXT);
+    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
+      stage: 'label-drift',
+      missingLabels: ['Bestiality'],
+    });
+  });
+
+  it('🔴 POSITIVE CONTROL — the same path publishes when every requested label came back', async () => {
+    scannerReturns(scanOutput([]));
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+    expect(snapshot.textOutputs).toEqual([GENERATED_TEXT]);
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('the scan CHECKS exactly the list it SENDS', async () => {
+    // 🔴 `requestedLabels` is deliberately NOT defaulted inside
+    // `decideTextOutputVerdict` — a default is how a caller ends up checking a
+    // list it did not send. This pins that the two are the same expression.
+    scannerReturns(scanOutput([]));
+    await screenGeneratedText({
+      texts: [GENERATED_TEXT],
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(mockCreateXGuardModerationRequest.mock.calls[0][0].labels).toEqual([
+      ...TEXT_OUTPUT_SCAN_LABELS,
+    ]);
+  });
 });
