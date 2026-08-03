@@ -178,10 +178,32 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     `{id, blockId, name, iconUrl}` — NEITHER field. Its entries are therefore
  *     admitted here by ABSENCE (`undefined !== 'offsite'` is true), carrying no
  *     page evidence at all, which makes them the strongest case for the gate
- *     rather than an exception to it. Do not "tighten" this by adding a
- *     `hasPage` test: that would silently drop every legacy entry, which is the
- *     empty-a-returning-viewer's-list failure `resolveRecentApp` exists to
- *     avoid.
+ *     rather than an exception to it.
+ *
+ *     🔴 DO NOT ADD A `hasPage` TEST — NEITHER FORM, AND THE SECOND IS THE TRAP.
+ *     `hasPage === true` drops every legacy entry outright (they never recorded
+ *     the field), which is the empty-a-returning-viewer's-list failure
+ *     `resolveRecentApp` exists to avoid. `hasPage !== false` LOOKS like the
+ *     sound narrowing — it keeps the unhealed `undefined` and hides only apps
+ *     positively known to be page-less — but a STORED `false` does not mean what
+ *     it says. `handleOpenRecent` (`AppListingsMarketplaceBody`) persists
+ *     `resolveRecentApp`'s lossy `hasPage: entry.hasPage === true` straight back
+ *     into localStorage, so a stored `false` CONFLATES "the server says no page"
+ *     with "we had no evidence and discarded it". #3559's reconciliation heals
+ *     only the entries it MATCHES against the listings already loaded; a legacy
+ *     PAGE app outside that set (one `listAvailable` page, limit 24, narrowed
+ *     further by any kind/category filter) passes through untouched, resolves to
+ *     `false`, and the first rail click persists it — after which `!== false`
+ *     would hide a menu entry whose `/apps/run/<blockId>` still resolves
+ *     perfectly. Measured by executing the real functions, not by inspection.
+ *
+ *     The prerequisite that would make the narrowing sound: carry the TRI-STATE
+ *     through the rail so an unknown `hasPage` is persisted as `undefined`
+ *     rather than coerced to `false`. Until that lands the gate stays on `kind`
+ *     + `blockId`. And note what `!== false` would NOT have bought even then:
+ *     the legacy model-slot entry (no `hasPage`, no page, `undefined !== false`)
+ *     is admitted either way — closing that one needs the server's answer, not a
+ *     stricter read of the store.
  *
  *     Dark → the whole section is hidden (the menu has no second link shape to
  *     fall back to; the `/apps` rail, which does, keeps showing the same entries
