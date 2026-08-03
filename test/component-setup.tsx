@@ -87,8 +87,30 @@ Object.defineProperty(globalThis.navigator, 'clipboard', {
   },
 });
 
-afterEach(() => {
-  cleanup();
+// 🔴 `cleanup()` is ASYNC and the hook MUST await it. Returning the promise (or
+// awaiting it) is the whole fix — do not "simplify" this back to a bare
+// `cleanup();` statement inside a block body.
+//
+// vitest-browser-react 2.2.0 `cleanup()` (dist/pure-*.js:112) is
+// `async function cleanup()`. Per mounted root it does
+// `await act(async () => root.unmount())` and only THEN
+// `document.body.removeChild(container)`. So the container removal happens after
+// an await, in a later microtask.
+//
+// The previous form was `afterEach(() => { cleanup(); })` — a block body with no
+// return, so the promise floated and Vitest received `undefined` and did not
+// wait. Container removal then raced the NEXT test's render, leaving two mounted
+// containers in `document.body` at once. Any `page.getByTestId(...)` query is
+// document-scoped, so a testid that legitimately appears once per render resolved
+// to 2 elements and failed with a strict-mode violation.
+//
+// That is exactly the shape of the long-running `AppListingDetailBody > the
+// "Browse all apps" link is present even when the rail is empty` flake
+// (`apps-browse-all` is rendered in exactly ONE place,
+// `src/components/Apps/RelatedListings.tsx:105`): load-dependent, red on a busy
+// CI box and green on a quiet one, and it moved between container indices.
+afterEach(async () => {
+  await cleanup();
 });
 
 /**
