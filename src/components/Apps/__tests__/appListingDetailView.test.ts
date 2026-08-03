@@ -302,16 +302,21 @@ describe('getDetailPrimaryAction — off-site', () => {
     );
   });
   /**
-   * 🔴 INTENT REVERSED, DELIBERATELY. This block previously passed a real
-   * `connectClientId: 'client-123'` and asserted `href` was UNDEFINED — it
-   * encoded "even with a client_id, produce nothing", which is exactly the
-   * behaviour that shipped three approved, live listings with a dead
-   * "Connecting this app will be available soon." CTA and no way to open them.
+   * COVERAGE ADDED, NOTHING REVERSED — and the distinction matters, because an
+   * earlier version of this comment claimed the opposite and was wrong.
    *
-   * The new intent: a linked OAuth client does not remove the app's address.
-   * `resolveOffsiteSubKind` flips the sub-kind on `connectClientId != null`
-   * alone, so under the old rule linking a client was the SOLE cause of the
-   * dead CTA. The destination decides now — the sub-kind does not.
+   * The test replaced here passed `connectClientId: 'client-123'` and asserted
+   * `href` was undefined. It read like "even with a client_id, produce
+   * nothing", but the fixture defaults `externalUrl` to `null`, so what it
+   * actually pinned was the destination-LESS case: connect + no address → stub.
+   * That behaviour is UNCHANGED — every one of its assertions still holds, and
+   * they are re-pinned below over four absence shapes instead of one.
+   *
+   * What this case adds is the shape nothing covered: connect WITH a valid
+   * https address. `resolveOffsiteSubKind` flips the sub-kind on
+   * `connectClientId != null` alone, so linking an OAuth client was the sole
+   * cause of the dead CTA on three approved, live listings. The destination
+   * decides now — the sub-kind does not.
    */
   it('🔴 connect + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
     const action = getDetailPrimaryAction(
