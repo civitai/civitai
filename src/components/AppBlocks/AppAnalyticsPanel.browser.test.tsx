@@ -74,3 +74,55 @@ describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
     expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
   });
 });
+
+/**
+ * The "Top endpoints" table renders the aggregate's GROUP BY key. #3561 bounded that
+ * column, which promoted the internal tokens to the TOP rows — so this table became
+ * the most prominent place raw internal strings appear on the panel.
+ *
+ * `endpointBucketLabel` is unit-tested on its own (endpoint-bucket-label.test.ts);
+ * what these two cases pin is the WIRING — that the render site actually calls it.
+ * A helper nothing calls is the failure mode this exists to prevent.
+ */
+describe('AppAnalyticsPanel — Top endpoints are humanised, not raw tokens', () => {
+  test('a bounded token renders as an operation name and the raw token is absent', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      engagement: {
+        ...ZEROED.engagement,
+        apiCalls: 250,
+        topEndpoints: [
+          { endpoint: 'workflow:submit', count: 245 },
+          { endpoint: 'storage:set', count: 5 },
+        ],
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Generation submits')).toBeInTheDocument();
+    await expect.element(page.getByText('App storage writes')).toBeInTheDocument();
+    // The raw tokens must not survive anywhere in the rendered output.
+    expect(page.getByText('workflow:submit').elements()).toHaveLength(0);
+    expect(page.getByText('storage:set').elements()).toHaveLength(0);
+    // And it must not have degraded to the per-row humaniser's no-detail output.
+    expect(page.getByText('(no workflow id)').elements()).toHaveLength(0);
+  });
+
+  test('a legacy tailed bucket keeps its tail so two such rows stay distinguishable', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      engagement: {
+        ...ZEROED.engagement,
+        apiCalls: 2,
+        topEndpoints: [
+          { endpoint: 'workflow:submit:wf_aaa', count: 1 },
+          { endpoint: 'workflow:submit:wf_bbb', count: 1 },
+        ],
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Generation submits (wf_aaa)')).toBeInTheDocument();
+    await expect.element(page.getByText('Generation submits (wf_bbb)')).toBeInTheDocument();
+  });
+});

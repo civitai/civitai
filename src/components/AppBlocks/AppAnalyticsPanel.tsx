@@ -27,6 +27,7 @@ import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
+import { endpointBucketLabel } from '~/components/AppBlocks/endpoint-bucket-label';
 import { trpc } from '~/utils/trpc';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip, Filler);
@@ -344,7 +345,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
                       <Table.Tr key={e.endpoint}>
                         <Table.Td>
                           <Text size="sm" lineClamp={1}>
-                            {e.endpoint}
+                            {endpointBucketLabel(e.endpoint)}
                           </Text>
                         </Table.Td>
                         <Table.Td ta="right">{e.count.toLocaleString()}</Table.Td>
