@@ -61,10 +61,12 @@ B. MINORS — art style tells you NOTHING about age. Anime, cartoon, and stylize
 
 C. REAL PEOPLE — an actual human being, living or deceased.
 
-   Fictional characters are NOT real people, however specific or nameable they are. Anime, game,
-   comic, cartoon and film characters all have names, and a prompt naming one is not evidence of a
-   real person — it is evidence of a character. Drawn and illustrated art is essentially never a
-   real-person likeness unless it is an obvious caricature of a specific public figure.
+   A fictional character's NAME is not evidence of a real person. Anime, game, comic and cartoon
+   characters all have names; a prompt naming one is evidence of a character.
+
+   But a recognisable likeness IS a real person regardless of what the character is called or what
+   medium it is drawn in. If the face plainly resembles the actor behind a live-action role, or a
+   specific public figure, set depictsRealPerson true even though the prompt names a character.
 
    Set depictsRealPerson only when the image depicts a specific human being who exists or existed
    and you could name that human. A generic attractive face, a photorealistic render, or a

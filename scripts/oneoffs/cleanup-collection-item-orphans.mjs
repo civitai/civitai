@@ -3,11 +3,16 @@
  * foreign keys that schema.prisma has always declared but the database never had.
  *
  *   node scripts/oneoffs/cleanup-collection-item-orphans.mjs count
+ *   node scripts/oneoffs/cleanup-collection-item-orphans.mjs backup
  *   node scripts/oneoffs/cleanup-collection-item-orphans.mjs clean [--apply] [--only imageId]
  *   node scripts/oneoffs/cleanup-collection-item-orphans.mjs constrain [--apply] [--only imageId]
  *
- * Without --apply nothing is written. `constrain` refuses to run while orphans remain, because
+ * Without --apply nothing is written. `clean --apply` refuses to run until `backup` has captured
+ * the rows it is about to delete, and `constrain` refuses to run while orphans remain, because
  * VALIDATE would fail on them.
+ *
+ * Deleting a CollectionItem also cascades to CollectionItemScore, which the backup does NOT
+ * capture and which cannot be reconstructed. Check for scores before cleaning a scored collection.
  */
 import pg from 'pg';
 import dotenv from 'dotenv';
@@ -58,6 +63,32 @@ async function count() {
   return total;
 }
 
+const BACKUP_TABLE = '_orphan_collectionitem_backup';
+
+async function backup() {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS "${BACKUP_TABLE}" (relation text, row jsonb, "backedUpAt" timestamptz DEFAULT now())`
+  );
+  for (const { column, table } of relations) {
+    await client.query(`DELETE FROM "${BACKUP_TABLE}" WHERE relation = $1`, [column]);
+    const { rowCount } = await client.query(
+      `INSERT INTO "${BACKUP_TABLE}" (relation, row)
+         SELECT $1, to_jsonb(ci) FROM "CollectionItem" ci
+          WHERE ci."${column}" IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM "${table}" x WHERE x.id = ci."${column}")`,
+      [column]
+    );
+    console.log(`${column}: backed up ${rowCount} rows to ${BACKUP_TABLE}`);
+  }
+}
+
+const backedUpCount = async (column) => {
+  const { rows } = await client
+    .query(`SELECT count(*)::int n FROM "${BACKUP_TABLE}" WHERE relation = $1`, [column])
+    .catch(() => ({ rows: [{ n: 0 }] }));
+  return rows[0].n;
+};
+
 async function clean() {
   for (const { column, table } of relations) {
     const before = await orphanCount({ column, table });
@@ -70,32 +101,39 @@ async function clean() {
       continue;
     }
 
+    if ((await backedUpCount(column)) < before) {
+      console.log(`${column}: run \`backup\` first — ${before} orphans, fewer rows captured`);
+      continue;
+    }
+
     // Collected once into a temp table: the anti-join is a full scan, and re-running it per batch
     // would cost minutes each time.
-    await client.query(`DROP TABLE IF EXISTS orphan_ids`);
+    await client.query(`DROP TABLE IF EXISTS pg_temp.orphan_ids`);
     await client.query(
       `CREATE TEMP TABLE orphan_ids AS
          SELECT ci.id FROM "CollectionItem" ci
           WHERE ci."${column}" IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM "${table}" x WHERE x.id = ci."${column}")`
     );
-    await client.query(`CREATE INDEX ON orphan_ids (id)`);
+    await client.query(`CREATE INDEX ON pg_temp.orphan_ids (id)`);
 
     let deleted = 0;
     for (;;) {
       const { rowCount } = await client.query(
         `DELETE FROM "CollectionItem"
-          WHERE id IN (SELECT id FROM orphan_ids ORDER BY id LIMIT ${BATCH_SIZE})`
+          WHERE id IN (SELECT id FROM pg_temp.orphan_ids ORDER BY id LIMIT ${BATCH_SIZE})`
       );
-      if (!rowCount) break;
-      await client.query(
-        `DELETE FROM orphan_ids WHERE id IN (
-           SELECT id FROM orphan_ids ORDER BY id LIMIT ${BATCH_SIZE})`
+      // Prune unconditionally and break on an empty queue rather than on a zero-row delete: a
+      // batch whose ids were already removed elsewhere would otherwise exit reporting success.
+      const { rowCount: pruned } = await client.query(
+        `DELETE FROM pg_temp.orphan_ids WHERE id IN (
+           SELECT id FROM pg_temp.orphan_ids ORDER BY id LIMIT ${BATCH_SIZE})`
       );
-      deleted += rowCount;
+      if (!pruned) break;
+      deleted += rowCount ?? 0;
       process.stdout.write(`\r  ${column}: deleted ${deleted}/${before}`);
     }
-    await client.query(`DROP TABLE IF EXISTS orphan_ids`);
+    await client.query(`DROP TABLE IF EXISTS pg_temp.orphan_ids`);
     console.log(`\r  ${column}: deleted ${deleted}/${before}   `);
   }
 }
@@ -141,9 +179,11 @@ async function constrain() {
   }
 }
 
-const commands = { count, clean, constrain };
+const commands = { count, backup, clean, constrain };
 if (!commands[command]) {
-  console.error('usage: cleanup-collection-item-orphans.mjs <count|clean|constrain> [--apply] [--only <column>]');
+  console.error(
+    'usage: cleanup-collection-item-orphans.mjs <count|backup|clean|constrain> [--apply] [--only <column>]'
+  );
   process.exit(1);
 }
 

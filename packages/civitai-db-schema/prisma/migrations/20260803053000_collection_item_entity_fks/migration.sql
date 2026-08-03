@@ -11,9 +11,17 @@
 -- Images alone are deleted from four places, two of them raw SQL and one a bulk deleteMany, so
 -- application-level cleanup could not be made airtight.
 --
--- Run the steps in order. Step 2 cannot be validated while orphans remain. Deleting ~250k rows in
--- one statement is avoidable -- the script batches at 5,000 -- but the plain form is kept here for
--- readability.
+-- CAUTION, three things the plain SQL below does not convey:
+--   1. Deleting a CollectionItem CASCADES to CollectionItemScore. Judge/community scores attached
+--      to a deleted item are destroyed and cannot be reconstructed. On this run 20 of the deleted
+--      rows sat in collections that hold any scores at all; check before running elsewhere.
+--   2. ADD CONSTRAINT takes ShareRowExclusive on the REFERENCED table, so it blocks writes to
+--      "Image"/"Post"/"Article"/"Model" for its duration -- not just to "CollectionItem".
+--   3. Each DELETE below seq-scans a ~205M row, 15 GB heap and holds one long transaction. Prefer
+--      the batched runner (scripts/oneoffs/cleanup-collection-item-orphans.mjs), which also backs
+--      the rows up first. The single statements are kept here only as the readable equivalent.
+--
+-- Run the steps in order; step 2 cannot be validated while orphans remain.
 
 -- Step 1: clear existing orphans.
 DELETE FROM "CollectionItem" ci WHERE ci."imageId" IS NOT NULL
