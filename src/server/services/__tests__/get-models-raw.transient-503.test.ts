@@ -69,7 +69,9 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 // linux-nixos query engine) — a false-positive vector Vitest flags. Stubbing
 // them keeps the run clean without touching the code under test.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+// This factory is EXHAUSTIVE: it replaces the module wholesale, so it must list
+// every export ~/server/db/kyselyDb.ts imports. Add to it when pgDb.ts gains one.
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 // Keep the REAL REDIS_KEYS (the ~/server/redis/caches module reads nested keys
 // like REDIS_KEYS.*.RESOURCE_DATA at module load), but stub the redis/sysRedis
 // CLIENTS so no real connection opens. importOriginal here does not connect

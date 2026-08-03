@@ -9,7 +9,11 @@ const { mockQuery, mockTagCache, mockTagCacheByName } = vi.hoisted(() => {
   };
 });
 
+// This factory is EXHAUSTIVE: it replaces the module wholesale, so it must list
+// every export ~/server/db/kyselyDb.ts imports. Add to it when pgDb.ts gains one.
 vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: { query: mockQuery },
+  pgDbReadLong: { query: mockQuery },
   pgDbWrite: { query: mockQuery },
 }));
 
