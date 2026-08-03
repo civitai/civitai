@@ -368,14 +368,20 @@ describe('AppListingDetailBody', () => {
    * mounts and throw on strict mode. Each variant's href is unique, so each wait
    * can only be satisfied by its own mount.
    *
-   * 🔴 `:not([data-testid="apps-listing-hero-launch"])` is load-bearing. The
-   * click-to-launch hero banner is an anchor to the SAME `/apps/run/<slug>`
-   * href and sits EARLIER in the tree, so a bare `a[href=…]` returns the banner
-   * and `glyphOf` then reads the cover placeholder's category icon instead of
-   * the CTA's. That is a real failure for the glyph test — and, worse, a silent
-   * FALSE PASS for the link-semantics test below, whose assertions (no `target`,
-   * no `rel`) the banner happens to satisfy too. These tests are about the
-   * BUTTON; say so in the selector.
+   * 🔴 `[class*="Button-root"]` is load-bearing. The click-to-launch hero banner
+   * is an anchor to the SAME `/apps/run/<slug>` href and sits EARLIER in the
+   * tree, so a bare `a[href=…]` returns the banner and `glyphOf` then reads the
+   * cover placeholder's category icon instead of the CTA's. That is a real
+   * failure for the glyph test — and, worse, a silent FALSE PASS for the
+   * link-semantics test below, whose assertions (no `target`, no `rel`) the
+   * banner happens to satisfy too. These tests are about the BUTTON; say so in
+   * the selector.
+   *
+   * Discriminate on what the CTA IS, not on what it is not: an earlier revision
+   * excluded the banner's `data-testid`, which works here but is a trap to copy —
+   * `next.config.mjs` strips `data-testid` in production builds
+   * (`reactRemoveProperties`), so that shape matches nothing in a prod-build
+   * harness. Mirrors `waitForCta` in AppListingCard.browser.test.tsx.
    *
    * Timeout matches the 10s that `test/component-setup.tsx` deliberately sets as
    * the project-wide `vi.waitFor` default — its comment names the saturated
@@ -389,9 +395,14 @@ describe('AppListingDetailBody', () => {
     await renderWithProviders(ui);
     const cta = await vi.waitUntil(
       () =>
-        document.body.querySelector(
-          `a[href="${ctaHref}"]:not([data-testid="apps-listing-hero-launch"])`
-        ),
+        // 🔴 Discriminate STRUCTURALLY (the CTA is the Button), not by excluding
+        // the banner's `data-testid`. `next.config.mjs` strips `data-testid` in
+        // production builds via `reactRemoveProperties`, so a testid-based
+        // selector is correct in vitest (dev transform) but silently matches
+        // nothing in any prod-build harness. This mirrors the existing precedent
+        // at AppListingCard.browser.test.tsx's `waitForCta`, and it is
+        // self-describing: it says what the CTA IS rather than what it is not.
+        document.body.querySelector(`a[href="${ctaHref}"][class*="Button-root"]`),
       { timeout: 10000, interval: 25 }
     );
     return cta as HTMLAnchorElement;
@@ -651,9 +662,7 @@ describe('AppListingDetailBody', () => {
   test('🔴 a listing with NO cover art still gets the launch affordance', async () => {
     // The placeholder-gradient branch. An owner who has not uploaded a cover yet
     // must not silently lose the way into their own app.
-    const { within } = await renderScoped(
-      <AppListingDetailBody detail={base({ coverUrl: null })} canOpenPage />
-    );
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({ coverUrl: null })} canOpenPage />);
     const hero = within.getByTestId(HERO);
     await expect.element(hero).toBeInTheDocument();
     expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app');
@@ -663,9 +672,7 @@ describe('AppListingDetailBody', () => {
   });
 
   test('🔴 the banner is keyboard focusable and Enter activates it', async () => {
-    const { within } = await renderScoped(
-      <AppListingDetailBody detail={base({})} canOpenPage />
-    );
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} canOpenPage />);
     const hero = within.getByTestId(HERO);
     await expect.element(hero).toBeInTheDocument();
     const el = hero.element() as HTMLElement;

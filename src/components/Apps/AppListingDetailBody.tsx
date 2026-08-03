@@ -212,6 +212,18 @@ function HeroCover({
       aria-label={`Open ${name}`}
       data-testid="apps-listing-hero-launch"
       underline="never"
+      // 🔴 `c="inherit"` is load-bearing, not cosmetic. Mantine's Anchor root sets
+      // `color: var(--mantine-color-anchor)` (blue-4 `#4DABF7` in dark scheme), and
+      // Tabler icons stroke with `currentColor` — so without this the no-cover
+      // placeholder's 72px category glyph turns link-blue instead of staying the
+      // page's grey `--mantine-color-text`. The cover-IMAGE branch is unaffected
+      // (an `<img>` ignores `color`), which is exactly why this is easy to miss:
+      // it only shows on listings with no cover. `CreatorChip` in AppListingCard
+      // carries `c="dimmed"` for the same reason.
+      // Not covered by the component suite — it loads no CSS (vitest.config.mts
+      // registers only the process shim and component-setup), so every visual
+      // claim here is reasoning, not measurement.
+      c="inherit"
       // Minimal, card-idiom affordance: pointer + a small hover dim + the
       // site's `focus-visible:ring` pattern, so the banner reads as pressable
       // without becoming a redesign. `focus:outline-none` is paired with a ring
