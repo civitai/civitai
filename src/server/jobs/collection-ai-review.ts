@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import {
+  AI_REVIEW_SYSTEM_USER_ID as SYSTEM_USER_ID,
   COLLECTION_AI_REVIEW_KEY_PREFIX,
   updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
@@ -24,7 +25,6 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createJob } from './job';
 
-const SYSTEM_USER_ID = -1;
 // Chunks are barriers waiting on the slowest call (~3s median, 13-20s tail), so they must be wide
 // enough to absorb stragglers. Chunk size is also the crash-safety granularity. See the feature doc.
 const BATCH_SIZE = 300;
@@ -153,7 +153,7 @@ async function classifyItem({
       if (!result) return undefined;
 
       ({ usage } = result);
-      decision = decideFromObservations(result.observations);
+      decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       logToAxiom({

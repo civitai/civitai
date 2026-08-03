@@ -6331,6 +6331,9 @@ export const comicsRouter = router({
           type: 'new-comic-comment',
           key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
           category: NotificationCategory.Comment,
+          // Same CommentV2 row is also swept by new-mention / new-thread-response; this shares their
+          // dedupe key so the project owner gets one notification, not two.
+          dedupeKey: `comment:v2:${comment.id}`,
           userId: project.userId,
           details: {
             comicProjectId: String(input.projectId),

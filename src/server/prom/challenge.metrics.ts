@@ -483,13 +483,25 @@ const COMPLETING_STUCK_MINUTES = 30;
  * read. Neither can strand a row in `Completing` any more, so this gauge should no longer see a
  * stampless `Completing` row from those paths.
  *
- * 🔴 It does NOT follow that the class is gone. `upsertChallenge` still writes the WHOLE metadata
+ * It does NOT follow that the whole class is gone. `upsertChallenge` still writes the WHOLE metadata
  * column from its replica snapshot (`{ ...existingMetadata, themeElements }`) — the predicate only
- * stops it landing on a DIFFERENT status, not on a same-status racing write. That is no longer a
- * wedge, but it still silently drops concurrent metadata (e.g. the `reviewedAt` watermark, which
- * rewinds incremental review to the challenge start), and a declared-key type violation still makes
- * `parseChallengeMetadata` return `{}` and wipe the column. Converting that write to the same jsonb
- * `||` merge is the remaining work.
+ * stops it landing on a DIFFERENT status, not on a same-status racing write — and a declared-key
+ * type violation still makes `parseChallengeMetadata` return `{}` and wipe the column. Converting
+ * that write to the same jsonb `||` merge would close it.
+ *
+ * That was assessed on 2026-08-03 and DELIBERATELY LEFT — the residue is not worth a second raw-SQL
+ * write inside that transaction. 🔴 The assessment corrects an earlier version of this note, which
+ * said losing the `reviewedAt` watermark "rewinds incremental review to the challenge start" as
+ * though that re-judged the backlog at LLM cost. It does not: the same WHERE clause in
+ * `daily-challenge-processing.ts` carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's
+ * comment for that image), which drops every already-scored entry no matter what the watermark says.
+ * The watermark is a SCAN optimisation, not the dedupe — losing it costs a wider index scan.
+ * Probability is near zero too: the only concurrent writer of this column is that watermark, which
+ * runs every 10 minutes against the ONE current challenge, so a save of that specific challenge must
+ * straddle a 600-second-cadence instantaneous UPDATE within a sub-second window on the common
+ * (no-LLM) path. Revisit only with evidence of a real loss.
+ * (Cron expressions are spelled out in words in this block on purpose — a literal slash-star-ten
+ * would close the comment.)
  *
  * So the design is not merely the cheap direction to be wrong in — it is load-bearing. A legacy or
  * malformed stamp lands here too, and treating such rows as "not stuck" would make the gauge

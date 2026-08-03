@@ -14,6 +14,11 @@ Contest metadata in prod currently runs ~204 bytes average, 708 max — there is
 
 ## Design
 
+The prompt itself is **not in this repository** — it spells out which signals reject versus
+escalate, and this repo is public. It lives in `KeyValue` under `collection-ai-review:default`
+(the seed the moderation dialog offers) and per collection under `collection-ai-review:<id>`,
+readable only through the moderator-gated `collection.getAiReview*` procedures.
+
 The model reports **observations only** — `sexualContent`, `depictsMinor`, `hasBuzzReference` and
 friends. `decideFromObservations()` in `src/server/services/ai/collection-review.service.ts` turns
 those into `approve | reject | escalate`. Keeping the rules out of the model means the policy is
@@ -63,7 +68,7 @@ ORDER BY (collectionId, collectionItemId, createdAt);
 ```
 
 `ReplacingMergeTree` because the tracker delivers at-least-once: it retries on 5xx, and a NATS ack
-timeout means the row landed *and* got retried. `createdAt` is stamped in JS, so a redelivery is
+timeout means the row landed _and_ got retried. `createdAt` is stamped in JS, so a redelivery is
 byte-identical and collapses on merge. Add `FINAL` when a query must not see a duplicate before the
 next merge.
 

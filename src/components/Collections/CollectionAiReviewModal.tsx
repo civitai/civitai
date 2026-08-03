@@ -19,21 +19,27 @@ import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { AI_REVIEW_MODELS } from '~/server/schema/collection.schema';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
-import { DEFAULT_AI_REVIEW_PROMPT } from '~/server/services/ai/collection-review.prompt';
 import { Flags } from '~/shared/utils/flags';
 
 export default function CollectionAiReviewModal({ collectionId }: { collectionId: number }) {
   const dialog = useDialogContext();
   const { data: existing, isLoading } = trpc.collection.getAiReview.useQuery({ id: collectionId });
+  const { data: defaultPrompt, isLoading: loadingDefault } =
+    trpc.collection.getAiReviewDefaultPrompt.useQuery();
 
   return (
     <Modal {...dialog} title="AI moderation" size="lg">
-      {isLoading ? (
+      {isLoading || loadingDefault ? (
         <Group justify="center" p="xl">
           <Loader />
         </Group>
       ) : (
-        <AiReviewForm collectionId={collectionId} existing={existing} onClose={dialog.onClose} />
+        <AiReviewForm
+          collectionId={collectionId}
+          existing={existing}
+          defaultPrompt={defaultPrompt ?? ''}
+          onClose={dialog.onClose}
+        />
       )}
     </Modal>
   );
@@ -42,10 +48,12 @@ export default function CollectionAiReviewModal({ collectionId }: { collectionId
 function AiReviewForm({
   collectionId,
   existing,
+  defaultPrompt,
   onClose,
 }: {
   collectionId: number;
   existing?: CollectionAiReviewSchema | null;
+  defaultPrompt: string;
   onClose: () => void;
 }) {
   const utils = trpc.useUtils();
@@ -53,7 +61,7 @@ function AiReviewForm({
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [dryRun, setDryRun] = useState(existing?.dryRun ?? true);
   const [model, setModel] = useState<string>(existing?.model ?? AI_REVIEW_MODELS[0]);
-  const [prompt, setPrompt] = useState(existing?.prompt ?? DEFAULT_AI_REVIEW_PROMPT);
+  const [prompt, setPrompt] = useState(existing?.prompt ?? defaultPrompt);
   const [allowedNsfwLevels, setAllowedNsfwLevels] = useState(
     existing?.allowedNsfwLevels ?? Flags.arrayToInstance([NsfwLevel.PG, NsfwLevel.PG13])
   );
