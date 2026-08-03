@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PlacementOutcome } from '~/shared/utils/placement';
+import type { PlacementOutcome, PlacementStatus } from '~/shared/utils/placement';
 import {
   clampDeclineFeeRate,
   declineFeeAmount,
@@ -8,6 +8,7 @@ import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
   PLACEMENT_SURFACES,
+  placementOutcomeFromStatus,
   placementPriceCap,
   placementSurfaces,
   resolvePlacementSpace,
@@ -117,6 +118,57 @@ describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
   });
 });
 
+describe('settling a stored placement', () => {
+  // `status` comes back from a schemaless TEXT column, so the failure mode to
+  // close is a value that isn't in the union reaching the split and falling off
+  // the end of the switch as `undefined` — which pays nobody, silently.
+  it('refuses an outcome it does not recognise instead of returning undefined', () => {
+    const call = () =>
+      splitPlacementPayment({
+        amount: 100,
+        outcome: 'removed' as unknown as PlacementOutcome,
+        declineFeeRate: 0.3,
+        sellerShare: 0.3,
+        platformShare: 0.3,
+      });
+
+    expect(call).toThrow(/unknown outcome/);
+  });
+
+  it('resolves a removal only when it knows who removed it', () => {
+    expect(placementOutcomeFromStatus('removed', 'owner')).toBe('removedByOwner');
+    expect(placementOutcomeFromStatus('removed', 'moderator')).toBe('removedByModerator');
+    expect(() => placementOutcomeFromStatus('removed', null)).toThrow(/who removed it/);
+    expect(() => placementOutcomeFromStatus('removed')).toThrow(/who removed it/);
+  });
+
+  it('maps the unambiguous statuses and refuses the ones that settle nothing', () => {
+    expect(placementOutcomeFromStatus('approved')).toBe('approved');
+    expect(placementOutcomeFromStatus('declined')).toBe('declined');
+    expect(placementOutcomeFromStatus('expired')).toBe('expired');
+    expect(() => placementOutcomeFromStatus('pending')).toThrow(/no settled outcome/);
+    expect(() => placementOutcomeFromStatus('nonsense' as PlacementStatus)).toThrow(
+      /unknown status/
+    );
+  });
+
+  // The two removals pay opposite amounts, which is the whole reason the actor
+  // is stored rather than inferred.
+  it('pays opposite amounts for the two removals', () => {
+    const settle = (removedBy: 'owner' | 'moderator') =>
+      splitPlacementPayment({
+        amount: 500,
+        outcome: placementOutcomeFromStatus('removed', removedBy),
+        declineFeeRate: 0.3,
+        sellerShare: 0.3,
+        platformShare: 0.3,
+      });
+
+    expect(settle('owner').toPlacer).toBe(500);
+    expect(settle('moderator').toPlacer).toBe(0);
+  });
+});
+
 describe('declineFeeAmount', () => {
   it('never rounds a non-zero rate away to nothing', () => {
     // 5% of 19 floors to 0; a free decline defeats the whole point of the fee.
@@ -167,8 +219,13 @@ describe('pricing', () => {
   it('never lets a set price exceed the cap', () => {
     expect(effectivePlacementPrice(10_000, 500)).toBe(500);
     expect(effectivePlacementPrice(250, 500)).toBe(250);
-    expect(effectivePlacementPrice(null, 500)).toBe(500);
     expect(effectivePlacementPrice(-5, 500)).toBe(0);
+  });
+
+  // Defaulting an unpriced space to its ceiling would charge the maximum for a
+  // space whose owner never named a price.
+  it('reports an unset price as unset rather than as the cap', () => {
+    expect(effectivePlacementPrice(null, 500)).toBeNull();
   });
 });
 

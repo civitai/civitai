@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -64,9 +64,9 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
         PLACEMENT_SURFACES[surface].defaultDeclineFeeRate
       ),
     expiryHours: (surface) =>
-      stored.expiryHours?.[surface] ?? PLACEMENT_SURFACES[surface].expiryHours,
+      clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>
-      stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers ?? PLACEMENT_PRICE_CAP_TIERS,
+      usablePriceCapTiers(stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers),
   };
 }
 
@@ -86,18 +86,26 @@ export async function placementPriceRange(
   userId: number,
   surface: PlacementSurface
 ): Promise<PlacementPriceRange> {
-  const [scoreRow, subscription, config] = await Promise.all([
+  const [scoreRow, capTier, config] = await Promise.all([
+    // Cast through `numeric`: `::int` on a stored value that isn't integer text
+    // raises rather than returning null, and this read shouldn't be able to fail
+    // on one malformed row.
     dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT (meta -> 'scores' ->> 'total')::int AS score FROM "User" WHERE id = ${userId}
+      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ${userId}
     `,
-    getHighestTierSubscription(userId),
+    // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
+    // creator mid-failed-payment would price against a tier they aren't paying
+    // for, while the UI showed them the free cap. Every other monetization cap
+    // in the app resolves through this helper.
+    getCapTier(userId),
     getPlacementConfig(),
   ]);
 
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
   // heavily-reported creator can land below zero and gets the bottom band.
   const score = scoreRow[0]?.score ?? 0;
-  const tier = toPriceCapTier(subscription?.tier);
+  const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
     min: PLACEMENT_MIN_PRICE,
@@ -106,6 +114,27 @@ export async function placementPriceRange(
     tier,
   };
 }
+
+/**
+ * Escrow with no timeout is money frozen indefinitely, which is the whole reason
+ * expiry exists — so an operator typo of `8760` must not quietly become a year
+ * of held Buzz.
+ */
+export const MIN_EXPIRY_HOURS = 1;
+export const MAX_EXPIRY_HOURS = 24 * 14;
+
+const clampExpiryHours = (hours: number | undefined, fallback: number) => {
+  if (typeof hours !== 'number' || !Number.isFinite(hours)) return fallback;
+  return Math.min(Math.max(hours, MIN_EXPIRY_HOURS), MAX_EXPIRY_HOURS);
+};
+
+/**
+ * A stored table whose lowest band starts above zero gives every creator beneath
+ * it a cap of 0, i.e. a space nobody can be charged for. It fails toward free
+ * rather than toward overcharging, but silently, and the schema can't see it.
+ */
+const usablePriceCapTiers = (tiers: PlacementPriceTier[] | undefined) =>
+  tiers?.some((tier) => tier.minScore === 0) ? tiers : PLACEMENT_PRICE_CAP_TIERS;
 
 const MEMBERSHIP_TIERS: MembershipTier[] = ['bronze', 'silver', 'gold'];
 

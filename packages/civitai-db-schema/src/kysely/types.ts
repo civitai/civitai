@@ -2884,6 +2884,11 @@ export type Placement = {
   data: Generated<unknown>;
   status: string;
   /**
+   * 'owner' | 'moderator', set with status 'removed'. The two removals refund
+   * opposite amounts, so the status alone cannot settle the money.
+   */
+  removedBy: string | null;
+  /**
    * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
    * the space, whose price may move between placement and release.
    */

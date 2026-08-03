@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS "Placement" (
   "placerId"          INTEGER NOT NULL,
   "data"              JSONB NOT NULL DEFAULT '{}',
   "status"            TEXT NOT NULL,
+  -- 'owner' | 'moderator'. Set with status 'removed': the two removals refund
+  -- opposite amounts, so the status alone cannot settle the money.
+  "removedBy"         TEXT,
   "amount"            INTEGER NOT NULL,
   "buzzTransactionId" TEXT,
   "feeTransactionId"  TEXT,
@@ -38,13 +41,29 @@ CREATE TABLE IF NOT EXISTS "Placement" (
   CONSTRAINT "Placement_amount_nonnegative" CHECK ("amount" >= 0)
 );
 
-ALTER TABLE "Placement"
-  ADD CONSTRAINT "Placement_ownerId_fkey"
-  FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Applied by hand, so every statement here has to survive a re-run after a
+-- partial apply. A bare ADD CONSTRAINT aborts the second time through.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_ownerId_fkey') THEN
+    ALTER TABLE "Placement"
+      ADD CONSTRAINT "Placement_ownerId_fkey"
+      FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
 
-ALTER TABLE "Placement"
-  ADD CONSTRAINT "Placement_placerId_fkey"
-  FOREIGN KEY ("placerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_placerId_fkey') THEN
+    ALTER TABLE "Placement"
+      ADD CONSTRAINT "Placement_placerId_fkey"
+      FOREIGN KEY ("placerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_removedBy_check') THEN
+    ALTER TABLE "Placement"
+      ADD CONSTRAINT "Placement_removedBy_check"
+      CHECK ("removedBy" IS NULL OR "removedBy" IN ('owner', 'moderator'));
+  END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS "Placement_surface_targetType_targetId_status_idx"
   ON "Placement" ("surface", "targetType", "targetId", "status");
@@ -53,6 +72,12 @@ CREATE INDEX IF NOT EXISTS "Placement_placerId_status_idx" ON "Placement" ("plac
 -- Drives the expiry sweep, which reads only pending rows past their deadline.
 CREATE INDEX IF NOT EXISTS "Placement_status_expiresAt_idx" ON "Placement" ("status", "expiresAt");
 
--- One escrow charge per placement, so a retried hold cannot double-charge.
+-- One escrow charge and one decline fee per placement, so a retry after a
+-- partial failure cannot charge twice. Prisma cannot express a partial unique
+-- index, so these live only here — see the note on the models in
+-- schema.full.prisma before trusting a `prisma migrate diff` that offers to drop
+-- them.
 CREATE UNIQUE INDEX IF NOT EXISTS "Placement_buzzTransactionId_key"
   ON "Placement" ("buzzTransactionId") WHERE "buzzTransactionId" IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "Placement_feeTransactionId_key"
+  ON "Placement" ("feeTransactionId") WHERE "feeTransactionId" IS NOT NULL;

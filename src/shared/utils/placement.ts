@@ -22,6 +22,16 @@ export type PlacementSpaceMode =
 export type PlacementStatus = 'pending' | 'approved' | 'declined' | 'expired' | 'removed';
 
 /**
+ * Who removed a placement, stored alongside `status: 'removed'`.
+ *
+ * The two removals have opposite money outcomes — an owner removing an
+ * auto-approved placement refunds in full, a moderator removing an abusive one
+ * refunds nothing — so `removed` alone cannot tell a reconcile or a retry which
+ * one happened.
+ */
+export type PlacementRemovedBy = 'owner' | 'moderator';
+
+/**
  * Everything that varies per surface, in one table — the shape v1's
  * `STICKER_SURFACES` earned. **A surface absent from this table is denied
  * everywhere**, which is the property the table exists for; adding one must be
@@ -143,9 +153,13 @@ export function placementPriceCap(
  * The effective price is `min(set, cap)` computed here at read. Storing it would
  * go stale the moment a membership lapses or a score moves, with nothing failing
  * to say so.
+ *
+ * An unset price is `null`, not the cap. The creator sets the price and the cap
+ * only ceilings it, so defaulting an unpriced space to its maximum inverts that
+ * — callers must decide what an unpriced space does rather than charge for one.
  */
 export const effectivePlacementPrice = (setPrice: number | null, cap: number) =>
-  Math.max(Math.min(setPrice ?? cap, cap), PLACEMENT_MIN_PRICE);
+  setPrice == null ? null : Math.max(Math.min(setPrice, cap), PLACEMENT_MIN_PRICE);
 
 // ---------------------------------------------------------------------------
 // The split
@@ -228,6 +242,38 @@ export function splitPlacementPayment(input: PlacementSplitInput): PlacementSpli
     // to the owner, so a removal no one benefits from stays uninteresting to game.
     case 'removedByModerator':
       return { ...nothing, toPlatform: amount };
+    // `outcome` arrives from a schemaless TEXT column, so the switch has to
+    // refuse an unknown value rather than fall off the end returning undefined —
+    // a caller destructuring the result would pay nobody and swallow it.
+    default:
+      throw new Error(`placement split: unknown outcome ${JSON.stringify(outcome)}`);
+  }
+}
+
+/**
+ * The stored status back to the outcome that decides the money. `removed` is
+ * ambiguous on its own — the two removals refund opposite amounts — so it must
+ * be resolved with the actor rather than guessed.
+ */
+export function placementOutcomeFromStatus(
+  status: PlacementStatus,
+  removedBy?: PlacementRemovedBy | null
+): PlacementOutcome {
+  switch (status) {
+    case 'approved':
+      return 'approved';
+    case 'declined':
+      return 'declined';
+    case 'expired':
+      return 'expired';
+    case 'removed':
+      if (removedBy === 'owner') return 'removedByOwner';
+      if (removedBy === 'moderator') return 'removedByModerator';
+      throw new Error('placement outcome: a removed placement must record who removed it');
+    case 'pending':
+      throw new Error('placement outcome: a pending placement has no settled outcome');
+    default:
+      throw new Error(`placement outcome: unknown status ${JSON.stringify(status)}`);
   }
 }
 

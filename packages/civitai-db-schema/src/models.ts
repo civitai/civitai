@@ -5158,6 +5158,7 @@ export interface Placement {
   placer?: User;
   data: JsonValue;
   status: string;
+  removedBy: string | null;
   amount: number;
   buzzTransactionId: string | null;
   feeTransactionId: string | null;
