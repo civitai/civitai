@@ -125,11 +125,13 @@ export function useSubmitCreatorShopForm({
   // they may not touch. Published is deliberately NOT part of this: the server
   // allows economics changes after publish, and a sticker predating per-use
   // pricing can only be repaired if someone can still reach the field.
+  //
+  // "No creator" reads as "not yours", which is what it means on the server:
+  // `null === userId` is false there, so a cosmetic without a creator — an
+  // official one — is refused. Treating a missing creator as permission would
+  // demand a price the save then rejects.
   const canEditEconomics =
-    !isEdit ||
-    !!currentUser?.isModerator ||
-    !item?.cosmetic.createdById ||
-    item.cosmetic.createdById === currentUser?.id;
+    !isEdit || !!currentUser?.isModerator || item?.cosmetic.createdById === currentUser?.id;
   const economicsEditable = isSticker && canEditEconomics;
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
