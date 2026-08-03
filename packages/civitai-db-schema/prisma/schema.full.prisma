@@ -2107,11 +2107,15 @@ enum TagSource {
 
 model TagsOnImageNew {
   imageId    Int
-  // No FK exists on this column: it was created ON DELETE CASCADE in
-  // 20250303170613_tags_on_image_new and dropped in 20250314203912_drop_tags_on_image,
-  // where the `after_image_delete` trigger in programmability/image_delete_triggers.sql
-  // took over the cascade. `onDelete: Cascade` records that intent; it does not
-  // reinstate the constraint.
+  // The FK on this column is INTENTIONALLY ABSENT and must not be re-added.
+  // Enforcement lives in the `after_image_delete` trigger
+  // (programmability/image_delete_triggers.sql), verified enabled in production,
+  // which deletes this table's rows on image delete. The FK was created
+  // ON DELETE CASCADE in 20250303170613_tags_on_image_new and deliberately
+  // dropped in 20250314203912_drop_tags_on_image, one day after that trigger
+  // took over — this table is far too large to carry the constraint.
+  // `onDelete: Cascade` documents the semantics the trigger already implements.
+  // It is NOT a to-do to add the constraint.
   image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
   attributes Int   @db.SmallInt()
