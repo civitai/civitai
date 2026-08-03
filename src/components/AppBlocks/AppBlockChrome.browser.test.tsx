@@ -299,6 +299,12 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     clearRecentlyOpenedApps();
   });
 
+  // A data: URI that actually loads — an http URL fails in-browser (Mantine Avatar
+  // fires onError and swaps the <img> for a placeholder span ~11 ms after mount),
+  // making the `expect(img).not.toBeNull()` assertion race the error path.
+  const LOADABLE_ICON =
+    'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
   // The platform-nav Menu mounts its dropdown lazily — open it first (its trigger
   // is "Apps menu", distinct from the ⋯ "App menu").
   async function openPlatformNav() {
@@ -314,7 +320,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
       id: 'other',
       blockId: 'other-block',
       name: 'Other App',
-      iconUrl: 'https://cdn.example/icon.png',
+      iconUrl: LOADABLE_ICON,
     });
 
     renderWithProviders(
@@ -336,7 +342,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     expect(other.getAttribute('href')).toBe('/apps/run/other-block');
     const otherImg = other.querySelector('img');
     expect(otherImg).not.toBeNull();
-    expect(otherImg?.getAttribute('src')).toBe('https://cdn.example/icon.png');
+    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_ICON);
 
     // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
     const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;
