@@ -1411,16 +1411,22 @@ export async function getRevenueForOwner({
  */
 export type RevenueUnavailableReason = 'notEntitled';
 
-export type RevenuePayload = {
+/**
+ * The PLACEHOLDER payload only — named `Empty…` deliberately. `recentAttributions: []`
+ * (an empty tuple) and a REQUIRED `unavailable` mean this type can describe nothing else,
+ * so typing the real measurement path with it would force a developer to add
+ * `unavailable` to a genuine result — the exact inverse of the bug this fixes. It was
+ * briefly called `RevenuePayload`, which invited precisely that.
+ */
+export type EmptyRevenuePayload = {
   summary: RevenueSummary;
   topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
   recentAttributions: [];
   /**
-   * Present ONLY when the zeroed buckets are a placeholder rather than a
-   * measurement. A genuinely-measured result omits it even when every bucket is
-   * 0 — without it a publisher who has simply earned nothing yet and a caller
-   * who was never allowed to query are byte-identical, and the dashboard
-   * presents never-queried zeros as earnings.
+   * REQUIRED here, because on this type the zeroed buckets are always a placeholder.
+   * The contract as seen by a CALLER is "present only when the zeros are a placeholder,
+   * absent on a genuine measurement" — a measured result comes back from
+   * `getRevenueForOwner`, which never returns this type, so it never carries the field.
    */
   unavailable: RevenueUnavailableReason;
 };
@@ -1436,7 +1442,7 @@ export type RevenuePayload = {
  * legitimate way to build this payload without the flag, and a future second
  * call site cannot silently omit it.
  */
-export function emptyRevenue(): RevenuePayload {
+export function emptyRevenue(): EmptyRevenuePayload {
   const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
   return {
     summary: {

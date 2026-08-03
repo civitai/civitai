@@ -81,13 +81,22 @@ export default function AppRevenuePage() {
             </Text>
           </div>
 
-          {myAppsQuery.isLoading ? (
-            <Group justify="center" py="xl">
-              <Loader />
-            </Group>
-          ) : (
-            <RevenuePanel appBlockId={appBlockId} />
-          )}
+          {/*
+            Mounted UNCONDITIONALLY, deliberately NOT gated on
+            `myAppsQuery.isLoading`. Gating it serializes two independent reads:
+            the panel's `getMyRevenue` cannot start until `getMyApps` resolves,
+            adding a whole round-trip plus five aggregates of latency to a money
+            screen. On main both queries were issued on the same render behind one
+            combined loader — keep that parallelism; the panel owns its own
+            loading state.
+
+            Safe because ownership is enforced ABOVE (the `ownerCheckDone &&
+            !thisApp` early return) and, decisively, server-side: the revenue
+            service scopes every aggregate by `appOwnerUserId`, so a non-owner's
+            in-flight query can only ever return their own empty figures. The
+            notFound is defence in depth, not what prevents a leak.
+          */}
+          <RevenuePanel appBlockId={appBlockId} />
         </Stack>
       </Container>
     </>

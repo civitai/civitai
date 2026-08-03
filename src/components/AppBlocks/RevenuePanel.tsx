@@ -24,6 +24,28 @@ import { trpc } from '~/utils/trpc';
  */
 type RevenueUnavailableReason = 'notEntitled';
 
+/**
+ * 🔴 EXHAUSTIVE on the union, so a second value cannot silently inherit the
+ * notEntitled sentence.
+ *
+ * The docblock above asks a future author to "add a branch"; that was an instruction with
+ * nothing enforcing it — the render only tested `unavailable` for truthiness, so widening
+ * the union would have shown confidently WRONG copy on a money screen rather than an
+ * obviously missing branch. The `never` assignment makes it a COMPILE error instead: add a
+ * value to the union and `tsc` fails here until the copy exists. `AppAnalyticsPanel` uses
+ * a value-branch for the same reason.
+ */
+function unavailableMessage(reason: RevenueUnavailableReason): string {
+  switch (reason) {
+    case 'notEntitled':
+      return 'Your account does not have access to app revenue reporting yet. No earnings were measured — this is not a report of zero earnings.';
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
+  }
+}
+
 type SummaryShape = {
   pending: { count: number; grossCents: number; shareCents: number };
   confirmed: { count: number; grossCents: number; shareCents: number };
@@ -176,10 +198,7 @@ export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
           icon={<IconInfoCircle size={16} />}
           title="Revenue unavailable"
         >
-          <Text size="sm">
-            Your account does not have access to app revenue reporting yet. No earnings were
-            measured — this is not a report of zero earnings.
-          </Text>
+          <Text size="sm">{unavailableMessage(unavailable)}</Text>
         </Alert>
       )}
 

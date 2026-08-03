@@ -45,16 +45,35 @@ describe('RevenuePanel wiring — the discriminator has exactly one reader, and 
   it('sanity: the tree walk found the panel and both pages (positive control)', () => {
     // Without this, an empty/misrooted walk would make every "no other caller"
     // assertion below vacuously true.
-    expect(files.length).toBeGreaterThan(500);
+    // Tightened from >500: `src` actually holds ~4,400 .ts/.tsx files, so 500 would
+    // still pass on a walk that had silently lost most of the tree.
+    expect(files.length).toBeGreaterThan(3000);
     const found = files.map(rel);
     expect(found).toContain(PANEL);
     for (const p of PAGES) expect(found).toContain(p);
   });
 
-  it('RevenuePanel is the ONLY component that queries blocks.getMyRevenue', () => {
+  it('RevenuePanel is the ONLY component that reads blocks.getMyRevenue', () => {
+    // 🔴 Broader than `trpc.blocks.getMyRevenue.useQuery`, which the original form
+    // pinned. That was evaded by every realistic alternative — `useSuspenseQuery`,
+    // `trpc.useQueries((t) => [t.blocks.getMyRevenue(...)])`, and
+    // `createServerSideHelpers().blocks.getMyRevenue.prefetch()` — each of which would
+    // have added an unguarded reader with this test still green.
+    //
+    // Two deliberate narrowings, because the bare name over-matches:
+    //   - CLIENT SURFACES ONLY (components/, pages/). The proc's own definition in
+    //     blocks.router.ts and the prose references in the services are not readers and
+    //     cannot render anything.
+    //   - A CALL/ACCESS shape (`getMyRevenue` followed by `.` or `(`), so a comment
+    //     mentioning the proc by name does not register as a consumer.
+    // Residual gaps, stated rather than papered over: a raw `fetch('/api/trpc/...')`,
+    // and destructuring the proc into a local before calling it. This is one guard, not
+    // a proof.
+    const CLIENT_DIRS = ['src/components/', 'src/pages/'];
     const callers = files
       .filter((f) => !f.endsWith('.test.ts') && !f.endsWith('.test.tsx'))
-      .filter((f) => /trpc\.blocks\.getMyRevenue\.useQuery/.test(readFileSync(f, 'utf8')))
+      .filter((f) => CLIENT_DIRS.some((d) => rel(f).startsWith(d)))
+      .filter((f) => /getMyRevenue\s*[.(]/.test(readFileSync(f, 'utf8')))
       .map(rel)
       .sort();
     // If this fails with an EXTRA entry, that new consumer must branch on
