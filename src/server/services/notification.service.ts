@@ -20,6 +20,13 @@ export const createNotificationPendingRow = notificationSingleRowFull
     userId: z.number().optional(),
     userIds: z.array(z.number()).optional(),
     debounceSeconds: z.number().optional(),
+  })
+  // Mirrors the same refine on @civitai/notifications' copy. Without it, callers that validate against
+  // THIS schema (e.g. /api/mod/send-mod-notification) accept the pair, then the package schema rejects it
+  // inside createNotification below — which logs and swallows, so the request 200s and nothing sends.
+  .refine((row) => !(row.dedupeKey && row.debounceSeconds !== undefined), {
+    message: 'dedupeKey is not supported on debounced notifications',
+    path: ['dedupeKey'],
   });
 export type CreateNotificationPendingRow = z.infer<typeof createNotificationPendingRow>;
 

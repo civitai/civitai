@@ -27,12 +27,56 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
   }[threadType as string] as string;
 };
 
+/**
+ * SQL for the `dedupeKey` column every comment-derived processor selects. One comment can satisfy
+ * several types at once (an @mention that is also a thread reply on a model you own); they all emit the
+ * same dedupe key, and the notifications app hands the recipient only the first one to land. `v1` is the
+ * legacy `Comment` table, `v2` is `CommentV2` — their ids overlap, so the namespace is load-bearing.
+ */
+export const commentDedupeKey = (version: 'v1' | 'v2') =>
+  `concat('comment:${version}:', details->>'commentId')`;
+
+/** Same, for queries that UNION both comment tables and mark the V2 branch with `details.version`. */
+export const commentDedupeKeyByVersion = `concat('comment:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId')`;
+
+/**
+ * The same key, but only claimed when the notification can actually be linked to. Claiming SUPPRESSES
+ * every other notification for that comment, so a claimant that renders a dead link would silently
+ * replace one that works.
+ *
+ * `threadType` resolves to the `'comment'` fallback for any `Thread` entity `threadUrlMap` doesn't
+ * address (comicProject, clubPost, model3dReview today). Those threads stay unclaimed, which is what
+ * lets a purpose-built owner notification like `new-comic-comment` own the key instead. V1 rows carry no
+ * `threadType` and build their URL from `modelId`, so they always render and always claim.
+ *
+ * Add a `Thread` entity column WITHOUT a `threadUrlMap` entry and this keeps the dedupe correct on its
+ * own — that omission is exactly how the mention/challenge regression got in.
+ */
+export const commentDedupeKeyIfAddressable = `case
+          when details->>'version' is null then ${commentDedupeKeyByVersion}
+          when details->>'threadType' <> 'comment' then ${commentDedupeKeyByVersion}
+        end`;
+
+/**
+ * Batch order for the comment family, lowest first. `send-notifications` runs each priority as its own
+ * sequential batch, so this decides WHICH of several competing notifications a user actually receives:
+ * the most specific one runs first and claims the dedupe key. Being named beats being replied to, which
+ * beats being in the thread, which beats owning the thing it happened on.
+ */
+export const CommentNotificationPriority = {
+  Mention: 1,
+  DirectResponse: 2,
+  ThreadResponse: 3,
+  EntityOwner: 4,
+} as const;
+
 // Moveable (all)
 
 export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
@@ -57,6 +101,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-model:owner:v1:', details->>'commentId') "key",
+        ${commentDedupeKey('v1')} "dedupeKey",
         "ownerId"    "userId",
         'new-comment' "type",
         details
@@ -68,6 +113,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-comment-response': {
     displayName: 'New comment responses (Models)',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${
@@ -95,6 +141,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-response:owner:v1:', details->>'commentId') "key",
+        ${commentDedupeKey('v1')} "dedupeKey",
         "ownerId"    "userId",
         'new-comment-response' "type",
         details
@@ -106,6 +153,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-comment-nested': {
     displayName: 'New responses to comments and reviews on your models',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
@@ -132,6 +180,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-nested:user:v1:', details->>'commentId') "key",
+        ${commentDedupeKey('v1')} "dedupeKey",
         "ownerId"    "userId",
         'new-comment-nested' "type",
         details
@@ -143,6 +192,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-comment-reply': {
     displayName: 'New comment replies',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
@@ -203,6 +253,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKeyIfAddressable} "dedupeKey",
         "ownerId"    "userId",
         'new-comment-reply' "type",
         details
@@ -214,6 +265,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-thread-response': {
     displayName: 'New replies to comment threads you are in',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.ThreadResponse,
     prepareMessage: ({ details }) => {
       if (!details.version) {
         return {
@@ -340,6 +392,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
+        ${commentDedupeKeyIfAddressable} "dedupeKey",
         "ownerId"    "userId",
         'new-thread-response' "type",
         details
@@ -351,6 +404,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-review-response': {
     displayName: 'New review responses',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => {
       if (details.version !== 2) {
         return {
@@ -387,6 +441,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-review-response:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-review-response' "type",
         details
@@ -398,6 +453,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-image-comment': {
     displayName: 'New comments on your images',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} commented on your image`;
@@ -457,6 +513,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-image:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-image-comment' "type",
         details
@@ -468,6 +525,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-article-comment': {
     displayName: 'New comments on your articles',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) =>
       details && !isEmpty(details)
         ? {
@@ -496,6 +554,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-article:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-article-comment' "type",
         details
@@ -507,6 +566,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-bounty-comment': {
     displayName: 'New comments on your bounty',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
       url: `/bounties/${details.bountyId}?highlight=${details.commentId}`,
@@ -533,6 +593,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-bounty:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-bounty-comment' "type",
         details
@@ -544,6 +605,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-challenge-comment': {
     displayName: 'New comments on your challenges',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your challenge: "${details.challengeTitle}"`,
       url: `/challenges/${details.challengeId}?highlight=${details.commentId}`,
@@ -569,6 +631,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-challenge:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId" "userId",
         'new-challenge-comment' "type",
         details
@@ -585,6 +648,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-3d-model-comment': {
     displayName: 'New comments on your 3D models',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your 3D model: "${details.model3dName}"`,
@@ -611,6 +675,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-model3d:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-3d-model-comment' "type",
         details
@@ -622,6 +687,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-3d-model-comment-response': {
     displayName: 'New responses to your comments on 3D models',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.DirectResponse,
     defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the 3D model "${details.model3dName}"`,
@@ -655,6 +721,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-response-model3d:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-3d-model-comment-response' "type",
         details
@@ -666,6 +733,7 @@ export const commentNotifications = createNotificationProcessor({
   'new-3d-model-comment-nested': {
     displayName: 'New nested comments on your 3D models',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
     defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a comment on your 3D model "${details.model3dName}"`,
@@ -700,6 +768,7 @@ export const commentNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-comment-nested-model3d:user:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
         "ownerId"    "userId",
         'new-3d-model-comment-nested' "type",
         details
