@@ -7501,11 +7501,13 @@ model PlacementSpace {
 /// One paid occupation of a space. `data` is opaque here on purpose — the sticker and
 /// remix surfaces own their own payload shape, and this layer never reads inside it.
 ///
-/// The DB carries three constraints Prisma cannot express, all in the migration:
-/// partial unique indexes on `buzzTransactionId` and `feeTransactionId` (what stops a
-/// retried charge from charging twice), a CHECK on `amount >= 0`, and a CHECK confining
-/// `removedBy`. A `prisma migrate diff` will read them as drift and offer to drop them —
-/// don't let it.
+/// Money movements live in `PlacementTransaction`, not in columns here: a settlement
+/// that got half way has to say which half, and a status column cannot.
+///
+/// The DB carries CHECK constraints Prisma cannot express, all in the migration —
+/// `amount >= 0`, `status` confined to its five values, and `removedBy` tied to
+/// `status = 'removed'`. A `prisma migrate diff` will read them as drift and offer to
+/// drop them; don't let it.
 model Placement {
   id                    Int       @id @default(autoincrement())
   surface               String
@@ -7523,17 +7525,32 @@ model Placement {
   /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
   /// the space, whose price may move between placement and release.
   amount                Int
-  buzzTransactionId     String?
-  /// Set when the decline fee is charged, so a retry after a partial failure cannot
-  /// charge twice.
-  feeTransactionId      String?
   createdAt             DateTime  @default(now())
   expiresAt             DateTime?
   resolvedAt            DateTime?
   resolvedById          Int?
+  transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
   @@index([placerId, status])
   @@index([status, expiresAt])
+}
+
+/// One row per movement of money for a placement. `UNIQUE (placementId, kind)` is the
+/// idempotency guard: the insert is the lock, so a retried leg raises rather than paying
+/// twice. `transactionId` is the Buzz service's receipt, derived from the row
+/// (`placement-<id>-<kind>`) and never time-based, so the service's own dedupe is a real
+/// second line rather than something a retry steps around.
+model PlacementTransaction {
+  id            Int       @id @default(autoincrement())
+  placementId   Int
+  placement     Placement @relation(fields: [placementId], references: [id], onDelete: Cascade)
+  kind          String
+  transactionId String?
+  amount        Int
+  createdAt     DateTime  @default(now())
+
+  @@unique([placementId, kind])
+  @@index([kind, createdAt])
 }

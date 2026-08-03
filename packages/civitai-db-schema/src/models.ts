@@ -5160,12 +5160,21 @@ export interface Placement {
   status: string;
   removedBy: string | null;
   amount: number;
-  buzzTransactionId: string | null;
-  feeTransactionId: string | null;
   createdAt: Date;
   expiresAt: Date | null;
   resolvedAt: Date | null;
   resolvedById: number | null;
+  transactions?: PlacementTransaction[];
+}
+
+export interface PlacementTransaction {
+  id: number;
+  placementId: number;
+  placement?: Placement;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

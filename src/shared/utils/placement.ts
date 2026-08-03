@@ -32,6 +32,55 @@ export type PlacementStatus = 'pending' | 'approved' | 'declined' | 'expired' | 
 export type PlacementRemovedBy = 'owner' | 'moderator';
 
 /**
+ * Every movement of money a placement can make, one row each in the ledger.
+ *
+ * The escrow is taken as **two holds** — the decline fee and the principal — so
+ * that every release is a whole-hold operation.
+ *
+ * Two properties follow, and both are the point rather than side effects:
+ *
+ * 1. Settlement never pays back through the placer's wallet. Refunding in full
+ *    and then charging the fee would hand them custody of money they owe, and a
+ *    placer can *make* that window happen by racing a spend against the refund —
+ *    the fee then fails for insufficient funds and declines become free.
+ * 2. The placer's money always returns through a real refund of a real hold, so
+ *    the Buzz service restores the exact yellow/green mix it drew from. Nothing
+ *    here reconstructs that mix by arithmetic of ours, which would be a rule we
+ *    invented and would have to keep correct forever.
+ *
+ * The cost: the decline fee is fixed when the placement is made, not when it is
+ * declined. Deliberate — the fee is the price of the owner's attention, and a
+ * price shouldn't move after you've paid it.
+ */
+export type PlacementTransactionKind =
+  | 'holdFee'
+  | 'holdPrincipal'
+  | 'feeToOwner'
+  | 'principalToPlacer'
+  | 'feeToPlacer'
+  | 'toOwner'
+  | 'toSeller'
+  | 'toPlatform'
+  | 'forfeit';
+
+export const PLACEMENT_HOLD_KINDS = [
+  'holdFee',
+  'holdPrincipal',
+] as const satisfies readonly PlacementTransactionKind[];
+
+/**
+ * Derived from the row, never from the clock.
+ *
+ * Both existing escrow precedents build `…-${Date.now()}` prefixes, so a retry
+ * presents a *different* id and walks past the Buzz service's own dedupe — which
+ * the challenge payouts rely on deliberately (`challenge-prize.ts`). A
+ * row-derived id makes that dedupe a real second line behind the ledger's
+ * unique constraint.
+ */
+export const placementTransactionId = (placementId: number, kind: PlacementTransactionKind) =>
+  `placement-${placementId}-${kind}`;
+
+/**
  * Everything that varies per surface, in one table — the shape v1's
  * `STICKER_SURFACES` earned. **A surface absent from this table is denied
  * everywhere**, which is the property the table exists for; adding one must be

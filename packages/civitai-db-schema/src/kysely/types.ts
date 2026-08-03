@@ -2893,12 +2893,6 @@ export type Placement = {
    * the space, whose price may move between placement and release.
    */
   amount: number;
-  buzzTransactionId: string | null;
-  /**
-   * Set when the decline fee is charged, so a retry after a partial failure cannot
-   * charge twice.
-   */
-  feeTransactionId: string | null;
   createdAt: Generated<Timestamp>;
   expiresAt: Timestamp | null;
   resolvedAt: Timestamp | null;
@@ -2917,6 +2911,14 @@ export type PlacementSpace = {
   price: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type PlacementTransaction = {
+  id: Generated<number>;
+  placementId: number;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  createdAt: Generated<Timestamp>;
 };
 export type PlatformDefaultBlock = {
   app_block_id: string;
@@ -4173,6 +4175,7 @@ export type DB = {
   Partner: Partner;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
+  PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;

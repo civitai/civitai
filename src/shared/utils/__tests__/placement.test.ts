@@ -11,6 +11,7 @@ import {
   placementOutcomeFromStatus,
   placementPriceCap,
   placementSurfaces,
+  placementTransactionId,
   resolvePlacementSpace,
   splitPlacementPayment,
 } from '~/shared/utils/placement';
@@ -166,6 +167,29 @@ describe('settling a stored placement', () => {
 
     expect(settle('owner').toPlacer).toBe(500);
     expect(settle('moderator').toPlacer).toBe(0);
+  });
+});
+
+describe('the transaction ledger', () => {
+  // Both escrow precedents build `…-${Date.now()}` prefixes, so a retry presents
+  // a different id and walks past the Buzz service's dedupe — which the challenge
+  // payouts rely on deliberately. Row-derived is the rule, not the preference.
+  it('derives the external id from the row, never from the clock', () => {
+    expect(placementTransactionId(42, 'holdFee')).toBe('placement-42-holdFee');
+    expect(placementTransactionId(42, 'holdFee')).toBe(placementTransactionId(42, 'holdFee'));
+    expect(placementTransactionId(42, 'holdFee')).not.toBe(placementTransactionId(42, 'toOwner'));
+    expect(placementTransactionId(42, 'toOwner')).not.toBe(placementTransactionId(43, 'toOwner'));
+    expect(placementTransactionId(42, 'holdFee')).not.toMatch(/\d{10,}$/);
+  });
+
+  it('splits the escrow so the fee is never taken from the principal', () => {
+    for (const amount of AMOUNTS) {
+      const fee = declineFeeAmount(amount, 0.3);
+      const principal = amount - fee;
+
+      expect(fee + principal).toBe(amount);
+      expect(principal).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 
