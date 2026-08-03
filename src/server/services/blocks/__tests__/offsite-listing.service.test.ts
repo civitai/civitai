@@ -638,6 +638,19 @@ describe('approveExternalRequest — go-live ACTIONABILITY gate', () => {
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 
+  it('the pre-tx fail-fast rejects BEFORE any transaction is opened', async () => {
+    // 🔴 The observable that distinguishes the (4c) REPLICA fail-fast from the (5)
+    // in-tx authoritative re-assert: with only the in-tx gate the transaction still
+    // opens and rolls back, so `rejects` alone cannot tell the two apart and the
+    // pre-tx guard would be untested. `$transaction` never being called is the only
+    // signal that proves this specific guard ran.
+    stageApproveScenario({ externalUrl: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
   it('REFUSES approve when the destination is not https (http:// is not a destination)', async () => {
     stageApproveScenario({ externalUrl: 'http://insecure.example.com/app' });
     await expect(
