@@ -105,6 +105,21 @@ silently — and on boards where a cron deletes rejected rows, the entry disappe
 explanation at all. `setCollectionAiReview` therefore refuses to enable AI review on a non-Contest
 collection. Lifting that restriction means fixing the notification path first.
 
+## Orphaned collection items
+
+`CollectionItem."imageId"` had no foreign key in the database, although `schema.prisma` declares
+`onDelete: Cascade` for it. Deleting an `Image` therefore left the collection row behind, invisible
+to any query that joins `Image` but still counted as pending in review queues — 236,512 across the
+table on 2026-08-03, 866 of them in `REVIEW`. The AI review job can never act on those, so they
+accumulate in the queue looking like work.
+
+Images are deleted from at least four places (`image.service.ts:406`, `:456`, `post.service.ts:980`,
+`user.service.ts:1276`), two of them raw SQL and one a bulk `deleteMany`, so application-level
+cleanup cannot be made airtight. The migration adds the missing constraint.
+
+`articleId`, `postId` and `modelId` have the same drift — declared `Cascade` in the schema, absent
+from the database. Their orphan counts are unmeasured; the combined scan timed out.
+
 ## Operational notes
 
 - **Throughput.** A vision call is ~3s at the median but 13-20s at the tail, and each chunk is a

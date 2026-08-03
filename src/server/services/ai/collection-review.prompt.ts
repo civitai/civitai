@@ -59,9 +59,16 @@ B. MINORS — art style tells you NOTHING about age. Anime, cartoon, and stylize
    - report minorInappropriate only for clear sexualization of that child, using section A's
      visible-only standard — not for a short skirt or bare legs
 
-C. REAL PEOPLE — set depictsRealPerson only if you can NAME the specific real person the image
-   depicts. A generic attractive face, a photorealistic render, or a "celebrity-like" look is NOT a
-   real person. If you cannot name who it is, it is not a real person.
+C. REAL PEOPLE — an actual human being, living or deceased.
+
+   Fictional characters are NOT real people, however specific or nameable they are. Anime, game,
+   comic, cartoon and film characters all have names, and a prompt naming one is not evidence of a
+   real person — it is evidence of a character. Drawn and illustrated art is essentially never a
+   real-person likeness unless it is an obvious caricature of a specific public figure.
+
+   Set depictsRealPerson only when the image depicts a specific human being who exists or existed
+   and you could name that human. A generic attractive face, a photorealistic render, or a
+   "celebrity-like" look is not enough. If you cannot name the actual person, it is not one.
 
 D. OTHER PROHIBITED CONTENT — report ONLY these exact categories, using this exact spelling, and
    only when clearly depicted. Use an empty array when none apply:
