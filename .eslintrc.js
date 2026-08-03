@@ -198,7 +198,17 @@ module.exports = {
       // browser test is exactly the authoring path the rule exists to close.
       //
       // Blast radius on the existing tree is bounded and, by lint.yml's split,
-      // zero in the blocking step. Population measured by instrumenting all 117
+      // zero in the blocking step TODAY — with two named caveats, because
+      // "zero" is not the same as "permanently zero":
+      //   1. `--diff-filter=A` classifies a rename-with-heavy-edit as ADDED, so
+      //      MOVING one of the 5 backlog files lands it in the BLOCKING step.
+      //      Same caveat the sibling rule documents at the top of this file.
+      //   2. lint.yml's own header records that the report-only steps are
+      //      planned to flip to blocking once the backlog clears. On that day
+      //      these 16 sites block anyone touching those 5 files. The debt is
+      //      small and mechanical (9 distinct URLs, nearly all
+      //      'https://cdn/x.png' -> LOADABLE_IMAGE_DATA_URI).
+      // Population measured by instrumenting all 117
       // *.browser.test.tsx files with a document-level capture listener for
       // <img> `error` events: 14 distinct external image URLs really do mount as
       // broken images today, across 6 files. The rule reports 16 sites in 5

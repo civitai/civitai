@@ -953,15 +953,30 @@ const noModuleScopeCache = {
  * component test (`*.browser.test.tsx`).
  *
  * Nothing serves an external URL to the test browser, so such an `<img>` never
- * loads: the element's real `error` event fires a few milliseconds after mount
- * and every image-rendering component in this codebase has an `onError` fallback
- * that then DESTROYS the `<img>` and swaps in a placeholder. Mantine 7.17.8's
- * `Avatar` is the sharpest case — `useState(!src)` + `onError -> setError(true)`,
- * measured at ~11 ms from mount to swap. Any assertion that the `<img>` EXISTS is
- * therefore racing that window: green on a fast local machine, intermittently red
- * on a loaded CI box. That exact defect sat red on `main` across five PRs before
- * #3551 fixed it, and the fixture it fixed was a duplicate of one that already
- * existed in another test file — a convention nobody could see was not enough.
+ * loads: the element's real `error` event fires a few milliseconds after mount.
+ * What happens NEXT depends on the component, and the distinction is the whole
+ * reason this rule is narrow rather than a blanket ban — each clause below was
+ * read off the installed `@mantine/core`, not assumed:
+ *
+ *   - DESTROYS the `<img>`: Mantine `Avatar` (`Avatar.mjs:70,91` — `useState(!src)`
+ *     + `onError -> setError(true)`, then renders a `<span>` placeholder INSTEAD
+ *     of the `<img>`), measured at ~11 ms from mount to swap. Same for a bespoke
+ *     `onError -> placeholder` handler, e.g. `src/components/Apps/AppListingCard.tsx:135`.
+ *   - KEEPS the `<img>`: Mantine `Image` (`Image.mjs:58` — `if (error && fallbackSrc)`
+ *     swaps to a DIFFERENT `<img>`; with no `fallbackSrc` it re-renders the SAME
+ *     one, so the element survives with a failed src). `fallbackSrc` appears ZERO
+ *     times in `src/`, so in this repo Mantine `Image` never destroys anything.
+ *
+ * So only the first group can flake an `<img>`-existence assertion, by racing that
+ * ~11 ms window: green on a fast local machine, intermittently red on a loaded CI
+ * box. That exact defect sat red on `main` across five PRs before #3551 fixed it,
+ * and the fixture it fixed was a duplicate of one that already existed in another
+ * test file — a convention nobody could see was not enough.
+ *
+ * 🔴 An earlier draft of this header claimed "every image-rendering component in
+ * this codebase" destroys the `<img>`. That was false, and it mattered: it is the
+ * rationale a future maintainer reads when deciding whether to widen or delete
+ * this rule, and it overstated how much of the codebase is actually at risk.
  *
  * Fix: use the shared `LOADABLE_IMAGE_DATA_URI` from `test/component-setup`. It
  * is a 1x1 transparent PNG `data:` URI, so it resolves locally and synchronously
@@ -973,6 +988,20 @@ const noModuleScopeCache = {
  * URLs across 6 files really do mount as broken images today. They are latent,
  * not theoretical — each becomes a flake the day someone adds an `<img>`
  * assertion beside it, which is precisely what happened to AppBlockChrome.
+ *
+ * 🔴 COVERAGE IS PARTIAL — do not read the two numbers above and below as a pair.
+ * This rule reports 9 distinct URLs of those 14, so AT LEAST 5 (~36%) of the
+ * measured mounting fixtures are OUTSIDE it. The gap has a known shape: `url` is
+ * the single most common http-literal binding in the browser suite (36
+ * occurrences) and is deliberately NOT in `IMAGE_URL_KEYS`, because `url` is also
+ * the overwhelmingly common name for non-image URLs. That leaves ~38 uncovered
+ * http literals carrying an image extension across 12 files — including 8 more
+ * sites in `ListingAssetStep.browser.test.tsx`, a file this rule already flags
+ * elsewhere. Widening to `url` behind the existing `IMAGE_EXT_RE` proof would be
+ * a one-line change with identical false-positive discipline; it is deferred, not
+ * overlooked. Most of those feed Mantine `Image`, which per the mechanism note
+ * above does NOT destroy the `<img>`, so the latent risk is lower than the raw
+ * count suggests — but it is not zero, and it is not covered.
  *
  * SCOPE / false-positive control. Two independent conditions must hold, so the
  * rule cannot reach a non-image URL:

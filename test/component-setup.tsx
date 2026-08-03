@@ -99,14 +99,18 @@ afterEach(() => {
  * survives for the whole test.
  *
  * An http(s) URL does NOT. Nothing serves it in the test browser, so the fetch
- * fails and the element's real `error` event fires ~11 ms after mount — and every
- * image-rendering component in this codebase has an `onError` fallback that then
- * DESTROYS the `<img>` and swaps in a placeholder. Mantine 7.17.8's `Avatar` is
- * the sharpest case: it is `useState(!src)` + `onError -> setError(true)`, so the
- * `<img>` renders at mount and is gone a few frames later. Any
- * `expect(...querySelector('img')).not.toBeNull()` against such a fixture is
- * racing that ~11 ms window — it passes on a fast local machine and fails on a
- * loaded CI box. That defect sat red on `main` across five PRs before #3551.
+ * fails and the element's real `error` event fires ~11 ms after mount. Whether
+ * that BREAKS a test depends on the component, and only the first case below can:
+ *   - Mantine `Avatar` (and any bespoke `onError -> placeholder`, e.g.
+ *     `src/components/Apps/AppListingCard.tsx:135`) renders a placeholder INSTEAD
+ *     of the `<img>` — the element is DESTROYED ~11 ms after mount.
+ *   - Mantine `Image` does NOT: it only swaps when `fallbackSrc` is set (and that
+ *     prop appears zero times in `src/`), otherwise it re-renders the same `<img>`.
+ * So `expect(...querySelector('img')).not.toBeNull()` against an Avatar-backed
+ * fixture races that ~11 ms window — passing on a fast local machine and failing
+ * on a loaded CI box. That defect sat red on `main` across five PRs before #3551.
+ * (An earlier draft of this note said EVERY image-rendering component destroys
+ * the `<img>`; that was false — checked against the installed `@mantine/core`.)
  *
  * Deliberately testing the error path (an image that must FAIL to load) is a
  * legitimate exception — see the escape hatch documented on the

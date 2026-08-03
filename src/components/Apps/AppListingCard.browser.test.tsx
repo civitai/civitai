@@ -523,9 +523,11 @@ describe('AppListingCard', () => {
     // An unfetchable URL — the browser fires the <img>'s real `error` event, which
     // is the component's own onError → placeholder path. This is the ONE shape the
     // shared LOADABLE_IMAGE_DATA_URI cannot express: the whole point is that the
-    // fetch must FAIL. Every assertion below is on the post-error state (guarded by
-    // a `vi.waitFor` on the placeholder), so nothing here races the swap the way an
-    // "<img> exists" assertion would.
+    // fetch must FAIL. Nothing here races the swap the way an "<img> exists"
+    // assertion would: the one assertion that runs BEFORE the `vi.waitFor` is on
+    // `apps-listing-cover`, the ratio box, which survives the error swap; the
+    // placeholder assertion — the only one that depends on the post-error state —
+    // is inside the `vi.waitFor`.
     renderWithProviders(
       <AppListingCard
         // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- testing the onError → placeholder path; this URL MUST fail to load
