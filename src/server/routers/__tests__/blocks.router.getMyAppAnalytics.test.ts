@@ -208,7 +208,8 @@ describe('getMyAppAnalytics — gate', () => {
   });
 
   it('flag OFF (even for a moderator): returns zeroed analytics + runs NO aggregate', async () => {
-    // moderatorProcedure passes (mod), but the appBlocks flag is OFF →
+    // appDeveloperProcedure passes (fakePerUserFlag keys the author capability off
+    // isModerator, hence the "moderator" test names), but the appBlocks flag is OFF →
     // enforceAppBlocksFlag marks _appBlocksDisabled on the query ctx → the proc
     // short-circuits to the empty shape and never touches the aggregate service.
     mockIsAppBlocksEnabled.mockResolvedValue(false);
@@ -338,17 +339,19 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
  * scope for this action", enforce-token-scope.ts:84) — the exact 403 this change
  * fixes.
  *
- * Everything else in this describe block stays GREEN on pre-change code: the three
- * BEHAVIOURAL cases below plus the enum-only bitmask sanity test, i.e. FOUR green
- * tests, only one of which is regression coverage. They are INVARIANT guards, not
- * regression guards:
+ * EVERY other test in this describe block stays GREEN on pre-change code — currently
+ * the three behavioural cases below, the enum-only bitmask sanity test, and the
+ * schema-cap test at the end. Count them at the source rather than trusting a number
+ * written here; a previous revision of this comment said "four" and was made stale by
+ * a later round appending a fifth. Exactly ONE test in this block is regression
+ * coverage. The rest are INVARIANT guards:
  *   - NO_SUBMIT was already FORBIDDEN before, because an un-annotated proc implicitly
  *     requires `Full` and that token lacks Full too. It pins that narrowing the gate
  *     did not accidentally WIDEN it — a different property, worth keeping, but it
  *     would not have caught the original bug.
  *   - the Full-key and session cases pin no-regression, and passed before by
  *     construction.
- * Do not read four green tests here as four tests of the fix.
+ * Do not read a block of green tests here as a block of tests OF THE FIX.
  */
 const FULL = 33554431; // TokenScope.Full — a Full personal API key
 const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
@@ -412,12 +415,25 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
    * enforceTokenScope's bypass is exact equality (`ctx.tokenScope !== TokenScope.Full`),
    * NOT `hasFlag`. So a mask that is a strict SUPERSET of Full but lacks bit 25 —
    * `Full|AppBlocksDevTunnel` = 100663295 — satisfied the un-annotated gate before and
-   * is FORBIDDEN after. That is a real allow→deny flip, harmless only because no such
-   * credential can be created. The caps that make it unreachable are pinned here: if
-   * either is raised, the flip becomes reachable and every `requiredScope` in this
-   * router needs re-examining.
+   * is FORBIDDEN after. A real allow→deny flip.
+   *
+   * 🔴 SCOPE OF THIS TEST — it does NOT prove the flip is globally unreachable, and an
+   * earlier revision of this comment wrongly implied it did. It pins the two PUBLIC
+   * (zod-validated) surfaces only:
+   *   - a personal API key's `tokenScope`, and
+   *   - an OAuth client's `allowedScopes` via tRPC create/update.
+   * It does NOT and cannot cover: OAuth ACCESS tokens (the hub bounds a requested scope
+   * against `ALL_SCOPES`, not Full — deliberately, so an opt-in bit is not dropped, so a
+   * token's real ceiling is its client's allowedScopes), or `allowedScopes` written by
+   * RAW SQL MIGRATION, which is exactly how the one client exceeding Full got its value
+   * (civitai-cli, 100663297 — not a superset of Full, since it carries bit 0 and none of
+   * 1..24, which is why the flip is unreachable in practice).
+   *
+   * So: if either cap below is raised, this test goes red. If a MIGRATION grants some
+   * client `Full | <opt-in bit>`, nothing here will notice — that case is held only by
+   * inspection.
    */
-  it('no creatable credential can hold a superset-of-Full mask (the flip is unreachable)', async () => {
+  it('the two zod-validated credential surfaces reject a superset-of-Full mask', async () => {
     const { addApiKeyInputSchema } = await import('~/server/schema/api-key.schema');
     const { createOauthClientSchema, updateOauthClientSchema } = await import(
       '~/server/schema/oauth-client.schema'
@@ -443,13 +459,19 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
     expect(updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: SUPERSET }).success).toBe(
       false
     );
-    // Boundary: the caps still ADMIT Full itself, so they are not vacuously rejecting
-    // everything (which would make the three assertions above prove nothing).
+    // Boundary controls: each cap must still ADMIT Full, or the rejections above prove
+    // nothing (a fixture missing a required field would reject regardless of the scope,
+    // and the test would still pass with the cap removed). One per assertion above —
+    // the fixtures differ ONLY in the scope field, so a green here isolates the cap as
+    // the cause.
     expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: TokenScope.Full }).success).toBe(
       true
     );
     expect(
       createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: TokenScope.Full }).success
+    ).toBe(true);
+    expect(
+      updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: TokenScope.Full }).success
     ).toBe(true);
   });
 });

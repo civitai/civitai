@@ -5180,12 +5180,23 @@ export const blocksRouter = router({
     // 🔴 That early return is EXACT EQUALITY, so the no-regression claim is CONDITIONAL,
     // not universal: a mask that is a strict SUPERSET of Full but lacks bit 25 (e.g.
     // `Full|AppBlocksDevTunnel` = 100663295) passed before and is FORBIDDEN now.
-    // No such credential can exist today, and that is enforced by schema caps rather
-    // than luck — `api-key.schema.ts` caps a personal key's tokenScope at `.max(Full)`
-    // and `oauth-client.schema.ts` caps `allowedScopes` at `.max(Full)`, so bit 25/26
-    // are unreachable through either public surface (the civitai-cli client's
-    // 100663297 comes from a migration, not the API). Those caps are pinned by a test
-    // below; if one is ever raised, re-check this gate.
+    //
+    // The invariant that makes this unreachable is: NO issuable credential holds a
+    // superset of Full that omits bit 25. Be precise about what enforces it, because
+    // it is NOT one uniform cap:
+    //   - Personal API keys: `api-key.schema.ts` caps `tokenScope` at `.max(Full)`.
+    //   - OAuth clients via tRPC: `oauth-client.schema.ts` caps `allowedScopes` at
+    //     `.max(Full)`. Both are pinned by the test below.
+    //   - OAuth ACCESS TOKENS are NOT bounded by Full at all — the hub decodes the
+    //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
+    //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
+    //     `allowedScopes`, not Full.
+    //   - And the one client exceeding Full (civitai-cli, 100663297) was written by a
+    //     RAW SQL migration, which no zod schema governs.
+    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
+    // flip is unreachable — but that last part rests on INSPECTION of that migration,
+    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
+    // this gate flips for it and no test will catch it.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the
@@ -5730,12 +5741,34 @@ export const blocksRouter = router({
    * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
-    // Same gate, same bit, same reason as getMyAppAnalytics above: un-annotated meant
-    // an implicit `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token
-    // — and the CLI reports that failure as "not permitted (are you the app owner, and
-    // is Apps enabled for your account?)", which sends the developer looking for an
-    // ownership problem they do not have. A Full personal API key is unaffected
-    // (enforceTokenScope early-returns on Full).
+    // Same gate and same bit as getMyAppAnalytics above: un-annotated meant an implicit
+    // `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token — and the CLI
+    // reports that failure as "not permitted (are you the app owner, and is Apps enabled
+    // for your account?)", which sends the developer looking for an ownership problem
+    // they do not have. A Full personal API key is unaffected (enforceTokenScope
+    // early-returns on Full).
+    //
+    // 🔴 But NOT the same STAKE, so the bit choice is argued separately here rather than
+    // inherited. Analytics is a pure read; this proc MINTS A CREDENTIAL — it lazily
+    // provisions a per-user Forgejo identity whose token carries `write:repository`
+    // (dev-git-access.service) and returns it embedded in `cloneUrl`. So annotating
+    // widens who can trigger that mint from {session, Full personal key} to also
+    // include the civitai-cli OAuth login token.
+    //
+    // Accepted, deliberately: AppBlocksSubmit is opt-in, excluded from `Full`, and
+    // carried only by the first-party civitai-cli client; the caller must still own the
+    // app, not be banned, and the app must be `approved`; the collaborator grant is
+    // `read` on that one repo; and this is already the established meaning of the bit
+    // for CLI-facing procs, several of which are outright mutations (see
+    // `listingMediaCliScope` in app-listings.router.ts). A dedicated bit would be
+    // stricter but would recreate the "one command needs two different scopes" problem
+    // the analytics note above argues against.
+    //
+    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
+    // review", which does not mention minting a git credential. That copy lives in
+    // @civitai/auth and is a product decision, not a drive-by edit — but if an
+    // `AppBlocksRead` bit is ever introduced, THIS proc is the one that should not move
+    // to it (it is not a read), while getMyAppAnalytics is.
     .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
