@@ -32,9 +32,22 @@ import type { DB } from '@civitai/db-schema/kysely'; // for createKyselyClients<
 import { Prisma, PrismaClient } from '@civitai/db-schema'; // Prisma path
 ```
 
+## Drift detector
+
+`src/schema-drift/` compares the Prisma schema against a live database's `pg_catalog` and
+reports constraints that are declared but not enforced (and enforced but not declared):
+foreign-key presence, referential actions, nullability and uniqueness. Read-only.
+
+```bash
+pnpm --filter @civitai/db-schema drift        # needs DATABASE_URL
+```
+
+See `src/schema-drift/README.md` for what it checks and, just as importantly, what it does
+not.
+
 ## Env
 
-None.
+None for the exports above. The drift detector reads `DATABASE_URL`.
 
 ## Gotchas
 

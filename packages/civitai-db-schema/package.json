@@ -4,14 +4,26 @@
   "private": true,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "scripts": {
+    "drift": "tsx src/schema-drift/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
-    "kysely": "^0.28.7"
+    "kysely": "^0.28.7",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "vitest": "^4.0.18"
   },
   "exports": {
     ".": "./src/index.ts",
     "./enums": "./src/enums.ts",
     "./models": "./src/models.ts",
     "./kysely": "./src/kysely/types.ts",
-    "./kysely/updated-at-tables": "./src/kysely/updated-at-tables.ts"
+    "./kysely/updated-at-tables": "./src/kysely/updated-at-tables.ts",
+    "./schema-drift": "./src/schema-drift/index.ts"
   }
 }

@@ -1,0 +1,83 @@
+// Curated fixture for the schema<->database drift detector.
+//
+// Small on purpose: a 226 KB dump of the real catalog would make the expectations
+// unreadable and unmaintainable. Every model here exists to exercise one behaviour:
+//
+//   Author       plain table, field-level @unique, a nullable column
+//   Post         @@map to a different table name, @map to a different column name,
+//                a REQUIRED relation with no onDelete (Prisma default: Restrict)
+//   Comment      an explicit onDelete: Cascade, and an OPTIONAL relation with no
+//                onDelete (Prisma default: SetNull, NOT Cascade)
+//   Project      a @@unique over two columns, and the target of a composite relation
+//   ProjectSlot  a relation whose `references` is NOT `id` — two non-id columns, in
+//                order, so the ordered-tuple match is exercised
+//   LegacyThing  @@ignore: skipped even though its table exists in the catalog
+//   ReportView   mapped to a name the catalog does not list as a table (a view):
+//                skipped rather than reported as missing every constraint. Also carries
+//                the named `@relation("Name", fields: ...)` form used in the real schema.
+//
+// This is a fixture for the PARSER, not a schema Prisma loads: back-relation fields are
+// omitted where they would add nothing to what is under test.
+
+model Author {
+  id       Int       @id @default(autoincrement())
+  email    String    @unique
+  name     String?
+  posts    Post[]
+  comments Comment[]
+}
+
+model Post {
+  id        Int       @id @default(autoincrement())
+  authorId  Int
+  author    Author    @relation(fields: [authorId], references: [id])
+  title     String
+  slug      String    @unique
+  createdAt DateTime  @default(now())
+  archived  Boolean?
+  body      String?   @map("body_text")
+  comments  Comment[]
+
+  @@map("posts")
+}
+
+model Comment {
+  id       Int     @id @default(autoincrement())
+  postId   Int
+  post     Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId Int?
+  author   Author? @relation(fields: [authorId], references: [id])
+  text     String
+}
+
+model Project {
+  id        Int           @id @default(autoincrement())
+  projectId Int
+  position  Int
+  slots     ProjectSlot[]
+
+  @@unique([projectId, position])
+}
+
+model ProjectSlot {
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  position  Int
+  project   Project @relation(fields: [projectId, position], references: [projectId, position], onDelete: Cascade)
+}
+
+model LegacyThing {
+  id       Int    @id @default(autoincrement())
+  authorId Int
+  author   Author @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@ignore
+}
+
+model ReportView {
+  id       Int    @id
+  authorId Int
+  author   Author @relation("ReportAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@map("report_view")
+}
