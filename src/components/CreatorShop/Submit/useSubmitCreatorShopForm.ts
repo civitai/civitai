@@ -133,6 +133,13 @@ export function useSubmitCreatorShopForm({
   const canEditEconomics =
     !isEdit || !!currentUser?.isModerator || item?.cosmetic.createdById === currentUser?.id;
   const economicsEditable = isSticker && canEditEconomics;
+  // Permission and obligation are different questions, and the server only ever
+  // answered the first: a moderator MAY change another creator's economics, but
+  // nothing says an unrelated edit should force them to invent values for a
+  // sticker that isn't theirs — which on a cross-listing would rewrite the
+  // original creator's top-up price for every buyer.
+  const economicsRequired =
+    economicsEditable && (!isEdit || item?.cosmetic.createdById === currentUser?.id);
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
   // An unset economic field is an error the creator can see, not a field that
@@ -142,7 +149,7 @@ export function useSubmitCreatorShopForm({
   const usesError = !isSticker
     ? null
     : uses === undefined
-    ? economicsEditable
+    ? economicsRequired
       ? 'Set how many uses a purchase grants'
       : null
     : price < usesFloor
@@ -154,7 +161,7 @@ export function useSubmitCreatorShopForm({
   const pricePerUseError = !isSticker
     ? null
     : pricePerUse === undefined
-    ? economicsEditable
+    ? economicsRequired
       ? 'Set what one extra use costs'
       : null
     : pricePerUse < perUseFloor
@@ -358,6 +365,12 @@ export function useSubmitCreatorShopForm({
     priceFloor,
     isSticker,
     economicsEditable,
+    economicsRequired,
+    // The two economics fields are now mandatory input on a sticker that never
+    // had them, so the discard guard has to know they changed — otherwise
+    // Cancel throws away the value the form just insisted on, with no prompt.
+    economicsChanged:
+      uses !== existingEconomics.uses || pricePerUse !== existingEconomics.pricePerUse,
     uses,
     setUses,
     usesError,

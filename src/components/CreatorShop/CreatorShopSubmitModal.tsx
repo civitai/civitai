@@ -112,6 +112,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
       description !== (item?.description ?? '') ||
       price !== (item?.unitAmount ?? priceFloor) ||
       offsetsChanged ||
+      form.economicsChanged ||
       form.acceptsBlueBuzzChanged ||
       !!localUrl
     : !!imageId ||
@@ -119,7 +120,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
       !!description.trim() ||
       sellableByOthers ||
       acceptsBlueBuzz ||
-      offsetsChanged;
+      offsetsChanged ||
+      form.economicsChanged;
 
   const handleCancel = () => {
     if (!isDirty) return dialog.onClose();

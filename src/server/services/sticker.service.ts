@@ -327,10 +327,27 @@ export async function purchaseStickerUses({
     `;
     topUpRowRemaining = row?.remaining ?? quantity;
   } catch (error) {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: transactionId,
-      description: `Failed to buy sticker uses - ${cosmetic.name}`,
-    });
+    // The only path where the buyer is actually out of pocket, and so the one
+    // that must leave a trace: a failing refund used to discard the grant error,
+    // surface the refund's error instead, and record nothing. Retried like the
+    // payout — a refund is at least as important as one — and logged with the
+    // transaction id, which is what makes it reconcilable by hand.
+    try {
+      await withRetries(
+        () =>
+          refundMultiAccountTransaction({
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to buy sticker uses - ${cosmetic.name}`,
+          }),
+        3
+      );
+    } catch (refundError) {
+      void logToAxiom({
+        level: 'error',
+        message: 'Sticker top-up refund failed — buyer charged with no uses',
+        data: { cosmeticId, userId, transactionId, amount, error, refundError },
+      }).catch(() => undefined);
+    }
     throw throwBadRequestError('Failed to buy sticker uses');
   }
 

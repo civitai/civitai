@@ -301,12 +301,10 @@ describe('purchaseStickerUses', () => {
   // back a rejecting promise inside the very catch that exists to keep the
   // payout reachable.
   it('survives a rejecting logger inside the bookkeeping catch', async () => {
-    // Honest about its own strength: this pins that the purchase resolves and
-    // the payout still runs, and it does NOT discriminate the `.catch()` on the
-    // logger — removing that catch leaves this green, because vitest's harness
-    // absorbs the rejection that would end the process in Node. The catch is
-    // kept on the library's contract (`logToAxiom` awaits its ingest with no
-    // internal guard), not on the strength of this test.
+    // Kills the `await logToAxiom(...)` mutant: an awaited rejection escapes
+    // the catch block and rejects the whole call. It does NOT kill a deleted
+    // `.catch()` — vitest absorbs the rejection that would end the process
+    // under Node — which is what the sibling test below is for.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', onUnhandled);
@@ -323,6 +321,23 @@ describe('purchaseStickerUses', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+
+  // The observable seam is whether a handler is ATTACHED, which this code owns
+  // — not whether the process survives, which belongs to Node and the harness.
+  // Asserts shape, not absorption: absorption is a language guarantee once
+  // `.catch` is attached, so that is the right place to stop.
+  it('attaches a handler to the logger it calls from a catch block', async () => {
+    const axiomCatch = vi.fn(() => undefined);
+    logToAxiom.mockReturnValue({ catch: axiomCatch });
+    findHoldings
+      .mockResolvedValueOnce([{ remaining: 0 }])
+      .mockRejectedValueOnce(new Error('pool timeout'));
+
+    await call({ quantity: 10 });
+
+    expect(logToAxiom).toHaveBeenCalled();
+    expect(axiomCatch).toHaveBeenCalled();
   });
 
   it('still pays the creator when the post-grant balance read throws', async () => {
@@ -370,6 +385,33 @@ describe('purchaseStickerUses', () => {
     expect(refundMultiAccountTransaction.mock.calls[0][0].externalTransactionIdPrefix).toBe(
       charged
     );
+  });
+
+  // The one path where the buyer is genuinely out of pocket. Retried, and it
+  // must leave a trace carrying the transaction id — a silent failure here is
+  // money gone with nothing to reconcile against.
+  it('retries a failing refund and records it with the transaction id', async () => {
+    queryRaw.mockRejectedValue(new Error('deadlock'));
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz service down'));
+
+    await expect(call()).rejects.toThrow(/Failed to buy/i);
+
+    expect(refundMultiAccountTransaction.mock.calls.length).toBeGreaterThan(1);
+    const logged = logToAxiom.mock.calls.find((c) =>
+      (c[0] as { message?: string }).message?.includes('refund failed')
+    );
+    expect(logged).toBeDefined();
+    const charged = createMultiAccountBuzzTransaction.mock.calls[0][0].externalTransactionIdPrefix;
+    expect((logged?.[0] as { data?: { transactionId?: string } }).data?.transactionId).toBe(
+      charged
+    );
+  });
+
+  // The buyer's error must describe their problem, not the refund's.
+  it('reports the purchase failure rather than the refund failure', async () => {
+    queryRaw.mockRejectedValue(new Error('deadlock'));
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz service down'));
+    await expect(call()).rejects.toThrow(/Failed to buy sticker uses/i);
   });
 });
 
