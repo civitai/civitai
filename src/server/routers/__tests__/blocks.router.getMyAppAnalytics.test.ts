@@ -208,8 +208,12 @@ describe('getMyAppAnalytics — gate', () => {
   });
 
   it('flag OFF (even for a moderator): returns zeroed analytics + runs NO aggregate', async () => {
-    // appDeveloperProcedure passes (fakePerUserFlag keys the author capability off
-    // isModerator, hence the "moderator" test names), but the appBlocks flag is OFF →
+    // Two DIFFERENT gates, both keyed off isModerator by different code — hence the
+    // "moderator" test names. appDeveloperProcedure passes because `hasAppBlocksAuthor`
+    // reads `getFeatureFlags(ctx).appBlocksAuthor`, which this file does NOT mock, so it
+    // resolves from the static `availability: ['mod']` fallback against
+    // `modUser.isModerator`. Separately `fakePerUserFlag` mocks `isAppBlocksEnabled` —
+    // the DARK flag — and here it is forced OFF →
     // enforceAppBlocksFlag marks _appBlocksDisabled on the query ctx → the proc
     // short-circuits to the empty shape and never touches the aggregate service.
     mockIsAppBlocksEnabled.mockResolvedValue(false);
@@ -336,7 +340,7 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
  * 🔴 WHICH OF THESE IS ACTUAL REGRESSION COVERAGE — measured, not assumed. With the
  * `.meta` line deleted, ONLY 'CLI OAuth login token … reaches the service' goes red,
  * and it fails with this gate's own error ("Your API key does not have the required
- * scope for this action", enforce-token-scope.ts:84) — the exact 403 this change
+ * scope for this action", thrown by runEnforceTokenScope) — the exact 403 this change
  * fixes.
  *
  * EVERY other test in this describe block stays GREEN on pre-change code — currently
@@ -422,12 +426,17 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
    * (zod-validated) surfaces only:
    *   - a personal API key's `tokenScope`, and
    *   - an OAuth client's `allowedScopes` via tRPC create/update.
-   * It does NOT and cannot cover: OAuth ACCESS tokens (the hub bounds a requested scope
-   * against `ALL_SCOPES`, not Full — deliberately, so an opt-in bit is not dropped, so a
-   * token's real ceiling is its client's allowedScopes), or `allowedScopes` written by
-   * RAW SQL MIGRATION, which is exactly how the one client exceeding Full got its value
-   * (civitai-cli, 100663297 — not a superset of Full, since it carries bit 0 and none of
-   * 1..24, which is why the flip is unreachable in practice).
+   * It does NOT cover the non-zod writers, of which there are at least three — treat this
+   * list as "the ones known when this was written", not a partition:
+   *   - OAuth ACCESS tokens: the hub bounds a requested scope against `ALL_SCOPES`, not
+   *     Full (deliberately, so an opt-in bit is not dropped), so a token's real ceiling is
+   *     its client's `allowedScopes | UserRead`.
+   *   - `allowedScopes` written by RAW SQL MIGRATION — exactly how the one client
+   *     exceeding Full got its value (civitai-cli, 100663297, which is NOT a superset of
+   *     Full: bit 0 and none of 1..24, which is why the flip is unreachable in practice).
+   *   - `allowedScopes` written by publish-request.service for `appblk-*` clients. Safe
+   *     by construction (mapped bits are all below 25, and `grants: []` means no bearer
+   *     token) rather than by any cap this test can assert on.
    *
    * So: if either cap below is raised, this test goes red. If a MIGRATION grants some
    * client `Full | <opt-in bit>`, nothing here will notice — that case is held only by

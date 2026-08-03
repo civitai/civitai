@@ -5186,13 +5186,18 @@ export const blocksRouter = router({
     // it is NOT one uniform cap:
     //   - Personal API keys: `api-key.schema.ts` caps `tokenScope` at `.max(Full)`.
     //   - OAuth clients via tRPC: `oauth-client.schema.ts` caps `allowedScopes` at
-    //     `.max(Full)`. Both are pinned by the test below.
+    //     `.max(Full)` on create AND update. Both of these are pinned by a test in
+    //     `blocks.router.getMyAppAnalytics.test.ts`.
     //   - OAuth ACCESS TOKENS are NOT bounded by Full at all — the hub decodes the
     //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
     //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
-    //     `allowedScopes`, not Full.
-    //   - And the one client exceeding Full (civitai-cli, 100663297) was written by a
-    //     RAW SQL migration, which no zod schema governs.
+    //     `allowedScopes | UserRead`, not Full.
+    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
+    //     migration, which no zod schema governs.
+    //   - `appblk-*` clients get `allowedScopes` written directly by
+    //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
+    //     carry `grants: []` so they cannot mint an account bearer token at all.
     // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
     // flip is unreachable — but that last part rests on INSPECTION of that migration,
     // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
@@ -5741,7 +5746,11 @@ export const blocksRouter = router({
    * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
-    // Same gate and same bit as getMyAppAnalytics above: un-annotated meant an implicit
+    // Same SCOPE gate and same bit as getMyAppAnalytics above — but note the base
+    // procedures differ: that one is `appDeveloperProcedure` (author cohort), this one is
+    // `protectedProcedure` plus an inline appBlocks-feature check below, so its audience
+    // is any Apps-enabled logged-in owner. Relevant to the "who can trigger the mint"
+    // reasoning further down. Un-annotated meant an implicit
     // `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token — and the CLI
     // reports that failure as "not permitted (are you the app owner, and is Apps enabled
     // for your account?)", which sends the developer looking for an ownership problem
@@ -5766,9 +5775,13 @@ export const blocksRouter = router({
     //
     // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
     // review", which does not mention minting a git credential. That copy lives in
-    // @civitai/auth and is a product decision, not a drive-by edit — but if an
-    // `AppBlocksRead` bit is ever introduced, THIS proc is the one that should not move
-    // to it (it is not a read), while getMyAppAnalytics is.
+    // @civitai/auth and is a product decision, not a drive-by edit.
+    //
+    // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
+    // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
+    // `GET /api/v1/blocks/submissions`: `civitai app metrics` calls both hops, so moving
+    // one alone recreates the very "two scopes for one command" problem the note on that
+    // proc argues against.
     .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
