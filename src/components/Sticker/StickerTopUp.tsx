@@ -30,7 +30,7 @@ export function StickerTopUp({
     onSuccess: async (result) => {
       showSuccessNotification({
         title: 'Uses added',
-        message: `You now have ${numberWithCommas(result.remaining)} uses of :${sticker.slug}:`,
+        message: `Added ${numberWithCommas(result.quantity)} uses of :${sticker.slug}:`,
       });
       await Promise.all([
         queryUtils.cosmetic.getStickerBalances.invalidate(),
@@ -91,7 +91,14 @@ export function StickerTopUp({
         label="Buy uses"
         loading={purchase.isPending}
         onPerformTransaction={() =>
-          purchase.mutate({ cosmeticId: sticker.id, quantity, payWith: 'default' })
+          purchase.mutate({
+            cosmeticId: sticker.id,
+            quantity,
+            // What the button above is charging for. The server refuses if the
+            // creator has moved the price since this rendered.
+            expectedPricePerUse: sticker.pricePerUse,
+            payWith: 'default',
+          })
         }
       />
       <Button size="xs" variant="subtle" color="gray" onClick={onCancel}>

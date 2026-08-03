@@ -29,6 +29,9 @@ export type PurchaseStickerUsesInput = z.infer<typeof purchaseStickerUsesSchema>
 export const purchaseStickerUsesSchema = z.object({
   cosmeticId: z.number().int().positive(),
   quantity: z.number().int().positive().max(STICKER_TOPUP_MAX_QUANTITY),
+  // The per-use price the buyer was shown. The server refuses if it has since
+  // changed rather than charging a number they never agreed to.
+  expectedPricePerUse: z.number().int().positive().optional(),
   // Same option the shop purchase takes; rejected server-side when the listing
   // doesn't accept Blue Buzz.
   payWith: z.enum(['default', 'blue-first']).optional(),

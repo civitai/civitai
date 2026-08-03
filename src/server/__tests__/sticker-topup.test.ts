@@ -12,20 +12,23 @@ const createBuzzTransaction = vi.fn();
 const getBlockedPairIds = vi.fn();
 const refreshOwnedStickerCache = vi.fn();
 
+// Every read in this path decides whether to charge or how much, so none may
+// come off the replica. `dbRead` throws rather than returning data: a lagging
+// replica would charge yesterday's price, and that failure is invisible in a
+// test that lets the read succeed.
+const replicaForbidden = (what: string) => () => {
+  throw new Error(`${what} must be read on the writer`);
+};
 vi.mock('~/server/db/client', () => ({
   dbRead: {
-    cosmetic: { findUnique: (...args: unknown[]) => findCosmetic(...args) },
-    cosmeticShopItem: { findFirst: (...args: unknown[]) => findListing(...args) },
-    // Holdings decide whether to charge, so they must NOT be read here — a
-    // lagging replica would let a stale balance authorize a purchase.
-    userCosmetic: {
-      findMany: () => {
-        throw new Error('holdings must be read on the writer');
-      },
-    },
+    cosmetic: { findUnique: replicaForbidden('the per-use price') },
+    cosmeticShopItem: { findFirst: replicaForbidden('the listing') },
+    userCosmetic: { findMany: replicaForbidden('holdings') },
   },
   dbWrite: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
+    cosmetic: { findUnique: (...args: unknown[]) => findCosmetic(...args) },
+    cosmeticShopItem: { findFirst: (...args: unknown[]) => findListing(...args) },
     userCosmetic: { findMany: (...args: unknown[]) => findHoldings(...args) },
   },
 }));
@@ -189,23 +192,99 @@ describe('purchaseStickerUses', () => {
     expect(createMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(50);
   });
 
-  it('credits the existing balance rather than granting a fresh one', async () => {
-    const result = await call({ quantity: 10 });
-    const sql = queryRaw.mock.calls[0][0].join('?');
+  // Asserting the SQL *adds to* the stored value rather than replacing it, by
+  // executing the statement's shape against a fake row. A `toContain('COALESCE')`
+  // grep passes for `SET remaining = ${quantity}` too, which clobbers the
+  // balance a buyer already paid for.
+  it('adds to the stored balance rather than replacing it', async () => {
+    await call({ quantity: 10 });
+    const [strings, ...params] = queryRaw.mock.calls[0];
+    const sql = (strings as string[]).join(' ? ');
+
     expect(sql).toContain('ON CONFLICT');
-    expect(sql).toContain('COALESCE');
-    expect(queryRaw.mock.calls[0]).toContain(STICKER_TOPUP_CLAIM_KEY);
-    expect(result.remaining).toBe(10);
+    expect(params).toContain(STICKER_TOPUP_CLAIM_KEY);
+
+    // The DO UPDATE clause must reference the existing column, not just the
+    // parameter — `SET "remaining" = ?` would pass a substring check.
+    const doUpdate = sql.slice(sql.indexOf('DO UPDATE'));
+    expect(doUpdate).toMatch(/COALESCE\(\s*"UserCosmetic"\."remaining"\s*,\s*0\s*\)\s*\+/);
+    expect(doUpdate).not.toMatch(/COALESCE\(\s*excluded/i);
+  });
+
+  it('reports the balance across every holding, not just the top-up row', async () => {
+    // A purchase row with 6 left plus the 10 just bought.
+    findHoldings
+      .mockResolvedValueOnce([{ remaining: 6 }])
+      .mockResolvedValueOnce([{ remaining: 6 }, { remaining: 10 }]);
+    const result = await call({ quantity: 10 });
+    expect(result.remaining).toBe(16);
     expect(refreshOwnedStickerCache).toHaveBeenCalledWith([BUYER]);
   });
 
-  it('pays the creator their 70% pool, with no seller share', async () => {
+  // Counted and summed, not "find the first one that looks right": paying the
+  // creator twice is the mint case, and a `.find()` assertion cannot see it.
+  it('pays the creator their 70% pool exactly once, with no seller share', async () => {
     await call({ quantity: 10 });
-    const payout = createBuzzTransaction.mock.calls.find(
-      (c) => c[0].type === 'Sell' || c[0].toAccountId === CREATOR
+    const payouts = createBuzzTransaction.mock.calls.map((c) => c[0]);
+    expect(payouts).toHaveLength(1);
+    expect(payouts[0].toAccountId).toBe(CREATOR);
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(35);
+    // Never more than was collected, whatever the split.
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBeLessThanOrEqual(50);
+  });
+
+  it('splits a blue-funded payout across colours without paying out more', async () => {
+    findListing.mockResolvedValue({ id: 3, meta: { acceptsBlueBuzz: true }, addedById: CREATOR });
+    createMultiAccountBuzzTransaction.mockResolvedValue({
+      transactionCount: 2,
+      transactionIds: [
+        { accountType: 'blue', amount: 20 },
+        { accountType: 'yellow', amount: 30 },
+      ],
+    });
+    await call({ quantity: 10, payWith: 'blue-first' });
+    const payouts = createBuzzTransaction.mock.calls.map((c) => c[0]);
+    expect(payouts.reduce((sum, p) => sum + p.amount, 0)).toBe(35);
+    expect(payouts.map((p) => p.toAccountType).sort()).toEqual(['blue', 'yellow']);
+  });
+
+  // The floor case, executed rather than reasoned: 1 use at 5 Buzz is where
+  // integer rounding actually bites.
+  it('never pays out more than it collected at the per-use floor', async () => {
+    await call({ quantity: 1 });
+    const charged = createMultiAccountBuzzTransaction.mock.calls[0][0].amount;
+    const paid = createBuzzTransaction.mock.calls.reduce((sum, c) => sum + c[0].amount, 0);
+    expect(charged).toBe(5);
+    expect(paid).toBe(3);
+    expect(paid).toBeLessThan(charged);
+  });
+
+  // Two tabs, a retry, a double-click. A shop purchase can't repeat; a top-up
+  // can, and a shared external id reads as "already paid" to the Buzz service.
+  it('gives every top-up a distinct external transaction id', async () => {
+    await call({ quantity: 1 });
+    await call({ quantity: 1 });
+    const [first, second] = createMultiAccountBuzzTransaction.mock.calls.map(
+      (c) => c[0].externalTransactionIdPrefix
     );
-    expect(payout?.[0].toAccountId).toBe(CREATOR);
-    expect(payout?.[0].amount).toBe(35);
+    expect(first).not.toBe(second);
+  });
+
+  it('refuses when the price moved since the buyer was shown it', async () => {
+    await expect(call({ expectedPricePerUse: 4 })).rejects.toThrow(/price changed/i);
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when the shown price still matches', async () => {
+    await expect(call({ expectedPricePerUse: 5 })).resolves.toBeTruthy();
+  });
+
+  // A Redis blip must not read as a failed purchase, and must not swallow the
+  // creator's payout by short-circuiting the rest of the function.
+  it('still pays the creator when the cache refresh throws', async () => {
+    refreshOwnedStickerCache.mockRejectedValue(new Error('redis down'));
+    await expect(call({ quantity: 10 })).resolves.toBeTruthy();
+    expect(createBuzzTransaction).toHaveBeenCalled();
   });
 
   // A creator topping up their own sticker would otherwise send 70% back to
@@ -223,10 +302,16 @@ describe('purchaseStickerUses', () => {
     expect(createBuzzTransaction).not.toHaveBeenCalled();
   });
 
-  it('refunds the charge when the grant fails', async () => {
+  // Refunded once, and against the prefix that was actually charged — a refund
+  // aimed at the wrong id leaves the buyer's Buzz gone.
+  it('refunds exactly the charge it made when the grant fails', async () => {
     queryRaw.mockRejectedValue(new Error('deadlock'));
     await expect(call()).rejects.toThrow(/Failed to buy/i);
-    expect(refundMultiAccountTransaction).toHaveBeenCalled();
+    const charged = createMultiAccountBuzzTransaction.mock.calls[0][0].externalTransactionIdPrefix;
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(refundMultiAccountTransaction.mock.calls[0][0].externalTransactionIdPrefix).toBe(
+      charged
+    );
   });
 });
 

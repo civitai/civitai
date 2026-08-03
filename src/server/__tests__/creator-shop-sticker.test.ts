@@ -301,6 +301,23 @@ describe('replacing sticker artwork keeps every economic field', () => {
     ]);
   });
 
+  // The guard above only catches a field added to the READER. This catches the
+  // other direction: a field written into `data` that the reader doesn't know
+  // about is dropped on every artwork replace, with every other test green.
+  it('writes no economic field the reader cannot carry forward', () => {
+    const built = buildCosmeticData(
+      CosmeticType.Sticker,
+      'img',
+      false,
+      null,
+      'party_cat',
+      stickerEconomicsFromCosmeticData(existingData)
+    );
+    expect(Object.keys(built).sort()).toEqual(
+      ['url', 'slug', 'animated', 'uses', 'pricePerUse'].sort()
+    );
+  });
+
   it('carries the economics into the rebuilt blob', () => {
     expect(
       buildCosmeticData(

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isPreview, isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
@@ -202,6 +203,7 @@ export async function purchaseStickerUses({
   userId,
   cosmeticId,
   quantity,
+  expectedPricePerUse,
   payWith = 'default',
   buzzType = 'yellow',
   stickersEnabled,
@@ -209,6 +211,8 @@ export async function purchaseStickerUses({
   userId: number;
   cosmeticId: number;
   quantity: number;
+  /** The price the buyer was shown. Refuses rather than charging a different one. */
+  expectedPricePerUse?: number;
   payWith?: 'default' | 'blue-first';
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
@@ -220,7 +224,10 @@ export async function purchaseStickerUses({
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > STICKER_TOPUP_MAX_QUANTITY)
     throw throwBadRequestError(`You can buy between 1 and ${STICKER_TOPUP_MAX_QUANTITY} uses`);
 
-  const cosmetic = await dbRead.cosmetic.findUnique({
+  // Every read below decides either whether to charge or how much, so none of
+  // them may come off the replica: a price edit inside the replication window
+  // would otherwise charge the old price.
+  const cosmetic = await dbWrite.cosmetic.findUnique({
     where: { id: cosmeticId },
     select: { id: true, name: true, type: true, createdById: true, data: true },
   });
@@ -234,11 +241,17 @@ export async function purchaseStickerUses({
   const pricePerUse = stickerPricePerUseFromCosmeticData(cosmetic.data);
   if (!pricePerUse)
     throw throwBadRequestError('This sticker does not sell additional uses right now');
+  // The buyer confirmed a number on a button. If the creator changed it since
+  // that render, refuse rather than charging something they never agreed to.
+  if (expectedPricePerUse !== undefined && expectedPricePerUse !== pricePerUse)
+    throw throwBadRequestError(
+      `The price changed to ${pricePerUse} Buzz per use. Check the new price and try again.`
+    );
 
   // Delisted stickers can still be topped up — delisting stops NEW sales, and
   // stranding someone who already paid punishes them for the creator's
   // decision. Archived (and never-published) cannot: withdrawn is withdrawn.
-  const listing = await dbRead.cosmeticShopItem.findFirst({
+  const listing = await dbWrite.cosmeticShopItem.findFirst({
     where: { cosmeticId, status: CosmeticShopItemStatus.Published },
     orderBy: { id: 'asc' },
     select: { id: true, meta: true, addedById: true },
@@ -281,7 +294,11 @@ export async function purchaseStickerUses({
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
   const amount = pricePerUse * quantity;
-  const transactionId = `sticker-topup-${userId}-${cosmeticId}-${Date.now()}`;
+  // Random, not a timestamp: unlike a shop purchase, a top-up is repeatable, so
+  // two calls in the same millisecond (two tabs, a retry, a double-click) would
+  // share an external id — and a duplicate is treated as "the money already
+  // moved", which would grant uses for a charge that never happened.
+  const transactionId = `sticker-topup-${userId}-${cosmeticId}-${randomUUID()}`;
   const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
     fromAccountTypes,
@@ -297,7 +314,7 @@ export async function purchaseStickerUses({
     .filter((t) => t.accountType === 'blue')
     .reduce((sum, t) => sum + t.amount, 0);
 
-  let remaining: number;
+  let topUpRowRemaining: number;
   try {
     // COALESCE rather than a Prisma `increment`: adding to a NULL balance yields
     // NULL in Postgres, which reads as unlimited.
@@ -308,7 +325,7 @@ export async function purchaseStickerUses({
       DO UPDATE SET "remaining" = COALESCE("UserCosmetic"."remaining", 0) + ${quantity}
       RETURNING "remaining"
     `;
-    remaining = row?.remaining ?? quantity;
+    topUpRowRemaining = row?.remaining ?? quantity;
   } catch (error) {
     await refundMultiAccountTransaction({
       externalTransactionIdPrefix: transactionId,
@@ -317,7 +334,27 @@ export async function purchaseStickerUses({
     throw throwBadRequestError('Failed to buy sticker uses');
   }
 
-  await refreshOwnedStickerCache([userId]);
+  // The top-up row's own balance is not the buyer's balance — a purchase and a
+  // creator grant are separate rows and the spend drains across all of them, so
+  // reporting the row would understate what they can actually place.
+  const remaining = (
+    await dbWrite.userCosmetic.findMany({
+      where: { userId, cosmeticId },
+      select: { remaining: true },
+    })
+  ).reduce((sum, h) => sum + (h.remaining ?? 0), 0);
+
+  // The buyer has their uses; a cache refresh that fails must not read as a
+  // failed purchase, and must not skip the creator's payout below.
+  try {
+    await refreshOwnedStickerCache([userId]);
+  } catch (error) {
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to refresh owned sticker cache after top-up',
+      data: { cosmeticId, userId, transactionId, error },
+    });
+  }
 
   // Payout follows the sale, never the buyer's own money back: a creator
   // topping up their own sticker would otherwise round-trip 70% through the

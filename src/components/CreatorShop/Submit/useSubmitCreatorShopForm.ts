@@ -57,10 +57,25 @@ export function useSubmitCreatorShopForm({
       : CosmeticType.Badge
   );
   const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
-  const [uses, setUses] = useState<number>(existingEconomics.uses ?? STICKER_DEFAULT_USES);
-  const [pricePerUse, setPricePerUse] = useState<number>(
+  // Both fields fall back to a default for display, so an untouched field is
+  // NOT evidence of intent: a sticker that predates per-use pricing shows the
+  // floor, and sending that on an unrelated edit would commit its creator to
+  // selling uses at 5 Buzz — and would make a cross-listing uneditable, since
+  // resellers may not change another creator's economics at all.
+  const [usesTouched, setUsesTouched] = useState(false);
+  const [pricePerUseTouched, setPricePerUseTouched] = useState(false);
+  const [uses, setUsesState] = useState<number>(existingEconomics.uses ?? STICKER_DEFAULT_USES);
+  const [pricePerUse, setPricePerUseState] = useState<number>(
     existingEconomics.pricePerUse ?? STICKER_MIN_BUZZ_PER_USE
   );
+  const setUses = (value: number) => {
+    setUsesTouched(true);
+    setUsesState(value);
+  };
+  const setPricePerUse = (value: number) => {
+    setPricePerUseTouched(true);
+    setPricePerUseState(value);
+  };
   const [slug, setSlug] = useState<string>(
     ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
   );
@@ -264,10 +279,12 @@ export function useSubmitCreatorShopForm({
         )
           payload.slug = normalizedSlug;
         // The economics were editable in this form but never sent, so changing
-        // them did nothing. Sent on any change, and on an artwork swap for the
-        // same reason as the slug.
-        if (isSticker && (artReplaced || uses !== existingEconomics.uses)) payload.uses = uses;
-        if (isSticker && (artReplaced || pricePerUse !== existingEconomics.pricePerUse))
+        // them did nothing. Sent only when the creator actually touched the
+        // field and moved it: unlike the slug, the server carries the stored
+        // economics forward through an artwork rebuild on its own, so an
+        // artwork swap is not a reason to send them.
+        if (isSticker && usesTouched && uses !== existingEconomics.uses) payload.uses = uses;
+        if (isSticker && pricePerUseTouched && pricePerUse !== existingEconomics.pricePerUse)
           payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
