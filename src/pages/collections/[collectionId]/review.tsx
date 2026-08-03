@@ -115,17 +115,19 @@ const ReviewCollection = () => {
   const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
   const [sort, setSort] = useState<CollectionReviewSort>(CollectionReviewSort.Newest);
   const [collectionTagId, setCollectionTagId] = useState<number | undefined>(undefined);
+  const [awaitingHumanReview, setAwaitingHumanReview] = useState(false);
 
   const filters = useMemo(
     () => ({
       collectionId,
       statuses,
       forReview: true,
+      awaitingHumanReview: awaitingHumanReview || undefined,
       reviewSort: sort,
       collectionTagId,
       browsingLevel: allBrowsingLevelsFlag,
     }),
-    [collectionId, statuses, sort, collectionTagId]
+    [collectionId, statuses, sort, collectionTagId, awaitingHumanReview]
   );
 
   const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
@@ -216,6 +218,15 @@ const ReviewCollection = () => {
                     </Chip>
                   </Group>
                 </Chip.Group>
+                <Chip
+                  checked={awaitingHumanReview}
+                  onChange={() => {
+                    setAwaitingHumanReview((v) => !v);
+                    deselectAll();
+                  }}
+                >
+                  <span>Needs human review</span>
+                </Chip>
 
                 <SelectMenuV2
                   label="Sort by"
