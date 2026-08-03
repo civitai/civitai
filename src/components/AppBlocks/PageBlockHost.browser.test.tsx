@@ -833,11 +833,24 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     // keepalive so the beacon survives a page unload/navigation.
     expect((init as RequestInit | undefined)?.keepalive).toBe(true);
     const body = JSON.parse(String((init as RequestInit).body));
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       appBlockId: 'apb_test',
       blockInstanceId: 'page_apb_test',
       slotId: 'app.page',
     });
+    // 🔴 LAUNCH TIMINGS RIDE THIS BEACON — there is still exactly ONE beacon and
+    // the `ok` path still carries no `status`. The allowed key set is pinned so a
+    // future field cannot be added to the wire unnoticed.
+    expect(Object.keys(body).sort()).toEqual(
+      ['appBlockId', 'blockInstanceId', 'slotId', 'timings'].sort()
+    );
+    expect(typeof body.timings.totalMs).toBe('number');
+    expect(body.timings.totalMs).toBeGreaterThan(0);
+    // Never a zero-valued leg on the wire — an unobserved leg is OMITTED.
+    for (const [k, v] of Object.entries(body.timings)) {
+      expect(typeof v, `timings.${k}`).toBe('number');
+      expect(v, `timings.${k}`).toBeGreaterThan(0);
+    }
     // No isAnon/userId from the client — those are server-derived in the route.
     expect(body).not.toHaveProperty('isAnon');
     expect(body).not.toHaveProperty('userId');

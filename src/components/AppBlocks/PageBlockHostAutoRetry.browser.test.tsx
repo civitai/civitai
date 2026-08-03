@@ -571,12 +571,20 @@ describe('PageBlockHost auto-retry — beacon semantics (one per mount, the sett
 
     await pollFor('ok beacon', () => beaconCalls().length >= 1);
     const [body] = beaconBodies();
-    // The `ok` beacon carries no `status` field (see sendBlockRender).
-    expect(body).toEqual({
+    // The `ok` beacon carries no `status` field (see sendBlockRender). It MAY
+    // carry `timings` (the launch-latency payload rides this same beacon); no
+    // other key is allowed on the wire.
+    expect(body).toMatchObject({
       appBlockId: 'apb_test',
       blockInstanceId: 'page_apb_test',
       slotId: 'app.page',
     });
+    expect(
+      Object.keys(body).every((k) =>
+        ['appBlockId', 'blockInstanceId', 'slotId', 'timings'].includes(k)
+      )
+    ).toBe(true);
+    expect(body).not.toHaveProperty('status');
     // Give any stray emit a chance to show up before asserting exclusivity — on
     // the virtual clock that can be a generous window for free.
     await advance(LAST_BACKOFF_MS + BLOCK_READY_TIMEOUT_MS);
