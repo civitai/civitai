@@ -1,4 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Mocked for the EXIT CODE, not the assertions. Reached transitively, this
+// module instantiates Prisma — and in a worktree without the repo's flake
+// dev-shell that leaves an unhandled rejection which fails no test but still
+// sets rc=1, so a mutation sweep reading rc scores every mutant as killed.
+// Nothing below touches a database. See civitai#3576.
+vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+
 import { NsfwLevel } from '~/server/common/enums';
 import { nsfwBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
