@@ -1,4 +1,7 @@
+import type * as PromClient from '~/server/prom/client';
+import type * as RedisCaches from '~/server/redis/caches';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromClient from '~/server/prom/client';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -9,8 +12,10 @@ const { mocks } = vi.hoisted(() => ({
     purchasesCreate: vi.fn(),
     userCosmeticCreate: vi.fn(),
     createBuzzTransaction: vi.fn(),
-    refundTransaction: vi.fn(),
+    createMultiTx: vi.fn(),
+    refundMultiTx: vi.fn(),
     logToAxiom: vi.fn(),
+    getBlockedPairIds: vi.fn(),
   },
 }));
 
@@ -29,18 +34,34 @@ vi.mock('~/server/db/client', () => ({
       }),
   },
 }));
-vi.mock('~/server/prom/client', () => ({ dbReadFallbackCounter: { inc: vi.fn() } }));
+// `importOriginal` keeps the rest of the module real: this suite's import graph
+// reaches prom collectors it never names, and a hand-listed mock silently breaks
+// the moment that graph grows.
+vi.mock('~/server/prom/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromClient>()),
+  dbReadFallbackCounter: { inc: vi.fn() },
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
+// The post-commit sticker cache bust would reach a Redis that isn't running here,
+// and its failure path logs to axiom — which these tests assert stays silent.
+// `importOriginal` leaves every other cache export real.
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof RedisCaches>()),
+  refreshOwnedStickerCache: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
-  createMultiAccountBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
-  refundTransaction: mocks.refundTransaction,
+  createMultiAccountBuzzTransaction: mocks.createMultiTx,
+  refundMultiAccountTransaction: mocks.refundMultiTx,
+  refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
   getAllImages: vi.fn(),
   enqueueImageIngestion: vi.fn(),
+}));
+vi.mock('~/server/services/user-preferences.service', () => ({
+  getBlockedPairIds: mocks.getBlockedPairIds,
 }));
 
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
@@ -57,9 +78,11 @@ const shopItemRow = ({
   meta = { sellableByOthers: true, sellerShare: 20 },
   createdById = CREATOR_ID as number | null,
   unitAmount = PRICE,
+  type = 'Badge',
 } = {}) => ({
   id: SHOP_ITEM_ID,
   status: 'Published',
+  listed: true,
   cosmeticId: 7,
   availableQuantity: null,
   availableFrom: null,
@@ -68,7 +91,7 @@ const shopItemRow = ({
   title: 'Test Badge',
   meta,
   addedById: createdById,
-  cosmetic: { type: 'Badge', createdById },
+  cosmetic: { type, createdById },
   _count: { purchases: 0 },
 });
 
@@ -80,8 +103,15 @@ const sellCalls = () =>
     .map(([arg]) => arg)
     .filter((arg) => arg.type === TransactionType.Sell);
 
-const purchase = (viaShopUserId?: number) =>
-  purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID, viaShopUserId });
+// The buyer's charge, per funding account. Defaults to the whole price in yellow.
+const chargeResponse = (charges: { accountType: string; amount: number }[]) => ({
+  transactionIds: charges.map((c, i) => ({ transactionId: `tx-${i}`, ...c })),
+  totalAmount: charges.reduce((sum, c) => sum + c.amount, 0),
+  transactionCount: charges.length,
+});
+
+const purchase = (viaShopUserId?: number, payWith?: 'default' | 'blue-first') =>
+  purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID, viaShopUserId, payWith });
 
 describe('purchaseCosmeticShopItem payouts', () => {
   beforeEach(() => {
@@ -90,18 +120,40 @@ describe('purchaseCosmeticShopItem payouts', () => {
     mocks.userCosmeticFindFirst.mockResolvedValue(null); // buyer doesn't own it yet
     mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it('a block between buyer and creator rejects the purchase before any charge', async () => {
+    mocks.getBlockedPairIds.mockResolvedValue([CREATOR_ID]);
+
+    await expect(purchase()).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('official items (no creator) skip the block lookup entirely', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ createdById: null, meta: {} }));
+
+    await purchase();
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
   });
 
   it('charges the buyer the full price to the bank before paying anyone', async () => {
     await purchase();
 
-    const charge = mocks.createBuzzTransaction.mock.calls[0][0];
+    const charge = mocks.createMultiTx.mock.calls[0][0];
     expect(charge).toMatchObject({
       fromAccountId: BUYER_ID,
+      fromAccountTypes: ['yellow'],
       toAccountId: 0,
       amount: PRICE,
       type: TransactionType.Purchase,
     });
+    expect(charge.externalTransactionIdPrefix).toMatch(
+      new RegExp(`^cosmetic-purchase-${BUYER_ID}-${SHOP_ITEM_ID}-`)
+    );
   });
 
   it('own-storefront purchase (shop enabled) pays the creator the full 70% pool: 7000', async () => {
@@ -118,7 +170,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
         fromAccountId: 0,
         toAccountId: CREATOR_ID,
         amount: 7000,
-        externalTransactionId: 'tx-1',
+        externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:yellow$`),
       }),
     ]);
   });
@@ -185,13 +237,13 @@ describe('purchaseCosmeticShopItem payouts', () => {
           fromAccountId: 0,
           toAccountId: CREATOR_ID,
           amount: 5000,
-          externalTransactionId: `tx-1:${CREATOR_ID}`,
+          externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:yellow$`),
         }),
         expect.objectContaining({
           fromAccountId: 0,
           toAccountId: RESELLER_ID,
           amount: 2000,
-          externalTransactionId: `tx-1:${RESELLER_ID}`,
+          externalTransactionId: expect.stringMatching(`:sell:${RESELLER_ID}:yellow$`),
         }),
       ])
     );
@@ -240,8 +292,16 @@ describe('purchaseCosmeticShopItem payouts', () => {
     await purchase(undefined);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: 11, amount: 5000, externalTransactionId: 'tx-1:11' }),
-      expect.objectContaining({ toAccountId: 22, amount: 5000, externalTransactionId: 'tx-1:22' }),
+      expect.objectContaining({
+        toAccountId: 11,
+        amount: 5000,
+        externalTransactionId: expect.stringMatching(':sell:11:yellow$'),
+      }),
+      expect.objectContaining({
+        toAccountId: 22,
+        amount: 5000,
+        externalTransactionId: expect.stringMatching(':sell:22:yellow$'),
+      }),
     ]);
   });
 
@@ -254,8 +314,8 @@ describe('purchaseCosmeticShopItem payouts', () => {
 
     expect(sellCalls()).toHaveLength(0);
     // The only transaction is the buyer's charge.
-    expect(mocks.createBuzzTransaction).toHaveBeenCalledTimes(1);
-    expect(mocks.createBuzzTransaction.mock.calls[0][0].type).toBe(TransactionType.Purchase);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
     // And the payout block didn't silently blow up either.
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
   });
@@ -264,7 +324,77 @@ describe('purchaseCosmeticShopItem payouts', () => {
     await purchase(undefined);
 
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
-    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('purchaseCosmeticShopItem blue buzz payments', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ meta: { sellableByOthers: false, acceptsBlueBuzz: true } })
+    );
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(chargeResponse([{ accountType: 'blue', amount: PRICE }]));
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it('rejects blue payment for items that do not accept it, before any charge', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ meta: { sellableByOthers: false } }));
+
+    await expect(purchase(undefined, 'blue-first')).rejects.toThrow('does not accept Blue Buzz');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('fully-covered blue-first purchase pays the creator the whole pool in blue', async () => {
+    await purchase(undefined, 'blue-first');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['blue', 'yellow']);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({
+        toAccountId: CREATOR_ID,
+        toAccountType: 'blue',
+        amount: 7000,
+        externalTransactionId: expect.stringMatching(`:sell:${CREATOR_ID}:blue$`),
+      }),
+    ]);
+  });
+
+  it('blue-first: drains blue then the domain color, payout pro-rated per color', async () => {
+    // Buyer had 6000 blue; the remaining 4000 came from yellow.
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([
+        { accountType: 'blue', amount: 6000 },
+        { accountType: 'yellow', amount: 4000 },
+      ])
+    );
+
+    await purchase(undefined, 'blue-first');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['blue', 'yellow']);
+    // Creator pool 7000 → floor(7000 * 6000/10000) = 4200 blue + 2800 yellow.
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'blue', amount: 4200 }),
+        expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'yellow', amount: 2800 }),
+      ])
+    );
+    expect(sellCalls()).toHaveLength(2);
+  });
+
+  it('default payment on a blue-accepting item stays on the domain color', async () => {
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+
+    await purchase(undefined, 'default');
+
+    expect(mocks.createMultiTx.mock.calls[0][0].fromAccountTypes).toEqual(['yellow']);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, toAccountType: 'yellow', amount: 7000 }),
+    ]);
   });
 });
 
@@ -315,5 +445,43 @@ describe('computeCreatorShopSplit', () => {
       platformCut: 300,
     });
     expect(split.creatorAmount + split.sellerAmount + split.platformCut).toBeLessThanOrEqual(999);
+  });
+});
+
+// Every LISTING path filters stickers out when the flag is off, but filtered
+// from a list is not refused: with a shop item id in hand a buyer could pay for
+// a sticker they then can't place, because the picker is gated too.
+describe('purchaseCosmeticShopItem sticker gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ id: BUYER_ID });
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.createMultiTx.mockResolvedValue(chargeResponse([{ accountType: 'user', amount: PRICE }]));
+  });
+
+  it('refuses to sell a sticker when the flag is off', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('Cosmetic is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('sells a sticker when the flag is on', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+  });
+
+  // The regression that would go unnoticed: the gate must not reach any other type.
+  it('still sells a badge with the flag off', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    await purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID });
+    expect(mocks.createMultiTx).toHaveBeenCalled();
   });
 });

@@ -233,6 +233,12 @@ function CreatorShopReviewPage() {
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  // The slug is user-visible text in its own right, so it needs reviewing
+  // alongside the artwork — not just the image.
+  const stickerSlug =
+    selected?.cosmetic.type === CosmeticType.Sticker
+      ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+      : undefined;
 
   // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
   // offsets and see the in-context preview update live before saving.
@@ -727,6 +733,16 @@ function CreatorShopReviewPage() {
                             </Text>
                           }
                         />
+                        {!!stickerSlug && (
+                          <DetailRow
+                            label="Slug"
+                            value={
+                              <Text size="sm" fw={500}>
+                                :{stickerSlug}:
+                              </Text>
+                            }
+                          />
+                        )}
                         <DetailRow
                           label="Description"
                           last

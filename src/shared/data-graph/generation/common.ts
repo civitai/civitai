@@ -978,6 +978,24 @@ export function createCheckpointGraph(
             // Valid version options are allowed through for ecosystems with version selectors.
             if (modelLocked && modelVersionId && val.id !== modelVersionId) {
               if (!validVersionIds?.has(val.id)) {
+                // 🔴 OBSERVE ONLY — issue #3520 phase 1. The substitution below is
+                // deliberate graceful degradation and is UNCHANGED; this records
+                // that it happened so a caller who is billed for model A and given
+                // model B can find that out. On-site the correction is visible (the
+                // picker snaps); through the App Blocks bridge the id is deliberate
+                // and the correction is invisible — same code, same behaviour,
+                // observable in one context and not the other.
+                //
+                // The collector is present only on server-built contexts, and
+                // `record` is write-once + never-throwing, so the client pays
+                // nothing and a metrics/classifier fault cannot fail a parse that
+                // would otherwise have succeeded.
+                ext.modelSubstitutions?.record({
+                  requested: val.id,
+                  applied: modelVersionId,
+                  ecosystem: ctx.ecosystem,
+                  workflow: ctx.workflow,
+                });
                 return { id: modelVersionId, model: { type: 'Checkpoint' } };
               }
             }

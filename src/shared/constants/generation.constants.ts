@@ -645,6 +645,7 @@ export const aspectRatioDimensions: Record<
     '9:16': { width: 1080, height: 1920 },
   },
   '2K': {
+    '21:9': { width: 3360, height: 1440 },
     '16:9': { width: 2560, height: 1440 },
     '4:3': { width: 2304, height: 1728 },
     '1:1': { width: 2048, height: 2048 },

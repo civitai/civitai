@@ -90,6 +90,14 @@ export const PaymentProvider = {
   Civitai: 'Civitai',
 } as const;
 export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvider];
+export const MembershipGiftStatus = {
+  Pending: 'Pending',
+  Fulfilled: 'Fulfilled',
+  Failed: 'Failed',
+  Refunded: 'Refunded',
+  Revoked: 'Revoked',
+} as const;
+export type MembershipGiftStatus = (typeof MembershipGiftStatus)[keyof typeof MembershipGiftStatus];
 export const UserEngagementType = {
   Follow: 'Follow',
   Hide: 'Hide',
@@ -425,6 +433,7 @@ export const CosmeticType = {
   ContentDecoration: 'ContentDecoration',
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
+  Sticker: 'Sticker',
 } as const;
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 export const CosmeticSource = {

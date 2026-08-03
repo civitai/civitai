@@ -29,6 +29,29 @@ export async function getChecklists(taskId) {
   return response.checklists || [];
 }
 
+// Edit a checklist item (rename, assign, resolve/complete, nest)
+export async function editChecklistItem(checklistId, checklistItemId, updates = {}) {
+  const body = {};
+  if (updates.name !== undefined) body.name = updates.name;
+  if (updates.assignee !== undefined) body.assignee = updates.assignee;
+  if (updates.resolved !== undefined) body.resolved = updates.resolved;
+  if (updates.parent !== undefined) body.parent = updates.parent;
+
+  const response = await apiRequest(`/checklist/${checklistId}/checklist_item/${checklistItemId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return response;
+}
+
+// Delete a checklist item
+export async function deleteChecklistItem(checklistId, checklistItemId) {
+  const response = await apiRequest(`/checklist/${checklistId}/checklist_item/${checklistItemId}`, {
+    method: 'DELETE',
+  });
+  return response;
+}
+
 // Add item to first checklist, or create one if none exist
 export async function addChecklistItemToTask(taskId, itemName, checklistName = 'Checklist') {
   let checklists = await getChecklists(taskId);

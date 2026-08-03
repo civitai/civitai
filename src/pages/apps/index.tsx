@@ -43,6 +43,10 @@ export default function AppsPage() {
           (`MarketplaceBody` → `AppBlockCard`) is intentionally retained in the
           tree; swap this back to `<MarketplaceBody />` (re-import it) to fall
           back to the AppBlock-backed grid.
+          ⚠️ That rollback is now PARTIAL: `AppBlockCard`'s title/description link
+          to `/apps/<appBlockId>`, which is retired and redirects to the store
+          detail. Restoring the old grid therefore no longer restores the old
+          detail surface — undo the route retirement too if that is the intent.
 
           The grid will be EMPTY until the mod-only backfills run on prod
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,

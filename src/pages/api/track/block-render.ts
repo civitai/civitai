@@ -5,9 +5,10 @@ import {
   ensureRegisterAppBlockRuntimeMetrics,
   normalizeErrorClass,
   normalizeSlotId,
+  observeAppBlockLaunch,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
-import { blockRenderSchema } from '~/server/schema/track.schema';
+import { blockRenderSchema, blockRenderTrackerPayload } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 // App Blocks Analytics Phase 2 — block render/impression beacon.
@@ -67,12 +68,17 @@ export default PublicEndpoint(
     const result = blockRenderSchema.safeParse(parsed);
     if (!result.success) return res.status(400).send('invalid input');
 
-    // `status`/`errorClass` drive the prom render counter ONLY — they are NOT
-    // forwarded to the ClickHouse insert (the `blockRenders` table is provisioned
-    // out-of-repo by the tracker service; adding columns is out of scope here).
-    // Strip them so the CH payload stays byte-identical to the pre-change insert.
-    // `errorClass` still drives the prom label below (normalized), never the CH insert.
-    const { status, errorClass, ...renderData } = result.data;
+    // `status`/`errorClass`/`secondary`/`timings` drive prom ONLY — none is
+    // forwarded to the ClickHouse insert (the `blockRenders` table is
+    // provisioned out-of-repo by the tracker service; adding columns is out of
+    // scope here). `blockRenderTrackerPayload` is the shared ALLOWLIST that
+    // builds the CH payload, so it stays byte-identical to the pre-change insert
+    // and the OTHER writer (`track.blockRender`) cannot drift from this one.
+    //
+    // 🔴 `secondary` ALSO GATES THE CH INSERT ENTIRELY (see below). Every beacon
+    // increments the prom counter, but only a mount's FIRST beacon writes a
+    // `blockRenders` row — that table counts IMPRESSIONS, one per host mount.
+    const { status, errorClass, secondary, timings } = result.data;
 
     // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
     // ALL labels are BOUNDED even though the beacon body is client-supplied and
@@ -85,17 +91,53 @@ export default PublicEndpoint(
     // gates so only well-formed beacons count. Fire-and-forget: never let a
     // metrics failure break the beacon.
     try {
-      const appBlockIdLabel = await boundAppBlockIdLabel(renderData.appBlockId);
+      const appBlockIdLabel = await boundAppBlockIdLabel(result.data.appBlockId);
       const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();
       rendersTotal.inc({
         app_block_id: appBlockIdLabel,
-        slot_id: normalizeSlotId(renderData.slotId),
+        slot_id: normalizeSlotId(result.data.slotId),
         result: status,
         error_class: normalizeErrorClass(status, errorClass),
       });
+
+      // ── LAUNCH LATENCY ────────────────────────────────────────────────────
+      // Reuses the `appBlockIdLabel` already resolved above (TTL-cached, no
+      // extra DB read) and rides inside the SAME try/catch, so a launch-metric
+      // failure can never affect the beacon response.
+      //
+      // 🔴 GATED ON `ok` AND `!secondary`, and both halves are load-bearing:
+      //   - a launch-FAILURE beacon never saw BLOCK_READY, so its `total` is
+      //     meaningless — and worse, a fast failure would be recorded as a FAST
+      //     LAUNCH, biasing the distribution in the reassuring direction;
+      //   - a `secondary` beacon is a mid-session credential-loss teardown,
+      //     reported minutes after a launch that already succeeded.
+      // The client also only attaches `timings` on the success path; this is the
+      // server-side half of the same rule, because the body is client-supplied.
+      if (status === 'ok' && !secondary) observeAppBlockLaunch(appBlockIdLabel, timings);
     } catch {
       // swallow — observability must not affect the response
     }
+
+    // 🔴 SECONDARY (follow-up) BEACON → prom only, NO ClickHouse row. Return here,
+    // AFTER the counter above and BEFORE the insert below.
+    //
+    // `blockRenders` is an IMPRESSION table and its rows carry no status, so one
+    // mount must produce at most one row. A host now emits a SECOND beacon when an
+    // outcome it already reported later changes (a page that rendered fine and
+    // then lost its credential mid-session). Inserting for that would write a row
+    // BYTE-IDENTICAL to the first — undedupable after the fact — silently
+    // inflating `civitai_app_blocks_impressions_24h`, `renders_by_app_24h`, the
+    // digest CronJob and the author-analytics tab for precisely the sessions that
+    // suffered a revocation. An observability fix must not corrupt an analytics
+    // series.
+    //
+    // 🔴 The gate is the FLAG, not `status === 'error'`. A LAUNCH failure is a
+    // mount's only beacon and MUST still write its row — it is a real attempted
+    // render. Only a follow-up to an already-reported mount is suppressed.
+    //
+    // Returning early also skips the session resolve, which the insert was the
+    // only reason to pay for.
+    if (secondary) return res.status(200).end();
 
     // Resolve the session ONCE here so we can derive isAnon, then hand it to the
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived
@@ -104,7 +146,10 @@ export default PublicEndpoint(
     const tracker = new Tracker(req, res, session);
     // Fire-and-forget: blockRender() dispatches the ClickHouse insert without
     // awaiting the network round-trip (same as the tRPC resolver did).
-    void tracker.blockRender({ ...renderData, isAnon: !session?.user });
+    void tracker.blockRender({
+      ...blockRenderTrackerPayload(result.data),
+      isAnon: !session?.user,
+    });
 
     return res.status(200).end();
   },

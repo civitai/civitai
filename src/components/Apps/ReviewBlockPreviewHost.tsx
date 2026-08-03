@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { clampReviewSandbox } from '~/components/AppBlocks/sandbox';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -63,6 +64,7 @@ export function ReviewBlockPreviewHost({
   iframeSrc: string;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
@@ -251,6 +253,14 @@ export function ReviewBlockPreviewHost({
         reviewRunForReal={runForRealActive}
         // Re-mint the block token on an auth-failure Retry, preserving the mode.
         onRetryToken={() => doMint(runForRealActive)}
+        // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, gated
+        // on the VIEWER having BOTH `appBlocks` and `appBlocksPages` — the
+        // reviewer gate that lets a mod reach this preview proves nothing about
+        // that route, so read the route's own predicate. (Mods have both today,
+        // so this is what restores the menu on the review surface; a reviewer
+        // missing either — including during an `appBlocks` kill-switch — gets no
+        // dead links.)
+        canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
     </Stack>
   );

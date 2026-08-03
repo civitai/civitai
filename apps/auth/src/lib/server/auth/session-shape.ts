@@ -66,6 +66,8 @@ export interface ShapeSessionUserInput {
   subscriptionRows: ProducerSubscriptionRow[];
   permissions: string[];
   roles: string[];
+  /** Comped tier from `UserMembershipOverride`. Ranked alongside subscriptions, so it can only raise. */
+  overrideTier?: string;
   /** `env.TIER_METADATA_KEY` — the `product.metadata` key holding the tier. Undefined → no tier resolved. */
   tierKey?: string;
 }
@@ -75,6 +77,7 @@ export function shapeSessionUser({
   subscriptionRows,
   permissions,
   roles,
+  overrideTier,
   tierKey,
 }: ShapeSessionUserInput): SessionUser {
   // tier / subscriptionsByBuzzType (mirrors the main app's loop).
@@ -102,6 +105,14 @@ export function shapeSessionUser({
         primarySubscriptionId = sub.id;
       }
       if (isBadState && !primarySubscriptionId) primarySubscriptionId = sub.id;
+    }
+  }
+
+  // Competes in the ranking rather than replacing it, so comping bronze can't downgrade a paying gold user.
+  // Deliberately no subscriptionId / `subscriptions` entry: nothing billing-side exists to resolve.
+  if (overrideTier && overrideTier !== 'free') {
+    if (!highestTier || (TIER_ORDER[overrideTier] ?? 0) > (TIER_ORDER[highestTier] ?? 0)) {
+      highestTier = overrideTier;
     }
   }
 

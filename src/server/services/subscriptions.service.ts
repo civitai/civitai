@@ -268,19 +268,29 @@ export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscript
  * @param userId - The user ID
  * @returns The subscription with the highest tier, or null if no subscriptions found
  */
-export const getHighestTierSubscription = async (userId: number) => {
-  const subscriptions = await getAllUserSubscriptions(userId);
+// A tier missing from the hierarchy sorts lowest (indexOf -1 < any valid index).
+const pickHighestTier = <T extends { tier: string }>(subscriptions: T[]): T | null =>
+  subscriptions.reduce<T | null>(
+    (highest, current) =>
+      !highest ||
+      constants.memberships.tierOrder.indexOf(current.tier as any) >
+        constants.memberships.tierOrder.indexOf(highest.tier as any)
+        ? current
+        : highest,
+    null
+  );
 
-  if (subscriptions.length === 0) return null;
+export const getHighestTierSubscription = async (userId: number) =>
+  pickHighestTier(await getAllUserSubscriptions(userId));
 
-  // Find the subscription with the highest tier using the tier hierarchy from constants
-  return subscriptions.reduce((highest, current) => {
-    const highestTierIndex = constants.memberships.tierOrder.indexOf(highest.tier as any);
-    const currentTierIndex = constants.memberships.tierOrder.indexOf(current.tier as any);
-
-    // If tier not found in hierarchy, treat as lowest (-1 < any valid index)
-    return currentTierIndex > highestTierIndex ? current : highest;
-  });
+/**
+ * The tier monetization CAPS resolve against — null when there's no good-standing subscription, which the
+ * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
+ * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
+ */
+export const getCapTier = async (userId: number): Promise<string | null> => {
+  const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
+  return pickHighestTier(subscriptions)?.tier ?? null;
 };
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
@@ -370,6 +380,11 @@ export const deliverMonthlyCosmetics = async ({
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
+
+  // No owned-sticker cache bust here on purpose: this delivers membership badges
+  // (joined on Cosmetic.productId), importing ~/server/redis/caches pulls the
+  // redis client into this module's whole dependency tree, and the cache's
+  // 5-minute TTL covers the case anyway.
 };
 
 /**

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
@@ -148,7 +149,14 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => {
+// Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
+// (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
+// transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
+// gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
+// Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
+// link ("does not provide an export named X") and the whole file collects 0 tests.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation =
     (name: string) =>
     (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
@@ -179,6 +187,7 @@ vi.mock('~/utils/trpc', () => {
     },
   };
   return {
+    ...actual,
     trpc: {
       useUtils: () => utils,
       blocks: {
@@ -231,15 +240,19 @@ describe('CombinedReviewModal', () => {
   test('renders BOTH section headers, the code ReportTabs, and the media preview + assets', async () => {
     renderWithProviders(<CombinedReviewModal selection={SELECTION} onClose={vi.fn()} />);
 
-    // Both stacked section headers.
+    // Both stacked section headers. `getByText` is SUBSTRING-matching by default, and
+    // #3412 added the `apps-offsite-onsite-note` prose ("Listing media update — ...")
+    // which also contains "Listing media" — two matches, and a strict query throws.
+    // `exact: true` pins the HEADER itself (the thing this assertion is about) rather
+    // than loosening to `.first()`, which the note alone would satisfy.
     await expect.element(page.getByText('App code review')).toBeInTheDocument();
-    await expect.element(page.getByText('Listing media')).toBeInTheDocument();
+    await expect.element(page.getByText('Listing media', { exact: true })).toBeInTheDocument();
 
     // Code section: the agent ReportTabs (its tabs) render.
     await expect.element(page.getByRole('tab', { name: /Scopes/ })).toBeInTheDocument();
     await expect.element(page.getByRole('tab', { name: /Code review/ })).toBeInTheDocument();
     // Code section: the on-site bundle affordance.
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
 
     // Media section: the listing PREVIEW (card + detail) + the content-review surface.
     await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();

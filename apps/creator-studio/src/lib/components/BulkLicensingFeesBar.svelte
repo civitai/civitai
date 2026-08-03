@@ -18,8 +18,9 @@
   import {
     feeToRatio,
     formatFeeRatio,
-    FEE_IMAGE_OPTIONS,
+    feeMaxFor,
     DEFAULT_FEE_IMAGES,
+    type MonetizationLimits,
   } from '$lib/monetization/fee';
 
   // Bulk licensing-fee bar (sibling of PaidAccessBulkBar). Owns the fee inputs + confirm dialog; the
@@ -30,12 +31,15 @@
     suggestedFee,
     cancelHref,
     onSelectAll,
+    limits,
   }: {
     matchingVersionIds: number[];
     selected: SvelteSet<number>;
     suggestedFee: number | undefined;
     cancelHref: string;
     onSelectAll: (ids: number[]) => void;
+    /** Strictest per-image fee cap across the selection — one fee is applied to every picked version. */
+    limits: MonetizationLimits;
   } = $props();
 
   let bulkBuzz = $state<number | undefined>(1);
@@ -86,6 +90,7 @@
     <NumberInput
       name="buzz"
       min={0}
+      max={feeMaxFor(limits, Number(bulkImages))}
       bind:value={bulkBuzz}
       placeholder="Buzz"
       aria-label="Buzz (leave empty to clear the fee)"
@@ -105,7 +110,7 @@
         {bulkImages}
       </Select.Trigger>
       <Select.Content>
-        {#each FEE_IMAGE_OPTIONS as opt (opt)}
+        {#each limits.fee.denominators as opt (opt)}
           <Select.Item value={String(opt)} label={String(opt)} />
         {/each}
       </Select.Content>

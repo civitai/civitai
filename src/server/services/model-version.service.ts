@@ -82,12 +82,16 @@ import {
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
+  getCachedCapTier,
   getPaidAccess,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  capMediaType,
+  effectivePaidAccessPrice,
+  isPermanentGate,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
@@ -481,12 +485,28 @@ export const upsertModelVersion = async ({
     ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
     : 0;
 
-  // Versions with a license fee earn through that channel, so they opt out of
-  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
-  // doesn't strip it, since a creator may have set the bit independently.
+  // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
+  // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
+  // absent as cleared would wipe a creator's fee when a moderator declines a review.
+  const feeProvided = data.licensingFee !== undefined;
+  const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
+
+  // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
+  // read a stored 0 as "still has a fee".
+  if (feeProvided && !hasLicensingFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
+
+  // Versions with a license fee earn through that channel, so they opt out of tip + creator-comp
+  // payouts. This is the flag's only set site, so clearing the fee has to strip it — otherwise the
+  // version earns neither the fee nor payouts (CU 868kk4j2k).
   let flagsOverride: number | undefined;
-  if (data.licensingFee != null && data.licensingFee > 0) {
+  if (hasLicensingFee) {
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  } else if (feeProvided && Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
+    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
@@ -790,7 +810,9 @@ export const upsertModelVersion = async ({
           isModerator,
         }),
         systemFields:
-          flagsOverride !== undefined ? { flags: 'licensing-fee-disable-payout' } : undefined,
+          flagsOverride !== undefined
+            ? { flags: hasLicensingFee ? 'licensing-fee-disable-payout' : 'licensing-fee-cleared' }
+            : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }
@@ -799,6 +821,15 @@ export const upsertModelVersion = async ({
     ingestModelById({ id: version.modelId }).catch((error) =>
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
+
+    // The orchestrator caches fee + payoutEnabled per version, so a fee or flag change that doesn't
+    // invalidate it keeps pricing and paying against the old value. Never rejects: the write has
+    // already committed, and a failed bust must not surface as a failed save.
+    const feeBefore =
+      existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
+    const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
+    if (feeBefore !== feeAfter || flagsOverride !== undefined)
+      await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     return version;
   }
@@ -845,10 +876,7 @@ export const updateModelVersionPaidAccess = async ({
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
 
-  if (
-    existingVersion.usageControl !== ModelUsageControl.Download &&
-    !!paidAccess?.terms.download
-  ) {
+  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
     throw throwBadRequestError(
       'Cannot charge for download if downloads are disabled for this model version'
     );
@@ -1921,6 +1949,7 @@ export const earlyAccessPurchase = async ({
       status: true,
       name: true,
       meta: true,
+      baseModel: true,
       model: {
         select: {
           id: true,
@@ -1987,8 +2016,19 @@ export const earlyAccessPurchase = async ({
   let buzzTransactionId: string | undefined;
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
-  const amount =
-    type === 'download' ? (terms.download?.price as number) : (generationPrice(terms) as number);
+  //
+  // A PERMANENT gate is charged at the OWNER's current cap, not the stored price: a lapsed membership
+  // drops what buyers pay to the free-tier cap (CU 868kj4q4j), and the stored value is left alone so
+  // re-subscribing restores it. A TIMED early-access window has no ceiling, so it charges as stored —
+  // this must mirror getViewerMonetization, or buyers see one price and get billed another.
+  const storedPrice = type === 'download' ? terms.download?.price : generationPrice(terms);
+  const permanent = isPermanentGate(paidAccess);
+  // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
+  const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
+  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
+    permanent,
+    mediaType: capMediaType(modelVersion.baseModel),
+  });
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
@@ -2006,7 +2046,9 @@ export const earlyAccessPurchase = async ({
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
-      description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
+        modelVersion.model.name
+      } - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],

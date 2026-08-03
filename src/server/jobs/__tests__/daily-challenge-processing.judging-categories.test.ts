@@ -265,14 +265,13 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
     expect(mockDbWriteQueryRaw).not.toHaveBeenCalled();
   });
 
-  it('categories undefined (any source): falls back to the fixed rubric, deduped via SQL ROW_NUMBER', async () => {
+  it('categories undefined (any source): ranks against the fixed rubric', async () => {
     mockOneRow();
     mockDbWriteQueryRaw.mockResolvedValueOnce([]); // winner-cooldown (global) query
     const result = await getJudgedEntries(100, config, undefined, ChallengeSource.System, undefined);
     expect(result).toHaveLength(1);
-    // Fixed path's SQL uses ROW_NUMBER() for best-per-user dedup; categories path doesn't.
-    const sql = (mockDbReadQueryRaw.mock.calls[0][0] as unknown as string[]).join('');
-    expect(sql).toContain('ROW_NUMBER');
+    // theme 10, everything else 0, against the 50/15/15/20 fixed split.
+    expect(result[0].weightedRating).toBeCloseTo(5);
   });
 
   it('empty categories array (defensive): treated as no categories -> fixed rubric', async () => {
@@ -280,8 +279,57 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
     // No winner-cooldown prime: user challenges skip the cooldown query entirely.
     const result = await getJudgedEntries(100, config, undefined, ChallengeSource.User, []);
     expect(result).toHaveLength(1);
-    const sql = (mockDbReadQueryRaw.mock.calls[0][0] as unknown as string[]).join('');
-    expect(sql).toContain('ROW_NUMBER');
+    expect(result[0].weightedRating).toBeCloseTo(5);
+  });
+
+  // The fixed rubric used to rank through its own SQL variant, deduping per user with ROW_NUMBER
+  // before the theme gate could drop anything. Every challenge stores a rubric now, so there is one
+  // query for every case and the gate runs first — see the theme-gate test below.
+  it('sends the same query whether or not categories were passed', async () => {
+    mockOneRow();
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    await getJudgedEntries(100, config, undefined, ChallengeSource.System, undefined);
+    const fixedSql = (mockDbReadQueryRaw.mock.calls[0][0] as unknown as string[]).join('');
+
+    vi.clearAllMocks();
+    mockOneRow();
+    await getJudgedEntries(100, config, undefined, ChallengeSource.User, [
+      { key: 'theme', weight: 100, label: 'Theme', criteria: 'x' },
+    ] as never);
+    const categorySql = (mockDbReadQueryRaw.mock.calls[0][0] as unknown as string[]).join('');
+
+    expect(fixedSql).toBe(categorySql);
+    expect(fixedSql).not.toContain('ROW_NUMBER');
+  });
+
+  // Previously the fixed path deduped in SQL by raw weighted score, so a user whose best-scoring
+  // entry was theme-disqualified was dropped from the challenge instead of falling back.
+  it('falls back to a user’s next entry when their best one is theme-disqualified', async () => {
+    mockDbReadQueryRaw.mockResolvedValueOnce([
+      {
+        imageId: 1,
+        userId: 100,
+        username: 'alice',
+        // Highest raw score, but theme 1 is below the disqualify threshold.
+        note: JSON.stringify({
+          score: { theme: 1, aesthetic: 10, humor: 10, wittiness: 10 },
+          summary: 'disqualified',
+        }),
+      },
+      {
+        imageId: 2,
+        userId: 100,
+        username: 'alice',
+        note: JSON.stringify({
+          score: { theme: 8, aesthetic: 4, humor: 4, wittiness: 4 },
+          summary: 'eligible',
+        }),
+      },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    const result = await getJudgedEntries(100, config, undefined, ChallengeSource.System, undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].imageId).toBe(2);
   });
 });
 
@@ -346,7 +394,7 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
-    expect(secondQuerySql()).toContain('ROW_NUMBER');
+    expect(secondQuerySql()).not.toContain('ROW_NUMBER');
   });
 
   it('null categories fall back to the fixed rubric (System source)', async () => {
@@ -354,7 +402,7 @@ describe('pickWinnersForChallenge — judging-category gate', () => {
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
-    expect(secondQuerySql()).toContain('ROW_NUMBER');
+    expect(secondQuerySql()).not.toContain('ROW_NUMBER');
   });
 });
 

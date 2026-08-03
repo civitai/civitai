@@ -18,6 +18,29 @@ import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cp
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerPyroscope } from '~/server/pyroscope';
+import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
+import { pgDbWrite } from '~/server/db/pgDb';
+// Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
+// request that runs a @civitai/db-queries function doesn't pay client construction. @civitai/db-queries
+// functions take a client as their first argument; callers pass these. pg is not OTEL-instrumented, so
+// building the wrappers here is order-independent.
+import '~/server/db/kyselyDb';
+
+// Register pg type parsers for Postgres enum-ARRAY columns (`"SomeEnum"[]`) so the Kysely path parses them as
+// string[] instead of the raw `{a,b}` literal (see @civitai/db/kysely). Awaited here — register() awaits this
+// module, so parsers are in place before the first request query. Fail-open: a transient DB hiccup at boot
+// must not crash the server (enum arrays would just read as strings until a restart). No-op during build,
+// where pgDbWrite is undefined.
+if (pgDbWrite) {
+  try {
+    await registerEnumArrayTypeParsers(pgDbWrite);
+  } catch (err) {
+    console.error(
+      '[instrumentation.node] enum-array type-parser registration failed (fail-open):',
+      err
+    );
+  }
+}
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is

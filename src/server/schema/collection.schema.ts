@@ -106,6 +106,34 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+// Declared here, not in the service, so the client can render the picker without pulling in
+// server-only AI deps.
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+
+export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
+// Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
+// metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
+export const collectionAiReviewSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  prompt: z.string().trim().min(1).max(20000),
+  // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
+  allowedNsfwLevels: z
+    .number()
+    .int()
+    .min(1)
+    .default(NsfwLevel.PG | NsfwLevel.PG13),
+  escalationAction: z.enum(['reject', 'leaveForHuman']).default('reject'),
+  reasonCopy: z.record(z.string(), z.string()).optional(),
+  dryRun: z.boolean().default(true),
+});
+
+export type SetCollectionAiReviewInput = z.infer<typeof setCollectionAiReviewInput>;
+export const setCollectionAiReviewInput = z.object({
+  collectionId: z.number(),
+  aiReview: collectionAiReviewSchema,
+});
+
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
 export const collectionMetadataSchema = z
   .object({
@@ -228,6 +256,9 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   collectionId: z.number(),
   statuses: z.array(z.enum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
+  // Items AI review handed to a human: still REVIEW, but already stamped by the system user, so
+  // the job will not pick them up again.
+  awaitingHumanReview: z.boolean().optional(),
   reviewSort: z.enum(CollectionReviewSort).optional(),
   collectionTagId: z.number().optional(),
 });

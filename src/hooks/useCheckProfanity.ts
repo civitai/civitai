@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import { createProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
 
+// Building the filter allocates the whole English dataset + matcher, so it's
+// shared across every consumer — but stays lazy so pages that never check
+// profanity don't pay for it.
+let sharedProfanityFilter: ReturnType<typeof createProfanityFilter> | undefined;
+const getProfanityFilter = () => (sharedProfanityFilter ??= createProfanityFilter());
+
 export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions> {
   /** Whether to enable profanity checking. When false, returns clean results */
   enabled?: boolean;
@@ -47,10 +53,7 @@ export function useCheckProfanity(
 ): ProfanityAnalysis {
   const { enabled = true } = options;
 
-  // Create profanity filter with provided options
-  const profanityFilter = useMemo(() => {
-    return createProfanityFilter();
-  }, []);
+  const profanityFilter = useMemo(getProfanityFilter, []);
 
   // Analyze the text
   const analysis = useMemo((): ProfanityAnalysis => {

@@ -748,6 +748,40 @@ export class Tracker {
     );
   }
 
+  // One row per sticker PLACEMENT, matching the consumption rule — a comment
+  // with the same sticker three times emits three rows. Append-only history;
+  // the authoritative balance is UserCosmetic.remaining in Postgres.
+  public async stickerUsage(
+    rows: { userId: number; cosmeticId: number; entityType: string; entityId: number }[]
+  ) {
+    if (!rows.length) return;
+    return this.trackMany('stickerUsageEvents', rows, { skipActorMeta: true });
+  }
+
+  // The beggars board deletes rejected items within the hour, so a decision that is not recorded
+  // here leaves no trace of what the model did or why.
+  public collectionAiReview(values: {
+    appliedAction: string;
+    collectionId: number;
+    collectionItemId: number;
+    entityId: number;
+    userId: number;
+    model: string;
+    decision: string;
+    violations: string[];
+    escalations: string[];
+    reason: string;
+    applied: boolean;
+    promptTokens: number;
+    completionTokens: number;
+  }) {
+    return this.track(
+      'collectionAiReviewEvents',
+      { ...values, applied: values.applied ? 1 : 0, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
+  }
+
   public retoolAudit(values: {
     action: string;
     privileged: boolean;

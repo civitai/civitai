@@ -10,6 +10,7 @@ import { DeleteCard } from '~/components/Account/DeleteCard';
 
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
+import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,6 +23,7 @@ import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { StrikesCard } from '~/components/Account/StrikesCard';
+import { StickerInventoryCard } from '~/components/Account/StickerInventoryCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 import dynamic from 'next/dynamic';
 
@@ -51,9 +53,11 @@ export default function Account() {
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
           {features.creatorControls && <CreatorControlsCard />}
+          <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
+          <MembershipGiftsCard />
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />

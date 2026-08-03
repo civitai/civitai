@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -247,6 +248,7 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
+  collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,
     default: true,
@@ -288,6 +290,10 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
+  // does NOT gate rendering — a sticker already in a comment or DM must render
+  // for everyone, or flipping this off orphans content that is already out there.
+  stickers: { availability: ['mod'], fliptKey: 'stickers' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
@@ -354,6 +360,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
+  giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
@@ -560,7 +567,7 @@ function checkRegionAccess(
 }
 
 // Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
-type FliptModule = typeof import('~/server/flipt/client');
+type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 

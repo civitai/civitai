@@ -3,7 +3,7 @@ import client from 'prom-client';
 // definitions + record helpers stay a runtime-light leaf that a unit test can load without booting
 // the app graph. The DB used by the state gauges is pulled in LAZILY (dynamic import inside the
 // gauge refresh) so importing this module never statically drags in pgDb/env.
-import { registerCounterWithLabels } from '@civitai/telemetry/client';
+import { registerCounter, registerCounterWithLabels } from '@civitai/telemetry/client';
 
 /**
  * CHALLENGE observability (additive telemetry only — no behavior change).
@@ -32,6 +32,7 @@ const SCAN_RESULTS = new Set(['scanned', 'blocked', 'error']);
 const STATUSES = new Set(['Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled']);
 const VOID_REASONS = new Set(['moderator', 'nsfw', 'activation']);
 const REFUND_REASONS = new Set(['void', 'delete']);
+const DIVERGENCE_FIELDS = new Set(['place', 'prize', 'both']);
 
 export function normSource(v: string | null | undefined): string {
   return v && SOURCES.has(v) ? v : 'unknown';
@@ -55,6 +56,9 @@ export function normVoidReason(v: string | null | undefined): string {
 }
 export function normRefundReason(v: string | null | undefined): string {
   return v && REFUND_REASONS.has(v) ? v : 'other';
+}
+export function normDivergenceField(v: string | null | undefined): string {
+  return v && DIVERGENCE_FIELDS.has(v) ? v : 'other';
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +132,70 @@ const refundFailuresCounter = registerCounterWithLabels({
   name: 'challenge_refund_failures_total',
   help: 'Challenge refund attempts that threw (non NOT_FOUND), by source and reason',
   labelNames: ['source', 'reason'] as const,
+});
+// Money-path anomaly. A winner-prize payout is deduped only by its externalTransactionId, which
+// embeds the place — so a winner re-picked at a different place than the one already recorded would
+// pay twice. Any non-zero value means a completion re-picked winners over an existing record and
+// the payout had to be reconciled onto the stored placement. Expected to sit flat at zero.
+const winnerPlaceDivergenceCounter = registerCounterWithLabels({
+  name: 'challenge_winner_place_divergence_total',
+  help: 'ChallengeWinner inserts that conflicted with a stored row holding a different place/prize; the payout was reconciled to the stored placement (expected to stay at zero)',
+  labelNames: ['field'] as const,
+});
+// Money-path anomaly, and DELIBERATELY NOT folded into the divergence counter above. That one means
+// "a stored row disagreed with a re-pick" — a cross-run anomaly whose remediation is to work out why
+// a completion ran twice. This one means "one winner-pick named the same creator in more than one
+// slot", a judging-quality anomaly whose remediation is the prompt/model. Same metric, and an
+// operator reading a non-zero value could not tell which had happened, nor could an alert on one
+// avoid firing on the other.
+//
+// A creator can only ever hold ONE ChallengeWinner row per challenge — (challengeId, userId) is the
+// table's unique key — so a second placement for the same creator is never payable, and the extra
+// entries are dropped before the payout is built. Expected to sit flat at zero.
+const winnerDuplicatePickCounter = registerCounterWithLabels({
+  name: 'challenge_winner_duplicate_pick_total',
+  help: 'Winner placements dropped before payout because the same creator held more than one place in a single pick (expected to stay at zero)',
+  // `origin` separates the two layers that can drop, and it exists because `source` cannot do the
+  // job: `normSource` routes both enum drift AND a null source (the caller reads its source off a
+  // row typed `| undefined`) into `unknown`, so `source: unknown` alone cannot distinguish "the
+  // choke point caught what a caller missed" from "a caller emitted without a readable source".
+  // Those want different responses, so they get different label values rather than a shared bucket.
+  labelNames: ['source', 'origin'] as const,
+});
+// Money-path anomaly, and DELIBERATELY ITS OWN COUNTER rather than another `field` value on
+// `challenge_winner_place_divergence_total`. That counter means "a stored row disagreed with a
+// re-pick and the payout WAS reconciled onto it" — the record was wrong, the money is safe. This one
+// means the conflict could NOT be resolved: no stored row was readable, so the payout is left on the
+// freshly-picked place and settles a `-place-N` transaction id with no ChallengeWinner row to key it
+// to. Opposite money verdicts, so sharing a series would make any read that did not break out the
+// label report "reconciled" for the one case where money may have moved twice.
+//
+// The causes differ as much as the verdicts. Divergence is triggered by a completion re-picking
+// winners over an existing record; remediation is finding out why a completion ran twice.
+//
+// This one fires whenever a P2002 is followed by a re-read that finds nothing, and there is more
+// than one way to get there. Do NOT treat the list below as exhaustive — the counter's meaning is
+// "the conflict did not resolve to a row", not "the sequence is desynced":
+//   - a P2002 on a DIFFERENT unique key. `ChallengeWinner` also has `id Int @id
+//     @default(autoincrement())`, so a sequence left behind by a restore or a manual insert
+//     collides on `id`, which says nothing about (challengeId, userId). Remediation: resync the
+//     sequence. Structurally real, but note it is not what prod looks like today.
+//   - a genuine (challengeId, userId) conflict whose row disappears between the failed INSERT and
+//     the re-read. Both FKs are `onDelete: Cascade` and no application code deletes these rows, so
+//     the realistic actor is a cascade or a human doing post-incident cleanup. Remediation: find
+//     out who deleted winner rows, which is a very different investigation.
+// Same function, different constraint, different fix; the module's existing split (duplicate-pick
+// vs divergence) draws the line in exactly the same place.
+//
+// UNLABELLED on purpose, and that is a feature here. `createChallengeWinner` is handed a winner row,
+// not a challenge, so the `source` every other counter in this file slices by is genuinely not in
+// scope, and adding a parameter for it would change a money-path signature to carry a telemetry
+// label. The side effect is that an unlabelled counter emits `0` from process start instead of
+// emitting no series until its first increment — so a `> 0` rule on it cannot fail open the way one
+// on a label-bearing counter can.
+const winnerConflictUnresolvedCounter = registerCounter({
+  name: 'challenge_winner_conflict_unresolved_total',
+  help: 'ChallengeWinner inserts that conflicted (P2002) but whose stored row could not be read; the payout was LEFT on the freshly-picked place with no winner row to key it to (expected to stay at zero)',
 });
 
 // ---------------------------------------------------------------------------
@@ -289,6 +357,63 @@ export function recordChallengeRefundFailure(args: {
   }
 }
 
+export function recordChallengeWinnerPlaceDivergence(args: { field: 'place' | 'prize' | 'both' }) {
+  try {
+    winnerPlaceDivergenceCounter.inc({ field: normDivergenceField(args.field) });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/**
+ * The winner-insert conflict that could NOT be resolved to a stored row — the one branch of
+ * `createChallengeWinner` that still settles an unreconciled payout key. See the counter definition
+ * above for why this is not a `field` value on the divergence counter.
+ */
+export function recordChallengeWinnerConflictUnresolved() {
+  try {
+    winnerConflictUnresolvedCounter.inc();
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/**
+ * `count` = how many placements were dropped, not how many picks contained a duplicate.
+ *
+ * An EXPLICITLY SUPPLIED `count` that is not a positive finite number records NOTHING — `0`, but
+ * equally `-1`, `NaN` and `Infinity`. This counter's contract is that it sits flat at zero and that
+ * every unit of it is a real placement dropped before payout, so neither "I dropped nothing" nor "my
+ * caller computed garbage" may be rounded up into "I dropped one". An OMITTED `count` still defaults
+ * to 1: that caller is not supplying a number at all, it is saying "one drop", which is the only
+ * case where 1 is the honest answer.
+ *
+ * Alerting for this counter and for `challenge_winner_place_divergence_total` lives in the infra
+ * repo, not here, so treat any claim in this file about whether something is wired as unverifiable
+ * from inside this codebase and liable to rot. What this file CAN promise is the emitter contract:
+ * "expected to stay at zero" is a statement about what the emit sites do, not a promise that
+ * anybody is notified when it doesn't hold. The intent is that any non-zero value is actionable —
+ * which is why the emit sites are this careful about what one unit means.
+ *
+ * Note for whoever wires or re-checks it: an un-deployed build and a genuinely quiet counter are
+ * the SAME empty vector in Prometheus. A rule that reads "expected to stay at zero" over a series
+ * that never existed is indistinguishable from a healthy one, so confirm the series exists before
+ * trusting a quiet alert.
+ */
+export function recordChallengeWinnerDuplicatePick(args: {
+  source?: string | null;
+  count?: number;
+  origin: 'caller' | 'chokepoint';
+}) {
+  try {
+    if (args.count !== undefined && !isPositiveFinite(args.count)) return;
+    const count = isPositiveFinite(args.count) ? args.count : 1;
+    winnerDuplicatePickCounter.inc({ source: normSource(args.source), origin: args.origin }, count);
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // C. State gauges (async collect(), low cardinality, memoized ~45s)
 // ---------------------------------------------------------------------------
@@ -308,6 +433,94 @@ export function recordChallengeRefundFailure(args: {
 const CHALLENGE_GAUGE_TTL_MS = 45_000;
 const CHALLENGE_GAUGE_STATEMENT_TIMEOUT_MS = 5_000;
 const COMPLETING_STUCK_MINUTES = 30;
+
+/**
+ * COMPLETING-STUCK — why this keys off the claim stamp and not `updatedAt`.
+ *
+ * `completing_stuck` is meant to answer "has a challenge been sitting in `Completing` — i.e. mid
+ * winner-pick — long enough that it is deadlocked?". It originally asked that as
+ * `status = 'Completing' AND "updatedAt" < now() - 30 minutes`, which measured the wrong column and
+ * made the gauge (and its alert) meaningless:
+ *
+ *   `Challenge.updatedAt` is a PRISMA-side `@updatedAt` — the client writes it, there is no DB
+ *   trigger. But the only thing that ever puts a row into `Completing` is
+ *   `claimChallengeForCompletion`, which is RAW SQL (`$executeRaw`), so entering `Completing` never
+ *   bumps `updatedAt`. A daily challenge whose last Prisma write was ~24h earlier therefore already
+ *   satisfies `updatedAt < now() - 30 minutes` at the INSTANT it is claimed. Observed in prod as the
+ *   gauge blipping to exactly 1 for ~1 minute at 00:00–00:01 UTC on 5 consecutive days,
+ *   `source=System` only — that is the NORMAL ~25–30s completion window, not a stall. It also failed
+ *   in the other direction: any Prisma write during a live completion run (e.g. the prizes
+ *   recompute) resets `updatedAt` and hides a genuine stall.
+ *
+ * So the predicate now uses `metadata->>'completingClaimedAt'` — the stamp the claim itself writes,
+ * and the same field `resetStuckCompletingChallenges` already uses to decide a run is dead. That
+ * makes this gauge measure real claim age, and keeps it consistent with the recovery job.
+ *
+ * MISSING / MALFORMED STAMP COUNTS AS STUCK. A `Completing` row without a usable stamp is the most
+ * broken state there is, and the one thing nothing can recover: `resetStuckCompletingChallenges`
+ * compares `(metadata->>'completingClaimedAt')::timestamptz`, which is NULL-propagating, so a
+ * stampless row is never selected and never reset — it stays `Completing` forever.
+ *
+ * Declaring `completingClaimedAt` in `challengeMetadataSchema` does not close it. The destroyer is
+ * not the zod strip — it is a STALE FULL-COLUMN REPLACE. Six sites in total do a stale-replica
+ * full-column metadata replace. Two of them read a challenge (from the REPLICA), spend real time,
+ * then wrote the whole metadata column back keyed only on `id` with no status predicate, so
+ * `claimChallengeForCompletion` could land in the window and have the pre-claim snapshot overwrite
+ * the fresh stamp. The stamp was never IN that snapshot, so there was nothing for the schema to
+ * have preserved. Their damage differed, and only the first is what THIS gauge would have seen:
+ *
+ *   - `backfill-theme-elements.ts` wrote metadata and NOT status, so it left the row IN
+ *     `Completing` with no stamp — the stranded state this gauge counts. A multi-second LLM call
+ *     sits between its read and its write, and `?force=true` widens it to every themed
+ *     Active/Scheduled challenge.
+ *   - `challenge.service.ts`'s `upsertChallenge` also wrote `status`, pinned back to the
+ *     Active/Scheduled value it had READ — so it did not strand a stampless `Completing` row, it
+ *     UN-CLAIMED a challenge mid-completion. Invisible to this gauge; the damage lands elsewhere.
+ *
+ * BOTH WRITES ARE NOW PREDICATED (2026-07-31): the backfill's UPDATE carries
+ * `AND status IN ('Active','Scheduled')` and merges with jsonb `||` instead of replacing the
+ * column; `upsertChallenge` uses the `updateMany` + `count === 0` pattern keyed on the status it
+ * read. Neither can strand a row in `Completing` any more, so this gauge should no longer see a
+ * stampless `Completing` row from those paths.
+ *
+ * It does NOT follow that the whole class is gone. `upsertChallenge` still writes the WHOLE metadata
+ * column from its replica snapshot (`{ ...existingMetadata, themeElements }`) — the predicate only
+ * stops it landing on a DIFFERENT status, not on a same-status racing write — and a declared-key
+ * type violation still makes `parseChallengeMetadata` return `{}` and wipe the column. Converting
+ * that write to the same jsonb `||` merge would close it.
+ *
+ * That was assessed on 2026-08-03 and DELIBERATELY LEFT — the residue is not worth a second raw-SQL
+ * write inside that transaction. 🔴 The assessment corrects an earlier version of this note, which
+ * said losing the `reviewedAt` watermark "rewinds incremental review to the challenge start" as
+ * though that re-judged the backlog at LLM cost. It does not: the same WHERE clause in
+ * `daily-challenge-processing.ts` carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's
+ * comment for that image), which drops every already-scored entry no matter what the watermark says.
+ * The watermark is a SCAN optimisation, not the dedupe — losing it costs a wider index scan.
+ * Probability is near zero too: the only concurrent writer of this column is that watermark, which
+ * runs every 10 minutes against the ONE current challenge, so a save of that specific challenge must
+ * straddle a 600-second-cadence instantaneous UPDATE within a sub-second window on the common
+ * (no-LLM) path. Revisit only with evidence of a real loss.
+ * (Cron expressions are spelled out in words in this block on purpose — a literal slash-star-ten
+ * would close the comment.)
+ *
+ * So the design is not merely the cheap direction to be wrong in — it is load-bearing. A legacy or
+ * malformed stamp lands here too, and treating such rows as "not stuck" would make the gauge
+ * silently blind to the only permanently-wedged state — the same fail-open the zero-emit note below
+ * exists to prevent. The competing worry, legacy rows pinning the gauge high, does not apply: there
+ * are no `Completing` rows in prod today.
+ *
+ * TEXT COMPARISON, NOT `::timestamptz`. The cast is not an option here: `('garbage')::timestamptz`
+ * RAISES, which would fail the whole gauge query, get swallowed by the never-throw catch, and freeze
+ * ALL FOUR gauges on last-good values — a silent failure far worse than the bug being fixed. The
+ * stamp is only ever written as `new Date().toISOString()`, so the regex below pins it to exactly
+ * that fixed-width UTC shape; strings of that shape sort lexicographically iff they sort
+ * chronologically, so the plain `<` against a `to_char`-formatted threshold is an exact
+ * chronological comparison that cannot raise on any input. A stamp NOT of that shape is not
+ * silently mis-ordered — it falls into the "no usable stamp" branch above and counts as stuck.
+ */
+const CLAIM_STAMP_ISO_RE = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`;
+/** `to_char` mask producing byte-identical output to JS `Date#toISOString()`. */
+const CLAIM_STAMP_PG_FORMAT = `YYYY-MM-DD"T"HH24:MI:SS.MS"Z"`;
 
 type SourceCount = { source: string; count: number };
 type SourceStatusCount = { source: string; status: string; count: number };
@@ -346,11 +559,20 @@ async function queryChallengeGauges(): Promise<ChallengeGaugeData> {
       `SELECT source::text AS source, count(*)::text AS count
          FROM "Challenge" WHERE ingestion = 'Pending' GROUP BY source`
     );
+    // Claim age, NOT `updatedAt` — see the COMPLETING-STUCK note above for why `updatedAt` made this
+    // gauge fire on every healthy completion, and why the two "no usable stamp" branches count as
+    // stuck rather than being cast to a timestamp.
     const completingStuck = await dbClient.query<{ source: string; count: string }>(
       `SELECT source::text AS source, count(*)::text AS count
          FROM "Challenge"
         WHERE status = 'Completing'
-          AND "updatedAt" < now() - interval '${COMPLETING_STUCK_MINUTES} minutes'
+          AND (
+            metadata->>'completingClaimedAt' IS NULL
+            OR metadata->>'completingClaimedAt' !~ '${CLAIM_STAMP_ISO_RE}'
+            OR metadata->>'completingClaimedAt' < to_char(
+                 (now() AT TIME ZONE 'UTC') - interval '${COMPLETING_STUCK_MINUTES} minutes',
+                 '${CLAIM_STAMP_PG_FORMAT}')
+          )
         GROUP BY source`
     );
     // Budget utilisation over challenges currently consuming their AI-review budget (Active or
@@ -526,6 +748,13 @@ export function __resetChallengeMetricsForTest(): void {
   operationSpentBuzzCounter.reset();
   refundBuzzCounter.reset();
   refundFailuresCounter.reset();
+  // Both money-path anomaly counters were missing here. Counters live on a process-global registry,
+  // so an un-reset one carries its value across every test in the file that touched it — a test
+  // asserting "this stayed at zero" would pass or fail on execution ORDER rather than on behaviour,
+  // which is precisely backwards for a metric whose whole contract is "expected to sit at zero".
+  winnerPlaceDivergenceCounter.reset();
+  winnerDuplicatePickCounter.reset();
+  winnerConflictUnresolvedCounter.reset();
 }
 
 /**
@@ -540,5 +769,23 @@ export function __setChallengeGaugeCacheForTest(data: Partial<ChallengeGaugeData
     completingStuck: data.completingStuck ?? [],
     budgetRatio: data.budgetRatio ?? [],
   };
+  challengeGaugeFetchedAt = Date.now();
+}
+
+/**
+ * Run the REAL gauge SQL (against whatever `~/server/db/pgDb` resolves to — a test mocks it onto an
+ * in-process Postgres) and await the cache update, bypassing the TTL and any in-flight refresh.
+ *
+ * `__setChallengeGaugeCacheForTest` mocks at the WRONG layer to defend a query predicate: it injects
+ * the rows a query would have returned, so it cannot tell a correct `WHERE` from a broken one. This
+ * hook is what lets a test seed real rows and assert the emitted series — the only way the
+ * `updatedAt` → `completingClaimedAt` fix is actually pinned.
+ *
+ * Deliberately does NOT swallow: `refreshChallengeGauges` catches everything to protect the scrape,
+ * so a test driving it would silently see an empty cache on a broken query. Here the error surfaces.
+ */
+export async function __refreshChallengeGaugesFromDbForTest(): Promise<void> {
+  challengeGaugeInflight = null;
+  challengeGaugeCache = await queryChallengeGauges();
   challengeGaugeFetchedAt = Date.now();
 }

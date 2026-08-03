@@ -22,6 +22,20 @@ const mocks = vi.hoisted(() => ({
 // moderator gate; these suites render the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+// IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
+// predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
+// shortcuts; the real hook THROWS without a FeatureFlagsProvider (which this
+// scaffold does not mount). Dark flags = the production default, and these
+// suites assert host lifecycle, not the menu.
+// Deliberately a WHOLE-module factory, not an `importOriginal` spread: the real
+// module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
+// wholesale trpc factory below does not provide, so spreading the original makes
+// the file fail to LOAD ("does not provide an export named
+// setTrpcBatchingEnabled") — verified by removing this mock.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+}));
+
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
@@ -48,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -60,6 +75,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },

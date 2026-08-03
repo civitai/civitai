@@ -31,7 +31,7 @@ const BASE = {
   userId: 99,
   blockInstanceId: 'page_ephemeral-my-app',
   scope: 'ai:write:budgeted',
-  endpoint: 'workflow:submit:wf_1',
+  endpoint: 'workflow:submit',
   statusCode: 200,
 };
 

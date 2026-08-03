@@ -21,13 +21,39 @@ import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publis
 // Stub the real host so the test targets the control surface only. It surfaces the
 // security-relevant prop so we can assert what the host is actually told to do.
 vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
-  PageBlockHost: ({ reviewRunForReal }: { reviewRunForReal?: boolean }) => (
-    <div data-testid="page-host" data-rfr={String(!!reviewRunForReal)} />
+  PageBlockHost: ({
+    reviewRunForReal,
+    canOpenPage,
+  }: {
+    reviewRunForReal?: boolean;
+    canOpenPage?: boolean;
+  }) => (
+    <div
+      data-testid="page-host"
+      data-rfr={String(!!reviewRunForReal)}
+      // Surfaced so the chrome "Recently run" wiring is assertable: this surface
+      // must forward the VIEWER's `appBlocks && appBlocksPages`, not a
+      // per-surface constant and not half the run route's predicate.
+      data-can-open-page={String(!!canOpenPage)}
+    />
   ),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, username: 'mod' }),
+}));
+
+// The review surface reads the run route's OWN predicate — `appBlocks &&
+// appBlocksPages` — to decide whether the app-chrome may offer
+// `/apps/run/<blockId>` shortcuts. The real hook THROWS without a
+// FeatureFlagsProvider, and both flags are per-test controllable so every corner
+// of the conjunction is assertable. Deliberately a WHOLE-module factory, not an
+// `importOriginal` spread: the real module imports `setTrpcBatchingEnabled` from
+// '~/utils/trpc', which the wholesale trpc factory below does not provide, so
+// spreading the original makes the file fail to LOAD.
+const flagState = vi.hoisted(() => ({ appBlocks: false, appBlocksPages: false }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => flagState,
 }));
 
 // Typed to the PRODUCTION mint-result shape (`buzzCap: number | null`,
@@ -92,6 +118,8 @@ import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost
 
 beforeEach(() => {
   mintCalls.inputs = [];
+  flagState.appBlocks = false;
+  flagState.appBlocksPages = false;
 });
 
 function mount() {
@@ -172,5 +200,60 @@ describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
     expect(page.getByTestId('review-run-for-real-consent').elements()).toHaveLength(0);
     // No run-for-real mint ever happened.
     expect(mintCalls.inputs.every((i) => i.runForReal === false)).toBe(true);
+  });
+});
+
+// The app-chrome "Recently run" menu links ONLY to `/apps/run/<blockId>`, whose
+// own `getServerSideProps` 404s unless the viewer has BOTH `appBlocks` AND
+// `appBlocksPages` — on EVERY surface, because that gate is on the viewer, not
+// on where the link was clicked from. This surface previously passed nothing, so
+// the fail-closed default hid the menu even for the mods who DO hold the flags.
+// It must forward the FULL conjunction, in all four corners.
+//
+// 🔴 The `appBlocks`-off row is the one a one-flag implementation gets wrong:
+// `appBlocks` is the block-runtime kill-switch and a Flipt override can disable
+// as well as enable, so pages-on/blocks-off is a reachable state in which those
+// links all 404. This page's own `getServerSideProps` also 404s without
+// `appBlocks`, so the row is not reachable through THIS route today — it is
+// pinned so the component's gate stays correct on its own terms rather than
+// borrowing an invariant from its caller.
+//
+// Mutation-sanity: hardcoding `canOpenPage={false}` (or dropping the prop) fails
+// the both-on row; hardcoding `true` fails the three off rows; reverting to
+// `!!features.appBlocksPages` fails the pages-on/blocks-off row specifically.
+describe('ReviewBlockPreviewHost — forwards the run route’s own flag conjunction', () => {
+  const canOpenPage = () =>
+    page.getByTestId('page-host').element().getAttribute('data-can-open-page');
+
+  test('BOTH flags on → canOpenPage=true (a mod reviewer keeps the "Recently run" shortcuts)', async () => {
+    flagState.appBlocks = true;
+    flagState.appBlocksPages = true;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(canOpenPage()).toBe('true');
+  });
+
+  test('🔴 pages ON but appBlocks OFF (kill-switch) → canOpenPage=false', async () => {
+    flagState.appBlocks = false;
+    flagState.appBlocksPages = true;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(canOpenPage()).toBe('false');
+  });
+
+  test('appBlocks ON but pages OFF → canOpenPage=false (the W10 dark case)', async () => {
+    flagState.appBlocks = true;
+    flagState.appBlocksPages = false;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(canOpenPage()).toBe('false');
+  });
+
+  test('both off → canOpenPage=false (no guaranteed-404 links for a pages-dark reviewer)', async () => {
+    flagState.appBlocks = false;
+    flagState.appBlocksPages = false;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(canOpenPage()).toBe('false');
   });
 });

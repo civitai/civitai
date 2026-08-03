@@ -26,6 +26,7 @@ import {
   recordChallengeVoided,
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 import {
   ChallengeParticipation,
@@ -73,10 +74,10 @@ import {
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import {
-  createImage,
   enqueueImageIngestion,
   imagesForModelVersionsCache,
 } from '~/server/services/image.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   amIBlockedByUser,
   getCosmeticsForUsers,
@@ -107,6 +108,10 @@ import {
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
+import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
@@ -1302,16 +1307,9 @@ export async function upsertChallenge({
   // misconfigured judge must not leave an orphaned cover Image behind.
   const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
-  // Handle cover image - create Image record if needed (like Article does)
-  let coverImageId: number;
-  if (coverImage.id) {
-    // Use existing image ID
-    coverImageId = coverImage.id;
-  } else {
-    // Create new Image record from uploaded file
-    const result = await createImage({ ...coverImage, userId });
-    coverImageId = result.id;
-  }
+  // Handle cover image - reuse the supplied id, else reuse/verify-then-create (like Article
+  // does). No ownership check here: this is the moderator path, as before.
+  const coverImageId = await resolveCoverImageId({ coverImage, userId });
 
   // Helper: resolve judging config and generate theme elements.
   async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
@@ -1412,9 +1410,15 @@ export async function upsertChallenge({
 
     // Use transaction to update both challenge and collection metadata atomically
     const updatedChallenge = await dbWrite.$transaction(async (tx) => {
-      // Update the challenge
-      const updated = await tx.challenge.update({
-        where: { id },
+      // Conditional on the status we VALIDATED, for the same reason as the Scheduled-only edit
+      // path below: the findUnique above ran on the read replica, and `tryGenerateThemeElements`
+      // can spend seconds in an LLM call before we get here. `claimChallengeForCompletion` may
+      // have flipped the challenge to Completing in that window. An unconditional update would
+      // then write `data.status` (pinned back to the pre-read Active) and the stale metadata
+      // snapshot over the fresh claim — un-claiming a challenge mid-completion and dropping the
+      // completingClaimedAt stamp the stuck-challenge reset keys off.
+      const { count } = await tx.challenge.updateMany({
+        where: { id, status: challenge.status },
         data: {
           ...data,
           nsfwLevel: deriveChallengeNsfwLevel(data.allowedNsfwLevel ?? 1),
@@ -1428,11 +1432,57 @@ export async function upsertChallenge({
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           judgingCategories: effectiveJudgingCategories,
+          // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
+          // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
+          // between that read and this one is dropped. The status predicate on this updateMany does
+          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
+          //
+          // It is not worth the second raw-SQL write inside this transaction, because both the
+          // probability and the consequence are near zero:
+          //   - The only concurrent writer of this column is the `reviewedAt` watermark in
+          //     daily-challenge-processing.ts (`*/10 * * * *`, and only for the ONE current
+          //     challenge). To lose it, a save of that specific challenge must straddle a
+          //     600-second-cadence instantaneous UPDATE. On the common path (the edit form
+          //     pre-fills themeElements, so no LLM call runs) the window is replica lag plus the
+          //     request — sub-second. The auto-generate branch's multi-second LLM window is wider
+          //     but only fires when a theme is set and no elements are stored.
+          //   - Losing it costs a WIDER SCAN, not re-judging. 🔴 An earlier version of this note
+          //     claimed it "re-judges the whole backlog at LLM cost" — that is WRONG. The same
+          //     WHERE clause carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's comment
+          //     for that image), which excludes every already-scored entry regardless of the
+          //     watermark. The watermark is a scan optimisation, not the dedupe.
+          //   - The other fields are self-protecting: `reconciliation.paidUserIds` cannot cause a
+          //     double-pay (participation prizes use a deterministic
+          //     `challenge-entry-prize-{cid}-{uid}` id and the ledger dedupes), and
+          //     `completingClaimedAt` is the DIFFERENT-status case the predicate above already
+          //     closes.
+          // Revisit only with evidence of an actual loss. See server/prom/challenge.metrics.ts.
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),
         },
       });
+      if (count === 0) {
+        // Rare by construction, so log it — otherwise there is no way to tell whether this guard
+        // has ever fired, or to distinguish a genuine race from replica lag (below).
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-upsert-status-precondition-failed',
+          challengeId: id,
+          message: `upsertChallenge aborted: challenge ${id} was no longer '${challenge.status}' at write time`,
+          readStatus: challenge.status,
+        }).catch(() => undefined);
+        // Deliberately NOT "reload and try again": `challenge.status` came from the read REPLICA,
+        // so this also fires when a transition already committed on the primary and has not
+        // replicated yet — a reload re-reads the same lagging replica and cannot clear it. It also
+        // fires when the row was deleted outright, where "status changed" is the wrong diagnosis.
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'This challenge changed while you were saving (it may have started, been completed, or been cancelled). Re-open it in a moment to see its current state.',
+        });
+      }
+      const updated = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       // Sync collection metadata if challenge has a collection
       if (challenge.collectionId) {
@@ -1634,20 +1684,20 @@ export async function upsertUserChallenge({
   // A reused id must belong to the caller — otherwise anyone could surface another user's
   // (possibly unpublished/blocked) image on a public challenge card, and the challenge scan
   // only covers text.
-  let coverImageId: number;
-  if (coverImage.id != null) {
-    // Regular users must own the reused image. Moderators skip the ownership check entirely
-    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
-    const ownedImage = await dbRead.image.findFirst({
-      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
-      select: { id: true },
-    });
-    if (!ownedImage)
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
-    coverImageId = ownedImage.id;
-  } else {
-    coverImageId = (await createImage({ ...coverImage, userId })).id;
-  }
+  const coverImageId = await resolveCoverImageId({
+    coverImage,
+    userId,
+    assertOwnership: async (imageId) => {
+      // Regular users must own the reused image. Moderators skip the ownership check entirely
+      // (trusted role — typically re-saving the creator's existing cover during a mod edit).
+      const ownedImage = await dbRead.image.findFirst({
+        where: isModerator ? { id: imageId } : { id: imageId, userId },
+        select: { id: true },
+      });
+      if (!ownedImage)
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
+    },
+  });
 
   // Fields shared by create + update. Entry-fee funded pools are modeled with the existing
   // Dynamic prize machinery: pool grows by `buzzPerAction` (net of the house cut) per entry.
@@ -2576,9 +2626,41 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         })
         .filter(isDefined);
 
-      // Create ChallengeWinner records (idempotent via P2002 handling)
+      // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+      // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
+      // one creator on two places. That creator has at most one `ChallengeWinner` row to be paid
+      // for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before the
+      // create loop, rather than at the payout: it keeps the duplicate from conflicting against the
+      // row its own twin just inserted, which would otherwise fire the place-divergence warning and
+      // counter for an anomaly that is not a re-pick at all. (Parity with the cron path.)
+      const { winners: dedupedWinners, dropped: droppedWinners } =
+        dedupeWinnersForPayout(winningEntries);
+      if (droppedWinners.length) {
+        winningEntries = dedupedWinners;
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-duplicate-pick',
+          message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
+          challengeId,
+          droppedUserIds: droppedWinners.map((entry) => entry.userId),
+          droppedPlaces: droppedWinners.map((entry) => entry.position),
+        }).catch(() => undefined);
+        recordChallengeWinnerDuplicatePick({
+          source: challenge.source,
+          count: droppedWinners.length,
+          origin: 'caller',
+        });
+      }
+
+      // Create ChallengeWinner records, then pay the placement that is PERSISTED rather than the
+      // one just picked. A user already recorded as a winner of this challenge cannot get a second
+      // row — (challengeId, userId) is unique, so the insert conflicts and the stored row keeps its
+      // original place. Paying the freshly-picked place would key the payout to a different
+      // externalTransactionId than the one already settled at the stored place and mint a second
+      // prize. (Parity with the cron completion path.)
+      const reconciledEntries: typeof winningEntries = [];
       for (const entry of winningEntries) {
-        await createChallengeWinner({
+        const persisted = await createChallengeWinner({
           challengeId,
           userId: entry.userId,
           imageId: entry.imageId!, // always non-null on fresh winner path
@@ -2587,7 +2669,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
           reason: entry.reason ?? undefined,
         });
+        reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
       }
+      winningEntries = reconciledEntries;
       log('ChallengeWinner records created');
     }
 
@@ -2595,16 +2679,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
     // stranded the collected green pool for green challenges. Deterministic externalTransactionId
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId,
-          title: challenge.title,
-          buzzType: challenge.buzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
+    // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId,
+      title: challenge.title,
+      buzzType: challenge.buzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // Send entry participation prizes to all eligible users
@@ -3380,7 +3463,7 @@ export async function upsertChallengeEvent({
   let coverImageId: number | null | undefined;
   if (coverImage === null) coverImageId = null;
   else if (coverImage) {
-    coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+    coverImageId = await resolveCoverImageId({ coverImage, userId });
   }
 
   return dbWrite.$transaction(async (tx) => {
@@ -3771,6 +3854,7 @@ export async function getCompletedChallengesWithWinners(
       judgeImage: string | null;
       judgeDeletedAt: Date | null;
       metadata: Record<string, unknown> | null;
+      judgingCategories: unknown;
     }>
   >`
     SELECT
@@ -3802,7 +3886,8 @@ export async function getCompletedChallengesWithWinners(
       ju.username as "judgeUsername",
       ju.image as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt",
-      c.metadata
+      c.metadata,
+      c."judgingCategories"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
@@ -3915,9 +4000,11 @@ export async function getCompletedChallengesWithWinners(
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
     const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
     const metadata = parseChallengeMetadata(item.metadata);
+    const parsedCategories = challengeJudgingCategoriesSchema.safeParse(item.judgingCategories);
 
     return {
       id: item.id,
+      judgingCategories: parsedCategories.success ? parsedCategories.data : null,
       title: item.title,
       theme: item.theme,
       invitation: item.invitation,

@@ -125,6 +125,16 @@ function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function unpublishedModelVersion(overrides: Record<string, unknown> = {}) {
+  const base = publishedModelVersion();
+  return {
+    ...base,
+    status: 'Unpublished',
+    model: { ...base.model, status: 'Unpublished', publishedAt: null },
+    ...overrides,
+  };
+}
+
 const aFile = {
   id: 55,
   url: 'https://abcd1234.r2.cloudflarestorage.com/civitai/files/x.safetensors',
@@ -263,5 +273,100 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
     expect(result.status).toBe('early-access');
     if (result.status === 'early-access') expect(result.details.deadline).toEqual(endsAt);
+  });
+
+  // The common case, and the one the bit-test read backwards: a user who has bought nothing carries
+  // the "no grant" sentinel `permissions: -1` (every bit set), so `permissions & EarlyAccessDownload`
+  // is non-zero and reads as "already holds the download grant". The purchase route was skipped and
+  // the user got a dead-end 403 instead of the buy CTA.
+  it('routes a user with no grant at all to early-access, not a bare denial', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('early-access');
+  });
+
+  it('lets an actual early-access buyer through the gate', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 2 }]);
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('success');
+  });
+
+  // --- Unpublished models: the review path ---------------------------------
+  // Moderators review unpublished models constantly (takedowns, TOS checks) and need the actual
+  // file to decide. The publish-state gate must keep answering them — and the owner — with the
+  // file while still hiding it from everyone else.
+  describe('unpublished models', () => {
+    beforeEach(() => {
+      modelVersionFindFirst.mockResolvedValue(unpublishedModelVersion());
+      resolveDownloadUrlMock.mockResolvedValue({
+        url: 'https://cdn.example.com/signed',
+        urlExpiryDate: new Date(),
+      });
+    });
+
+    it('serves the file to a moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 7, isModerator: true },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('serves the file to the owner', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('returns not-found for a signed-in user who is neither owner nor moderator', async () => {
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 1234, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('returns not-found for an anonymous request', async () => {
+      const result = await getFileForModelVersion({ modelVersionId: 1 });
+
+      expect(result.status).toBe('not-found');
+    });
+
+    it('still hides a deleted model from its own owner', async () => {
+      modelVersionFindFirst.mockResolvedValue(
+        unpublishedModelVersion({
+          model: { ...publishedModelVersion().model, status: 'Deleted' },
+        })
+      );
+
+      const result = await getFileForModelVersion({
+        modelVersionId: 1,
+        user: { id: 999, isModerator: false },
+      });
+
+      expect(result.status).toBe('not-found');
+    });
   });
 });

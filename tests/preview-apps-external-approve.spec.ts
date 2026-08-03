@@ -12,8 +12,8 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *       (reject is terminal + releases the slug → self-cleaning, no leftover row).
  *
  *   (2) APPROVE-GATE: submit (mod, NO assets — no icon/cover/screenshot) →
- *       `approveExternalRequest` → asserts a BAD_REQUEST (the dark P1
- *       `assertListingAssetsComplete` gate fires: "missing required assets"),
+ *       `approveExternalRequest` → asserts a BAD_REQUEST (the publish-FLOOR gate
+ *       `assertListingMeetsFloor` fires, naming the missing `icon` + `cover`),
  *       proving approve is BLOCKED without assets. Then `withdrawExternalRequest`
  *       cleans the still-pending draft.
  *
@@ -207,9 +207,10 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
       );
       publishRequestId = result.publishRequestId;
 
-      // APPROVE with NO icon/cover/screenshot attached → the assertListingAssetsComplete
-      // gate MUST fire (the router maps it to a BAD_REQUEST / HTTP 400 whose message
-      // names the missing assets). trpcMutation throws on a non-2xx response.
+      // APPROVE with NO icon/cover/screenshot attached → the publish-FLOOR gate
+      // `assertListingMeetsFloor` MUST fire (the router maps it to a BAD_REQUEST /
+      // HTTP 400 whose message names the missing floor assets). trpcMutation throws
+      // on a non-2xx response.
       let approveError: Error | null = null;
       try {
         await trpcMutation(request, 'appListings.approveExternalRequest', {
@@ -220,10 +221,14 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
         approveError = err as Error;
       }
       expect(approveError, 'approve without assets must be rejected by the gate').not.toBeNull();
-      expect(
-        approveError?.message ?? '',
-        'the gate error names the missing required assets'
-      ).toMatch(/missing required assets/i);
+      // Assert the gate's INTENT — the error names each missing FLOOR asset — rather
+      // than pinning the sentence verbatim. The exact wording has already churned
+      // once (#3392 swapped the live approve gate from `assertListingAssetsComplete`
+      // → `assertListingMeetsFloor`, silently breaking a verbatim match here), and the
+      // wording is not the contract under test; naming what's missing is.
+      const approveMessage = approveError?.message ?? '';
+      expect(approveMessage, 'the gate error names the missing icon').toMatch(/icon/i);
+      expect(approveMessage, 'the gate error names the missing cover').toMatch(/cover/i);
 
       // The gate fired BEFORE any mutation → the request is still pending.
       const stillPending = await findPendingBySlug(request, SLUG);

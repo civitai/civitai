@@ -1,6 +1,7 @@
 import { CacheTTL, constants } from '~/server/common/constants';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 
@@ -35,6 +36,15 @@ import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions
 // missed path — including the one leak-direction gap, a referral-granted member who
 // also sets a metric-hide flag — self-heals quickly while still absorbing effectively
 // all hot-path read repetition (a creator's models are read many times per 10 min).
+//
+// 🔴 SCOPE: this constant is for the membership-validity cache ONLY. The
+// metric-privacy-defaults cache further down has its own `METRIC_PRIVACY_DEFAULTS_TTL`
+// and the two are deliberately DIFFERENT — do not re-merge them into one shared value.
+// Why they differ: a membership can go invalid on its OWN, with no write anywhere in
+// this app (a subscription simply lapses at its period end), so nothing can bust the
+// key at the moment its value stops being true — only a short TTL bounds that. The
+// privacy defaults, by contrast, only ever change via an explicit `settings` write,
+// which busts the key; its TTL is a backstop for a failed bust, not for silent decay.
 const MEMBERSHIP_CACHE_TTL = CacheTTL.md;
 
 const getMembershipValidCacheKey = (userId: number) =>
@@ -156,6 +166,89 @@ export type UserMetricPrivacyDefaults = {
   hideModelGenerations?: boolean;
 };
 
+/**
+ * TTL for the metric-privacy-defaults cache. DELIBERATELY NOT `MEMBERSHIP_CACHE_TTL` —
+ * see the scope note on that constant for why the two must stay separate.
+ *
+ * Derived from an audit of every writer of the `User.settings` JSONB column, since that
+ * is the only thing this cache derives from. The three `hideModel*` booleans are
+ * written by exactly ONE path — `setUserSetting`, reached from the account
+ * Creator-Controls toggles — and that path busts this key in the same call. The THREE
+ * writers that touch `settings` WITHOUT going through `setUserSetting` do not move
+ * these flags: `setDismissedAlerts` uses a `jsonb_set` scoped to the
+ * `{dismissedAlerts}` path; `updateCreatorShopSettings` and
+ * `copyGallerySettingsToAllModelsByUser` (`model.service.ts`) each read-merge-write the
+ * blob from a fresh in-transaction row read, overriding only their own key
+ * (`creatorShop` / `gallerySettings` respectively).
+ *
+ * One caveat on those last two, so nobody reads this as a stronger guarantee than it
+ * is: both are whole-blob read-modify-writes at READ COMMITTED with no `FOR UPDATE`,
+ * so a `setUserSetting` landing between their read and their update is silently
+ * reverted. That is a lost update on the ROW, not a stale cache — no TTL at any value
+ * helps, because the cache would then be faithfully reporting a wrong row. It is a
+ * real pre-existing bug and deliberately out of scope here; it just means the correct
+ * claim is "cannot move these flags absent a lost-update race", not "provably cannot".
+ *
+ * So the TTL is NOT bounding a bypassing writer. What it bounds is two ways a CORRECT
+ * write can still leave a wrong value cached, and in both the TTL is the only thing
+ * that ever restores correctness:
+ *
+ *   1. A FAILED BUST. `bustUserMetricPrivacyDefaultsCache` is best-effort and swallows
+ *      its own error so a cache problem can never fail the user's mutation — so a
+ *      dropped delete leaves the pre-write triple in place with nothing to retry it.
+ *   2. A REPLICA-LAG REFILL. The write goes to the primary and the key is deleted, but
+ *      the refill below reads `dbRead` (a replica). A refill that lands inside the
+ *      replication window re-caches the OLD triple, and this is not a rare interleaving
+ *      — it is exactly what happens when a user toggles the setting and immediately
+ *      reloads to check it took.
+ *
+ * Because these flags are a user-facing privacy control, that worst case has to stay
+ * short enough to be a blip rather than a support ticket, which rules out a multi-hour
+ * value however clean the writer audit is.
+ *
+ * An hour is the balance. Periodic re-fetch rate is proportional to 1/TTL, so per entry
+ * per hour: 10min = 6, 1h = 1, 1day = 0.0417. Going 10min -> 1h removes (6-1)/6 = 83%
+ * of the periodic re-fetches; the next step up to a day would remove a further
+ * (1-0.0417)/6 = ~16% of the original churn, reaching ~99% cumulative. So an hour banks
+ * most — not almost all — of the available win, at 1/24th the worst-case staleness, and
+ * that trade is what the privacy-control argument above decides. (An earlier revision of
+ * this comment said "~4%" for that second step; that is 1/24, the fraction of churn
+ * REMAINING at a day, not the additional fraction removed. Do not re-derive it that way.)
+ * Memory does not enter into it — the cached working set is a rounding error against the
+ * total keyspace, and each entry is three booleans.
+ *
+ * If the bust is ever made durable (retry / outbox), this can go up. Until then, do not
+ * raise it without re-running the `User.settings` writer audit above.
+ */
+const METRIC_PRIVACY_DEFAULTS_TTL = CacheTTL.hour;
+
+/**
+ * Cache-observability labels for the shared `civitai_app_cache_{hit,miss}_total`
+ * counters. Counted PER USER ID (not per call) so the ratio is a true per-entry hit
+ * rate over a batched lookup, matching how `createCachedArray` reports.
+ *
+ * 🔴 NOTE FOR WHOEVER BUILDS THE DASHBOARD/ALERT: these are LABELLED counters, so a
+ * label child does not exist in the registry until its first `.inc()` — at which point
+ * it is already 1. A `rate()`/`increase()` can therefore never observe the 0->1 step.
+ *
+ * It is NOT true that both children materialize on the first request (an earlier
+ * revision of this comment claimed that). Both increments below are conditional, so a
+ * single request can only create ONE child: an all-hits batch never touches the miss
+ * child, and an all-misses batch never touches the hit child. Redis is shared rather
+ * than per-pod, so a freshly-rolled pod starts against a WARM cache and can serve many
+ * requests before its first miss.
+ *
+ * The exposed side is therefore the MISS child, and it gets more exposed exactly as
+ * this cache succeeds — a longer TTL makes misses rarer, which is the whole point of
+ * the TTL above. The loss is bounded (one scrape interval of accumulation, once per pod
+ * per child, per pod lifetime) so it is small, but it is a systematic DOWNWARD bias on
+ * the series you would use to prove the TTL change worked. Read the miss series by
+ * VALUE (e.g. `max_over_time`) rather than by `rate()` if you need it to be exact, and
+ * never read a fresh pod's silence as a real zero.
+ */
+const METRIC_PRIVACY_CACHE_NAME = 'user-metric-privacy-defaults';
+const METRIC_PRIVACY_CACHE_TYPE = 'redisPacked';
+
 const getUserMetricPrivacyDefaultsCacheKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.USER_METRIC_PRIVACY_DEFAULTS}:${userId}` as `${typeof REDIS_KEYS.CACHES.USER_METRIC_PRIVACY_DEFAULTS}:${string}`;
 
@@ -219,6 +312,21 @@ export async function getUserMetricPrivacyDefaultsMap(userIds: number[]) {
     else misses.push(id);
   });
 
+  // Per-id hit/miss so the hit rate is observable. A Redis read error lands entirely in
+  // `misses` (every id was reset to null above), which is the honest accounting — those
+  // ids do go to the DB.
+  const hits = unique.length - misses.length;
+  if (hits > 0)
+    cacheHitCounter.inc(
+      { cache_name: METRIC_PRIVACY_CACHE_NAME, cache_type: METRIC_PRIVACY_CACHE_TYPE },
+      hits
+    );
+  if (misses.length > 0)
+    cacheMissCounter.inc(
+      { cache_name: METRIC_PRIVACY_CACHE_NAME, cache_type: METRIC_PRIVACY_CACHE_TYPE },
+      misses.length
+    );
+
   if (misses.length === 0) return result;
 
   const fresh = await queryUserMetricPrivacyDefaults(misses);
@@ -233,7 +341,7 @@ export async function getUserMetricPrivacyDefaultsMap(userIds: number[]) {
       result.set(id, value);
       try {
         await redis.packed.set(getUserMetricPrivacyDefaultsCacheKey(id), value, {
-          EX: MEMBERSHIP_CACHE_TTL,
+          EX: METRIC_PRIVACY_DEFAULTS_TTL,
         });
       } catch {
         // Best-effort cache write; the TTL bounds any residual staleness.
@@ -246,8 +354,14 @@ export async function getUserMetricPrivacyDefaultsMap(userIds: number[]) {
 
 /**
  * Bust the cached metric-privacy defaults for one or more users. Wired into
- * `setUserSetting` so any change to a user's `hideModel*` defaults takes effect on the
- * next read; the TTL backstops any writer that bypasses `setUserSetting`.
+ * `setUserSetting`, which is the ONLY path that writes the `hideModel*` flags, so a
+ * change to a user's defaults takes effect on the next read.
+ *
+ * 🔴 This is best-effort by design — it swallows Redis errors so a cache problem can
+ * never fail the user's settings mutation. That makes it a non-guaranteed invalidation,
+ * and `METRIC_PRIVACY_DEFAULTS_TTL` the only bound on how long a swallowed delete can
+ * leave a user's privacy choice un-applied. Read the derivation on that constant before
+ * changing either side.
  */
 export async function bustUserMetricPrivacyDefaultsCache(userId: number | number[]) {
   const ids = (Array.isArray(userId) ? userId : [userId]).filter((id) => !!id);

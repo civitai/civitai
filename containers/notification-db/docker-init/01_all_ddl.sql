@@ -141,3 +141,13 @@ DROP INDEX "UserNotification_viewed_idx";
 DROP INDEX "UserNotification_userId_idx";
 DROP INDEX "UserNotification_createdAt_idx";
 DROP INDEX "UserNotification_userId_viewed_createdAt_idx";
+
+-- Cross-type notification dedup: one source event (e.g. a single comment) can match several
+-- notification types at once; each carries the same "dedupeKey" so a recipient only ever gets the
+-- first one to land. NULL opts a row out of dedup entirely (every non-comment type today).
+ALTER TABLE "PendingNotification" ADD COLUMN "dedupeKey" TEXT;
+ALTER TABLE "UserNotification" ADD COLUMN "dedupeKey" TEXT;
+
+CREATE UNIQUE INDEX CONCURRENTLY "UserNotification_userId_dedupeKey_uniq"
+    ON "UserNotification" ("userId", "dedupeKey")
+    WHERE "dedupeKey" IS NOT NULL;

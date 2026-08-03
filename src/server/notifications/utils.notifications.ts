@@ -8,6 +8,7 @@ import { auctionNotifications } from '~/server/notifications/auction.notificatio
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
+import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
@@ -61,6 +62,7 @@ export const notificationProcessors = {
   ...comicNotifications,
   ...strikeNotifications,
   ...referralNotifications,
+  ...membershipGiftNotifications,
 };
 
 // Sort notifications by priority and group them by priority
@@ -76,9 +78,13 @@ for (const notification of notifications) {
   notificationPriorities[priority] ??= [];
   notificationPriorities[priority].push(notification);
 }
+// Numeric sort, not lexicographic: `send-notifications` runs these batches in order and the comment
+// family relies on that order to decide which of several competing notifications wins the shared dedupe
+// key. A default .sort() would put priority 10 ahead of priority 2.
 export const notificationBatches = Object.keys(notificationPriorities)
-  .sort()
-  .map((key) => notificationPriorities[key as unknown as number]);
+  .map(Number)
+  .sort((a, b) => a - b)
+  .map((key) => notificationPriorities[key]);
 
 export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};

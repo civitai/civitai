@@ -1271,15 +1271,37 @@ export type GetMyListingForEditResult = {
 };
 
 /** Load a listing's scalars + current assets (edge-resolved URLs) + connect scope
- *  snapshot for edit prefill. */
-async function loadListingEditView(listingId: string): Promise<{
+ *  snapshot for edit prefill.
+ *
+ * 🔴 READ-AFTER-WRITE: defaults to the REPLICA (`dbRead`) — correct only for a row that
+ * was written long ago. A caller reading a SHADOW revision MUST pass `dbWrite`.
+ *
+ * The predicate is "is the target a shadow?", NOT "did I just create it".
+ * `beginListingRevision(...).created === false` means only that *this* call did not do
+ * the INSERT — it says NOTHING about whether the replica has the row. The shadow is
+ * minted on the PRIMARY by whoever got there first, and in this flow that is routinely
+ * microseconds earlier and in a DIFFERENT request: the media editor fires its own
+ * client-side `beginListingRevision` mutation on mount, `getMyListingForEdit` mints one
+ * for the same parent, a second tab does either. So a `created === false` read off the
+ * replica misses under lag exactly like a `created === true` one: the `findUnique`
+ * returns null, this throws NOT_FOUND → tRPC NOT_FOUND → the editor renders
+ * `<NotFound />` (its query has `retry: false`), discarding the whole editor including
+ * any in-flight upload. Because the client invalidates on every asset mutation, that is
+ * once per mutation, not once per page load.
+ *
+ * Same hazard the screenshot re-pack guards against in `app-listing-assets.service.ts`.
+ * Do NOT route a non-shadow (in-place draft/pending) read to the primary. */
+async function loadListingEditView(
+  listingId: string,
+  db: typeof dbRead = dbRead
+): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
-  const row = (await dbRead.appListing.findUnique({
+  const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       name: true,
@@ -1439,7 +1461,10 @@ export async function getMyListingForEdit(opts: {
     hasPendingRevision = !!pendingRevisionReq;
   }
 
-  const view = await loadListingEditView(effectiveId);
+  // 🔴 READ-AFTER-WRITE — same rule as `getMyListingForApp`: a SHADOW target is read
+  // from the PRIMARY (it may have been minted microseconds ago by ANY caller), an
+  // in-place target from the replica. See `loadListingEditView`.
+  const view = await loadListingEditView(effectiveId, effectiveId !== listingId ? dbWrite : dbRead);
 
   // Resolve the connect client's CURRENT allowedScopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
@@ -1478,29 +1503,120 @@ export type GetMyListingForAppResult = {
   contentRating: string;
   /** Whether a shadow-revision publish request is already under review for this listing. */
   hasPendingRevision: boolean;
+  /**
+   * The in-progress SHADOW revision id for an APPROVED parent (resolved server-side,
+   * idempotently — the same id the client's `beginListingRevision` returns), else
+   * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
+   */
+  shadowId: string | null;
+  /**
+   * The id the client hands to the asset procs: `shadowId` when a shadow already
+   * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
+   * on an approved parent arrives carrying the PARENT id — the asset service mints the
+   * shadow and re-targets (and re-maps screenshot row ids) server-side. See
+   * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`.
+   */
+  editTargetId: string;
+  /**
+   * Non-null when this listing's media CANNOT be edited at all (`removed` / `rejected`
+   * / the row is itself an internal shadow). The editor renders it as its inline alert
+   * instead of mounting the asset step — the same surface the client's on-mount
+   * `beginListingRevision` used to produce via `INVALID_REVISION`. `null` for every
+   * editable listing (`draft` / `pending` edited in place; `approved` via a revision).
+   */
+  editBlockedReason: string | null;
+  /**
+   * The EDITABLE target's current assets, edge-resolved — icon / cover / screenshots.
+   *
+   * 🔴 These are the assets of the EFFECTIVE edit target: the SHADOW's rows when a
+   * shadow EXISTS, the listing's own rows otherwise. NEVER the live parent's rows
+   * when a shadow exists — the media editor mutates + floor-checks exactly what it
+   * is handed, so returning the parent's `AppListingScreenshot` ids alongside a live
+   * shadow would let a "remove screenshot" delete a row from the LIVE served listing,
+   * bypassing moderator review. Same rule as `getMyListingForEdit`.
+   *
+   * 🔴 Under LAZY creation an approved parent with NO shadow yet projects the PARENT's
+   * rows — which IS the hazard above, so it is contained on the WRITE side: every
+   * screenshot proc re-maps a parent row id onto the freshly-minted shadow's clone
+   * before mutating, and `assertOwnerAssetEditable` fires (fail-closed) if that re-map
+   * ever hands back the parent. See `resolveOwnerAssetEditTarget`.
+   */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
 };
 
 /**
- * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target the page
- * then passes to `beginListingRevision` + the owner-gated asset procs), the
- * listing's lifecycle status + content rating, and whether a revision is already
- * under review. Owner-bound: a listing owned by another user → NOT_OWNED
- * (→FORBIDDEN); no listing row for the app → NOT_FOUND. Kind-agnostic (works for
- * both on-site and off-site listings — the on-site owner UI is the first caller).
+ * OWNER: resolve the caller's OWN listing for the owner-facing on-site
+ * listing-media page. Resolves by backing `appBlockId` (`AppListing.appBlockId` is
+ * `@unique`) when the app is approved; falls back to the pre-approval DRAFT BY SLUG
+ * (`kind='onsite', appBlockId IS NULL, status='draft'`) for a FIRST-version app that
+ * is still pending (no AppBlock exists yet) — the W13 draft-at-submit wiring gap that
+ * lets the author set media WHILE pending. At least one of `appBlockId` / `slug` must
+ * be given. Returns the `AppListing.id` (the target the page then passes to
+ * `beginListingRevision` + the owner-gated asset procs), the listing's lifecycle
+ * status + content rating, and whether a revision is already under review.
+ * Owner-bound: a listing owned by another user → NOT_OWNED (→FORBIDDEN); no listing
+ * row for the app → NOT_FOUND. Kind-agnostic (works for both on-site and off-site
+ * listings — the on-site owner UI is the first caller).
+ *
+ * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
+ * them the media editor had no way to see the icon/cover it is about to edit: it
+ * rendered every slot as "none" and its publish-floor check (icon+cover attached)
+ * could never be satisfied, so "Submit for review" stayed permanently disabled —
+ * the whole on-site listing-media flow was uncompletable. The assets come from the
+ * EFFECTIVE source: an approved parent's shadow WHEN ONE ALREADY EXISTS, else the
+ * listing's own rows.
+ *
+ * 🔴 THIS IS A READ. It does NOT create a shadow. It used to call
+ * `beginListingRevision`, so merely OPENING the media tab minted a `draft`
+ * `AppListing` — measured on prod 2026-07-30: 7 shadows, 7/7 with
+ * `updated_at == created_at` (never written since their clone tx), 6 of them minted
+ * that day purely by page views, three 1.5 s apart; 78% of approved onsite parents
+ * carried a shadow representing no edit, and they self-refilled on sight. A `.query`
+ * must not write. The shadow is now minted LAZILY by the first asset MUTATION (see
+ * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`), so every shadow
+ * that exists represents real work.
  */
 export async function getMyListingForApp(opts: {
-  appBlockId: string;
+  appBlockId?: string;
+  slug?: string;
   userId: number;
 }): Promise<GetMyListingForAppResult> {
-  const { appBlockId, userId } = opts;
-  const listing = await dbRead.appListing.findUnique({
-    where: { appBlockId },
-    select: { id: true, userId: true, status: true, contentRating: true },
-  });
+  const { appBlockId, slug, userId } = opts;
+  const entrySelect = {
+    id: true,
+    userId: true,
+    status: true,
+    contentRating: true,
+    revisionOfId: true,
+  } as const;
+  let listing = appBlockId
+    ? await dbRead.appListing.findUnique({
+        where: { appBlockId },
+        select: entrySelect,
+      })
+    : null;
+  // (W13 draft-at-submit) Pre-approval DRAFT fallback: a FIRST-version app has no
+  // backing AppBlock yet, so its draft listing (minted at submit) has
+  // `appBlockId = NULL` and is only reachable BY SLUG. Resolve it when the appBlockId
+  // lookup missed (or only a slug was supplied) so the owner-media page can reach the
+  // draft to set icon/cover/screenshots WHILE the app is pending. Scoped to the exact
+  // pre-approval-draft shape so this can never resolve some other kind/status by slug.
+  // Owner-bound below (unchanged).
+  if (!listing && slug) {
+    listing = await dbRead.appListing.findFirst({
+      where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      select: entrySelect,
+    });
+  }
   if (!listing) {
-    throw new OffsiteRequestError('NOT_FOUND', `no listing found for app ${appBlockId}`);
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
+    );
   }
   if (listing.userId !== userId) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
@@ -1512,6 +1628,38 @@ export async function getMyListingForApp(opts: {
     where: { status: 'pending', appListing: { revisionOfId: listing.id } },
     select: { id: true },
   });
+
+  // Resolve the EFFECTIVE edit target before reading assets — WITHOUT creating one.
+  // For an approved parent that is its shadow revision IF one already exists; a
+  // non-approved listing (draft / pending) has no shadow and is edited in place.
+  //
+  // 🔴 The existence probe reads the PRIMARY, not the replica. The client invalidates
+  // this query after EVERY asset mutation, and the FIRST such mutation is what mints
+  // the shadow — so the very next call is a read-after-write on a row inserted
+  // milliseconds ago. Missing it on a lagging replica would re-project the PARENT's
+  // rows (and their screenshot row ids) right after the shadow started diverging.
+  let effectiveId = listing.id;
+  let shadowId: string | null = null;
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
+    const existing = await dbWrite.appListing.findFirst({
+      where: { revisionOfId: listing.id },
+      select: { id: true },
+    });
+    if (existing) {
+      shadowId = existing.id;
+      effectiveId = existing.id;
+    }
+  }
+  // 🔴 READ-AFTER-WRITE: read a SHADOW back from the PRIMARY — always. A shadow read
+  // that misses on the replica throws NOT_FOUND → tRPC NOT_FOUND → `<NotFound />`
+  // (`retry: false`), discarding the editor mid-upload. Every non-shadow target
+  // (draft/pending edited in place, or an approved parent with no shadow yet) is old
+  // and stays on the replica.
+  const { assets } = await loadListingEditView(
+    effectiveId,
+    effectiveId !== listing.id ? dbWrite : dbRead
+  );
+
   return {
     appListingId: listing.id,
     status: listing.status,
@@ -1519,7 +1667,45 @@ export async function getMyListingForApp(opts: {
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
     hasPendingRevision: !!pendingRevisionReq,
+    shadowId,
+    editTargetId: effectiveId,
+    editBlockedReason: listingMediaEditBlockedReason(listing),
+    assets,
   };
+}
+
+/**
+ * Why this listing's MEDIA cannot be edited at all, or `null` when it can.
+ *
+ * The client used to learn this by firing `beginListingRevision` on mount and
+ * rendering its `INVALID_REVISION` message inline — the only thing that stopped the
+ * media editor mounting against a `removed` / `rejected` listing. Lazy creation
+ * removes that call, so the verdict is computed here (read-only) and surfaced on the
+ * read. Mirrors `updateListing`'s state routing: draft/pending edit in place,
+ * approved edits through a revision, rejected → resubmit, removed → terminal. An
+ * internal shadow (`revisionOfId != null`) is not a page the owner addresses directly.
+ *
+ * Pure + exported so the branch table is unit-testable without a DB.
+ */
+export function listingMediaEditBlockedReason(listing: {
+  status: string;
+  revisionOfId: string | null;
+}): string | null {
+  if (listing.revisionOfId != null) {
+    return 'this listing is an internal revision draft and cannot be edited directly';
+  }
+  switch (listing.status) {
+    case 'draft':
+    case 'pending':
+    case 'approved':
+      return null;
+    case 'rejected':
+      return 'this listing was rejected; submit a new listing instead of editing it';
+    case 'removed':
+      return 'this listing has been removed by a moderator and can no longer be edited';
+    default:
+      return `cannot edit a listing in status ${listing.status}`;
+  }
 }
 
 /**

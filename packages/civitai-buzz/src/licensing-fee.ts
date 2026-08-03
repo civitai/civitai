@@ -8,6 +8,25 @@
 /** Ceiling for a per-image licensing fee, in Buzz. Mirrored by the app's model-version schema. */
 export const MAX_LICENSING_FEE = 100;
 
+// Video costs far more to generate than an image, so every price ceiling is worth this much more on a
+// video model. Applied to the licensing-fee caps, the paid-access price cap, and the suggested defaults
+// — but NOT to the permanent-gate allowance, which counts gates rather than pricing them.
+export const VIDEO_CAP_MULTIPLIER = 5;
+
+/** The axis the caps resolve against. See capMediaType for how a base model maps onto it. */
+export type CapMediaType = 'image' | 'video';
+
+const mediaMultiplier = (mediaType: CapMediaType | undefined) =>
+  mediaType === 'video' ? VIDEO_CAP_MULTIPLIER : 1;
+
+/** Absolute ceiling a fee may be stored at, before the per-tier cap narrows it further. */
+export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
+  return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
+}
+
+/** Infinity means 'no limit', which no JSON boundary survives — every cap crosses one as null. */
+export const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? n : null);
+
 export type FeeRatio = { buzz: number; images: number };
 
 // Image-count denominators the creator UI offers (a select, not a free input). Every stored fee maps
@@ -43,8 +62,91 @@ export function ratioToFee(buzz: number, images: number): number {
 // everything else is 0.1 ⚡/image (= 1 ⚡ per 10 images).
 export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
 export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
-export function suggestedFeePerImage(modelType: string | null | undefined): number {
-  return (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+/** @internal Editors should read monetizationLimits().fee.suggested / .suggestedPerGeneration. */
+export function suggestedFeePerImage(
+  modelType: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  const base =
+    (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+  return base * mediaMultiplier(mediaType);
+}
+
+// Per-tier ceiling on the per-image licensing fee (CU 868kj4q49). Anyone may set a fee — including free
+// users — and the tier decides only HOW MUCH, replacing the old "Creator Program members only" gate.
+//
+// Shaped like SUGGESTED_FEE_PER_IMAGE: checkpoints carry more value, everything else takes `default`.
+const BRONZE_FEE_CAP = { checkpoint: 3, default: 1 };
+export const LICENSING_FEE_CAP_BY_TIER: Record<string, { checkpoint: number; default: number }> = {
+  free: { checkpoint: 1, default: 0.1 },
+  // Legacy paid tier — charges as bronze.
+  founder: BRONZE_FEE_CAP,
+  bronze: BRONZE_FEE_CAP,
+  silver: { checkpoint: 10, default: 5 },
+  gold: { checkpoint: MAX_LICENSING_FEE, default: MAX_LICENSING_FEE },
+};
+
+/**
+ * Highest per-image fee `tier` may charge for `modelType`. An unknown or lapsed tier gets the FREE cap, so
+ * a lapse tightens the ceiling without a migration and can never ungate anything.
+ */
+export function maxLicensingFee(
+  tier: string | null | undefined,
+  modelType?: string | null,
+  mediaType?: CapMediaType
+): number {
+  const caps =
+    (tier ? LICENSING_FEE_CAP_BY_TIER[tier] : undefined) ?? LICENSING_FEE_CAP_BY_TIER.free;
+  const base = modelType === 'Checkpoint' ? caps.checkpoint : caps.default;
+  return base * mediaMultiplier(mediaType);
+}
+
+/**
+ * What a generation is billed: the stored fee lowered to the RECIPIENT's current cap. The stored value is
+ * never rewritten, so re-subscribing restores it. A positive fee never clamps to 0 (the lowest cap of any
+ * tier is 0.1), so callers never need to drop a zeroed component.
+ */
+export function effectiveLicensingFee(
+  storedFee: number | null | undefined,
+  recipientTier: string | null | undefined,
+  modelType?: string | null,
+  mediaType?: CapMediaType
+): number {
+  if (storedFee == null || storedFee <= 0) return 0;
+  return Math.min(storedFee, maxLicensingFee(recipientTier, modelType, mediaType));
+}
+
+/**
+ * The cap in the editor's whole-number domain. Fees are entered as an integer "N ⚡ per M generations"
+ * ratio, so a fractional per-image cap (free/other is 0.1) has no valid entry at small denominators —
+ * capping in the per-image domain instead lets the UI offer 0.1 and the integer schema then rejects it.
+ *
+ * @internal Editors should read monetizationLimits().fee.maxBuzzByDenominator, which keeps this in step
+ * with the denominators offered and the tier used.
+ */
+export function maxFeeBuzzForRatio(
+  tier: string | null | undefined,
+  modelType: string | null | undefined,
+  images: number,
+  mediaType?: CapMediaType
+): number {
+  return Math.floor(maxLicensingFee(tier, modelType, mediaType) * images);
+}
+
+/**
+ * Denominators from FEE_IMAGE_OPTIONS that can express at least 1 ⚡ under this tier's cap.
+ * @internal Editors should read monetizationLimits().fee.denominators.
+ */
+export function feeImageOptionsForCap(
+  tier: string | null | undefined,
+  modelType?: string | null,
+  mediaType?: CapMediaType
+): number[] {
+  const usable = FEE_IMAGE_OPTIONS.filter(
+    (n) => maxFeeBuzzForRatio(tier, modelType, n, mediaType) >= 1
+  );
+  // Never return an empty select: the coarsest denominator is the most expressive.
+  return usable.length ? [...usable] : [FEE_IMAGE_OPTIONS[FEE_IMAGE_OPTIONS.length - 1]];
 }
 
 // Fees can be charged per image, per video, etc., so the cadence noun stays media-agnostic:

@@ -2,6 +2,12 @@ import * as z from 'zod';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
+import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import {
+  civitaiHostedImageUrlSchema,
+  SOURCE_IMAGE_URL_MAX,
+} from '~/server/schema/blocks/civitai-image-url';
+import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -36,10 +42,12 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 // `WorkflowBodyCustomComfy` (civitai-app-starters PR #171) — keep the two in
 // lockstep.
 //
-// INERT/DARK: blocks.router still handles ONLY `textToImage` — the submit /
-// estimate branch on `kind==='customComfy'` (+ the post-paid budget belt) is the
-// separate PR6. This member only widens the accepted wire shape; no live code
-// path reads it yet.
+// LIVE: blocks.router now branches on `kind==='customComfy'` in BOTH
+// `estimateWorkflow` and `submitWorkflow` (see `estimateCustomComfyWorkflow` /
+// `submitCustomComfyWorkflow`), backed by the post-paid budget belt
+// (`settleCustomComfySpend`) and the `buildCustomComfyWorkflowInput` translator.
+// The earlier "INERT/DARK — router handles ONLY textToImage" note is obsolete;
+// both members of this union are wired end-to-end.
 //
 // Caps are intentionally tighter than the platform-wide generateImageSchema —
 // blocks run in untrusted iframes and the token issuer caps per-call buzz at
@@ -87,40 +95,41 @@ const blockAdditionalResourceSchema = z.object({
 // ── img2img source image (App Blocks IMAGE bridge, Phase-2a) ─────────────────
 // The block body is UNTRUSTED iframe input, so an init/source image MUST NOT be
 // an arbitrary remote URL the generator would fetch (SSRF / arbitrary-fetch).
-// It is bounded to a Civitai-controlled host. An uploaded image resolves to an
-// `https://orchestration…civitai.com` URL, so this same bound covers the
-// "uploaded image" case WITHOUT widening to attacker-controlled origins.
+// It is bounded to a Civitai-controlled host by `civitaiHostedImageUrlSchema`.
 //
-// This is validated by parsed URL HOSTNAME (not a substring match), which is
-// intentionally tighter than the platform's server `sourceImageSchema`
-// (`.includes('image.civitai.com')`) — a substring check would accept
-// `https://evil.example/?x=image.civitai.com`; a hostname check rejects it and
-// also rejects non-https, userinfo, and host-confusion tricks. Kept LOCAL
-// (rather than importing the server orchestrator schema) so this module stays
-// client-safe — it is `import type`'d by a client component (failureSnapshot).
-const CIVITAI_IMAGE_HOSTS = ['civitai.com', 'civitai.red', 'civitai.green'] as const;
-function isCivitaiHostedImageUrl(raw: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== 'https:') return false;
-  const host = parsed.hostname.toLowerCase();
-  return CIVITAI_IMAGE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-}
+// 🔴 That predicate MOVED — unchanged — to `~/server/schema/blocks/civitai-image-url`,
+// which is where its full reasoning now lives (hostname-not-substring, the two
+// WHATWG parser-differential classes it closes, and the canonicalize-what-you-
+// validate rule). It moved because the `kind: 'step'` registry needs the SAME
+// bound for every step type that takes an image URL (`convert-image` today) and
+// cannot import this module — this module imports the registry to derive its
+// wire enums, so it would be a cycle. One rule, one place.
+//
+// Re-exported here because `SOURCE_IMAGE_URL_MAX` was part of this module's
+// public surface before the move.
+export { SOURCE_IMAGE_URL_MAX };
 
 const blockSourceImageSchema = z.object({
-  url: z
-    .string()
-    .max(2048)
-    .refine(isCivitaiHostedImageUrl, 'source image must be a Civitai-hosted https image URL'),
+  url: civitaiHostedImageUrlSchema,
   // Dimension hints for the graph's denoise/aspect derivation. Bounded to the
   // same block caps as params so an iframe can't send absurd dimensions.
   width: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
   height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX),
 });
+
+export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
+
+// ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
+// ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
+// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
+// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
+// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
+// Grok 7). This constant only stops an untrusted iframe from posting an
+// unbounded array before the body is even parsed — it is set ABOVE the largest
+// per-ecosystem cap on purpose so a future ecosystem raising its own limit is
+// not silently clamped here. Every element is validated individually against
+// `blockSourceImageSchema` (Civitai-host + dimension bounds), never just [0].
+export const BLOCK_SOURCE_IMAGES_WIRE_MAX = 10;
 
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
@@ -130,7 +139,10 @@ const blockTextToImageBodySchema = z.object({
   // LoRA-type model version that the server entitlement-gates per-resource and
   // base-model-family-matches against the checkpoint before any spend. Capped
   // at MAX_ADDITIONAL_RESOURCES for the iframe posture above.
-  additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
+  additionalResources: z
+    .array(blockAdditionalResourceSchema)
+    .max(MAX_ADDITIONAL_RESOURCES)
+    .optional(),
   // Optional img2img init/source image (App Blocks IMAGE bridge).
   // When present, the block bridge emits an img2img graph workflow whose VARIANT
   // is chosen from the checkpoint's ecosystem (buildImageWorkflowInput /
@@ -146,7 +158,34 @@ const blockTextToImageBodySchema = z.object({
   // buildImageWorkflowInput rejects fail-closed a checkpoint whose ecosystem
   // supports NEITHER img2img variant (deterministically via `isWorkflowAvailable`,
   // never relying on the graph's safeParse auto-correction).
+  //
+  // 🔴 DEPRECATED ALIAS — kept working indefinitely. The published developer
+  // docs and `@civitai/app-sdk` both ship `sourceImage` today, so removing it
+  // would break every deployed block. `sourceImages` (below) is the current
+  // field; the server normalizes the singular into a 1-element array
+  // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
+  // Multi-image conditioning. The graph layer has always supported N images
+  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
+  // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
+  // per-image posture as the singular one, with no "first element only" gap.
+  //
+  // Bounds: `.min(1)` — an EMPTY array is REJECTED rather than silently treated
+  // as "no source image". A caller that sends `sourceImages: []` computed an
+  // empty list and meant to send images; quietly downgrading that to a txt2img
+  // generation would bill them for something they did not ask for, which is the
+  // silent-wrong-answer failure mode this bridge has already been bitten by.
+  // Omit the field entirely for txt2img. `.max()` is the absolute wire bound —
+  // the REAL cap is per-ecosystem and enforced in buildImageWorkflowInput.
+  //
+  // Supplying BOTH `sourceImage` and `sourceImages` is rejected as ambiguous
+  // (see the union-level check below) rather than picking a winner.
+  sourceImages: z
+    .array(blockSourceImageSchema)
+    .min(1, 'sourceImages must not be empty — omit the field for text-to-image')
+    .max(BLOCK_SOURCE_IMAGES_WIRE_MAX)
+    .optional(),
   // Optional viewer-picked buzz account to spend (money page blocks). Absent →
   // unchanged Auto behavior (domain-allowed currencies drained blue-first). When
   // present, blocks.router moves it to the FRONT of the domain-allowed currency
@@ -183,6 +222,21 @@ const blockTextToImageBodySchema = z.object({
   }),
 });
 
+// Supplying BOTH the deprecated `sourceImage` and the current `sourceImages` is
+// AMBIGUOUS — we refuse rather than pick a winner. Silently preferring one is
+// exactly how a caller ends up conditioning on an image it thought it had
+// replaced. Enforced at the WIRE schema so both `estimateWorkflow` and
+// `submitWorkflow` inherit it from the single parse, with no way to reach the
+// translator holding both.
+const blockTextToImageBodySchemaChecked = blockTextToImageBodySchema.refine(
+  (body) => !(body.sourceImage && body.sourceImages),
+  {
+    path: ['sourceImages'],
+    message:
+      'send either `sourceImage` (deprecated) or `sourceImages`, not both — they are ambiguous together',
+  }
+);
+
 // App Blocks customComfy bridge (v1). Coarse fail-closed wire gate only:
 //  - `recipe` MUST be a REGISTERED recipe id (derived from the recipe registry
 //    keys) — an unregistered id is rejected at the union, before any translator
@@ -200,10 +254,57 @@ export const blockCustomComfyBodySchema = z
   })
   .strict();
 
+// ── App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1 ──
+//
+// The THIRD union member, added ALONGSIDE the existing two. `textToImage` and
+// `customComfy` are untouched: this member only ADDS a discriminant, so every
+// deployed block and every published `@civitai/app-sdk` body keeps parsing and
+// behaving exactly as before.
+//
+// Where the other two members each hand-wrote a capability, this one is
+// REGISTRY-BACKED: `step` must be a registered id (`REGISTERED_STEP_IDS`,
+// derived from the step-registry keys), and everything about the capability —
+// its bounded params, its billing mode, its moderation posture, its builder —
+// lives in that entry. Adding a capability is a registry entry, not a new union
+// member and not a router branch. That is the point: sibling union members are
+// what make consolidation a breaking change for every published app once the
+// wire contract is public.
+//
+// The wire gate here is deliberately COARSE, exactly mirroring `customComfy`:
+//  - `step` MUST be a REGISTERED id — an unregistered id is rejected AT THE
+//    UNION, before any translator, any spend reservation, or any orchestrator
+//    call. Fail-closed at the schema.
+//  - `params` is an opaque `Record<string, unknown>` here; the per-step
+//    `.strict()` param schema is applied by the handler, which is the single
+//    place a step's real param contract lives. That keeps the wire surface
+//    step-agnostic, so registering a step never edits this file.
+//  - `.strict()` rejects any extra top-level field on the body.
+//
+// 🔴 `customComfy` is NOT migrated behind the registry here. That is the RFC's
+// migration step 3 (with `kind: 'customComfy'` retained as a deprecated alias)
+// and is deliberately out of scope — step 1 is "land the registry alongside the
+// existing members; nothing breaks".
+//
+// Built through a FACTORY rather than inline so the "enum is derived from the
+// registry, not hardcoded" property is directly testable: a test can build the
+// same schema over a widened id list and assert the enum grew.
+export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
+  return z
+    .object({
+      kind: z.literal('step'),
+      step: z.enum(stepIds),
+      params: z.record(z.string(), z.unknown()),
+    })
+    .strict();
+}
+
+export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
-  blockTextToImageBodySchema,
+  blockTextToImageBodySchemaChecked,
   blockCustomComfyBodySchema,
+  blockStepBodySchema,
 ]);
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
@@ -230,4 +331,149 @@ export type BlockWorkflowSnapshot = {
     amount: number;
     accountType: 'yellow' | 'blue' | 'red' | 'green';
   };
+  /**
+   * Checkpoint versions the generation graph SILENTLY replaced (issue #3520).
+   *
+   * On a `modelLocked` ecosystem the graph swaps any version id that is not in
+   * the current workflow's visible list for that workflow's default, returns
+   * success, and bills the user. That is deliberate graceful degradation — it is
+   * what keeps an app pinned to a since-retired version working instead of
+   * hard-failing — but through this bridge the id was DELIBERATE and the
+   * correction was previously undetectable. `requested` is what the block asked
+   * for, `applied` is what actually ran.
+   *
+   * 🔴 BEHAVIOUR IS UNCHANGED: the same model runs as before; this field only
+   * reports it. OPTIONAL + additive, and OMITTED entirely when nothing was
+   * substituted, so every existing snapshot stays byte-identical and a consumer
+   * that does not read it is unaffected.
+   *
+   * WHERE IT APPEARS. 🔴 ON THE `kind: 'textToImage'` PATH ONLY. That is the
+   * only wire body whose handler resolves a checkpoint through the generation
+   * graph (`createBlockTextToImageStep` → `buildGenerationContext`), so it is
+   * the only one that can substitute anything. On that path: the submit reply,
+   * the `estimateWorkflow` reply, EVERY reply from `submitWorkflow` that quotes
+   * a cost without submitting (insufficient per-call budget, the per-user daily
+   * / review Buzz cap, the per-app aggregate spend+velocity cap, the dev-tunnel
+   * session cap), and — because the submit persists it on the orchestrator
+   * workflow's `metadata` — every subsequent `pollWorkflow` / `cancelWorkflow`
+   * read of that workflow. The poll is the one that matters in practice: it is
+   * the snapshot carrying `imageUrls`, i.e. the one a block actually renders
+   * from, so the record is present next to the images it describes rather than
+   * only on a reply the block may have discarded.
+   * The estimate reply is the exception — a whatIf creates no persisted workflow,
+   * so there the record exists only on that reply.
+   *
+   * 🔴 IT DOES **NOT** APPEAR ON `kind: 'customComfy'` OR `kind: 'step'`. Each of
+   * those has its own four cost-quoting exits, and none of the eight carries this
+   * field — correctly, because neither handler builds a generation context: a
+   * customComfy body binds a server-authored recipe and a registry step carries
+   * no model binding at all, so there is nothing to substitute and nothing to
+   * report.
+   *
+   * 🔴 IF YOU ARE EXTENDING A STEP TO RESOLVE A CHECKPOINT THROUGH THE GRAPH,
+   * READ THIS. The paragraph above is a statement about the txt2img handler's
+   * plumbing, NOT a property of the bridge — do not assume the field will flow
+   * on your path because it flows there. The READ half is kind-agnostic (the
+   * poll recovers the record from `workflow.metadata` for any workflow), but the
+   * WRITE half is per-handler: your handler must pass the request's collector to
+   * `snapshotFromWorkflow(..., { modelSubstitutions })` on the reply AND write
+   * `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY` into the submitted
+   * `body.metadata`, or the substitution stays exactly as unobservable as it was
+   * before #3520 — on the one surface #3520 exists to make observable.
+   * `submitStepWorkflow` does neither today. Pinned by
+   * `generation-surface-wiring.test.ts` (every `buildGenerationContext` call site
+   * enumerated from the tree and pinned to its ENCLOSING FUNCTION, so a new one
+   * inside a step handler fails there) and by the `kind:'step'` absence tests +
+   * their planted-metadata control in `blocks.router.workflow.test.ts`.
+   *
+   * 🔴 WIRE CONTRACT: this is an ADDITIVE field on the type
+   * `@civitai/app-sdk`'s `blocks/types.ts` mirrors. The SDK's inbound validator
+   * does not know it yet, so a block reads it only after the SDK type is widened
+   * in that repo — tracked separately; nothing here edits another repo.
+   */
+  modelSubstitutions?: Array<{
+    requested: number;
+    applied: number;
+    reason: ModelSubstitutionReason;
+  }>;
+  /**
+   * Generated FREE TEXT produced by a registered step whose `moderationPosture`
+   * is `'textOutput'` — and which has PASSED an output moderation scan.
+   *
+   * 🔴 EVERY STRING HERE HAS BEEN SCANNED. That is a property of how the field
+   * is produced, not a promise about who sets it. The single producer is
+   * `attachModeratedStepTextOutputs` (`services/blocks/steps/moderation`), which
+   * runs the scan and strips any incoming value of this field before merging its
+   * own. Do NOT set it anywhere else; doing so would be publishing unscanned
+   * model output, which is the one thing the `'textOutput'` posture exists to
+   * prevent.
+   *
+   * 🔴 BE EXACT ABOUT WHAT ENFORCES THAT — AN EARLIER REVISION OF THIS COMMENT
+   * WAS WRONG, AND IT IS RECORDED RATHER THAN QUIETLY REPLACED BECAUSE THIS IS
+   * THE WIRE-CONTRACT DOC AN ENTRY AUTHOR AND THE `@civitai/app-sdk`
+   * MIRROR-WRITER READ. It said `snapshotFromWorkflow` and `projectAppWorkflow`
+   * "are pure and synchronous and read only `extractOutput`, which returns MEDIA
+   * — neither can put prose in a snapshot at all". `StepOutputMedia.url` is a
+   * bare `string`, never URL-validated, and it reaches `snapshot.imageUrls` /
+   * `AppWorkflow.images[].url` without meeting the scan — so
+   * `extractOutput: () => [{ url: theModelsReply, … }]` on a text entry WOULD
+   * have published unscanned generated text with every gate green. Anyone
+   * trusting the old sentence would conclude a media extractor on a text entry
+   * is structurally harmless and propose relaxing registry clause 8-ii. It is
+   * not harmless; 8-ii is load-bearing.
+   *
+   * WHAT ACTUALLY HOLDS IT (all three off the one `stepOutputShape` predicate,
+   * and spelled out at `attachModeratedStepTextOutputs`): the TYPE
+   * (`TextOutputSurface.extractOutput?: never`), the LOAD-time registry clause
+   * 8-ii, and the READ path (both `workflow.service` extractors call
+   * `extractOutput` only when `postureProducesMedia(...)`). The original
+   * structural point does still stand on its own — a scan is an async network
+   * call and both projections are pure and synchronous, so neither could perform
+   * one — but it bounds only WHO CAN SCAN, never what a media extractor can
+   * smuggle.
+   *
+   * WHERE IT APPEARS: `blocks.pollWorkflow` and `blocks.cancelWorkflow` — the
+   * two procedures wrapped by `attachModeratedStepTextOutputs`, and therefore
+   * the only two that can carry THIS FIELD.
+   *
+   * 🔴 THE EARLIER WORDING CALLED THEM "the two surfaces a block reads a
+   * finished generation from", WHICH IS AN OVERCLAIM — corrected at the poll
+   * itself for the same reason, and recorded here too. Three further procedures
+   * read a finished workflow on a block's behalf, UNWRAPPED:
+   * `blocks.queryAppWorkflows`, `blocks.cancelAppWorkflow` and
+   * `blocks.publishGenerationOutputs` (note these are DIFFERENT procedures from
+   * the similarly-named wrapped pair). What makes those three safe is stated at
+   * each of them — `AppWorkflow` has no text field, and its `images` are
+   * posture-gated — not here.
+   *
+   * NOT on the submit replies, and that is not an oversight: the step submit
+   * passes no `wait`, so the reply is a freshly-queued workflow with no `output`
+   * to publish. It is also not load-bearing — a submit reply is built by
+   * `snapshotFromWorkflow`, which does not produce this field, so an
+   * orchestrator that started answering submits with completed output would
+   * degrade to "the block polls once more", never to "unscanned text ships".
+   *
+   * OMITTED entirely when there is no text, so every existing snapshot stays
+   * byte-identical.
+   *
+   * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
+   * mirrors, exactly like `modelSubstitutions` above. The SDK's inbound
+   * validator does not know it yet, so a block reads it only once that type is
+   * widened in the SDK repo — tracked separately; nothing here edits another repo.
+   */
+  textOutputs?: string[];
+  /**
+   * Set when generated text WAS produced but is being withheld — a content-policy
+   * hit, or a scanner error/timeout (the scan fails CLOSED).
+   *
+   * `reason` is a user-facing message, deliberately generic: it does not name the
+   * labels that triggered. The triggering labels + scores go to the per-app
+   * trigger log instead, which is where the actionable signal lives (an app whose
+   * outputs trigger constantly is telling you about its system prompt).
+   *
+   * Independent of `textOutputs` rather than mutually exclusive: a workflow with
+   * two text steps can release one and withhold the other, and both fields then
+   * appear.
+   */
+  textOutputWithheld?: { reason: string };
 };

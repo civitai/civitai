@@ -143,7 +143,7 @@ export const CreatorProgramV2 = () => {
           <h2 className="text-2xl font-bold">Get Paid</h2>
           <CreatorProgramPhase />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <p>Generating a lot of Buzz? Bank it to earn cash!</p>
           <Anchor href="/creator-program">Learn more</Anchor>
         </div>
@@ -225,7 +225,6 @@ const MembershipLapsedCard = () => {
 
           <div className="flex flex-col gap-2.5">
             <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
-            <LapsedBenefitRow text="Re-open your creator shop" />
             <LapsedBenefitRow text="Earn real cash from your creations" />
           </div>
 
@@ -335,7 +334,7 @@ const JoinCreatorProgramCard = () => {
         <p className="font-bold">Program requirements</p>
         <Divider />
 
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
             title={`Have a Creator Score higher than ${abbreviateNumber(
@@ -906,8 +905,8 @@ const WithdrawCashCard = () => {
     return null; // Failed to load.
   }
 
-  const canWithdraw =
-    (userCash?.ready ?? 0) >= MIN_WITHDRAWAL_AMOUNT || (userCash?.withdrawn ?? 0) > 0;
+  const hasMinBalance = (userCash?.ready ?? 0) >= MIN_WITHDRAWAL_AMOUNT;
+  const canWithdraw = hasMinBalance || (userCash?.withdrawn ?? 0) > 0;
 
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
@@ -976,7 +975,7 @@ const WithdrawCashCard = () => {
           </Table.Tbody>
         </Table>
 
-        {!canWithdraw && (
+        {!hasMinBalance && (
           <Alert color="red" className="mt-auto p-2">
             <div className="flex items-center gap-2">
               <IconLock size={24} className="shrink-0" />

@@ -60,22 +60,42 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
+// Stickers are paid goods. `span` and its data-* attributes are in the default
+// allowlist (mentions need them), so sticker markup would otherwise survive on
+// every rich-text surface — model descriptions, bounties, reviews, changelogs —
+// and render as the paid sticker for anyone who pasted it, owned or not.
+// Denied by default so a surface added later fails closed; the surfaces that
+// charge for stickers opt in.
+// Normalised so the strip is strictly BROADER than every consumer. All four
+// matchers (the RenderHtml hydrator, Tiptap parseHTML, the id-collection regex
+// and countStickerPlacements) are exact-lowercase today, so `STICKER` and
+// ` sticker` render nowhere — but if any one of them is later made lenient
+// about case or whitespace, a narrower strip would quietly open a gap.
+const isStickerSpan = (frame: { tag: string; attribs: Record<string, string> }) =>
+  frame.tag === 'span' && frame.attribs['data-type']?.trim().toLowerCase() === 'sticker';
+
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;
+  /** Opt-in for surfaces that gate sticker ownership (chat, comments). */
+  allowStickers?: boolean;
 };
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
-  const { stripEmpty = false, transformTags, ...options } = args ?? {};
+  const {
+    stripEmpty = false,
+    allowStickers = false,
+    transformTags,
+    // Composed rather than passed through: `...options` spreads last, so a
+    // caller-supplied filter would otherwise silently drop the sticker strip.
+    exclusiveFilter,
+    ...options
+  } = args ?? {};
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
     allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
-    exclusiveFilter: stripEmpty
-      ? (frame) => {
-          return (
-            frame.tag === 'p' && // The node is a p tag
-            !frame.text.trim() // The element has no text
-          );
-        }
-      : undefined,
+    exclusiveFilter: (frame) =>
+      (!allowStickers && isStickerSpan(frame)) ||
+      (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
+      (exclusiveFilter?.(frame) ?? false),
     allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
     transformTags: {
       a: function (tagName, { href, ...attr }) {

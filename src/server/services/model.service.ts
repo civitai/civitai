@@ -132,7 +132,6 @@ import {
   getValidCreatorMembershipMap,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -170,7 +169,10 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import {
+  getPaidAccess,
+  getPublicPaidAccessForModelVersions,
+} from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -3528,6 +3530,7 @@ export async function getModelsWithVersions({
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
+  const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
   const images = await getImagesForModelVersionCache(modelVersionIds);
   // const images = await getImagesForModelVersion({
@@ -3672,13 +3675,10 @@ export async function getModelsWithVersions({
               const files = groupedFiles[version.id]?.files ?? [];
               files.push(...vaeFile);
 
-              let earlyAccessDeadline = getEarlyAccessDeadline({
-                versionCreatedAt: version.createdAt,
-                publishedAt: version.publishedAt,
-                earlyAccessTimeframe: earlyAccessTimeFrame,
-              });
-              if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-                earlyAccessDeadline = undefined;
+              // `earlyAccessTimeFrame` is dead — no write path has touched it since the PaidAccess
+              // cutover, so the deadline has to come from PaidAccess.
+              const paidAccess = paidAccessMap[version.id] ?? null;
+              const earlyAccessDeadline = paidAccess?.endsAt ?? undefined;
 
               return {
                 ...version,
@@ -3697,6 +3697,7 @@ export async function getModelsWithVersions({
                   };
                 }),
                 earlyAccessDeadline,
+                paidAccess,
                 stats,
                 // images: images
                 //   .filter((image) => image.modelVersionId === version.id)

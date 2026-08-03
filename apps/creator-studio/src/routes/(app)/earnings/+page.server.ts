@@ -6,12 +6,13 @@ import {
   getBuzzDollarRatio,
 } from '$lib/server/earnings';
 import { getCreatorCash } from '$lib/server/cash';
-import { parseMonthRange, resolveCompareMonth } from '$lib/date-range';
+import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-  const range = parseMonthRange(url.searchParams.get('from'), url.searchParams.get('to'));
-  // Comparison month (strictly earlier than the selected one) drives the trend overlay AND the per-source delta chips.
-  const compare = resolveCompareMonth(url.searchParams.get('cmp'), range);
+export const load: PageServerLoad = async ({ locals, cookies }) => {
+  // The period comes from the shared cookie, NOT the URL: RangeSelector only ever writes that cookie, so reading
+  // search params here left every month change resolving back to the current month. Same source as the analytics
+  // loads. Comparison month (strictly earlier than the selected one) drives the trend overlay AND the delta chips.
+  const { range, compare } = readAnalyticsPeriod(cookies);
   // Last elapsed day of the selected month — the trend draws the full month on the x-axis but the current line stops
   // here (a partial month shouldn't read as a dip to zero for days that haven't happened).
   const todayIso = new Date().toISOString().slice(0, 10);

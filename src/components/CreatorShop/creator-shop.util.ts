@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
-import type { GetPublicShopItemsInput } from '~/server/schema/creator-shop.schema';
+import type {
+  GetCommunityCosmeticsInput,
+  GetPublicShopItemsInput,
+} from '~/server/schema/creator-shop.schema';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -37,6 +40,17 @@ export type CreatorShopPublicShopItem =
   RouterOutput['creatorShop']['getPublicShopItems']['items'][number];
 export const useQueryPublicShopItems = (filters: Partial<GetPublicShopItemsInput> = {}) => {
   const { data, ...rest } = trpc.creatorShop.getPublicShopItems.useInfiniteQuery(filters, {
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
+  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  return { items, ...rest };
+};
+
+// Site-wide community cosmetics hub feed (/shop marketplace section).
+export type CommunityCosmeticItem =
+  RouterOutput['creatorShop']['getCommunityCosmetics']['items'][number];
+export const useQueryCommunityCosmetics = (filters: Partial<GetCommunityCosmeticsInput> = {}) => {
+  const { data, ...rest } = trpc.creatorShop.getCommunityCosmetics.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
   const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
@@ -139,6 +153,19 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to archive item'),
   });
 
+  const setItemListed = trpc.creatorShop.setItemListed.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      // Delisting can strip a featured slot server-side, and both of these
+      // filter on `listed`.
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
+    },
+    onError: onError('Failed to update listing'),
+  });
+
   const unarchiveItem = trpc.creatorShop.unarchiveItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
@@ -209,6 +236,7 @@ export const useMutateCreatorShop = () => {
     submitItem,
     updateItem,
     archiveItem,
+    setItemListed,
     unarchiveItem,
     deleteItem,
     addResoldItem,

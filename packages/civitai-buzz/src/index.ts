@@ -6,3 +6,5 @@ export * from './queries';
 export * from './licensing-fee';
 export * from './creator-program';
 export * from './paid-access';
+export * from './media-type';
+export * from './monetization-limits';

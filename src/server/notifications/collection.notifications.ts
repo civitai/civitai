@@ -39,7 +39,9 @@ export const collectionNotifications = createNotificationProcessor({
     displayName: "Your submission wasn't accepted",
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `Your submission to ${details.collectionName} wasn't accepted.`,
+      message: details.reason
+        ? `Your submission to ${details.collectionName} wasn't accepted. ${details.reason}`
+        : `Your submission to ${details.collectionName} wasn't accepted.`,
       url: details.imageId
         ? `/images/${details.imageId}`
         : details.modelId
@@ -51,6 +53,9 @@ export const collectionNotifications = createNotificationProcessor({
         : `/collections/${details.collectionId}`,
     }),
   },
+  // No longer sent — `collection-item-rejected` carries the reason instead. Kept because
+  // getNotificationMessage resolves at render time, so removing it would blank out notifications
+  // already delivered to users.
   'beggars-board-rejected': {
     displayName: 'Beggars board entry declined',
     category: NotificationCategory.Buzz,

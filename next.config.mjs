@@ -141,6 +141,7 @@ export default defineNextConfig(
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
+      '@civitai/db-queries',
       '@civitai/shared',
       '@civitai/buzz',
       '@civitai/redis',
@@ -192,6 +193,17 @@ export default defineNextConfig(
       serverSourceMaps: true,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
+      // Nested async chunking for the SERVER build. Next's own defaults table
+      // (node_modules/next/dist/docs/01-app/03-api-reference/08-turbopack.md) has
+      // `turbopackClientSideNestedAsyncChunking` defaulting to TRUE in build mode but
+      // `turbopackServerSideNestedAsyncChunking` defaulting to FALSE in *both* dev and
+      // build — so the server build never got the async-chunk dedup the client build has,
+      // and every async chunk group re-emits its whole module graph.
+      //
+      // Trade: ~72% fewer emitted server chunks and roughly half the server chunk bytes,
+      // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
+      // in the PR rather than here, so they don't rot when Next's chunker changes.
+      turbopackServerSideNestedAsyncChunking: true,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

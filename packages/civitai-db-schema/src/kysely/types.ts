@@ -15,6 +15,7 @@ import type {
   CryptoTransactionStatus,
   RewardsEligibility,
   PaymentProvider,
+  MembershipGiftStatus,
   UserEngagementType,
   LinkType,
   ModelType,
@@ -277,6 +278,9 @@ export type AppBlock = {
   featured_order: number | null;
   screenshots: unknown | null;
   external_url: string | null;
+  spend_tier: Generated<string>;
+  spend_cap_buzz_per_day: number | null;
+  spend_velocity_max_gens: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -1916,6 +1920,8 @@ export type Cosmetic = {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: string | null;
+  pHashUrl: string | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -1934,6 +1940,7 @@ export type CosmeticShopItem = {
   reviewedById: number | null;
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
+  listed: Generated<boolean>;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -2366,6 +2373,24 @@ export type Link = {
   type: LinkType;
   entityId: number;
   entityType: string;
+};
+export type MembershipGift = {
+  id: string;
+  gifterId: number;
+  recipientId: number;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: Generated<MembershipGiftStatus>;
+  message: string | null;
+  anonymous: Generated<boolean>;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ModActivity = {
   id: Generated<number>;
@@ -3602,6 +3627,7 @@ export type UserCosmetic = {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
 };
 export type UserCosmeticShopPurchases = {
   userId: number;
@@ -3623,6 +3649,14 @@ export type UserLink = {
   userId: number;
   url: string;
   type: LinkType;
+};
+export type UserMembershipOverride = {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type UserMetric = {
   userId: number;
@@ -4048,6 +4082,7 @@ export type DB = {
   License: License;
   LicensingRoot: LicensingRoot;
   Link: Link;
+  MembershipGift: MembershipGift;
   ModActivity: ModActivity;
   Model: Model;
   Model3D: Model3D;
@@ -4159,6 +4194,7 @@ export type DB = {
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;
+  UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;
   UserNotificationSettings: UserNotificationSettings;
   UserPaymentConfiguration: UserPaymentConfiguration;

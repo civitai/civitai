@@ -65,11 +65,15 @@ import {
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import {
+  countPendingAccountDeletionImageRestores,
+  disarmAccountDeletionImagePurge,
+  recordPendingImageRestore,
+} from '~/server/services/account-deletion-images';
 import { deleteImageById } from '~/server/services/image.service';
-import { userModelCountCache } from '~/server/redis/caches';
+import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -93,21 +97,19 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { imageRemovalMode } from '~/server/utils/image-removal-mode';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type {
-  BountyEngagementType,
-  CosmeticType,
-  ModelEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { BountyEngagementType, ModelEngagementType } from '~/shared/utils/prisma/enums';
 import {
   ArticleEngagementType,
   CollectionMode,
   CollectionType,
   CosmeticSource,
+  CosmeticType,
   ModelStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
@@ -234,12 +236,9 @@ export const getUserCreator = async ({
   );
 
   // Expose only whether the shop is public — never leak the raw settings blob.
-  // "Live" requires an enabled shop AND an active membership; only pay for the
-  // membership check when the shop is enabled.
   const { settings, ...rest } = user;
-  const shopEnabled =
+  const creatorShopEnabled =
     (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true;
-  const creatorShopEnabled = shopEnabled && (await hasValidCreatorMembership(user.id));
   return {
     ...rest,
     creatorShopEnabled,
@@ -1025,16 +1024,18 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
-export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
+export const deleteUser = async ({ id, username, removeModels, removeImages }: DeleteUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { username, id },
-    select: { id: true },
+    select: { id: true, meta: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }
     : { userId: -1 };
+
+  const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
 
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
@@ -1052,6 +1053,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
         paddleCustomerId: null,
         image: null,
         profilePictureId: null,
+        meta,
       },
     }),
   ]);
@@ -1087,8 +1089,16 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  *
  * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
  * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
- * the user's Models to userId = -1. We can only restore what survives the deletion: the User row's
- * scrubbed fields (caller supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ * the user's Models to userId = -1.
+ * We can only restore what survives the deletion: the User row's scrubbed fields (caller
+ * supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ *
+ * Images depend on the removal the user chose (`meta.imageRemoval`):
+ * - `immediate` — remove-deleted-user-images hard-deletes them, S3 objects included, as it
+ *   reaches the account. Whatever it already took is gone; the rest survive from here on.
+ * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
+ *   so restoring inside the window brings the images back.
+ * Posts are hard-deleted on the immediate path only and are not recoverable.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
@@ -1096,7 +1106,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 export const restoreUser = async ({ id, username, email, restoreModels }: RestoreUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { id },
-    select: { id: true, deletedAt: true },
+    select: { id: true, deletedAt: true, meta: true },
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
@@ -1155,10 +1165,20 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  await dbWrite.user.update({
-    where: { id },
-    data: { deletedAt: null, username, email },
-  });
+  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+
+  await dbWrite.$transaction([
+    dbWrite.user.update({
+      where: { id },
+      data: { deletedAt: null, username, email, meta },
+    }),
+    disarmAccountDeletionImagePurge(id),
+  ]);
+
+  // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
+  // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.
+  const imagesPendingRestore = await countPendingAccountDeletionImageRestores(id);
+  if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -1167,7 +1187,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // stale "deleted" values until the cache expires.
   await deleteBasicDataForUser(id);
 
-  return { id, username, email, modelsRestored, modelIds: restoredModelIds };
+  return {
+    id,
+    username,
+    email,
+    modelsRestored,
+    modelIds: restoredModelIds,
+    imagesPendingRestore,
+  };
 };
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
@@ -2333,6 +2360,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
   await dbWrite.userCosmetic.create({
     data: { userId, cosmeticId: cosmetic.id },
   });
+  await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
@@ -2374,6 +2402,10 @@ export async function equipCosmetic({
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
+  // Stickers are owned, not equipped — everything you own is already in the
+  // picker, so equipping has nothing to mean. Guarded here and not only in the
+  // UI so an equipped sticker can't exist for the buckets to have to explain.
+  if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({
@@ -2627,22 +2659,28 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
   const keys = Object.keys(toSet);
   if (!keys.length) return;
 
-  await dbWrite.$executeRawUnsafe(`
+  // Parameterised: the payload is bound, not spliced into a string literal.
+  // `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding an
+  // apostrophe used to close the literal early and corrupt the statement.
+  await dbWrite.$executeRaw`
       UPDATE "User"
-      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
+      SET settings = COALESCE(settings, '{}'::jsonb) || ${JSON.stringify(toSet)}::jsonb
       WHERE id = ${userId}
-    `);
+    `;
   userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
-    .map(([key]) => `'${key}'`);
+    .map(([key]) => key);
   if (toRemove.length) {
-    await dbWrite.$executeRawUnsafe(`
+    // `jsonb - text[]` drops every listed key in one go, so the key names bind as a
+    // single array. The previous form hand-quoted them into a chain of `- 'key'`
+    // and emitted a trailing `}`, which made the statement unparseable.
+    await dbWrite.$executeRaw`
       UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}
+      SET settings = settings - ${toRemove}::text[]
       WHERE id = ${userId}
-    `);
+    `;
     userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 

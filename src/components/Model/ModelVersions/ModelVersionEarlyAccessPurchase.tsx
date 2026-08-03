@@ -1,11 +1,6 @@
-import { Anchor, Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
-import {
-  type ModelVersionTerms,
-  DEFAULT_GENERATION_TRIAL_LIMIT,
-  generationPrice,
-  paidGenerationGrant,
-} from '@civitai/buzz';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
+import { type ModelVersionTerms, generationPrice, generationTrialLimit } from '@civitai/buzz';
+import { IconAlertCircle, IconBrush } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -30,24 +25,17 @@ export const ModelVersionEarlyAccessPurchase = ({
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const features = useFeatureFlags();
-  const {
-    isLoadingAccess,
-    canDownload,
-    canGenerate,
-    paidAccess,
-    modelVersion,
-  } = useModelVersionPermission({
-    modelVersionId,
-  });
+  const { isLoadingAccess, canDownload, generationRequiresPurchase, paidAccess, modelVersion } =
+    useModelVersionPermission({
+      modelVersionId,
+    });
   const { modelVersionEarlyAccessPurchase, purchasingModelVersionEarlyAccess } =
     useMutateModelVersion();
 
   const paidAccessTerms = paidAccess?.terms as ModelVersionTerms | undefined;
   const downloadPrice = paidAccessTerms?.download?.price;
   const genPrice = paidAccessTerms ? generationPrice(paidAccessTerms) : undefined;
-  const genTrialLimit = paidAccessTerms
-    ? paidGenerationGrant(paidAccessTerms)?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT
-    : undefined;
+  const genTrialLimit = paidAccessTerms ? generationTrialLimit(paidAccessTerms) : 0;
 
   const invalidateWhatIf = useInvalidateWhatIf();
 
@@ -75,6 +63,8 @@ export const ModelVersionEarlyAccessPurchase = ({
   const supportsGeneration = features.imageGeneration && modelVersion?.canGenerate;
   const supportsDownloadPurchase = !!downloadPrice;
   const supportsGenerationPurchase = supportsGeneration && !!genPrice;
+  const supportsTrialGeneration =
+    supportsGeneration && genTrialLimit > 0 && generationRequiresPurchase;
 
   const userCanDoLabel = [
     supportsDownloadPurchase && 'download',
@@ -137,27 +127,32 @@ export const ModelVersionEarlyAccessPurchase = ({
                   loading={purchasingModelVersionEarlyAccess}
                   buzzAmount={genPrice as number}
                   onPerformTransaction={() => handlePurchase('generation')}
-                  disabled={canGenerate}
+                  disabled={!generationRequiresPurchase}
                 />
-                <Text size="xs" c="dimmed">
-                  The creator of the {resourceLabel} has enabled{' '}
-                  {genTrialLimit} trials for generation. Test this{' '}
-                  {resourceLabel}{' '}
-                  <GenerateButton
-                    versionId={modelVersionId}
-                    modelId={modelVersion?.model?.id}
-                    data-activity="create:version-stat"
-                    onClick={() => {
-                      dialog.onClose();
-                    }}
-                  >
-                    <Anchor>here</Anchor>
-                  </GenerateButton>
-                  .
-                </Text>
                 <Text size="xs" c="dimmed">
                   By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
+                </Text>
+              </Stack>
+            )}
+
+            {supportsTrialGeneration && (
+              <Stack gap="xs">
+                <Divider label="or try it first" labelPosition="center" />
+                <GenerateButton
+                  versionId={modelVersionId}
+                  modelId={modelVersion?.model?.id}
+                  data-activity="create:version-trial"
+                  onClick={handleClose}
+                >
+                  <Button variant="light" fullWidth leftSection={<IconBrush size={18} />}>
+                    Try it free
+                  </Button>
+                </GenerateButton>
+                <Text size="xs" c="dimmed">
+                  The creator of this {resourceLabel} has enabled up to{' '}
+                  {genTrialLimit.toLocaleString()} free trial generation
+                  {genTrialLimit === 1 ? '' : 's'} before purchase is required.
                 </Text>
               </Stack>
             )}

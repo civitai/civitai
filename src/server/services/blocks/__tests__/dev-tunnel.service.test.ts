@@ -94,6 +94,7 @@ import {
   buildDevTunnelApplyJob,
   buildDevTunnelIngressRoute,
   buildDevTunnelMiddleware,
+  chargeDevSessionOverage,
   deleteDevTunnelDns,
   deleteDevTunnelRoute,
   getActiveDevTunnel,
@@ -488,6 +489,39 @@ describe('reserveDevSessionBuzz / refundDevSessionBuzz (F4 support)', () => {
     await refundDevSessionBuzz('sess', 60);
     // back under the cap → a fresh 60 fits again
     expect(await reserveDevSessionBuzz('sess', 60, cap)).toEqual({ allowed: true, total: 60 });
+  });
+});
+
+// 🔴 FIX 5 — the THIRD reservation. A step submit reserves on the per-user
+// daily cap, the per-app aggregate cap AND the dev session; the price-divergence
+// correction touched only the first two while claiming it corrected "both". A
+// divergent submit inside a dev tunnel left this counter under-reading by the
+// overage — the one direction a backstop must never drift.
+describe('chargeDevSessionOverage (divergence correction, third reservation)', () => {
+  it('tops the counter up unconditionally — with NO deny path, even past the cap', async () => {
+    const cap = 100;
+    await reserveDevSessionBuzz('sess', 60, cap);
+    // 60 + 80 = 140, well past the cap. Money that has already moved is an
+    // accounting fact, not a request to approve: unlike `reserveDevSessionBuzz`
+    // this must NOT roll back, or the counter would under-read real spend.
+    await chargeDevSessionOverage('sess', 80);
+    // Proven by effect: the session is now over its ceiling, so any further
+    // reservation is denied — which is exactly the stricter posture wanted.
+    expect(await reserveDevSessionBuzz('sess', 1, cap)).toEqual({ allowed: false, total: 140 });
+  });
+
+  it('is a no-op for a zero/negative overage and ROUNDS UP a fractional one', async () => {
+    const cap = 1000;
+    await chargeDevSessionOverage('sess', 0);
+    await chargeDevSessionOverage('sess', -5);
+    expect(await reserveDevSessionBuzz('sess', 10, cap)).toEqual({ allowed: true, total: 10 });
+    await chargeDevSessionOverage('sess', 2.1);
+    expect(await reserveDevSessionBuzz('sess', 0, cap)).toEqual({ allowed: true, total: 13 });
+  });
+
+  it('NEVER throws on a redis error (best-effort; an already-billed submit must not break)', async () => {
+    sysRedis.incrBy.mockRejectedValueOnce(new Error('redis down'));
+    await expect(chargeDevSessionOverage('sess', 5)).resolves.toBeUndefined();
   });
 });
 

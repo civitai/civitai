@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Anchor,
   Avatar,
   Badge,
@@ -9,18 +10,14 @@ import {
   Image,
   Stack,
   Text,
-  Title,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
+import { IconApps, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   canOwnerEditListing,
   getListingCta,
@@ -28,7 +25,10 @@ import {
   getOwnerEditHref,
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
+import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
+import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import {
@@ -191,8 +191,19 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
         </Avatar>
         {/* Tuned to fit in the common case; the Tooltip reveals a long username
             only when it would still clip. */}
+        {/* 🔴 S5 — AUTHOR is size + weight ONLY: 12px/400 -> 14px/500, matching the
+            `/models` author line. `c="dimmed"` is KEPT deliberately (Zach's call):
+            taking BOTH title and author to white flattens the title-over-author
+            hierarchy on a `dark-6` card body, and `/models` needs white there only
+            because its author line is overlaid on media.
+
+            🔴 ACCEPTED RESIDUAL, on the record rather than an oversight: this leaves
+            the author line at contrast 4.73 — AA pass by 0.23, AAA fail. Do not
+            "fix" it to white in a later PR without revisiting that decision; the
+            verification asserts the colour did NOT change. */}
         <TruncatedText
-          size="xs"
+          size="sm"
+          fw={500}
           c="dimmed"
           lineClamp={1}
           tooltipLabel={creator.username}
@@ -218,6 +229,13 @@ export interface AppListingCardProps {
 export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
   const currentUser = useCurrentUser();
   const cta = getListingCta(card, { canOpenPage });
+  // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
+  // second inline copy. #3539 already gave each CTA its own icon; what was still
+  // missing is a single SOURCE, so the card, the listing detail and the recents
+  // rail could not drift apart silently. This substitution renders exactly the
+  // same three icons it did before (open → IconPlayerPlay, visit →
+  // IconExternalLink, detail → IconEye) — it is a consolidation, not a restyle.
+  const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
 
@@ -240,8 +258,36 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
 
+  // `@container` makes THIS card the query basis for the owner-Edit breakpoint in
+  // the action row below (see the long note there). It is
+  // `container-type: inline-size`, i.e. inline-axis containment only, so the
+  // card's height still follows its content and `h-full` is unaffected.
+  // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
+  // load-bearing. Measured against a `/models` card in the same session (dark),
+  // and re-measured at 394px mobile where all four values are identical:
+  //   border-radius  8px           -> 6px   (`rounded-md`)
+  //   border         0.877px solid -> 0px   (drop `withBorder`)
+  //   box-shadow     3-layer       -> none  (drop `shadow="sm"`)
+  //   background     rgb(37,38,43) -> unchanged
+  // The site baseline is `TwCard`'s `rounded-md border-gray-3 bg-gray-0
+  // shadow-gray-4`, where the absent border/shadow is EMERGENT: those classes set
+  // only a COLOUR, with no width/shadow utility, so both resolve to 0/none.
+  //
+  // 🔴 `radius={0}` + `rounded-md`, NOT `radius="md"`. Mantine's `md` is 8px and
+  // Tailwind's `rounded-md` is 6px — the two `md`s are different values, which is
+  // exactly how this drifted. Taking it from the Tailwind scale pins it to the same
+  // token the rest of the site's cards use.
+  //
+  // 🔴 PADDING STAYS 16px. The review's "zero padding" is about the MEDIA, and the
+  // cover is already full-bleed via `<Card.Section>`. Unlike `/models`, this card's
+  // text sits BELOW the media rather than overlaid on it, so the body needs padding.
+  //
+  // Losing the border is safe at 1-per-row mobile, where the card is effectively
+  // full-bleed: the card's own fill (rgb(37,38,43)) separates it from the page
+  // (rgb(26,27,30)) with every ancestor transparent — the same separation `/models`
+  // already relies on at `border: 0`. Measured, not assumed.
   return (
-    <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
+    <Card padding="md" radius={0} className="h-full rounded-md @container">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
@@ -288,9 +334,30 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               c="inherit"
               style={{ minWidth: 0 }}
             >
-              <Title order={4} className="line-clamp-2">
+              {/* 🔴 S5 — TITLE matches the `/models` card: 18px/700/rgb(193,194,197)
+                  (contrast 8.48) -> 20px/700/#fefefe (contrast 14.97). `c="white"`
+                  is `--mantine-color-white`, which ThemeProvider sets to #fefefe
+                  deliberately to match the Tailwind value — it is the token the
+                  site's own card components use, so prefer it over the review's
+                  suggested `--mantine-primary-color-contrast` (same rendered value,
+                  wrong token).
+
+                  🔴 Do NOT add `cardClasses.dropShadow`. The `/models` title carries
+                  a text-shadow because it sits OVER media; this one sits on the card
+                  body. Confirmed still true at 394px mobile.
+
+                  ⚠️ SEMANTIC SIDE EFFECT, declared not hidden: dropping `<Title
+                  order={4}>` removes the `h4` from each card — parity with
+                  `/models`, whose card title is a `<p>`. Grepped: nothing depends
+                  on a heading inside the card (no `getByRole('heading')`, no
+                  snapshot). 🔴 It does NOT leave `/apps` heading-less, as an
+                  earlier draft of this comment claimed: `RecentlyOpenedApps`
+                  ("Recently opened") and `RelatedListings` both render their own
+                  `Title` on those surfaces. The broader heading-hierarchy finding
+                  (S13) stays out of scope. */}
+              <Text size="xl" fw={700} lh={1.2} c="white" className="line-clamp-2">
                 {card.name}
-              </Title>
+              </Text>
             </Anchor>
             <CreatorChip creator={card.creator} />
             {showOwnerIncomplete && (
@@ -337,8 +404,68 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             of who is looking at it. */}
         <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="nowrap">
           {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". This is the
-              flexible side: it may truncate so the actions never do. */}
-          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
+              flexible side: it may truncate so the actions never do.
+
+              🔴 …but ONLY DOWN TO A FLOOR. Truncation is the designed behaviour and
+              stays; what this container query removes is the state BELOW it, where
+              the rollup is squeezed so hard that the surviving glyphs say nothing.
+              Measured on this tree (main + #3547), OWNER card, the widest CTA
+              ("View details"), the store's real 4-column geometry:
+
+                | card | container | actions | rollup | text px / natural | truncated |
+                |------|-----------|---------|--------|-------------------|-----------|
+                |  280 |       248 |     184 |     54 |          37 / 79  | YES       |
+                |  300 |       268 |     184 |     74 |          57 / 79  | yes       |
+                |  314 |       282 |     184 |     88 |          71 / 79  | yes       |
+                |  330 |       298 |     184 |     96 |          79 / 79  | no        |
+
+              (Widths are `getBoundingClientRect`; "truncated" is `scrollWidth >
+              clientWidth` on the `<Text truncate>`. Character counts below are
+              DERIVED from the text px at 12px, not read off a screenshot — the
+              live report is what confirmed the top row renders as "No ...".)
+
+              A 37px stub of "No reviews yet" is strictly worse than no rollup: it
+              occupies the slot, reads as a rendering bug, and carries no
+              information. 54px is the state the live 1200px-viewport store is in
+              today: card 280 is `(1200 − 32 container padding − 3×16 gutter) / 4`,
+              i.e. the 4-column `lg` span at a 1200px viewport.
+
+              🔴 THRESHOLD 264px, DERIVED NOT GUESSED. The floor we want is a rollup
+              box of ~70px = the 13px thumb glyph + its 4px gap + ~53px of 12px text,
+              which is ~9 characters — enough for "No reviews…" / "91% recom…" to
+              read as a phrase rather than as debris. The owner action set at its
+              WIDEST (icon-only Edit + "View details") measures 184px, and the row
+              gap is 8px, so the container width at which the rollup hits that floor
+              is 184 + 8 + 70 = 262 → 264. The model predicts the measured table
+              above to within ~2px at every row, which is why it is stated as
+              arithmetic instead of as a round number that happened to look right.
+
+              🔴 A CONTAINER query, for the same reason the owner-Edit swap below is
+              one: card width is NOT monotonic in viewport width (at `base` the grid
+              is ONE column, so a 390px phone gives a ~356px card — wider than the
+              280px a 1200px laptop gets at four columns). A `max-width` media query
+              would hide the rollup on exactly the viewports with the most room.
+
+              🔴 OWNER CARDS ONLY (`showEdit`). A non-owner card has no Edit control,
+              so its actions are 138px and the rollup never drops below 96px at any
+              width the store produces — it is byte-unchanged by this and must stay
+              that way.
+
+              ⚠️ ACCEPTED COLLATERAL, on the record rather than discovered later: the
+              query cannot see WHICH CTA rendered, and the narrow "Open" CTA (actions
+              140px) leaves the rollup its full 96px even at container 248 — measured,
+              untruncated at every width in the sweep. So an owner card
+              whose CTA is "Open"/"Visit" loses a rollup that would have fit, across
+              container 248–264 (viewport ~1200–1264 at four columns). Encoding a
+              second per-CTA threshold to reclaim that 64px band buys a second magic
+              number and a CTA-width classification in the render path; one rule that
+              is occasionally conservative is the better trade. */}
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            className={showEdit ? 'hidden @[264px]:flex' : undefined}
+          >
             <IconThumbUp
               size={13}
               style={{ flexShrink: 0 }}
@@ -349,27 +476,121 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {/* 🔴 `marginLeft: 'auto'` is what keeps the actions RIGHT-ALIGNED when the
+              rollup above is `display: none`. `justify="space-between"` distributes
+              a SINGLE remaining flex item to flex-START, so without this the whole
+              action group jumps to the left edge of the card the moment the rollup
+              is hidden — the exact left-alignment failure the block comment above
+              warns wrapping would cause, reintroduced by a different mechanism.
+              With BOTH children present it is a no-op: auto margins absorb free
+              space before `justify-content` is applied, and one auto margin on the
+              second of two items lands them in precisely the space-between
+              positions. Verified by measurement at both container widths, not
+              assumed. */}
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
-                kind (manifest editor for on-site, submit editor for off-site). */}
+                kind (manifest editor for on-site, submit editor for off-site).
+
+                🔴 TWO FORMS, ONE CHOSEN BY A CONTAINER QUERY. Measured at a 280px
+                card content box — what a 1200px viewport produces at the store's
+                4-column `xl` grid:
+
+                  | case @280                  | actions | rollup | rollup text |
+                  |----------------------------|---------|--------|-------------|
+                  | non-owner + "Open"         |      94 |    139 |         122 |
+                  | non-owner + "View details" |     138 |    132 |         115 |
+                  | owner + "Open"             |     188 |     82 |          65 |
+                  | owner + "View details"     |     232 |     38 |          21 |
+
+                The rollup's natural width is 139. In the last row the CTA icons'
+                ~44px pushed it to 38 and "91% recommend (100)" — glyph included —
+                simply vanished. Collapsing the OWNER-ONLY Edit to an icon returns
+                ~50px, which is the difference between truncated and absent.
+
+                🔴 A CONTAINER query, not a media query: the card's width is NOT
+                monotonic in viewport width. At `base` the grid is ONE column, so a
+                390px phone gives a WIDER card (~356) than a 1200px laptop at four
+                columns (280). A `max-width` media query would collapse the button
+                on exactly the viewports where there is the most room. `@container`
+                asks the only question that matters — how wide is THIS card.
+
+                Breakpoint 360px, read off the table: the owner "View details" cell
+                is the binding one, and its rollup clears ~120px (legible, merely
+                truncated) at container widths from ~360 up. Below that the text
+                button is what breaks it, so below that it becomes an icon.
+
+                🔴 The row stays `nowrap` with `flexShrink: 0`. Row height is a
+                constant 46px in every cell above and nothing overflows — letting
+                the row wrap would left-align the actions and grow the height of a
+                whole `h-full` grid row (see the block comment above). The fix is
+                to make the optional control smaller, not to change the layout. */}
             {showEdit && editHref && (
-              <Button
-                component={Link}
-                href={editHref}
-                size="sm"
-                variant="default"
-                leftSection={<IconPencil size={16} />}
-                data-testid="apps-listing-owner-edit"
-                onClick={(e: MouseEvent) => e.stopPropagation()}
-              >
-                Edit
-              </Button>
+              <>
+                <Button
+                  component={Link}
+                  href={editHref}
+                  size="sm"
+                  variant="default"
+                  leftSection={<IconPencil size={16} />}
+                  data-testid="apps-listing-owner-edit"
+                  className="hidden @[360px]:flex"
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  Edit
+                </Button>
+                {/* The narrow form. Icon-only, so it needs a REAL accessible name
+                    — `aria-label` + `Tooltip`, the `CategoryFilterButtons`
+                    precedent ("the icon alone is not an accessible name"). Only
+                    ONE of the two is ever displayed, and `display: none` removes
+                    the other from the accessibility tree, so a screen reader is
+                    offered exactly one "Edit" control, not two. */}
+                <Tooltip label="Edit" withArrow>
+                  <ActionIcon
+                    component={Link}
+                    href={editHref}
+                    size={36}
+                    variant="default"
+                    aria-label="Edit"
+                    data-testid="apps-listing-owner-edit-icon"
+                    className="@[360px]:hidden"
+                    onClick={(e: MouseEvent) => e.stopPropagation()}
+                  >
+                    <IconPencil size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              </>
             )}
 
             {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
                 or the unified detail). External Visit → new-tab anchor; everything
-                else → an internal Link. */}
+                else → an internal Link.
+
+                ICONS (product-feedback pass). Each action carries its own glyph so
+                the three CTAs are distinguishable at a glance in a dense grid
+                rather than three same-shaped buttons differing only in wording.
+                🔴 The mapping itself is NOT restated here — it lives in
+                `appListingActionGlyph.ts` and is read above via `CtaGlyph`. A copy
+                of it in this comment is exactly how the card and the detail page
+                drifted apart in the first place. The rail tile's icon button used
+                to carry a third copy (`RECENT_ACTION_ICONS` in
+                `RecentlyOpenedApps.tsx`); it now resolves through the same module
+                via `recentRailActionGlyph`, so all three surfaces are single-
+                sourced and the consolidation is complete.
+
+                🔴 The icon is DECORATIVE — the label text stays the accessible
+                name. Tabler icons render `<svg>` with no `<title>`, so they
+                contribute nothing to the name; the button's name is still
+                exactly "Open" / "Visit" / "View details". Asserted in
+                `AppListingCard.browser.test.tsx`.
+
+                🔴 WIDTH: `leftSection` makes each button ~22px wider, and the row
+                is `wrap="nowrap"` with `flexShrink: 0` on the actions (see the
+                block comment above — wrapping breaks alignment AND row height).
+                The pressure is absorbed where it was designed to be: the
+                recommend rollup on the left is the flexible side and truncates.
+                The tight case is `md`/`lg` (3–4 columns), not `base` (one wide
+                column); verified at 390/768/1440/2560 in the PR's viewport sweep. */}
             {cta.external ? (
               <Button
                 component="a"
@@ -378,7 +599,13 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 rel="noopener noreferrer"
                 size="sm"
                 variant="light"
-                rightSection={<IconExternalLink size={16} />}
+                rightSection={<CtaGlyph size={16} />}
+                // "Opened" = actually opened. An OFF-SITE app is opened the
+                // moment this Visit CTA is followed — there is no on-platform
+                // route afterwards that could record it (the on-site path is
+                // recorded by `/apps/run/<slug>` itself). Recording on a detail
+                // VIEW would be wrong: browsing is not opening.
+                onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(card))}
               >
                 {cta.label}
               </Button>
@@ -388,6 +615,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
+                leftSection={<CtaGlyph size={16} />}
               >
                 {cta.label}
               </Button>

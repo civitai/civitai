@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 P3a — /apps/review off-site (external-link) queue. Browser-mode render test
@@ -61,9 +62,16 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => {
-  const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+// Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
+// (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
+// transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
+// gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
+// Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
+// link ("does not provide an export named X") and the whole file collects 0 tests.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   return {
+    ...actual,
     trpc: {
       useUtils: () => ({
         appListings: {
@@ -324,7 +332,14 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     await expect.element(page.getByText('Content rating', { exact: true })).toBeInTheDocument();
     // The badge values they label are still rendered.
     await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByText('g', { exact: true })).toBeInTheDocument();
+    // #3412 added the listing-preview detail pane (`apps-listing-preview-detail`), which
+    // renders its OWN content-rating badge — so a bare exact 'g' now matches 2 elements and
+    // the strict query throws. Scope to the Content-rating FIELD GROUP this test is about,
+    // asserting its full text (label + badge value + qualifier). That still fails if the
+    // badge value is wrong or missing, rather than being satisfied by the preview's copy.
+    const ratingLabel = page.getByText('Content rating', { exact: true });
+    await expect.element(ratingLabel).toBeInTheDocument();
+    expect(ratingLabel.element().parentElement?.textContent).toBe('Content ratinggdeclared');
   });
 });
 

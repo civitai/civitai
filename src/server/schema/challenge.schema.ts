@@ -115,6 +115,21 @@ const challengeCompletionSummarySchema = z.object({
 export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSummarySchema>;
 
 // Zod schema for Challenge.metadata (Json? column)
+//
+// Every key the column can hold must be declared here. `parseChallengeMetadata` uses this schema's
+// default strip behaviour, so an undeclared key is SILENTLY DROPPED — and several call sites parse
+// the metadata and then write the parsed object back wholesale, which deletes anything missing from
+// this list. Two fields written by raw SQL elsewhere were lost that way; see the notes below. When
+// adding a key to Challenge.metadata anywhere in the codebase, add it here in the same change.
+//
+// 🔴 DECLARING A KEY RAISES THE STAKES ON ITS TYPE. An undeclared key with a bad value is merely
+// stripped and its siblings survive; a DECLARED key with a bad value fails the whole `safeParse`,
+// and `parseChallengeMetadata` then returns `{}` — so the write-back sites above would wipe the
+// ENTIRE metadata column, including `reconciliation.paidUserIds`, which gates participation
+// back-pay. There is no live exposure today (every writer is type-safe by construction —
+// `Date.now()` for the numbers, `toISOString()` for the strings — and all production rows conform),
+// but a new key whose writer can emit a wrong type is a much bigger liability declared than
+// undeclared. Prefer a permissive type over an exact one when the writer is not provably narrow.
 export const challengeMetadataSchema = z.object({
   challengeType: z.string().optional(),
   resourceUserId: z.number().optional(),
@@ -122,6 +137,37 @@ export const challengeMetadataSchema = z.object({
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
+  // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
+  // daily-challenge-processing. TWO readers, and the second is the one that matters:
+  //
+  //   1. getActiveChallengesFromDb's `ORDER BY cast(metadata->>'reviewedAt' as bigint) NULLS FIRST`
+  //      round-robin. Only decides anything once the Active set exceeds CHALLENGE_JOB_BATCH_SIZE
+  //      (200 vs ~31 today), so on its own this reader would make the key look inconsequential.
+  //   2. The INCREMENTAL-REVIEW WATERMARK in the review job: `lastReviewedAt` defaults to the
+  //      challenge's start date and is overwritten by this key, then gates the candidate pool with
+  //      `AND ci."reviewedAt" >= ${lastReviewedAt}`. Losing the key rewinds that watermark to the
+  //      START OF THE CHALLENGE, so every entry since then re-enters the pool. This has nothing to
+  //      do with batch size and is not bounded by the Active count.
+  //
+  // Reader 2 is why this is not cosmetic: for PAID user challenges `judgeAllEntries` skips the
+  // sampling cap entirely, so a rewound watermark means the whole accumulated backlog is judged in
+  // a single run — re-judging work already paid for, at LLM cost. Do not reason about this key from
+  // the ordering alone.
+  reviewedAt: z.number().optional(),
+  // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
+  // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
+  // claim-ownership check that gates its telemetry. Both read the RAW jsonb, not a parsed object,
+  // so the strip never affected a read — what it cost was durability across a parse-then-write-back.
+  // The one concrete case: a slow run whose claim was reset would strip the stamp on its late write,
+  // so the run that re-claimed saw none, failed open, and both emitted. Declaring it makes that a
+  // single emit. NOTE this does NOT make a stampless Completing row impossible — that row is
+  // unrecoverable (the reset's comparison is NULL-propagating, so it is never selected), and it is
+  // still reachable via a stale full-column metadata replace that was never carrying the stamp to
+  // begin with. See the note on the completing-stuck gauge in challenge.metrics.ts.
+  completingClaimedAt: z.string().optional(),
+  // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
+  // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
+  migratedAt: z.string().optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
@@ -601,6 +647,7 @@ export type ChallengeWinnerSummary = {
 export type ChallengeWithWinnersListItem = ChallengeListItem & {
   winners: ChallengeWinnerSummary[];
   completionSummary: ChallengeCompletionSummary | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Input schema for completed challenges with winners

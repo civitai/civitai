@@ -10,14 +10,23 @@ import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
+  BLOCK_READY_TIMEOUT_MS,
+  TOKEN_WAIT_TIMEOUT_MS,
+  decideAutoRetry,
+  advanceReviewConsentLatch,
+  buildReviewConsentNotification,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
+  shouldEmitMidSessionLossBeacon,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -28,6 +37,15 @@ import type { BlockImageScanResult } from './blockImageScanLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
+  computeLaunchTimings,
+  createLaunchMarks,
+  isDocumentHidden,
+  nowMs,
+  resetLaunchMarks,
+  shouldResetLaunchMarks,
+  type LaunchMarks,
+} from './launchTimings';
+import {
   classifyWildcardPackError,
   exceedsPreDownloadCap,
   resolveGetWildcardPackRequest,
@@ -35,12 +53,20 @@ import {
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
+import {
+  downloadUrlAsBlob,
+  isAllowedSaveImageUrl,
+  resolveSaveImageRequest,
+  sanitizeDownloadFilename,
+  SAVE_IMAGE_MAX_CONCURRENT,
+} from './saveImageDownload';
+import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -120,8 +146,24 @@ function storageErrorMessage(err: unknown): string {
  *     its page but can't push the host off to an arbitrary route.
  */
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
-const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`.
+ *
+ * 🔴 EXPORTED for the browser tests, which drive these windows on a VIRTUAL clock
+ * (`vi.useFakeTimers`) instead of sleeping through them in real time. Waiting them
+ * out for real cost ~99s in one file and was the single largest contributor to the
+ * component suite overrunning its CI budget; importing the real constants keeps the
+ * tests pinned to the host's actual windows rather than to copies that can drift.
+ *
+ * 🔴 They now LIVE in `pageBlockHostLogic` and are re-exported here. That module
+ * is plain TS with no React graph, so a NODE test can import them — which is what
+ * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
+ * windows instead of from a hard-coded literal in a comment. Importing them from
+ * this file would drag the whole component graph into the `unit` project.
+ */
+export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
@@ -189,8 +231,25 @@ export interface PageBlockHostProps {
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
   /** #3/#6: the token mint errored. Surface an error state instead of hanging at
-   *  `no_token`. */
+   *  `no_token`. Only escalates a host still in `loading` — see `tokenTerminal`
+   *  for the mid-session case. */
   tokenError?: boolean;
+  /**
+   * The mint has PERMANENTLY failed: no usable token remains AND the upstream
+   * hook's bounded automatic re-mints are exhausted (`useBlockToken.terminal`).
+   *
+   * 🔴 THIS IS THE ONLY THING THAT MAY TEAR DOWN A `ready` PAGE. Before it, the
+   * `tokenError` effect below transitioned out of `loading` ONLY — so a token
+   * that died mid-session left the host sitting at `ready` on a dead credential
+   * with `TOKEN_REFRESH` early-returning on `!token`, and the block just silently
+   * 401'd forever with no signal to the user or the platform. Gating on the
+   * SETTLED signal (rather than a bare `tokenError`) is what keeps a merely
+   * TRANSIENT refresh blip from ripping a working app out from under the user
+   * while it is still being recovered.
+   *
+   * Optional + default false → every existing caller is byte-identical.
+   */
+  tokenTerminal?: boolean;
   /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
@@ -233,6 +292,40 @@ export interface PageBlockHostProps {
    * the preview surface, not here.
    */
   reviewRunForReal?: boolean;
+  /**
+   * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
+   * where it gates the "Recently run" menu — that section's ONLY link shape is
+   * that route, which 404s fail-closed unless the viewer holds BOTH `appBlocks`
+   * and `appBlocksPages`.
+   *
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER:
+   * `!!(features.appBlocks && features.appBlocksPages)` — the exact conjunction
+   * `/apps/run/[slug]`'s own `getServerSideProps` checks, no more and no less.
+   * Two ways to get it wrong, both of which have been written here:
+   *
+   *   - A PER-SURFACE CONSTANT, justified with "the surfaces gate on DIFFERENT
+   *     flags". That conflates what gates the SURFACE with what gates the LINK
+   *     TARGET. The dev tunnel's own gate and mod review's reviewer check say
+   *     nothing about whether the menu's links resolve. Hardcoding it per
+   *     surface is what silently killed the menu for mods on three of four
+   *     surfaces.
+   *   - HALF THE CONJUNCTION (`!!features.appBlocksPages`). `appBlocks` is the
+   *     block-runtime kill-switch and a Flipt override can disable as well as
+   *     enable, so pages-on/blocks-off is a reachable state in which every one
+   *     of these links 404s. All four surfaces happen to sit behind their own
+   *     `appBlocks` check today, so the one-flag form is not currently a live
+   *     bug — but that makes the menu gate depend on an invariant held in four
+   *     other functions, which is exactly the kind of distant coupling that
+   *     produced the original defect. Encode the target route's predicate here.
+   *
+   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
+   * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
+   * mounter cannot quietly omit it or downgrade it to one flag.
+   *
+   * Default false → a mounter that hasn't wired it shows no dead links.
+   */
+  canOpenPage?: boolean;
 }
 
 export function PageBlockHost({
@@ -251,6 +344,7 @@ export function PageBlockHost({
   missingScopes,
   needsConsent,
   tokenError,
+  tokenTerminal = false,
   domain,
   maxBrowsingLevel,
   viewer,
@@ -259,6 +353,7 @@ export function PageBlockHost({
   onRetryToken,
   reviewMode = false,
   reviewRunForReal = false,
+  canOpenPage = false,
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -280,6 +375,15 @@ export function PageBlockHost({
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // BOUNDED AUTO-RETRY budget for this mount. State (not a ref) because the
+  // scheduling effect AND the render-failure beacon both derive from it, so it
+  // has to drive re-renders. `attempts` counts every automatic attempt;
+  // `reminted` counts the subset that spent a token re-mint (the rate-limit cap).
+  // A MANUAL Retry deliberately touches NEITHER — see handleRetry.
+  const [autoRetryBudget, setAutoRetryBudget] = useState<{
+    attempts: number;
+    reminted: number;
+  }>({ attempts: 0, reminted: 0 });
   // Active async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD).
   // Keyed by the OPEN_IMAGE_UPLOAD requestId; each entry mounts one
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
@@ -298,11 +402,180 @@ export function PageBlockHost({
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
 
+  // 🔴 A SEPARATE at-most-once latch for the MID-SESSION credential-loss beacon,
+  // and it MUST NOT be `blockRenderEmittedRef`.
+  //
+  // `blockRenderEmittedRef` encodes an ANALYTICS invariant — exactly ONE
+  // impression per host mount — that the `blockRenders` denominator and the
+  // BlockRenderFailureRate alert both depend on. Reusing it here would be wrong
+  // in both directions: a `ready` host has already consumed it (so the beacon
+  // would never fire — the precise reason a real prod revocation recorded zero
+  // error beacons on 2026-07-31), and clearing/relaxing it to make room would
+  // retroactively change what the already-sent `ok` impression means.
+  //
+  // The teardown is a genuinely DIFFERENT event from the page load, so it gets a
+  // different latch. Net effect on the wire for a revoked session: `ok` (the load
+  // really did succeed) followed by ONE
+  // `error{error_class="token_lost_midsession"}` (it was later revoked). Bounded
+  // per mount by this ref; the impression accounting above is untouched.
+  const midSessionLossEmittedRef = useRef<boolean>(false);
+  // Latches on the first committed `ready`. This is what tells a `ready → error`
+  // teardown apart from a `loading → error` launch failure — `status === 'error'`
+  // alone cannot (both transitions land on it). A ref, not state: it must not
+  // cause a render, and `handleRetry` deliberately does not clear it (a mount
+  // that ever launched has launched).
+  const reachedReadyRef = useRef<boolean>(false);
+
+  // ── LAUNCH LATENCY marks ────────────────────────────────────────────────────
+  // Four `performance.now()` stamps + a sticky hidden-tab flag. All the math
+  // (and every correctness rule) lives in the pure, node-tested `launchTimings`
+  // module; the host only records.
+  //
+  // 🔴 t0 IS THE FIRST CLIENT RENDER, not a mount effect. The `<iframe src>` is
+  // an SSR prop rendered inside `showIframe` (true while status === 'loading',
+  // which is the INITIAL status), so the cross-origin frame load starts in this
+  // very commit — before any token exists. A t0 taken in a post-mount effect
+  // would start the clock after the thing it is timing. The lazy-ref pattern
+  // below is the React-blessed way to do once-per-instance work at render time,
+  // and it is SSR-safe (`performance` is undefined there → `mountedAt: null` →
+  // `computeLaunchTimings` returns null and nothing is reported).
+  const launchMarksRef = useRef<LaunchMarks | null>(null);
+  if (launchMarksRef.current === null)
+    launchMarksRef.current = createLaunchMarks(nowMs(), isDocumentHidden());
+  // Which instance the marks above currently describe. Seeded at RENDER time
+  // with the first `blockInstanceId`, so the `[blockInstanceId]` effect below can
+  // tell "first mount" (no reset — that would throw away the render-time t0)
+  // from "soft nav to another app" (reset).
+  const launchInstanceRef = useRef<string | null>(null);
+  if (launchInstanceRef.current === null) launchInstanceRef.current = blockInstanceId;
+
+  // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
+  //
+  // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
+  // `_app.tsx` renders <Component> with no key either — so a SOFT navigation
+  // between two apps (appA → appB, e.g. via the "Recently run" menu) reuses this
+  // component instance: same mount, different `blockInstanceId`.
+  //
+  // Left alone, app A's latches would leak onto app B and produce a WRONG,
+  // MISATTRIBUTED signal: B's launch failure would inherit `reachedReady === true`
+  // and be reported as `token_lost_midsession` for an app that never launched —
+  // exactly the launch-vs-teardown confusion this whole feature exists to avoid.
+  // (Conversely a spent emit-latch would silently swallow B's genuine loss.)
+  //
+  // So the latches are scoped to the block INSTANCE, not the React mount.
+  //
+  // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
+  // from `status`, because under host reuse `status` is itself STALE (it is still
+  // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
+  //
+  // Be precise about the cost, because it is NOT an edge case. `status` inherited
+  // from app A can still move FORWARD out of 'ready' (→ 'error' on a terminal
+  // token, → 'fatal' on BLOCK_ERROR) — it is not frozen. What it cannot do is go
+  // BACK: every `setStatus` here is gated on the current value, and the only
+  // unconditional reset to 'loading' is `performRetry`. Since re-reaching 'ready'
+  // requires passing through 'loading', app B can never earn a genuine `ready`
+  // after a soft nav, so the latch re-arms only via a manual or automatic Retry.
+  //
+  // That costs nothing real TODAY, because on the same path app B never gets a
+  // working session to lose: `shouldStartInit` returns false for any non-'loading'
+  // status, so BLOCK_INIT is never sent and app B cannot reach a genuine ready
+  // state. The missed beacon is therefore unreachable — it describes a state the
+  // pre-existing host-reuse bug already prevents. Net vs. before this reset:
+  // strictly better (we traded a FALSE POSITIVE on app B's launch failure for a
+  // beacon that could not have fired anyway). Under-reporting, never
+  // mis-reporting — the right side to err on for an alerting signal.
+  //
+  // 🔴 The DECLARATION ORDER below is load-bearing: this effect must be declared
+  // BEFORE the status-sync effect that sets `reachedReadyRef`, so that a commit
+  // changing both `blockInstanceId` and `status` resets first and latches second.
+  // No current test detects a swap (no reachable case distinguishes them today) —
+  // so if you reorder these, reason it through rather than trusting the suite.
+  //
+  // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
+  // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
+  // impression) both predate this change. The real fix is `key={blockInstanceId}`
+  // on the run page, which would also change impression COUNTS, so it belongs in
+  // its own PR rather than riding along on an observability change.
+  useEffect(() => {
+    reachedReadyRef.current = false;
+    midSessionLossEmittedRef.current = false;
+    // Same reasoning for the launch marks: under host reuse app A's `mountedAt`
+    // would be attributed to app B's launch, producing a `total` that includes
+    // however long the user spent in app A. (Today app B can never earn a
+    // genuine `ready` after a soft nav — `shouldStartInit` refuses a non-'loading'
+    // status — so this is belt-and-braces against the pre-existing host-reuse
+    // bug being fixed later, not a live defect.)
+    //
+    // 🔴 BUT NOT ON FIRST MOUNT. This effect runs on mount as well as on change,
+    // and `mountedAt` was deliberately taken at RENDER time — the commit in which
+    // the iframe actually mounts. Resetting here unconditionally would overwrite
+    // it with a post-commit timestamp and silently shorten EVERY `total` by the
+    // render->effect gap, discarding exactly the window t0 exists to capture, in
+    // the flattering direction. `shouldResetLaunchMarks` is unit-tested.
+    if (shouldResetLaunchMarks(launchInstanceRef.current, blockInstanceId)) {
+      if (launchMarksRef.current)
+        resetLaunchMarks(launchMarksRef.current, nowMs(), isDocumentHidden());
+    }
+    launchInstanceRef.current = blockInstanceId;
+  }, [blockInstanceId]);
+
+  // 🔴 HIDDEN-TAB LATCH — sticky from mount until the beacon reads it.
+  //
+  // A run page opened in a background tab (cmd-click, session restore, a tab
+  // group reopened) gets throttled timers and reports a BLOCK_READY seconds late
+  // at ZERO user-felt cost. Without this the p95 measures tab-switching.
+  //
+  // Deliberately NOT the existing visibilitychange listener further down: that
+  // one is gated on `status === 'ready'`, i.e. it starts listening only AFTER
+  // the launch window it would need to observe has closed. This one is
+  // unconditional and mount-scoped.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks) return;
+    const handler = () => {
+      if (isDocumentHidden()) marks.wasHidden = true;
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
+  // Launch mark: the END of the token-mint leg (first non-null token). The leg
+  // races the frame load; it does not precede it.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks || !token || marks.tokenAt !== null) return;
+    marks.tokenAt = nowMs();
+  }, [token]);
+
   // Keep statusRef tracking the live status so handleRetry can branch on the
   // prior terminal state without reading it inside the setStatus updater.
   useEffect(() => {
     statusRef.current = status;
+    // Latch "this mount reached ready" off the COMMITTED status, for the same
+    // reason the impression beacon does (see its comment): keying off a
+    // setStatus updater's side effect silently drops the observation whenever
+    // another state update is already queued on this component.
+    if (status === 'ready') reachedReadyRef.current = true;
   }, [status]);
+
+  // BOUNDED AUTO-RETRY — the single decision both consumers read (the scheduling
+  // effect near `handleRetry`, and the render-FAILURE beacon below), so they can
+  // never disagree about whether the host has SETTLED on this terminal state.
+  // `canRemint` is whether a token re-mint is even wired: without it an auth
+  // terminal can never be recovered, so we must not burn an attempt on it.
+  const canRemint = onRetryToken != null;
+  const autoRetry = useMemo(
+    () =>
+      decideAutoRetry({
+        status,
+        attempts: autoRetryBudget.attempts,
+        reminted: autoRetryBudget.reminted,
+        canRemint,
+      }),
+    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+  );
+  /** True once the host has stopped auto-recovering: this terminal state is final. */
+  const autoRetrySettled = autoRetry.kind === 'none';
 
   // LAUNCH REVEAL — `prefers-reduced-motion: reduce` collapses the whole thing to
   // 0ms: no transition is ever emitted, and the overlay is dropped on the effect
@@ -440,6 +713,11 @@ export function PageBlockHost({
 
   const sendInitOnce = useCallback(() => {
     initSentRef.current = true;
+    // Launch mark: the FIRST BLOCK_INIT post. The controller re-posts every
+    // INIT_RETRY_INTERVAL_MS until acked, so only the first stamp is kept —
+    // `init_wait` is meant to include the re-post quantization, not exclude it.
+    const marks = launchMarksRef.current;
+    if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
@@ -472,6 +750,80 @@ export function PageBlockHost({
     if (!tokenError || token) return;
     setStatus((current) => (current === 'loading' ? 'error' : current));
   }, [tokenError, token]);
+
+  // MID-SESSION credential loss. The effect above only escalates a host still in
+  // `loading`, so a token that died AFTER the block went `ready` left the host
+  // parked on `ready` holding nothing: the `TOKEN_REFRESH` push early-returns on
+  // `!token`, so the block kept its now-dead credential and silently 401'd every
+  // call — no signal to the user, none to the platform.
+  //
+  // 🔴 GATED ON `tokenTerminal`, NOT `tokenError`. The upstream hook now retries a
+  // failed refresh on a bounded backoff and KEEPS a still-valid token while it
+  // does, so a transient blip never reaches here at all. Only once recovery has
+  // provably settled with nothing usable left do we replace the running app with
+  // the real terminal state — which also re-arms the bounded auto-retry below
+  // (an `error` status is an AUTH terminal, so its one automatic attempt spends a
+  // re-mint) and surfaces the prominent manual Retry once that settles too.
+  //
+  // 🔴 THE IMPRESSION BEACON IS STILL EXACTLY ONE. A host that reached `ready`
+  // already fired its ONE `ok` impression, and `blockRenderEmittedRef` is
+  // per-mount — so the launch-failure beacon below remains inert here by
+  // construction, and the `ok` already sent still means what it always meant
+  // (the page load succeeded — which it did). The teardown is reported by the
+  // SEPARATE mid-session beacon effect immediately after this one, on its own
+  // latch, so observability is gained without touching impression accounting.
+  useEffect(() => {
+    if (!tokenTerminal || token) return;
+    setStatus((current) => (current === 'ready' ? 'error' : current));
+  }, [tokenTerminal, token]);
+
+  // MID-SESSION credential-loss render beacon — the observability half of the
+  // teardown above.
+  //
+  // 🔴 WHY THIS EXISTS AT ALL (measured on production 2026-07-31): a real
+  // revocation teardown was driven end-to-end against a live app and the
+  // platform recorded ZERO error beacons for it. The only trace of the incident
+  // was the earlier successful `ok` impression, so every render metric said the
+  // app was healthy while it was dead in the viewer's tab. A mid-session
+  // teardown is exactly the failure mode a third-party app platform must be able
+  // to see — it is what a delist/suspend/revoke looks like from the runtime.
+  //
+  // Keys off the COMMITTED `status` (not a setStatus updater's side effect) for
+  // the same batching reason documented on the impression beacon below. The full
+  // decision — including WHY it is gated on `reachedReady` and on the settled
+  // `tokenTerminal` rather than a bare `tokenError` — lives in the pure,
+  // unit-tested `shouldEmitMidSessionLossBeacon`.
+  useEffect(() => {
+    if (
+      !shouldEmitMidSessionLossBeacon({
+        status,
+        reachedReady: reachedReadyRef.current,
+        tokenTerminal,
+        hasToken: !!token,
+        alreadyEmitted: midSessionLossEmittedRef.current,
+      })
+    )
+      return;
+    midSessionLossEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op. `errorClass` is a member of
+    // the server-side KNOWN_ERROR_CLASSES allowlist, so it survives as a real
+    // `error_class` prom label instead of collapsing into 'other'.
+    //
+    // 🔴 `secondary: true` is REQUIRED here, not decorative. This mount already
+    // sent its `ok` impression, and the `blockRenders` CH row carries no status —
+    // so without this flag the follow-up would write a SECOND byte-identical row
+    // for one mount, un-de-duplicatable, inflating every CH-derived impression
+    // figure for exactly the sessions that were revoked. The flag keeps the prom
+    // counter firing (that is what the alert reads) while skipping the insert.
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      status: 'error',
+      errorClass: MID_SESSION_LOSS_ERROR_CLASS,
+      secondary: true,
+    });
+  }, [status, tokenTerminal, token, appBlockId, blockInstanceId]);
 
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.
@@ -510,6 +862,12 @@ export function PageBlockHost({
   // BLOCK_READY → ready.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', () => {
+      // Launch mark: stamped HERE, in the message handler, not in the beacon
+      // effect. The beacon fires on the committed `status`, which is a React
+      // commit later — timing it there would fold an arbitrary amount of React
+      // scheduling into every sample.
+      const marks = launchMarksRef.current;
+      if (marks && marks.readyAt === null) marks.readyAt = nowMs();
       setStatus((current) => (current === 'loading' ? 'ready' : current));
       // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
       // timeout. Called UNCONDITIONALLY (not behind a "did this ack win the
@@ -542,12 +900,31 @@ export function PageBlockHost({
   // was reproduced deterministically the moment the launch-reveal work added one
   // more post-mount state update. Keying off the COMMITTED `status` is immune to
   // batching. Mirrors the failure-beacon effect immediately below.
+  //
+  // 🔴 LAUNCH TIMINGS RIDE THIS BEACON — no second beacon, no second call site,
+  // no second ClickHouse row. `blockRenderEmittedRef` is untouched, `secondary`
+  // is untouched, `error_class` is untouched, and the impression count is
+  // provably unchanged: this is the same one-per-mount emit it always was, with
+  // an optional field attached.
+  //
+  // `timings` is null (and omitted) whenever the sample must not be observed —
+  // a hidden tab, a missing mark, an out-of-range delta. The launch is still
+  // reported as an impression; only the latency observation is skipped. That is
+  // the right asymmetry: an under-counted histogram is honest, a histogram
+  // padded with zeros is not.
   useEffect(() => {
     if (status !== 'ready') return;
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
+    const marks = launchMarksRef.current;
+    const timings = marks ? computeLaunchTimings(marks) : null;
     // Fire-and-forget beacon — failures are a no-op.
-    sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      ...(timings ? { timings } : {}),
+    });
   }, [status, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
@@ -567,9 +944,41 @@ export function PageBlockHost({
   // reported a fatal error ('fatal'), its token never resolved ('no_token'), or
   // the mint hard-failed ('error'). Sharing the SAME emit-once ref makes ok/error
   // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  //
+  // 🔴 BEACON SEMANTICS UNDER AUTO-RETRY (deliberate, and what the alert on
+  // `civitai_app_block_renders_total` measures):
+  //   ONE beacon per host MOUNT, reporting the outcome the host SETTLES on. The
+  //   whole bounded automatic retry sequence is ONE logical page load:
+  //     - `ok`    — the first BLOCK_READY, whichever attempt produced it. A load
+  //                 that succeeds on attempt 2 emits exactly one `ok`, never an
+  //                 `error` first.
+  //     - `error` — a terminal state reached with NO further automatic attempt
+  //                 coming (`autoRetrySettled`). N failed automatic attempts
+  //                 therefore emit ONE `error`, not N.
+  //     - nothing — an intermediate terminal state that will be auto-retried.
+  //   Once either fires, the mount never emits again: `handleRetry` (user-initiated,
+  //   after the host already settled) deliberately does NOT reset the emit-once ref.
+  //   So the metric's denominator stays "page loads" and its numerator stays "page
+  //   loads the platform could not recover on its own" — which is the thing worth
+  //   paging on. Manual user retries are a separate, currently-unmeasured signal.
+  //
+  // 🔴 TWO KNOWN COSTS OF THAT CHOICE, stated so they aren't rediscovered as bugs:
+  //   1. UNMOUNT DURING THE SEQUENCE EMITS NOTHING. A user who navigates away
+  //      while a retry is pending produces no beacon at all, where before they
+  //      produced an `error`. The window grew from ~0s to the length of the whole
+  //      bounded sequence. There is no unmount flush today (adding one is the
+  //      obvious follow-up — `sendBlockRender` already sets `keepalive:true`
+  //      precisely so a beacon survives unload).
+  //   2. THE `error` NUMERATOR NOW MEANS SOMETHING NARROWER — "failures the
+  //      platform could not self-recover", not "failures". A regression that only
+  //      increases TRANSIENT launch failures is invisible to a ratio built on it.
+  //      The `BlockRenderFailureRate` alert in datapacket-talos still describes it
+  //      the old way; its wording needs a companion update.
   useEffect(() => {
     if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token' && status !== 'error')
       return;
+    // Another automatic attempt is scheduled — the host has NOT settled yet.
+    if (!autoRetrySettled) return;
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
     sendBlockRender({
@@ -577,10 +986,19 @@ export function PageBlockHost({
       blockInstanceId,
       slotId: 'app.page',
       status: 'error',
+      // Kept within the server-side KNOWN_ERROR_CLASSES enum
+      // (timeout|fatal|no_token|error) — the auto-retry adds no new class, so the
+      // existing `error_class` prom label and its alert are unchanged.
       errorClass: status,
     });
-  }, [status, appBlockId, blockInstanceId]);
+  }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
+  // MOD REVIEW SANDBOX — anti-spam latch for the reduced-permissions notice in
+  // the consent handler below. Bounded to at most TWO per host MOUNT (one generic
+  // + one scope-named upgrade — see `advanceReviewConsentLatch`). The review
+  // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
+  // gets its own budget, and the notification ids are mode-specific to match.
+  const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -600,10 +1018,6 @@ export function PageBlockHost({
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
-      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
-      // let untrusted review code pop a permission modal at the mod. Fire-and-
-      // forget ⇒ dropping it never hangs the block.
-      if (reviewMode) return;
       // PageBlockHost's local Status carries an extra terminal `'error'` variant
       // (a hard mint failure) the shared gate's HostStatus union doesn't model.
       // The gate only ever grants when status === 'ready', and `'error'` is a
@@ -614,6 +1028,53 @@ export function PageBlockHost({
       // Only act on a post-handshake request; a pre-handshake block never gets a
       // modal OR a toast (same posture as the consent gate itself).
       if (gateStatus !== 'ready') return;
+
+      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
+      // let untrusted review code pop a permission modal at the mod. That stays
+      // absolute; the request is still fire-and-forget (dropping the GRANT never
+      // hangs the block). What changed: dropping it SILENTLY meant the reviewer
+      // got nothing at all — no modal, no toast, no error — while the app parked
+      // forever on its consent card, which reads as "this app is broken" rather
+      // than "the preview deliberately withholds this permission". So review mode
+      // now emits a PASSIVE, non-interactive notice (never a modal, nothing to
+      // click, no scope is granted) pointing at the existing opt-in escape hatch.
+      if (reviewMode) {
+        const notice = resolveReviewConsentNotice(payload?.scopes, grantedScopes);
+        if (!notice.notify) return;
+        // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
+        // code and can post REQUEST_CONSENT in a loop, so one toast per message
+        // would let a hostile submission carpet-bomb the reviewing mod's screen
+        // (and bury the review chrome). The latch caps this at TWO notices per
+        // host mount — one generic, plus at most one upgrade to the scope-NAMED
+        // copy. It is NOT a plain "already notified" boolean: the SDK's `scopes`
+        // hint is optional, so a hint-less request on load would otherwise win
+        // the latch and permanently suppress the later, informative one.
+        const { show, next } = advanceReviewConsentLatch(
+          reviewConsentLatchRef.current,
+          notice.scopes.length > 0
+        );
+        reviewConsentLatchRef.current = next;
+        if (!show) return;
+        // `notice.scopes` is filtered to the known block-scope vocabulary, so no
+        // attacker-controlled text can reach this string; Mantine renders
+        // `message` as React text (escaped) — never as HTML.
+        const notification = buildReviewConsentNotification({
+          appBlockId,
+          runForReal: reviewRunForReal,
+          scopes: notice.scopes,
+        });
+        // Upgrade path only: retire the generic notice this one replaces, so the
+        // reviewer sees ONE notice, not a stack. A no-op when it already closed.
+        if (notification.supersedesId) hideNotification(notification.supersedesId);
+        showNotification({
+          id: notification.id,
+          color: 'yellow',
+          title: notification.title,
+          message: notification.message,
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         dialogStore.trigger({
@@ -659,6 +1120,7 @@ export function PageBlockHost({
     appName,
     onConsentGranted,
     reviewMode,
+    reviewRunForReal,
   ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a
@@ -793,7 +1255,9 @@ export function PageBlockHost({
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+    const off = onMessage<
+      { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
+    >(
       'SUBMIT_WORKFLOW',
       async (raw) => {
         if (reviewNack) {
@@ -809,11 +1273,20 @@ export function PageBlockHost({
         }
         if (!raw || typeof raw.requestId !== 'string' || !token) return;
         const requestId = raw.requestId;
+        // Idempotency (item 2, gen half): forward the OPTIONAL client key to the
+        // server so a lost-response retry collapses to one Buzz charge. Host-first:
+        // accept it defensively (only when a non-empty string) so older SDKs that
+        // never send it are unaffected and a garbage value is ignored.
+        const idempotencyKey =
+          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+            ? raw.idempotencyKey
+            : undefined;
         try {
           const { snapshot } = await submitWorkflowMutation.mutateAsync({
             blockToken: token,
             // Schema-validated server-side; the host never trusts this shape.
             body: raw.body as never,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
           });
           send('WORKFLOW_SUBMITTED', { requestId, snapshot });
         } catch (err) {
@@ -1680,6 +2153,7 @@ export function PageBlockHost({
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+  const sharedReportMutation = trpc.apps.shared.report.useMutation();
 
   // SHARED_LIST → apps.shared.list → SHARED_LIST_RESULT (query).
   useEffect(() => {
@@ -1720,6 +2194,8 @@ export function PageBlockHost({
               it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
             updatedAt:
               it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+            // item 3: pass the per-viewer vote flag straight through (no logic).
+            viewerVoted: it.viewerVoted,
           })),
           nextCursor: result.nextCursor,
         });
@@ -1944,6 +2420,160 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, sharedWithdrawMutation, reviewMode]);
+
+  // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
+  // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
+  // live). Maps the item exactly like SHARED_LIST (createdAt/updatedAt → ISO, and
+  // the additive viewerVoted flows straight through). A missing/hidden row comes
+  // back as `item: null` (the server applies the same hidden_at gate as list).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.get.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          const it = result.item;
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: it
+              ? {
+                  key: it.key,
+                  authorUserId: it.authorUserId,
+                  value: it.value,
+                  count: it.count,
+                  createdAt:
+                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                  updatedAt:
+                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                  viewerVoted: it.viewerVoted,
+                }
+              : null,
+          });
+        } catch (err) {
+          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
+  // reports a posted row for mod review; the server already trust-gates + rate-
+  // limits + files the report (endpoint pre-exists). Reply is SHARED_WITHDRAW-
+  // style `{ ok, error? }` — the error path MUST carry ok:false or the SDK drops
+  // it (→ hang). reviewMode NACK: report is a shared:write-trust op, never granted
+  // in run-for-real (mirrors the other shared writes).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
+      'SHARED_REPORT',
+      async (raw) => {
+        if (reviewMode) {
+          if (raw && typeof raw.requestId === 'string') {
+            send('SHARED_REPORT_RESULT', {
+              requestId: raw.requestId,
+              ok: false,
+              error: REVIEW_NACK_MESSAGE,
+            });
+          }
+          return;
+        }
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+        try {
+          await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          send('SHARED_REPORT_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedReportMutation, reviewMode]);
+
+  // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
+  // state) so increment/decrement never re-renders and the count is read
+  // synchronously in the message handler (single-threaded ⇒ check→increment before
+  // the first await is atomic per message), mirroring wildcardInFlightRef.
+  const saveImageInFlightRef = useRef<number>(0);
+
+  // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
+  // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
+  // has no allow-downloads). TWO variants, each with its own security gate:
+  //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
+  //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
+  //            attacker origin (an opaque-origin block's url/data is untrusted).
+  //   • id   — a cross-user grid image. Resolved through the SAME per-viewer
+  //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
+  //            a withheld/above-ceiling image (status !== 'visible', or omitted)
+  //            can NEVER be saved.
+  // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
+  // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
+  // so the block never hangs.
+  useEffect(() => {
+    const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
+      const req = resolveSaveImageRequest(raw);
+      if (!req) return; // missing/invalid requestId — can't correlate, drop
+      const { requestId } = req;
+      if (req.kind === 'invalid') {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      // F2 concurrency cap (host-side backpressure): bound concurrent host-side
+      // image downloads so a hostile block can't download-bomb the viewer's tab
+      // (memory/bandwidth). check→increment runs synchronously before the first
+      // await (single-threaded), so N concurrent SAVE_IMAGEs can't all pass the
+      // gate; excess replies `busy` (the block retries) rather than fetching.
+      if (saveImageInFlightRef.current >= SAVE_IMAGE_MAX_CONCURRENT) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
+        return;
+      }
+      saveImageInFlightRef.current += 1;
+      try {
+        if (req.kind === 'url') {
+          if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image url is not allowed' });
+            return;
+          }
+          await downloadUrlAsBlob(req.url, sanitizeDownloadFilename(req.filename, req.url));
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+          return;
+        }
+        // id variant — route through the gated per-viewer read.
+        if (!token) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'no block token' });
+          return;
+        }
+        const result = await getImagesByIdsMutation.mutateAsync({
+          blockToken: token,
+          imageIds: [req.imageId],
+        });
+        const image = result.images.find((i) => i.imageId === req.imageId);
+        if (!image || image.status !== 'visible') {
+          // Withheld (hidden / above-ceiling / unscanned / flagged) or unresolvable
+          // → never saveable. Do NOT leak which reason.
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image is not available' });
+          return;
+        }
+        await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
+        send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+      } catch (err) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+      } finally {
+        // Release the slot on EVERY exit that acquired one (success / refusal /
+        // error) so the gate can't leak slots and wedge shut.
+        saveImageInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, token, getImagesByIdsMutation]);
 
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
@@ -2428,8 +3058,7 @@ export function PageBlockHost({
   //      (defensive — the init effect's cleanup already disposes + nulls it when
   //      status left 'loading'; this guarantees no orphaned interval/timeout
   //      survives a retry).
-  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
-  //      successful retry re-emits exactly one impression.
+  //   2. Reset the per-mount handshake guard so init re-fires.
   //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
   //      contentWindow), so the re-armed handshake talks to a clean frame.
   //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
@@ -2452,25 +3081,83 @@ export function PageBlockHost({
   // token flips the props, init re-fires, and a successful mint loads the block.
   // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
   // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
-  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
-  // user-initiated, so no auto-retry loop is added.
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min) — which is
+  // why the AUTOMATIC re-mints are capped at MAX_AUTO_REMINTS. A manual Retry is
+  // user-initiated and stays uncapped here (the double-click guard below plus that
+  // server-side limit bound it).
+  //
+  // The re-arm itself is shared by the MANUAL button and the BOUNDED AUTO-RETRY
+  // below — one recovery path, not two (a second path is how the two drift).
+  //
+  // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
+  // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
+  // describing the outcome the host settles on.
+  const performRetry = useCallback(
+    ({ remint }: { remint: boolean }) => {
+      if (remint) onRetryToken?.();
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      initSentRef.current = false;
+      setReloadNonce((n) => n + 1);
+      setStatus('loading');
+    },
+    [onRetryToken]
+  );
+
   const handleRetry = useCallback(() => {
     const prior = statusRef.current;
     // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
     // status is already loading/ready does nothing — no re-mint, no remount.
     if (prior === 'loading' || prior === 'ready') return;
     // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
-    // below alone can't change the upstream `token`/`tokenError` props. Fire it
-    // BEFORE the local re-arm (the rotated token then flips props → init
-    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
-    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
-    controllerRef.current?.dispose();
-    controllerRef.current = null;
-    initSentRef.current = false;
-    blockRenderEmittedRef.current = false;
-    setReloadNonce((n) => n + 1);
-    setStatus('loading');
-  }, [onRetryToken]);
+    // alone can't change the upstream `token`/`tokenError` props. `fatal`/`timeout`
+    // are not auth failures → remount only.
+    //
+    // A manual Retry while an automatic one is still PENDING is coherent by
+    // construction: `performRetry` flips the status back to 'loading', which makes
+    // `decideAutoRetry` return 'none', which tears down the pending backoff timer
+    // in the scheduling effect's cleanup — so exactly ONE attempt runs, the one
+    // the user asked for. It also does NOT consume the automatic budget: the user
+    // taking over shouldn't spend the platform's remaining recovery attempts.
+    performRetry({ remint: prior === 'error' || prior === 'no_token' });
+  }, [performRetry]);
+
+  // 🔴 The backoff timer must NOT depend on `performRetry`'s IDENTITY. `performRetry`
+  // is rebuilt whenever the `onRetryToken` PROP changes identity, and a caller is
+  // free to pass an inline arrow (`onRetryToken={() => refresh()}`) — that makes it a
+  // new function on every parent render. If the scheduling effect depended on it,
+  // every such render would tear down and re-arm the pending timer, so the backoff
+  // would never elapse and auto-retry would SILENTLY NEVER FIRE. Reading it through
+  // a ref keeps the effect keyed on the DECISION alone.
+  const performRetryRef = useRef(performRetry);
+  useEffect(() => {
+    performRetryRef.current = performRetry;
+  }, [performRetry]);
+
+  // BOUNDED AUTO-RETRY — arm the backoff timer for the next automatic attempt.
+  //
+  // Placed here (after `performRetry`) rather than beside the other status
+  // effects purely for declaration order. `autoRetry` is the SAME memoized
+  // decision the failure beacon reads, so a scheduled retry and a suppressed
+  // beacon can never disagree.
+  //
+  // No timer leak: the cleanup clears the pending timeout on unmount AND whenever
+  // the decision changes (a manual Retry, a recovery, a status change) — so at
+  // most one backoff timer exists at a time and none survives the component.
+  useEffect(() => {
+    if (autoRetry.kind !== 'retry') return;
+    const { delayMs, remint } = autoRetry;
+    const t = setTimeout(() => {
+      // Consume the budget FIRST so the decision recomputes to the next attempt
+      // (or to 'none') even if the retry re-fails instantly.
+      setAutoRetryBudget((b) => ({
+        attempts: b.attempts + 1,
+        reminted: b.reminted + (remint ? 1 : 0),
+      }));
+      performRetryRef.current({ remint });
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [autoRetry]);
 
   return (
     <Box
@@ -2498,6 +3185,7 @@ export function PageBlockHost({
         appBlockId={appBlockId}
         appName={appName}
         slotId={PAGE_SLOT_ID}
+        canOpenPage={canOpenPage}
       />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
@@ -2613,7 +3301,25 @@ export function PageBlockHost({
                   aria-label={`Loading ${launchName}`}
                 />
                 <Text size="sm" c="dimmed">
-                  {`Starting ${launchName}…`}
+                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                      (manual AND automatic — both go through performRetry), so
+                      a re-attempt reads as a retry-in-progress rather than an
+                      identical "Starting …" that looks like nothing happened.
+                      This is the half of the reported defect where pressing
+                      Retry against a still-down host silently waited ~10s and
+                      re-rendered the same error.
+
+                      Deliberately NO "of N" here, and no attempt NUMBER: the
+                      fallback's pending-retry line counts AUTOMATIC attempts
+                      against a bounded ceiling, while this would count EVERY
+                      re-attempt including manual ones. Showing both put two
+                      counters on the same flow seconds apart, disagreeing —
+                      the card's "attempt 1 of 2" followed by this saying
+                      "attempt 2", and after a few manual clicks "attempt 7"
+                      against a stated maximum of 2. The bounded count belongs to
+                      the terminal card, where the budget is meaningful; this line
+                      only has to say that something is happening again. */}
+                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
                 </Text>
               </Stack>
             </Center>
@@ -2625,6 +3331,29 @@ export function PageBlockHost({
             reason={fallbackReason}
             blockName={sanitizeAppChromeName(appName) || blockId}
             onRetry={handleRetry}
+            // 🔴 The REAL terminal message renders the instant the status goes
+            // terminal — a pending automatic attempt is surfaced INSIDE it, never
+            // instead of it. The user is never held in a loading state waiting on
+            // a quiet retry (the silent-blank failure class), and the manual
+            // affordance stays available the whole time.
+            autoRetry={
+              autoRetry.kind === 'retry'
+                ? {
+                    attempt: autoRetry.attempt,
+                    // The ceiling REACHABLE from here, not the raw attempt cap —
+                    // an auth terminal is bounded by the lower re-mint budget, so
+                    // showing MAX_AUTO_RETRIES would promise a retry that will
+                    // never happen. Derived in decideAutoRetry.
+                    maxAttempts: autoRetry.maxAttempts,
+                    // prefers-reduced-motion: reduce → no spinner.
+                    animate: !reduceMotion,
+                  }
+                : undefined
+            }
+            autoRetriesSpent={autoRetryBudget.attempts}
+            // Automatic recovery has settled (exhausted, or never applicable):
+            // the button is now the only path forward, so make it unmissable.
+            prominentRetry={autoRetrySettled}
           />
         </Box>
       ) : null}

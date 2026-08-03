@@ -22,15 +22,26 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type {
+  AppSpendCapConfig,
   AvailableBlock,
   ListAvailableInput,
   MarketplaceMeta,
   PublicAppDetail,
+  SetAppSpendCapConfigInput,
   SetMarketplaceMetaInput,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { projectPublicOwner } from '~/server/services/blocks/public-owner';
+import {
+  resolveLimitsFromRow,
+  type AppSpendTier,
+} from '~/server/services/blocks/app-cap-limits.constants';
+import {
+  invalidateAppCapLimits,
+  normalizeCapOverrideInput,
+} from '~/server/services/blocks/app-cap-limits.service';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { isMatureContentRating } from '~/server/utils/server-domain';
@@ -3306,6 +3317,12 @@ export class BlockRegistry {
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
       screenshots: unknown;
+      // The app's real OWNER (OauthClient.userId → User). ONLY the three public
+      // chip columns are selected — never the rest of the user row. See
+      // `projectPublicOwner` for the allowlist rationale.
+      owner_user_id: number | null;
+      owner_username: string | null;
+      owner_image: string | null;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -3313,6 +3330,9 @@ export class BlockRegistry {
         ab.block_id,
         ab.app_id,
         oc.name AS app_name,
+        u.id AS owner_user_id,
+        u.username AS owner_username,
+        u.image AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,
@@ -3327,6 +3347,7 @@ export class BlockRegistry {
         ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      LEFT JOIN "User" u ON u.id = oc."userId"
       WHERE ab.id = ${appBlockId}::text
       LIMIT 1
     `) as Row[];
@@ -3358,6 +3379,12 @@ export class BlockRegistry {
       blockId: row.block_id,
       appId: row.app_id,
       appName: row.app_name ?? null,
+      // The app's REAL owner as the standard public chip ({id, username, image}
+      // ONLY — see projectPublicOwner). `appName` above is the OAuth client's
+      // name, which for every approved block equals the APP TITLE — so it must
+      // never be used as the author; that was the `/apps/<appBlockId>` "by
+      // {appName}" bug this field fixes.
+      owner: projectPublicOwner(row),
       // PUBLIC allowlist projection — identical to the listing path so the two
       // can't drift in what they expose.
       manifest: toPublicBlockManifest(row.manifest),
@@ -3598,6 +3625,115 @@ export class BlockRegistry {
       category: updated.category ?? null,
       featured: updated.featured,
       featuredOrder: updated.featuredOrder ?? null,
+    };
+  }
+
+  /**
+   * MOD-ONLY: read one app's generation-cap configuration — its SPEND tier, the
+   * raw override columns, and the RESOLVED ceilings the reserve path will
+   * actually enforce. Seeds the moderator form and lets an operator confirm the
+   * effective number after a write without re-deriving the tier table by hand
+   * (in particular, it shows when a deploy-time `BLOCK_APP_SPEND_*` clamp is
+   * binding below the value they set).
+   *
+   * 🔴 Reads `spendTier`, NOT `trustTier`. Spend and browser-isolation are
+   * separate axes — see `app-cap-limits.constants.ts`. Surfacing the trust tier
+   * on this screen would re-suggest the coupling this field exists to break.
+   *
+   * The router gates this with `moderatorProcedure`; this method does NO auth
+   * itself. Returns `null` for a missing app (router → NOT_FOUND).
+   *
+   * 🔴 Never wire this into an anon/publisher-facing procedure: the exact
+   * ceiling is deliberately withheld from apps so a hostile one can't probe it.
+   */
+  static async getAppSpendCapConfig(appBlockId: string): Promise<AppSpendCapConfig | null> {
+    const row = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        id: true,
+        spendTier: true,
+        spendCapBuzzPerDay: true,
+        spendVelocityMaxGens: true,
+      },
+    });
+    if (!row) return null;
+    return {
+      appBlockId: row.id,
+      spendTier: row.spendTier,
+      spendCapBuzzPerDay: row.spendCapBuzzPerDay ?? null,
+      spendVelocityMaxGens: row.spendVelocityMaxGens ?? null,
+      effective: resolveLimitsFromRow(row),
+    };
+  }
+
+  /**
+   * MOD-ONLY: set the app's SPEND TIER and/or the per-app override on the
+   * generation spend / velocity ceilings. The router gates this with
+   * `moderatorProcedure` + the `isModerator` belt; this method does NO auth
+   * itself.
+   *
+   * 🔴 This is the ONLY write path for these three columns. They are never
+   * sourced from the app manifest and appear in no publisher-facing input — a
+   * developer must not be able to raise their own abuse ceiling.
+   *
+   * 🔴 It writes `spendTier` and NEVER `trustTier`. Promoting an app's spend
+   * class must not touch its iframe-sandbox / renderMode privileges, and
+   * promoting its trust tier (a different mod surface) must not move its money
+   * ceiling. That independence is the whole point of the separate column.
+   *
+   * Semantics (identical to `setMarketplaceMeta`): an OMITTED field is left
+   * unchanged; an explicit `null` clears an override so the app falls back to
+   * its tier's limit. Override values are re-normalised through
+   * `normalizeCapOverrideInput` — the same floor/positive/hard-bound rules the
+   * READER applies — so a value can never be stored that the reader would then
+   * silently ignore or clamp differently.
+   *
+   * Invalidates the resolver's in-process cache so the change is immediate on
+   * this pod; other pods converge within the resolver's TTL.
+   *
+   * Throws NOT_FOUND for a missing app. Returns the resulting config, including
+   * the newly-effective ceilings.
+   */
+  static async setAppSpendCapConfig(input: SetAppSpendCapConfigInput): Promise<AppSpendCapConfig> {
+    const { appBlockId, spendTier, spendCapBuzzPerDay, spendVelocityMaxGens } = input;
+
+    const existing = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { id: true },
+    });
+    if (!existing) throwNotFoundError('App block not found');
+
+    // Build the patch from ONLY the provided fields. Override values are
+    // normalised with the exact read-side rules (positive int, floored,
+    // hard-bounded; anything that fails those rules becomes an explicit NULL =
+    // "no override" rather than a stored value the reader would ignore). The
+    // tier is already narrowed to the real enum by the zod input schema.
+    const data: {
+      spendTier?: AppSpendTier;
+      spendCapBuzzPerDay?: number | null;
+      spendVelocityMaxGens?: number | null;
+    } = normalizeCapOverrideInput({ spendCapBuzzPerDay, spendVelocityMaxGens });
+    if (spendTier !== undefined) data.spendTier = spendTier;
+
+    const updated = await dbWrite.appBlock.update({
+      where: { id: appBlockId },
+      data,
+      select: {
+        id: true,
+        spendTier: true,
+        spendCapBuzzPerDay: true,
+        spendVelocityMaxGens: true,
+      },
+    });
+
+    invalidateAppCapLimits(appBlockId);
+
+    return {
+      appBlockId: updated.id,
+      spendTier: updated.spendTier,
+      spendCapBuzzPerDay: updated.spendCapBuzzPerDay ?? null,
+      spendVelocityMaxGens: updated.spendVelocityMaxGens ?? null,
+      effective: resolveLimitsFromRow(updated),
     };
   }
 }

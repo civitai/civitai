@@ -1,6 +1,15 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
+  cappedTerms,
+  capMediaType,
+  effectiveLicensingFee,
+  gatePrices,
+  isPaidAccessActive,
+  isPermanentGate,
+  maxPaidAccessPrice,
+  maxPermanentAccessModels,
+  raisesOverCap,
   type ModelVersionTerms,
   type PaidAccessEntityType,
   type PaidAccessRow,
@@ -12,6 +21,7 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -139,7 +149,205 @@ export async function countUserPermanentAccessVersions(
   return Number(rows[0]?.count ?? 0);
 }
 
-/** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */
+// The tier the monetization caps resolve against, per user. Read on every paid-access purchase to clamp
+// what a buyer is charged, and getCapTier is an uncached join against the PRIMARY. A null tier (no
+// good-standing subscription) is cached like any other value — it's the common case.
+//
+// Busted from clearSessionCache, which Stripe's webhook reaches via refreshSession on every subscription
+// change, so an upgrade/downgrade/lapse applies on the next read; the TTL is only a missed-webhook backstop.
+type CachedCapTier = { userId: number; tier: string | null };
+// Lazily created (on first use) rather than at module load, for exactly the reason the
+// paidAccessCaches comment above gives: a top-level createCachedObject() runs during module
+// evaluation, so ANY test that wholesale-mocks `~/server/utils/cache-helpers` or
+// `~/server/redis/client` and merely imports this service transitively fails at COLLECTION —
+// before a single test runs — with "No createCachedObject export is defined on the mock" or
+// "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')". ~130 suites mock
+// those modules wholesale, so this is a broad tripwire, not a hypothetical.
+function createCapTierCache() {
+  return createCachedObject<CachedCapTier>({
+    key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
+    idKey: 'userId',
+    ttl: CacheTTL.hour,
+    // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
+      if (!userIds.length) return {};
+      const rows = await Promise.all(
+        userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
+      );
+      return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
+    },
+  });
+}
+
+let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
+function capTierCache() {
+  return (capTierCacheInstance ??= createCapTierCache());
+}
+
+/**
+ * Cap tiers for a set of users in ONE cache read. Prefer this over awaiting getCachedCapTier per user:
+ * capTierCache.fetch batches, a loop of single fetches is N sequential round-trips.
+ */
+export async function getCapTiers(
+  userIds: (number | null | undefined)[]
+): Promise<Map<number, string | null>> {
+  const unique = [...new Set(userIds.filter((id): id is number => id != null))];
+  if (!unique.length) return new Map();
+  const cached = await capTierCache().fetch(unique);
+  return new Map(unique.map((id) => [id, cached[id]?.tier ?? null]));
+}
+
+/** The owner tier a buyer's price is clamped against. Cached — see capTierCache. */
+export async function getCachedCapTier(userId: number): Promise<string | null> {
+  return (await getCapTiers([userId])).get(userId) ?? null;
+}
+
+export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
+
+const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
+  (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
+
+const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
+  const { download, generation } = gatePrices(terms as ModelVersionTerms | undefined);
+  return download > 0 || generation > 0;
+};
+
+export type ViewerMonetization = {
+  paidAccess: PaidAccessRow | undefined;
+  licensingFee: number | null;
+};
+
+/**
+ * Every amount a viewer would be charged for a set of versions — the paid-access gate and the licensing
+ * fee — capped against the owner's current tier in one batched lookup. They're capped together because
+ * capping them apart, against separately-fetched tiers, is how the two drift.
+ *
+ * An owner/mod gets the STORED values instead: their edit forms initialize from these and would save a
+ * capped value back over the original. Pass `ownerId` (the Model's owner, not PaidAccess.ownerId, so a
+ * transferred model reprices off whoever holds it now); it's required for `licensingFee` to be capped,
+ * and falls back to the gate's owner when omitted.
+ */
+export async function getViewerMonetization({
+  versions,
+  viewer,
+}: {
+  versions: {
+    id: number;
+    ownerId?: number;
+    licensingFee?: number | null;
+    modelType?: string | null;
+    /** Decides the media axis of the caps — video ceilings are higher. Absent prices as image. */
+    baseModel?: string | null;
+  }[];
+  viewer: PaidAccessViewer;
+}): Promise<Record<number, ViewerMonetization>> {
+  const rows = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  const ownerOf = (v: { id: number; ownerId?: number }) => v.ownerId ?? rows[v.id]?.ownerId;
+  const cappable = versions.filter((v) => {
+    const ownerId = ownerOf(v);
+    return (
+      ownerId != null &&
+      !isOwnerOrModView(viewer, ownerId) &&
+      (hasChargeablePrice(rows[v.id]?.terms) || (v.licensingFee ?? 0) > 0)
+    );
+  });
+  const capTiers = await getCapTiers(cappable.map(ownerOf));
+  const cappableIds = new Set(cappable.map((v) => v.id));
+
+  const out: Record<number, ViewerMonetization> = {};
+  for (const v of versions) {
+    const row = rows[v.id];
+    const storedFee = v.licensingFee ?? null;
+    if (!cappableIds.has(v.id)) {
+      out[v.id] = { paidAccess: row, licensingFee: storedFee };
+      continue;
+    }
+    const tier = capTiers.get(ownerOf(v) as number) ?? null;
+    const mediaType = capMediaType(v.baseModel);
+    // cappedTerms no-ops for a timed window: its price isn't ceilinged, so what's stored is what buyers
+    // pay. The licensing fee below is capped either way — charged per generation forever, not for the
+    // length of a window.
+    out[v.id] = {
+      paidAccess: row
+        ? {
+            ...row,
+            terms: cappedTerms(row.terms as ModelVersionTerms, tier, {
+              permanent: isPermanentGate(row),
+              mediaType,
+            }),
+          }
+        : undefined,
+      licensingFee:
+        storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
+    };
+  }
+  return out;
+}
+
+/** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
+export async function assertPaidAccessCaps({
+  userId,
+  isModerator,
+  versionId,
+  paidAccess,
+  tier,
+  baseModel,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  versionId?: number;
+  paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
+  tier: string | null | undefined;
+  baseModel?: string | null;
+}) {
+  if (isModerator || !paidAccess) return;
+
+  const existing = versionId
+    ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
+    : undefined;
+  // The price ceiling governs PERMANENT gates only. A timed early-access window prices itself out — the
+  // version becomes free when the window closes — so a creator may charge what they like for one.
+  if (paidAccess.permanent) {
+    const priceCap = maxPaidAccessPrice(tier, capMediaType(baseModel));
+    const next = gatePrices(paidAccess.terms);
+    const prev = gatePrices(existing?.terms as ModelVersionTerms);
+    // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised
+    // to the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
+    if (
+      raisesOverCap(next.download, prev.download, priceCap) ||
+      raisesOverCap(next.generation, prev.generation, priceCap)
+    )
+      throw throwBadRequestError(
+        `Your tier allows a permanent paid-access price of up to ${priceCap} Buzz. Lower the price, use a timed early-access window, or upgrade your membership.`
+      );
+  }
+
+  // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
+  if (paidAccess.permanent) {
+    const alreadyPermanent = existing != null && existing.timeframeDays == null;
+    const limit = maxPermanentAccessModels(tier);
+    if (!alreadyPermanent && Number.isFinite(limit)) {
+      const used = await countUserPermanentAccessVersions(userId, versionId);
+      if (used + 1 > limit)
+        throw throwBadRequestError(
+          `Your tier allows up to ${limit} permanent paid-access model${
+            limit === 1 ? '' : 's'
+          }. Upgrade your membership for more.`
+        );
+    }
+  }
+}
+
+/**
+ * Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). Pricing is
+ * already settled by then — pass a row from getViewerMonetization, not a raw one, or the viewer gets
+ * whatever the owner stored.
+ */
 export function toModelVersionPaidAccessDto(
   row: PaidAccessRow | undefined
 ): ModelVersionPaidAccessDto | null {
@@ -149,6 +357,33 @@ export function toModelVersionPaidAccessDto(
     timeframeDays: row.timeframeDays ?? null,
     terms: row.terms as ModelVersionTerms,
   };
+}
+
+// Public v1 API view of the gate. Omits `terms` (pricing belongs to the purchase flow) and
+// `timeframeDays` (= endsAt - publishedAt, both already in the response). `permanent` earns its
+// place by separating a never-expiring gate from a timed one whose endsAt is pending publish.
+export type PublicPaidAccessDto = {
+  permanent: boolean;
+  endsAt: Date | null;
+};
+
+/** An expired gate keeps its row as a tombstone, so presence alone doesn't mean gated. */
+export function toPublicPaidAccessDto(row: PaidAccessRow | undefined): PublicPaidAccessDto | null {
+  if (!row || !isPaidAccessActive(row)) return null;
+  return { permanent: row.timeframeDays == null, endsAt: row.endsAt };
+}
+
+export async function getPublicPaidAccessForModelVersions(
+  versionIds: number[]
+): Promise<Record<number, PublicPaidAccessDto>> {
+  if (!versionIds.length) return {};
+  const rows = await getPaidAccess('ModelVersion', versionIds);
+  const out: Record<number, PublicPaidAccessDto> = {};
+  for (const id of versionIds) {
+    const dto = toPublicPaidAccessDto(rows[id]);
+    if (dto) out[id] = dto;
+  }
+  return out;
 }
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
@@ -264,4 +499,3 @@ export async function materializePaidAccessEndsAt(
   });
   await bustPaidAccessCache('ModelVersion', [versionId]);
 }
-

@@ -1,4 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
+import { resolveCapTier, type CapTier } from '@civitai/buzz';
 
 // Read membership off SessionUser (resolved by the shared session cache / hub) rather than re-querying.
 
@@ -35,9 +36,27 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
   return real;
 }
 
-// Member-only actions require an ACTIVE Creator Program membership: joined the program (onboarding flag) AND a
-// current paid subscription — a lapsed membership revokes access.
-export const canSetLicensingFee = (m: Membership): boolean =>
-  m.isCreatorProgramMember && m.isMember;
-export const canSellIndefinitely = (m: Membership): boolean =>
-  m.isCreatorProgramMember && m.isMember;
+// Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — membership decides
+// only HOW MUCH, via maxLicensingFee / maxPaidAccessPrice.
+
+// No subscription and the 'free' tier are the same thing everywhere — both resolve to 'free', so neither
+// the caps nor the UI ever needs to tell them apart.
+export const displayTier = (m: Membership): string => m.tier ?? 'free';
+
+/**
+ * The tier the caps resolve against. Delegates to the shared rule so the spoke and the main app can't
+ * disagree about what a lapse, an unknown tier, or founder resolves to.
+ */
+export const cappedTier: (m: Membership) => CapTier = resolveCapTier;
+
+/** Every capacity fact the models page ships to its editors. `null` cap = unlimited. */
+export type CreatorCaps = {
+  /** Display label only — cap math uses `capTier`, which drops to free on a lapse. */
+  tier: string;
+  capTier: CapTier;
+  permanentUsed: number;
+  permanentCap: number | null;
+  maxEarlyAccessDays: number;
+  earlyAccessUsed: number;
+  earlyAccessCap: number;
+};

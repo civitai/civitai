@@ -5,6 +5,7 @@ import {
   infiniteQuerySchema,
   paginationSchema,
 } from '~/server/schema/base.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 /**
  * Sort options for the 3D models feed. Mirrors `ModelSort` shape (label-as-value
@@ -37,7 +38,7 @@ export type UpsertModel3DInput = z.infer<typeof upsertModel3DSchema>;
 export const upsertModel3DSchema = z.object({
   id: z.number().optional(),
   name: z.string().trim().min(1).max(150),
-  description: z.string().nullish(),
+  description: getSanitizedStringSchema().nullish(),
   licenseId: z.number().int().positive(),
   licenseDetails: z.string().nullish(),
   thumbnailImageId: z.number().int().positive().nullish(),
@@ -82,9 +83,7 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     statuses: z.array(z.enum(Model3DStatus)).optional(),
     tagIds: z.array(z.number().int().positive()).optional(),
     includeDrafts: z.boolean().optional(),
-    sort: z
-      .enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]])
-      .optional(),
+    sort: z.enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]]).optional(),
     period: z.enum(MetricTimeframe).optional(),
     // PolyGen `enableAnimation` toggle — JSON check on `Model3D.generationParams`.
     // The Meshy API binds rigging to animation, so the previous standalone
@@ -186,16 +185,12 @@ export type Model3DGallerySettingsSchema = {
   images?: number[] | undefined;
 };
 
-export type UpdateModel3DGallerySettingsInput = z.infer<
-  typeof updateModel3DGallerySettingsSchema
->;
+export type UpdateModel3DGallerySettingsInput = z.infer<typeof updateModel3DGallerySettingsSchema>;
 export const updateModel3DGallerySettingsSchema = z.object({
   id: z.number().int().positive(),
   gallerySettings: z
     .object({
-      hiddenUsers: z
-        .object({ id: z.number(), username: z.string().nullable() })
-        .array(),
+      hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
       hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
       hiddenImages: z.number().int().positive().array(),
     })

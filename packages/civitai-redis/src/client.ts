@@ -1624,6 +1624,40 @@ export const REDIS_SYS_KEYS = {
     // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
     TIP_CAP: 'system:blocks:tip-cap',
     /**
+     * Idempotency record for the block TIP endpoint (`POST /api/v1/blocks/tip`),
+     * keyed `system:blocks:tip-idem:${userId}:${clientIdempotencyKey}`. A tip
+     * moves REAL Buzz to a third party and is IRREVERSIBLE, so a timeout /
+     * lost-response retry that re-POSTs the same logical tip must NOT move money
+     * twice. The endpoint claims this key with `SET NX` before it reserves/charges;
+     * a replay that finds it set either (a) replays the cached TERMINAL result
+     * (200/4xx/5xx) verbatim — no second reserve, no second charge — or (b) gets a
+     * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
+     * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
+     * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
+     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
+     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     */
+    TIP_IDEM: 'system:blocks:tip-idem',
+    /**
+     * Idempotency record for the block GENERATION submit (`blocks.submitWorkflow`
+     * — both the txt2img and customComfy branches), keyed
+     * `system:blocks:gen-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`. A
+     * generation submit RESERVES the viewer's daily/per-app Buzz cap and SUBMITS to
+     * the orchestrator (a real charge), so two CONCURRENT same-key submits (a
+     * double-click / SDK auto-retry racing before the orchestrator's own
+     * `(userId, externalId)` dedupe engages) could otherwise BOTH reserve and BOTH
+     * charge. The handler `SET NX`-claims this key BEFORE the cap reservation; a
+     * concurrent submit that finds it in-progress gets a 409 (no 2nd reservation,
+     * no 2nd orchestrator submit), and a lost-response retry AFTER success replays
+     * the cached snapshot (no re-submit). DISTINCT from BUZZ_CAP (the daily-spend
+     * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
+     * logical generation across retries. Per-(user, app, key) so a key can never
+     * collide across apps or users. Short TTL (covers realistic retry windows); a
+     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
+     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     */
+    GEN_IDEM: 'system:blocks:gen-idem',
+    /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
      * bounds a single USER's daily Buzz SPEND; this one bounds the daily
@@ -1783,6 +1817,22 @@ export const REDIS_SYS_KEYS = {
       deploy.
      */
     IMAGE_SCANNER_NEW: 'system:image-scanner-new',
+    /*
+      Per-run image cap for the remove-deleted-user-images job. Set to '0' to
+      pause the drain without a deploy. Missing key means the job's compiled
+      default applies.
+     */
+    DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    /*
+      Set of userIds whose grace-blocked images are waiting on the
+      restore-user-images job. `restoreUser` adds an id once its restore
+      transaction commits; the job drops it once the reversal runs out of rows
+      to claim. Only a worklist — `Image.metadata` holds the durable
+      breadcrumbs, so a lost set means the images stay hidden until
+      unblockAccountDeletionImages is called for that account again, not that
+      the reversal is unrecoverable.
+     */
+    PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2033,7 +2083,9 @@ export const REDIS_KEYS = {
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
+    PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
+    USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',

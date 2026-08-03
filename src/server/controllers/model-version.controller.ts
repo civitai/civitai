@@ -1,11 +1,11 @@
 import { TRPCError } from '@trpc/server';
-import { maxPermanentAccessModels } from '@civitai/buzz';
+import { capMediaType, maxLicensingFee, raisesOverCap } from '@civitai/buzz';
 import {
-  countUserPermanentAccessVersions,
-  getPaidAccess,
+  assertPaidAccessCaps,
+  getViewerMonetization,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -284,7 +284,20 @@ const loadModelVersion = async ({
     // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
     // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
     // modelVersion.donationGoal instead.
-    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const { paidAccess, licensingFee } = (
+      await getViewerMonetization({
+        versions: [
+          {
+            id,
+            ownerId: version.model.user.id,
+            licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+            modelType: version.model.type,
+            baseModel: version.baseModel,
+          },
+        ],
+        viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+      })
+    )[id];
     const isOwnerOrMod =
       !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
     const eaDonationGoal =
@@ -294,7 +307,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
-      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+      licensingFee,
       canGenerate,
       wildcardSetId,
       paidAccess: toModelVersionPaidAccessDto(paidAccess),
@@ -384,30 +397,21 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    // A permanent (never-expiring) gate skips the timed-window caps below; it's a Creator Program
-    // member perk (moderators always), capped per tier. Only NEW permanent grants are gated —
-    // re-saving an already-permanent version stays allowed even if the creator's membership lapsed,
-    // so an edit can't lock them out of their own version.
-    if (input.paidAccess?.permanent && !ctx.user.isModerator) {
-      const existing = input.id ? (await getPaidAccess('ModelVersion', [input.id]))[input.id] : undefined;
-      const alreadyPermanent = existing != null && existing.timeframeDays == null;
-      if (!alreadyPermanent) {
-        const tier = (await getHighestTierSubscription(ctx.user.id))?.tier;
-        const isMember = !!tier && tier !== 'free' && tier !== 'founder';
-        if (!isMember)
-          throw throwBadRequestError(
-            'Permanent paid access requires an active Creator Program membership.'
-          );
-        const limit = maxPermanentAccessModels(tier);
-        const used = await countUserPermanentAccessVersions(ctx.user.id, input.id);
-        if (used + 1 > limit)
-          throw throwBadRequestError(
-            `Your Creator Program tier allows up to ${limit} permanent paid-access model${
-              limit === 1 ? '' : 's'
-            }.`
-          );
-      }
-    }
+    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
+    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
+    // memoized because both the paid-access and licensing-fee checks need it: getAllUserSubscriptions is
+    // uncached and hits the primary.
+    let capTier: string | null | undefined;
+    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
+
+    await assertPaidAccessCaps({
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      versionId: input.id,
+      paidAccess: input.paidAccess,
+      tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+      baseModel: input.baseModel,
+    });
 
     await assertUserEarlyAccessLimits({
       userId: ctx.user.id,
@@ -434,6 +438,18 @@ export const upsertModelVersionHandler = async ({
       const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
+      }
+      // Per-tier ceiling, varying by model type. Compared in whole cents: the stored value is a Prisma
+      // Decimal and the input a JSON float, so a raw > can read "raised" on an untouched fee.
+      if (!ctx.user.isModerator) {
+        const toCents = (v: number) => Math.round(v * 100);
+        const model = await getModel({ id: input.modelId, select: { type: true } });
+        const cap = maxLicensingFee(await actorTier(), model?.type, capMediaType(input.baseModel));
+        const stored = toCents(Number(existing?.licensingFee ?? 0));
+        if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
+          throw throwBadRequestError(
+            `Your tier allows a licensing fee of up to ${cap} Buzz per generation for this model type. Lower the fee or upgrade your membership.`
+          );
       }
       if (
         input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&

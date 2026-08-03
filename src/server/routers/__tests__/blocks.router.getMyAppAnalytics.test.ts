@@ -56,9 +56,14 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   getMyAppAnalytics: (...a: unknown[]) => mockGetMyAppAnalytics(...a),
   // emptyAnalytics + resolveRange are pure (no DB) — use the real ones so the
   // flag-off short-circuit returns the genuine zeroed shape.
-  emptyAnalytics: (range: unknown, notOwned: boolean) => ({
+  emptyAnalytics: (
+    range: unknown,
+    notOwned: boolean,
+    unavailable: string | undefined = notOwned ? 'notOwned' : undefined
+  ) => ({
     range,
     notOwned,
+    ...(unavailable ? { unavailable } : {}),
     installs: { total: 0, active: 0, series: [] },
     runs: { count: 0, buzzSpent: 0, series: [] },
     buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
@@ -209,11 +214,59 @@ describe('getMyAppAnalytics — gate', () => {
     mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyAppAnalytics({ appBlockId: 'apb_1' });
-    expect(result.notOwned).toBe(false);
     expect(result.installs).toEqual({ total: 0, active: 0, series: [] });
     expect(result.runs).toEqual({ count: 0, buzzSpent: 0, series: [] });
     expect(result.buzzPurchased).toEqual({ count: 0, buzzAmount: 0, grossCents: 0 });
     expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+
+  it('flag OFF: the zeroed payload is FLAGGED unavailable, not passed off as data', async () => {
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyAppAnalytics({ appBlockId: 'apb_1' });
+    expect(result.unavailable).toBe('notEntitled');
+    // Fail-closed on the legacy field too: a client that only guards on
+    // `notOwned` (civitai/cli#190) must refuse to render this payload.
+    expect(result.notOwned).toBe(true);
+  });
+
+  it('DISCRIMINATOR: a dark-flag zero is distinguishable from a genuine owned-but-empty zero', async () => {
+    // Both payloads have byte-identical all-zero counters and the same range —
+    // that is exactly the confusion this proc used to ship. The ONLY thing a
+    // client can branch on is the discriminator, so pin it from both sides.
+    const range = { from: new Date(0), to: new Date(0), granularity: 'day' as const };
+    const genuineZero = {
+      range,
+      notOwned: false,
+      installs: { total: 0, active: 0, series: [] },
+      runs: { count: 0, buzzSpent: 0, series: [] },
+      buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
+      engagement: { apiCalls: 0, activeUsers: 0, errorRate: 0, topScopes: [], topEndpoints: [] },
+    };
+    mockGetMyAppAnalytics.mockResolvedValue(genuineZero);
+
+    const owned = await blocksRouter
+      .createCaller(fakeCtx(modUser) as never)
+      .getMyAppAnalytics({ appBlockId: 'apb_1' });
+
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const dark = await blocksRouter
+      .createCaller(fakeCtx(modUser) as never)
+      .getMyAppAnalytics({ appBlockId: 'apb_1' });
+
+    // Precondition: the counters really are identical, so nothing else could
+    // tell these apart.
+    expect(dark.installs).toEqual(owned.installs);
+    expect(dark.runs).toEqual(owned.runs);
+    expect(dark.buzzPurchased).toEqual(owned.buzzPurchased);
+    expect(dark.engagement).toEqual(owned.engagement);
+
+    // A genuinely-measured empty app is NOT flagged; the dark-flag one is.
+    expect(owned.unavailable).toBeUndefined();
+    expect(dark.unavailable).toBe('notEntitled');
+    expect(owned.notOwned).toBe(false);
+    expect(dark.notOwned).toBe(true);
+    expect(dark).not.toEqual(owned);
   });
 });
 

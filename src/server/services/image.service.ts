@@ -213,6 +213,10 @@ import {
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
+import {
+  classifyImageScanFailure,
+  ImageScanFailureClass,
+} from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
@@ -354,8 +358,17 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
       );
     }
     await purgeResizeCache({ url: url });
-  } catch (e) {
-    // do nothing
+  } catch (error) {
+    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
+    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    await logToAxiom({
+      type: 'error',
+      name: 'delete-image-from-s3-failed',
+      message: 'S3 delete failed; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 }
 
@@ -861,6 +874,76 @@ export const imageScanTypes: ImageScanType[] = [
   ImageScanType.SpineRating,
 ];
 
+function extractSubmitErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object') {
+    const { errors, title } = error as { errors?: { messages?: unknown }; title?: unknown };
+    const messages = errors?.messages;
+    if (Array.isArray(messages) && messages.length) return messages.join('; ');
+    if (typeof title === 'string') return title;
+  }
+  return null;
+}
+
+// Permanent terminalizes on the first attempt, so only codes that describe this input
+// belong here. A systemic code (401/403/404, or 413 when our own body is the thing that
+// grew) would terminalize every image submitted during the outage.
+const PERMANENT_SUBMIT_STATUSES = [400, 415, 422];
+
+async function markImageScanSubmitFailure({
+  dbClient,
+  imageId,
+  status,
+  error,
+}: {
+  dbClient: { $executeRaw: typeof dbWrite.$executeRaw };
+  imageId: number;
+  status?: number;
+  error: unknown;
+}) {
+  const reason = extractSubmitErrorMessage(error);
+  const failureClass =
+    !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
+      ? ImageScanFailureClass.Permanent
+      : classifyImageScanFailure({ reason, failureType: 'send-fail' });
+  const isPermanent = failureClass === ImageScanFailureClass.Permanent;
+
+  const errorJson = JSON.stringify({
+    failureType: 'send-fail',
+    responseStatus: status,
+    reason: reason ?? undefined,
+    failureClass,
+    at: new Date().toISOString(),
+  });
+
+  await dbClient.$executeRaw`
+    UPDATE "Image"
+    SET
+      -- Transient keeps its status; Error would demote a fresh upload to the hourly lane.
+      "ingestion" = CASE
+        WHEN ${isPermanent}::boolean THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+        ELSE "ingestion"
+      END,
+      "scanRequestedAt" = ${new Date()},
+      "scanJobs" = jsonb_set(
+        jsonb_set(
+          COALESCE("scanJobs", '{}'),
+          '{retryCount}',
+          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+        ),
+        '{error}',
+        ${errorJson}::jsonb
+      )
+    WHERE id = ${imageId}
+      -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
+      AND "ingestion" = ANY(ARRAY['Pending','Rescan','Error']::"ImageIngestionStatus"[])
+  `;
+
+  return failureClass;
+}
+
 export const ingestImage = async ({
   image,
   lowPriority,
@@ -911,7 +994,11 @@ export const ingestImage = async ({
   }
 
   if (await isImageScannerNewEnabled()) {
-    const { data: workflowResponse } = await createImageIngestionRequest({
+    const {
+      data: workflowResponse,
+      error: submitError,
+      status: submitStatus,
+    } = await createImageIngestionRequest({
       imageId: id,
       url,
       type,
@@ -920,6 +1007,12 @@ export const ingestImage = async ({
     });
     if (!workflowResponse) {
       imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
+      const failureClass = await markImageScanSubmitFailure({
+        dbClient,
+        imageId: id,
+        status: submitStatus,
+        error: submitError,
+      });
       // The orchestrator submit already logs the transient failure in
       // createImageIngestionRequest, but from here it's otherwise a silent
       // `return false` — surface it at the dispatch layer so the failure is
@@ -929,6 +1022,8 @@ export const ingestImage = async ({
         type: 'error',
         reason: 'no-workflow-response',
         failureType: 'send-fail',
+        failureClass,
+        responseStatus: submitStatus,
         imageId: id,
         mediaType: type,
       }).catch(() => null);

@@ -1,3 +1,22 @@
+/* eslint-disable local-rules/no-module-scope-cache --
+ * 22 module-scope caches, every one of them keyed off REDIS_KEYS during module
+ * evaluation. This is a tracked BACKLOG, not a safe shape: it is structurally the
+ * same tripwire as the eager `capTierCache` that broke three suites at collection
+ * and turned `Unit tests` red on main (#3505 / #3506), and this module is imported
+ * far more widely than paid-access.service.ts was. Any suite that wholesale-mocks
+ * `~/server/redis/client` without `REDIS_KEYS.CACHES` and reaches this file
+ * unmocked dies during COLLECTION — the three suites in #3505 stay green only
+ * because they additionally mock this module.
+ *
+ * Disabled file-wide rather than converted here because that is 22 call-site
+ * migrations across the busiest cache module in the repo, and it wants to be its
+ * own reviewable change. The file-wide form also silences a NEW cache added here,
+ * which is accepted: a 23rd cache in this file adds no NEW tripwire, because
+ * anything reaching this module already has to mock it. A new cache in a SERVICE
+ * does add one, and that is what the rule is scoped to catch.
+ *
+ * Delete this disable once the caches below are lazy — the rule then guards them.
+ */
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -36,8 +55,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  CosmeticType,
+  ModelStatus,
+  TagSource,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -147,6 +172,55 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+type UserOwnedStickerLookup = {
+  userId: number;
+  cosmeticIds: number[];
+};
+/**
+ * Sticker are owned, never equipped, so `userCosmeticCache` — which only holds
+ * equipped cosmetics — can't answer "may this user send this sticker".
+ */
+export const lookupOwnedSticker = async (ids: number[], fromWrite?: boolean) => {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const owned = await db.userCosmetic.findMany({
+    where: { userId: { in: goodIds }, cosmetic: { type: CosmeticType.Sticker } },
+    select: { userId: true, cosmeticId: true },
+  });
+  return owned.reduce((acc, { userId, cosmeticId }) => {
+    acc[userId] ??= { userId, cosmeticIds: [] };
+    if (!acc[userId].cosmeticIds.includes(cosmeticId)) acc[userId].cosmeticIds.push(cosmeticId);
+    return acc;
+  }, {} as Record<number, UserOwnedStickerLookup>);
+};
+
+export const userOwnedStickerCache = createCachedObject<UserOwnedStickerLookup>({
+  key: REDIS_KEYS.CACHES.USER_OWNED_STICKER,
+  idKey: 'userId',
+  staleWhileRevalidate: false,
+  lookupFn: lookupOwnedSticker,
+  // Deliberately minutes, not the day the caches around this one use: a stale
+  // entry means someone can't send an sticker they paid for, and the bulk-SQL
+  // cosmetic crons grant without surfacing whose entry to drop. Cheap to rebuild
+  // (one small row) and read once per message send.
+  ttl: 60 * 5,
+});
+
+/**
+ * Call wherever a UserCosmetic write already has the affected user ids in hand,
+ * including paths that can't grant an sticker today — a redundant delete costs
+ * nothing next to the Postgres write it follows. Paths that would need a query
+ * change to learn the ids are left to the TTL above instead.
+ */
+export async function refreshOwnedStickerCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  if (!ids.length) return;
+  // `refresh` is already best-effort internally; this catch is belt-and-braces
+  // because every caller runs it after a committed grant.
+  await userOwnedStickerCache.refresh(ids).catch(() => undefined);
+}
 
 type CosmeticLookup = {
   id: number;
@@ -367,7 +441,43 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.userBasic, // ~4MB (tiny records)
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
+export type ModelVersionAccessCache = EntityAccessDataType & {
+  publishedAt: Date;
+  status: ModelStatus;
+};
+
+/**
+ * The authoritative availability read behind modelVersionAccessCache. Exported because
+ * `dontCacheFn` below means the cache is *allowed* to hold nothing for an id, and callers that
+ * gate access on the result (hasEntityAccess) must be able to resolve those ids for real rather
+ * than assume the worst.
+ */
+export async function lookupModelVersionAccess(
+  ids: number[],
+  fromWrite?: boolean
+): Promise<Record<string, ModelVersionAccessCache>> {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    SELECT
+      mv.id AS "entityId",
+      mmv."userId" AS "userId",
+      -- Model availability prevails if it's private
+      CASE
+        WHEN mmv.availability = 'Private'
+          THEN mmv."availability"
+        ELSE mv."availability"
+      END AS "availability",
+      mv."publishedAt" AS "publishedAt",
+      mv."status" as "status"
+    FROM "ModelVersion" mv
+         JOIN "Model" mmv ON mv."modelId" = mmv.id
+    WHERE
+      mv.id IN (${Prisma.join(goodIds, ',')})
+  `);
+  return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+}
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -388,29 +498,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
-      SELECT
-        mv.id AS "entityId",
-        mmv."userId" AS "userId",
-        -- Model availability prevails if it's private
-        CASE
-          WHEN mmv.availability = 'Private'
-            THEN mmv."availability"
-          ELSE mv."availability"
-        END AS "availability",
-        mv."publishedAt" AS "publishedAt",
-        mv."status" as "status"
-      FROM "ModelVersion" mv
-           JOIN "Model" mmv ON mv."modelId" = mmv.id
-      WHERE
-        mv.id IN (${Prisma.join(goodIds, ',')})
-    `);
-    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupModelVersionAccess(ids as number[], fromWrite),
 });
 
 type TagLookup = {

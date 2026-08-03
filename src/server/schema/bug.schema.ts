@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -19,7 +20,7 @@ export type CreateBugInput = z.infer<typeof createBugInput>;
 export const createBugInput = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
-  content: z.string().optional(),
+  content: getSanitizedStringSchema().optional(),
   status: z.string().min(1).default('Open'),
   clickupUrl: z.url().optional().or(z.literal('')),
   publishedAt: z.date().optional().nullable(),

@@ -5,6 +5,7 @@ import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsSto
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -93,18 +94,37 @@ export default function AppPage(props: PageProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
     props;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Record this ACTUAL run in the client-only recents store (localStorage), so
-  // the shared app-chrome "Recently run" menu can offer a 1-click return. Keyed
-  // by appBlockId (the store's stable de-dup id); `blockId` backs the
-  // `/apps/run/<blockId>` link and `name` is the display label. No icon URL is
-  // plumbed to this SSR page (PageProps carries none), so `iconUrl` is omitted —
-  // the menu falls back to a generic app icon. Fires once per mount; the store
-  // dedups so revisiting just moves the entry to the front.
+  // both the shared app-chrome "Recently run" menu AND the `/apps` store's
+  // "Recently opened" rail can offer a 1-click return. Keyed by appBlockId (the
+  // store's stable de-dup id).
+  //
+  // Fields, and why each is written:
+  //  - `blockId` — backs `/apps/run/<blockId>` (the chrome menu's link).
+  //  - `slug`    — backs `/apps/store-preview/<slug>` (the store rail's fallback
+  //    link). For an on-site app the AppListing slug IS the AppBlock `block_id`
+  //    (server-side single source: `app-listing-mapper.ts` → `slug: ab.blockId`),
+  //    which is also why this page's own `slug` prop is `page.blockId`.
+  //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
+  //    surface, so `hasPage` is true by construction; the rail uses it to decide
+  //    between re-opening the run route and the detail page.
+  // No icon URL is plumbed to this SSR page (PageProps carries none), so
+  // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
+  // generic app icon. Fires once per mount; the store dedups, so revisiting just
+  // moves the entry to the front.
   useEffect(() => {
-    recordRecentlyOpenedApp({ id: appBlockId, blockId, name: appName });
+    recordRecentlyOpenedApp({
+      id: appBlockId,
+      blockId,
+      slug: blockId,
+      kind: 'onsite',
+      hasPage: true,
+      name: appName,
+    });
   }, [appBlockId, blockId, appName]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
@@ -156,8 +176,21 @@ export default function AppPage(props: PageProps) {
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
   // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
   // TOKEN_REFRESH push delivers the granted scopes and the block retries.
-  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
-    useBlockToken(install, context);
+  const {
+    token,
+    expiresAt,
+    needsConsent,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    error,
+    // `terminal` = the mint failed, nothing usable is left, AND the hook's
+    // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
+    // down a running page — a transient refresh blip sets it while recovery is
+    // still under way — so the mid-session escalation keys on this instead.
+    terminal,
+    refresh,
+  } = useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -185,10 +218,22 @@ export default function AppPage(props: PageProps) {
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
           tokenError={error != null}
+          tokenTerminal={terminal}
           viewer={viewer}
           theme={theme}
           onConsentGranted={refresh}
           onRetryToken={refresh}
+          // The chrome's "Recently run" shortcuts point at this very route, so
+          // what decides whether they resolve is exactly this route's own
+          // `getServerSideProps` predicate — which requires BOTH flags (see the
+          // 404 above). `appBlocksPages` alone is NOT it: `appBlocks` is the
+          // block-runtime kill-switch and Flipt can disable as well as enable,
+          // so pages-on/blocks-off is reachable and would render guaranteed-404
+          // links. (Both are redundantly true here, since we already passed that
+          // gate; it is written out anyway so all four chrome mounters carry ONE
+          // greppable shape and a future surface can't justify a per-surface
+          // constant.)
+          canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
         />
       </Box>
     </>

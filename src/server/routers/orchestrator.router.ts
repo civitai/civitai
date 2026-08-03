@@ -345,10 +345,18 @@ export const orchestratorRouter = router({
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
+        // correct graceful degradation the issue defends — a stale localStorage
+        // version id after an ecosystem switch, with the picker visibly snapping
+        // back. Labelling it keeps it out of the App Blocks incidence number that
+        // gates the phase-3 policy decision, instead of inflating it with the one
+        // case everyone agrees is working as intended.
+        'onsite'
+      );
 
       // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
       // hides the option in the picker UI — a crafted submission payload would
@@ -419,10 +427,18 @@ export const orchestratorRouter = router({
     .input(z.any())
     .query(async ({ ctx, input }) => {
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3520: the ON-SITE generator. A substitution here is the DELIBERATE,
+        // correct graceful degradation the issue defends — a stale localStorage
+        // version id after an ecosystem switch, with the picker visibly snapping
+        // back. Labelling it keeps it out of the App Blocks incidence number that
+        // gates the phase-3 policy decision, instead of inflating it with the one
+        // case everyone agrees is working as intended.
+        'onsite'
+      );
 
       // Mirror of the gate in `generateFromGraph`. Reject what-if costing for
       // flag-gated workflows the user can't reach so we don't leak pricing

@@ -162,7 +162,7 @@ export const upsertCommentHandler = async ({
       }
     }
 
-    const comment = await createOrUpdateComment({ ...input, ownerId, locked });
+    const comment = await createOrUpdateComment({ ...input, ownerId, locked, track: ctx.track });
 
     if (!input.commentId) {
       await ctx.track.comment({

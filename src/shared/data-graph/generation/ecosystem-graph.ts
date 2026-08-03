@@ -57,6 +57,7 @@ import { ponyV7Graph } from './pony-v7-graph';
 import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
 import { klingGraph } from './kling-graph';
+import { minimaxGraph } from './minimax-graph';
 import { wanGraph } from './wan-graph';
 import { wanImageGraph } from './wan-image-graph';
 import { hunyuanGraph } from './hunyuan-graph';
@@ -412,6 +413,7 @@ export const ecosystemGraph = new DataGraph<
     // Video ecosystems - individual families
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
+    { values: ['MiniMax'] as const, graph: minimaxGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
     { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },

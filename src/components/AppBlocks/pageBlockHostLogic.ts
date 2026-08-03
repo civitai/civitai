@@ -3,6 +3,8 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+
 export type PageHostStatus =
   | 'loading'
   | 'ready'
@@ -64,6 +66,176 @@ export function resolveUngrantableConsentScopes(
   return Array.from(
     new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
   ).sort();
+}
+
+/** What a reviewMode REQUEST_CONSENT should surface to the moderator. */
+export type ReviewConsentNotice = {
+  /** Whether the mod gets a (passive, non-interactive) notice at all. */
+  notify: boolean;
+  /**
+   * The requested scopes safe to NAME in that notice: the un-granted subset,
+   * filtered to the known block-scope vocabulary. Empty ⇒ use generic copy.
+   */
+  scopes: string[];
+};
+
+/**
+ * MOD REVIEW SANDBOX — decide what a `reviewMode` REQUEST_CONSENT tells the
+ * moderator. The review host NEVER opens a consent modal (a grant would re-mint
+ * the mod's token with WIDER scopes at the request of unapproved code), and the
+ * review mint deliberately strips the app's scopes — so in review a consent
+ * round-trip can NEVER resolve. Dropping it silently (the old behaviour) left the
+ * app parked on its consent card with zero feedback at the reviewer.
+ *
+ * Differs from `resolveUngrantableConsentScopes` in exactly one way, and that
+ * difference is the bug this fixes: with NO usable `scopes` hint the prod path
+ * must stay silent (it can't tell "already granted" from "clamped"), but in
+ * review there is nothing to tell apart — consent is structurally unavailable, so
+ * a hint-less request is still a dead end and still deserves the notice. (The
+ * SDK's `useRequestConsent()` is fire-and-forget and need not send a hint at all.)
+ *
+ * The one case that stays SILENT is the benign one the hint proves: every
+ * requested scope is already granted, so nothing is actually blocked.
+ *
+ * 🔴 `rawScopesHint` is UNTRUSTED (it comes from the reviewed app's own frame, via
+ * its manifest). The returned `scopes` are therefore filtered through
+ * `isKnownBlockScope`, so only the fixed platform vocabulary can ever reach a
+ * moderator-facing string — an attacker can't smuggle arbitrary display text into
+ * a toast aimed at the reviewer. (Callers must still render it as React text.)
+ * That claim depends on `isKnownBlockScope` being an OWN-property test: it used
+ * to use `in`, which walks the prototype chain and let 12 inherited
+ * `Object.prototype` keys (`constructor`, `__proto__`, `toString`, …) through as
+ * "known scopes". Fixed at the predicate; the unit tests below pin it here too,
+ * because THIS is the caller that feeds untrusted runtime input to it.
+ */
+export function resolveReviewConsentNotice(
+  rawScopesHint: unknown,
+  grantedScopes: string[]
+): ReviewConsentNotice {
+  const requested = Array.isArray(rawScopesHint)
+    ? rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0)
+    : [];
+  if (requested.length === 0) return { notify: true, scopes: [] };
+
+  const granted = new Set<string>(grantedScopes);
+  const ungranted = Array.from(new Set(requested.filter((s) => !granted.has(s)))).sort();
+  // Benign: the block re-requested scopes it already holds — nothing is blocked.
+  if (ungranted.length === 0) return { notify: false, scopes: [] };
+
+  return { notify: true, scopes: ungranted.filter((s) => isKnownBlockScope(s)) };
+}
+
+/**
+ * Emit latch for the review consent notice — the ANTI-SPAM bound.
+ *
+ * `shown` — any notice has been emitted this mount.
+ * `named` — the emitted notice NAMED at least one scope (the informative one).
+ */
+export type ReviewConsentLatch = { shown: boolean; named: boolean };
+
+export const INITIAL_REVIEW_CONSENT_LATCH: ReviewConsentLatch = { shown: false, named: false };
+
+/**
+ * 🔴 ANTI-SPAM, and the reason it is not a plain boolean.
+ *
+ * The reviewed app is UNTRUSTED code that can post `REQUEST_CONSENT` in a loop,
+ * so the notice MUST be bounded per host mount. A plain "already notified"
+ * boolean bounded it to one — but at the cost of first-notice-wins: the SDK's
+ * `useRequestConsent()` takes an OPTIONAL `scopes` hint, so a hint-less request
+ * on load is an ordinary path, not an edge case. That first request produced the
+ * generic "requested a permission it doesn't have here" copy, set the latch, and
+ * then permanently suppressed the app's LATER, specific `['buzz:read:self']`
+ * request. The moderator never learned WHICH permission — defeating the point of
+ * naming scopes at all.
+ *
+ * So the latch tracks whether a scope-NAMED notice has been shown, and allows
+ * exactly ONE upgrade generic → named.
+ *
+ * BOUND (this is the security property, and it is why the transitions are
+ * written as an explicit state machine): at most TWO notices per host mount.
+ *   - `named` set        ⇒ never show again (the best notice is already up);
+ *   - `shown && !isNamed` ⇒ never show again (a repeat generic adds nothing).
+ * Every accepted transition sets `shown`, and only a `!named → named` step can
+ * follow an accepted generic — so the accept sequence is at most
+ * `generic, named`. A flood of any mix is capped at 2, not 2-per-distinct-scope.
+ */
+export function advanceReviewConsentLatch(
+  latch: ReviewConsentLatch,
+  isNamed: boolean
+): { show: boolean; next: ReviewConsentLatch } {
+  // The informative notice is already up — nothing left to tell the reviewer.
+  if (latch.named) return { show: false, next: latch };
+  // A generic notice is already up and this request names nothing new.
+  if (latch.shown && !isNamed) return { show: false, next: latch };
+  return { show: true, next: { shown: true, named: isNamed } };
+}
+
+/** A ready-to-render review consent notification. */
+export type ReviewConsentNotification = {
+  id: string;
+  /**
+   * The id this notice REPLACES (the generic one), or null. Non-null only on
+   * the generic → named upgrade.
+   */
+  supersedesId: string | null;
+  title: string;
+  message: string;
+};
+
+/**
+ * Build the moderator-facing review-consent notification.
+ *
+ * 🔴 THE `id` IS LOAD-BEARING, TWICE.
+ *
+ * (1) MODE-SPECIFIC. Mantine's `showNotification` is a NO-OP when a notification
+ * with the same id is already displayed or queued (default autoClose 4000ms). A
+ * single `review-consent-<appBlockId>` id was therefore identical across
+ * render-only and run-for-real — so the realistic sequence "notice fires in
+ * render-only → mod clicks Run for real… → host remounts → latch resets by
+ * design → app re-requests within 4s" SILENTLY SWALLOWED the run-for-real
+ * notice, re-creating the original silent-drop bug in the other mode. The mode
+ * is part of the id.
+ *
+ * (2) NAMED vs GENERIC. The generic → named upgrade must not be swallowed the
+ * same way, and it cannot use `updateNotification` either: that only maps over
+ * notifications that are still live, so once the generic has auto-closed the
+ * upgrade would vanish. The named notice therefore carries its OWN id and
+ * reports the generic id as `supersedesId`, which the caller passes to
+ * `hideNotification` first — a harmless no-op if the generic already closed.
+ * Net effect: exactly one visible notice, in BOTH timing cases.
+ *
+ * `scopes` must already be filtered by `resolveReviewConsentNotice` (known
+ * vocabulary only); callers must render `message` as React text, never HTML.
+ */
+export function buildReviewConsentNotification(opts: {
+  appBlockId: string;
+  runForReal: boolean;
+  scopes: string[];
+}): ReviewConsentNotification {
+  const { appBlockId, runForReal, scopes } = opts;
+  const baseId = `review-consent-${appBlockId}-${runForReal ? 'real' : 'render'}`;
+  const named = scopes.length > 0;
+
+  const what = named
+    ? `This app requested ${scopes.join(', ')}.`
+    : 'This app requested a permission it doesn’t have here.';
+  // 🔴 The opt-in is NOT free: "Run for real…" re-mints the token against the
+  // MODERATOR'S OWN account and spends the MODERATOR'S OWN Buzz (it grants
+  // `ai:write:budgeted` under a per-session cap). Untrusted code can emit this
+  // toast unprompted right after BLOCK_READY, so the one surface that points a
+  // reviewer at that opt-in must say what it costs them — pointing at a
+  // spend-your-own-money button without saying so is how a hostile app gets a
+  // mod to click it.
+  const how = runForReal
+    ? 'Review previews always run with reduced permissions.'
+    : 'Review previews run with reduced permissions — use “Run for real…” (runs against your own account and Buzz) to grant the app its real permissions.';
+
+  return {
+    id: named ? `${baseId}-scoped` : baseId,
+    supersedesId: named ? baseId : null,
+    title: 'Permission unavailable in review',
+    message: `${what} ${how}`,
+  };
 }
 
 // ── OPEN_RESOURCE_PICKER (Design 1 host-chrome resource picker) ──────────────
@@ -325,3 +497,299 @@ export function pageFallbackReason(status: PageHostStatus): PageFallbackReason |
       return 'timeout';
   }
 }
+
+// ── BOUNDED AUTO-RETRY (launch-failure recovery) ─────────────────────────────
+//
+// The reported defect was NOT that the retry LOGIC was broken — it works — but
+// that a transient launch failure required the user to notice and press a
+// button, and the button was easy to miss ("there might have been a retry
+// button but I didn't notice — I did a full page reload"). So the host now
+// re-attempts the load ITSELF a bounded number of times, and only after that
+// budget is spent does it settle on a definitive terminal state whose manual
+// Retry is made prominent.
+//
+// 🔴 THE TERMINAL STATE IS NEVER DELAYED OR MASKED. The host renders the real
+// terminal `BlockFallback` the instant a terminal status is reached; the pending
+// auto-retry is surfaced as ADDITIONAL copy inside that same fallback. There is
+// no "keep spinning while we quietly retry" state — that would recreate the
+// silent-blank failure class this codebase has fought repeatedly.
+//
+// 🔴 BOUNDED, ALWAYS. Two independent caps:
+//   - MAX_AUTO_RETRIES bounds the total automatic attempts per host mount.
+//   - MAX_AUTO_REMINTS bounds how many of those may spend a token RE-MINT.
+//     `/api/v1/block-tokens` is rate-limited (60/min per user+instance), and an
+//     unbounded auth-failure loop is exactly the shape that would burn it.
+// The budgets are per MOUNT and are NOT refilled by a manual Retry — once spent,
+// every subsequent failure goes straight to the definitive terminal state.
+
+/**
+ * Maximum AUTOMATIC load re-attempts per host mount (the initial load excluded).
+ *
+ * 🔴 ROLLBACK: setting this to 0 cleanly disables auto-retry entirely — the
+ * decision returns `none` for every status, so the terminal fallback renders
+ * immediately with the prominent manual Retry and `autoRetriesSpent` stays 0 (no
+ * false "we already retried" copy). It is the one-line kill switch; there is no
+ * feature flag on this path.
+ */
+export const MAX_AUTO_RETRIES = 2;
+
+/**
+ * Maximum automatic attempts that may spend a token RE-MINT. Auth terminals
+ * (`error`/`no_token`) can only be recovered by re-minting — a local remount can
+ * never clear them — so this is the specific cap that protects the rate-limited
+ * `/api/v1/block-tokens` (60/min per user+instance) from an automatic loop.
+ *
+ * 🔴 MUST STAY STRICTLY BELOW `MAX_AUTO_RETRIES`, and there is a test that pins
+ * exactly that. Because `reminted` is a SUBSET of `attempts` (every re-minting
+ * attempt also increments `attempts`), the invariant `reminted <= attempts` holds
+ * — so if the two caps were EQUAL the total-attempt check, which runs first,
+ * would always fire first and this cap would be unreachable dead code: a stated
+ * safety limit that provably cannot bind. Keeping it strictly lower makes it the
+ * binding constraint on the auth path (the expensive one), while non-auth
+ * terminals — which cost nothing but a remount — still get the full budget.
+ */
+export const MAX_AUTO_REMINTS = 1;
+
+/**
+ * Backoff before automatic attempt N (index 0 = the first auto-retry). Modest and
+ * exponential-ish: long enough for a transient blip/deploy-drain to clear, short
+ * enough that a real failure settles quickly. Indices past the end reuse the last
+ * value (defensive — today the array covers MAX_AUTO_RETRIES exactly).
+ */
+export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
+
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`. Re-exported from `PageBlockHost` (its historical home) so existing
+ * importers are unaffected.
+ *
+ * 🔴 They live HERE, in the pure module, so a NODE test can import them: they are
+ * inputs to `worstReachableLaunchMs()` below, and importing them from the
+ * component would drag the whole React graph into the `unit` project.
+ */
+export const BLOCK_READY_TIMEOUT_MS = 10_000;
+export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+
+/**
+ * The longest wall-clock a SUCCESSFUL launch can legitimately take, derived from
+ * the constants above rather than asserted.
+ *
+ * 🔴 WHY THIS IS A FUNCTION AND NOT A COMMENT. The launch-latency histograms drop
+ * any sample past a fixed cap, and that cap has to clear this bound or it silently
+ * discards real slow successes — a slowness-correlated drop that trims exactly the
+ * tail the metric exists to show. Two earlier revisions got the arithmetic wrong in
+ * a comment (once by ~27s, once by ~10s) and nothing was red either time. A test
+ * now asserts both caps exceed this value, so widening any input below walks the
+ * bound up and fails loudly.
+ *
+ * 🔴 THE SEQUENCE, and why it is NOT `attempts x (token + ready)`:
+ *
+ *   attempt 1   no token at all -> `no_token` at TOKEN_WAIT_TIMEOUT_MS.
+ *               This is an AUTH terminal, so it spends the re-mint budget.
+ *   + backoff[0]
+ *   attempt 2   a re-mint is in flight, so this attempt can AGAIN pay the full
+ *               token wait; the ready timer only arms once `hasToken` lets
+ *               `shouldStartInit` pass, so the two windows are SERIAL within the
+ *               attempt: TOKEN_WAIT + BLOCK_READY_TIMEOUT -> `timeout`.
+ *               `timeout` is NON-auth, so it spends no re-mint and a third
+ *               attempt is still allowed.
+ *   + backoff[1]
+ *   attempt 3   the token from attempt 2 PERSISTS (nothing cleared it), so the
+ *               token wait cannot be paid again — this attempt is bounded by
+ *               BLOCK_READY_TIMEOUT alone, and ends in `ok`.
+ *
+ * Two consecutive `no_token`s are UNREACHABLE (`MAX_AUTO_REMINTS = 1` stops the
+ * second), and a post-`timeout` attempt cannot re-pay the token wait. Both of
+ * those are why the naive `3 x (15 + 10) + backoffs` = 82s over-states it, and
+ * why treating every attempt as ~15s under-states it.
+ */
+export function worstReachableLaunchMs(): number {
+  const backoffs = AUTO_RETRY_BACKOFF_MS.slice(0, MAX_AUTO_RETRIES).reduce((a, b) => a + b, 0);
+  // attempt 1: the auth terminal that costs the full token wait.
+  const first = TOKEN_WAIT_TIMEOUT_MS;
+  // The one attempt that can pay BOTH windows (a re-mint is in flight).
+  const remintedAttempt = TOKEN_WAIT_TIMEOUT_MS + BLOCK_READY_TIMEOUT_MS;
+  // Every later attempt already holds a token, so it is ready-bounded only.
+  const tokenHoldingAttempts = Math.max(0, MAX_AUTO_RETRIES - MAX_AUTO_REMINTS);
+  return first + remintedAttempt + tokenHoldingAttempts * BLOCK_READY_TIMEOUT_MS + backoffs;
+}
+
+/** Terminal statuses a bounded auto-retry may attempt to recover from. */
+export function isAutoRetryableStatus(status: PageHostStatus): boolean {
+  return (
+    status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error'
+  );
+}
+
+/**
+ * AUTH terminals: the iframe never received a usable token. `token`/`tokenError`
+ * are PROPS owned upstream (useBlockToken in the route), and `shouldStartInit`
+ * gates on `hasToken` — so a local remount alone can NEVER recover these; only a
+ * re-mint can. Mirrors the manual-Retry branch in PageBlockHost.handleRetry.
+ */
+export function isAuthTerminalStatus(status: PageHostStatus): boolean {
+  return status === 'error' || status === 'no_token';
+}
+
+export type AutoRetryDecision =
+  | { kind: 'none' }
+  | {
+      kind: 'retry';
+      /** 1-based index of the attempt being scheduled. */
+      attempt: number;
+      /**
+       * The highest attempt number still reachable FROM HERE, given the current
+       * status. This is what the UI must show as the denominator — NOT the raw
+       * `MAX_AUTO_RETRIES`. On an auth terminal the sequence is bounded by the
+       * (lower) re-mint budget, so advertising the attempt cap would promise the
+       * user a retry that will never happen: a fresh auth failure gets
+       * "attempt 1 of 1", not "attempt 1 of 2". Derived rather than passed in, so
+       * the copy cannot drift from the bound that actually governs it.
+       */
+      maxAttempts: number;
+      delayMs: number;
+      /** Whether this attempt spends a token re-mint. */
+      remint: boolean;
+    };
+
+/**
+ * Decide whether the host should schedule another AUTOMATIC load attempt.
+ *
+ * Pure so every bound is unit-testable without driving the real 10s/15s timer
+ * windows, and so the two consumers can never disagree: the scheduling effect
+ * (which arms the backoff timer) and the render-FAILURE beacon (which must stay
+ * silent while the host has not settled — see the beacon-semantics note in
+ * PageBlockHost) both read THIS function.
+ *
+ * Returns `{kind:'none'}` — i.e. the host has SETTLED on this terminal state — when:
+ *   - the status is non-terminal (loading/ready) or not auto-retryable;
+ *   - the total attempt budget is spent;
+ *   - the status is an AUTH terminal and either (a) the re-mint budget is spent,
+ *     or (b) no re-mint is wired (`canRemint:false`). In both cases a further
+ *     attempt is a GUARANTEED re-fail (a remount can't change an upstream token),
+ *     so retrying would waste the user's time and, in case (a), the rate limit.
+ */
+export function decideAutoRetry(args: {
+  status: PageHostStatus;
+  /** Automatic attempts already performed this mount. */
+  attempts: number;
+  /** Automatic attempts already performed that spent a re-mint. */
+  reminted: number;
+  /** Whether the host actually has a token re-mint available (`onRetryToken`). */
+  canRemint: boolean;
+}): AutoRetryDecision {
+  const { status, attempts, reminted, canRemint } = args;
+  if (!isAutoRetryableStatus(status)) return { kind: 'none' };
+  if (attempts >= MAX_AUTO_RETRIES) return { kind: 'none' };
+
+  const remint = isAuthTerminalStatus(status);
+  if (remint && (!canRemint || reminted >= MAX_AUTO_REMINTS)) return { kind: 'none' };
+
+  const delayMs =
+    AUTO_RETRY_BACKOFF_MS[attempts] ?? AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1];
+
+  // The reachable ceiling FROM HERE. An auth terminal can only continue while it
+  // has re-mint budget, so its ceiling is the attempts already spent plus the
+  // re-mints still available — clamped by the attempt cap. A non-auth terminal is
+  // governed by the attempt cap alone. This keeps a MIXED sequence honest too: a
+  // timeout followed by an auth failure has already spent an attempt but no
+  // re-mint, so it correctly reads "attempt 2 of 2".
+  //
+  // Proven never to under-promise: the auth branch is only reached while
+  // `reminted < MAX_AUTO_REMINTS`, so `MAX_AUTO_REMINTS - reminted >= 1` and the
+  // result is always `>= attempt`. 🔴 It CAN still shrink across renders if the
+  // caps are ever widened past `MAX_AUTO_RETRIES === MAX_AUTO_REMINTS + 1` (e.g.
+  // 4 and 2: a timeout shows "1 of 4", a following auth failure "2 of 3"). Today's
+  // constants make that unreachable; revisit this line if they change.
+  const maxAttempts = remint
+    ? Math.min(MAX_AUTO_RETRIES, attempts + (MAX_AUTO_REMINTS - reminted))
+    : MAX_AUTO_RETRIES;
+
+  return { kind: 'retry', attempt: attempts + 1, maxAttempts, delayMs, remint };
+}
+
+// ── MID-SESSION CREDENTIAL-LOSS render beacon ────────────────────────────────
+//
+// 🔴 THE GAP THIS CLOSES (measured on production 2026-07-31): a real revocation
+// teardown was driven end-to-end against a live app and the platform recorded
+// ZERO error beacons. Its only record of the incident was the earlier,
+// successful `ok` impression — so from the metric's point of view the app was
+// perfectly healthy while it was, in fact, dead in every viewer's tab.
+//
+// WHY IT WAS ZERO. The host's ONE-beacon-per-mount rule is enforced by a single
+// emit-once ref shared by the `ok` impression and the launch-FAILURE beacon.
+// A host that reached `ready` has already spent that ref on `ok`, so when the
+// `tokenTerminal` effect later tears it down to `error`, the failure beacon is
+// inert BY CONSTRUCTION — not by accident, and not fixable by relaxing the ref
+// (that would retroactively double-count impressions and corrupt the denominator
+// the alert is built on, which is "page loads").
+//
+// THE FIX IS A SECOND, INDEPENDENT AT-MOST-ONCE CHANNEL. The mid-session beacon
+// gets its OWN ref, so:
+//   - the `ok` impression already sent is untouched (analytics unchanged);
+//   - the teardown is reported exactly once per mount;
+//   - it is tagged `token_lost_midsession`, which no launch failure can emit,
+//     so the two are trivially separable in PromQL.
+// A mount that loses its credential mid-session therefore emits TWO beacons —
+// `ok` then `error{error_class="token_lost_midsession"}` — and that is the
+// intended, documented shape: they describe two DIFFERENT events (the load
+// succeeded; the session was later revoked), not one event counted twice.
+
+/** Inputs to the mid-session credential-loss beacon decision. */
+export type MidSessionLossBeaconArgs = {
+  /** The COMMITTED host status (never read inside a setStatus updater). */
+  status: PageHostStatus;
+  /** True once this mount has observed `status === 'ready'` at least once. */
+  reachedReady: boolean;
+  /** `useBlockToken.terminal`: the mint has PERMANENTLY failed. */
+  tokenTerminal: boolean;
+  /** Whether a usable token remains. */
+  hasToken: boolean;
+  /** Whether this mount's mid-session beacon has ALREADY been emitted. */
+  alreadyEmitted: boolean;
+};
+
+/**
+ * Decide whether to emit the mid-session credential-loss render beacon.
+ *
+ * TRUE requires ALL of:
+ *   1. `reachedReady` — the block DID launch. Without this the failure is a
+ *      LAUNCH failure, already covered by the existing failure beacon under its
+ *      own class ('error'/'no_token'/…); emitting here too would double-count.
+ *   2. `status === 'error'` — the host has actually been torn down. `'error'` is
+ *      reachable from exactly two places in PageBlockHost: `loading → error`
+ *      (launch-time mint failure) and `ready → error` (this case). Requiring
+ *      `reachedReady` picks out the second. Deliberately NOT `'fatal'` /
+ *      `'timeout'` / `'no_token'`: those describe the BLOCK failing, not its
+ *      credential being revoked, and mis-tagging them would make the class lie.
+ *   3. `tokenTerminal && !hasToken` — the credential loss is SETTLED. The
+ *      upstream hook retries a failed refresh on a bounded backoff and keeps a
+ *      still-valid token while it does, so a transient blip must never reach
+ *      here. This mirrors the teardown effect's own gate exactly: emitting on a
+ *      weaker condition than the one that tore the host down would report an
+ *      event that never happened to the user.
+ *   4. `!alreadyEmitted` — at most once per mount, independent of the impression
+ *      ref. Re-renders (token prop churn, retry-budget updates) re-run the
+ *      effect; without this every one of them would fire another beacon.
+ */
+export function shouldEmitMidSessionLossBeacon(args: MidSessionLossBeaconArgs): boolean {
+  const { status, reachedReady, tokenTerminal, hasToken, alreadyEmitted } = args;
+  if (alreadyEmitted) return false;
+  if (!reachedReady) return false;
+  if (status !== 'error') return false;
+  if (!tokenTerminal || hasToken) return false;
+  return true;
+}
+
+/**
+ * The `errorClass` the mid-session beacon carries. Distinct from every
+ * launch-failure class so `sum by(error_class)` separates "never launched" from
+ * "launched, then revoked".
+ *
+ * 🔴 MUST be a member of KNOWN_ERROR_CLASSES in
+ * `~/server/metrics/app-block-runtime.metrics` — the beacon route clamps anything
+ * else to 'other', which would silently merge this signal back into the generic
+ * bucket. Pinned by a test in `__tests__/pageBlockHostLogic.test.ts`.
+ */
+export const MID_SESSION_LOSS_ERROR_CLASS = 'token_lost_midsession';

@@ -44,8 +44,8 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
-  createImage,
   deleteImageById,
   enqueueImageIngestion,
   resolveIngestionError,
@@ -827,21 +827,29 @@ export const upsertArticle = async ({
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
-    let coverId = coverImage?.id;
+    // Stays `undefined` when there is no cover — Prisma reads that as "don't write this
+    // column". (It was previously seeded from `coverImage?.id`, which is dead: the only branch
+    // in which that could be non-undefined is the one that immediately overwrites it.)
+    let coverId: number | undefined;
     if (coverImage) {
-      if (!coverId) {
-        const result = await createImage({ ...coverImage, userId });
-        coverId = result.id;
-      } else {
-        // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
-        const isExistingCover = article != null && coverId === article.coverId;
-        if (!isExistingCover) {
-          const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
-          if (!isImgOwner) {
-            throw throwAuthorizationError('Invalid cover image');
+      // `id` present -> the ownership rule below runs, unchanged. `id` absent -> reuse an
+      // existing row for this url, else verify the object is still in the uploads bucket
+      // before minting a row (a stale client draft can replay a key whose object is gone).
+      coverId = await resolveCoverImageId({
+        coverImage,
+        userId,
+        currentCoverId: article?.coverId,
+        assertOwnership: async (imageId) => {
+          // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
+          const isExistingCover = article != null && imageId === article.coverId;
+          if (!isExistingCover) {
+            const isImgOwner = await isImageOwner({ userId, isModerator, imageId });
+            if (!isImgOwner) {
+              throw throwAuthorizationError('Invalid cover image');
+            }
           }
-        }
-      }
+        },
+      });
     }
 
     if (!id) {
@@ -1762,9 +1770,10 @@ export type ArticleTextModerationStatus = {
   updatedAt: Date | null;
 };
 
-// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service)
-// and carries the classifier's verdict (transient | permanent | unknown) plus the
-// human reason, letting the scan-status UI render a class-aware cause.
+// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service, scan
+// verdicts) and `markImageScanSubmitFailure` (image.service, submit rejections). Both
+// carry the classifier's verdict (transient | permanent | unknown) plus the human reason,
+// letting the scan-status UI render a class-aware cause.
 function extractScanFailure(scanJobs: Prisma.JsonValue): {
   failureClass: string | null;
   reason: string | null;

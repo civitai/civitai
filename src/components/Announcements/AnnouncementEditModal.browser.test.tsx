@@ -1,6 +1,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The announcement banner cannot be destroyed by an interrupted or failed upload.
@@ -20,6 +21,30 @@ const mocks = vi.hoisted(() => ({
   behavior: 'success' as 'success' | 'fail' | 'hang',
   uploaded: { url: 'new-banner-key', objectUrl: 'blob:new', id: 'new-banner-key', type: 'image' },
   mutate: vi.fn(),
+  /**
+   * 🔴 REFERENTIALLY STABLE, and that is the whole point — not a tidy-up.
+   *
+   * `getAnnouncementTargets` feeds an effect keyed on the query RESULT:
+   *
+   *   const watchedTargets = form.watch('targetUserIds');            // subscribes
+   *   useEffect(() => {
+   *     if (targetsQuery.data) form.setValue('targetUserIds', targetsQuery.data.join(', '));
+   *   }, [targetsQuery.data]);
+   *
+   * Returning a fresh `{ data: [], isSuccess: true }` from the mock — as this file
+   * did — hands the effect a NEW array identity on every render. Real react-query
+   * memoises `data`, so the effect runs once; the mock made it run forever:
+   * effect → setValue → the watch subscriber re-renders → new `[]` → effect …
+   *
+   * That loop pegs the page's main thread, so Vitest's own in-page test timeout
+   * can never fire: the FILE hangs with zero output instead of reporting a
+   * failure. It consumed the whole 25-minute `component-tests` budget on every
+   * PR from 2026-07-29 (1e8d043695) onward — the run reached 110/111 files in
+   * ~2 minutes and then sat here until the runner killed it, which is why the
+   * check reported "exceeded its budget, no suite reported red" rather than a
+   * red test. Keep the identity stable, or the freeze comes straight back.
+   */
+  targetsQuery: { data: [] as number[], isSuccess: true },
 }));
 
 vi.mock('~/hooks/useCFImageUpload', async () => {
@@ -50,7 +75,7 @@ vi.mock('~/hooks/useCFImageUpload', async () => {
 // Partial mock: other modules in the graph import unrelated named exports from here
 // (`setTrpcBatchingEnabled`), and replacing the module wholesale breaks their import.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     useUtils: () => ({
       announcement: { getAnnouncementsPaged: { invalidate: vi.fn() } },
@@ -60,7 +85,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         useMutation: () => ({ mutate: mocks.mutate, isPending: false }),
       },
       getAnnouncementTargets: {
-        useQuery: () => ({ data: [], isSuccess: true }),
+        // Stable identity — see the note on `mocks.targetsQuery`.
+        useQuery: () => mocks.targetsQuery,
       },
     },
   },

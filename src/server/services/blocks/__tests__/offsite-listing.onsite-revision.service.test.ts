@@ -415,6 +415,25 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     expect(res.items.map((r: { kind: string }) => r.kind)).toEqual(['onsite', 'offsite']);
   });
 
+  it('🔴 every mod queue projects appListing.revisionOfId — the review drift panel’s only handle on the LIVE parent', async () => {
+    // A revision request's `appListingId` IS the shadow id, so `revisionOfId` is the
+    // ONLY way the review surface can reach the listing that is currently being
+    // served. Drop it and `RevisionDriftSection` silently renders nothing: the mod is
+    // back to approving a destructive screenshot replace with no before/after — the
+    // gap this projection exists to close. Guarded on all three queues because the
+    // history tabs render the same modal body.
+    await listPendingOffsiteRequests({});
+    await listApprovedOffsiteRequests({});
+    await listRejectedOffsiteRequests({});
+    const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
+      (c) =>
+        (c[0] as { select: { appListing: { select: Record<string, unknown> } } }).select.appListing
+          .select
+    );
+    expect(selects).toHaveLength(3);
+    for (const select of selects) expect(select.revisionOfId).toBe(true);
+  });
+
   it('listApprovedOffsiteRequests + listRejectedOffsiteRequests both widen the kind filter', async () => {
     await listApprovedOffsiteRequests({});
     await listRejectedOffsiteRequests({});

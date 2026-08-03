@@ -3,6 +3,7 @@ import { Menu } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   IconEdit,
+  IconRobot,
   IconHome,
   IconPencil,
   IconStar,
@@ -18,12 +19,18 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import dynamic from 'next/dynamic';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
+
+const CollectionAiReviewModal = dynamic(
+  () => import('~/components/Collections/CollectionAiReviewModal')
+);
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { CollectionFollowAction } from './CollectionFollow';
@@ -44,6 +51,7 @@ export function CollectionContextMenu({
   const currentUser = useCurrentUser();
 
   const isMod = currentUser?.isModerator ?? false;
+  const features = useFeatureFlags();
   const isOwner = currentUser?.id === ownerId;
 
   const deleteCollectionMutation = trpc.collection.delete.useMutation({
@@ -260,6 +268,21 @@ export function CollectionContextMenu({
             >
               Edit collection
             </Menu.Item>
+            {features.collectionAiReview && (
+              <Menu.Item
+                leftSection={<IconRobot size={14} stroke={1.5} />}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  dialogStore.trigger({
+                    component: CollectionAiReviewModal,
+                    props: { collectionId },
+                  });
+                }}
+              >
+                AI moderation
+              </Menu.Item>
+            )}
           </>
         )}
         {currentUser && permissions?.read && (

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
@@ -14,16 +15,22 @@ import { constants } from '~/server/common/constants';
 import type {
   AutoCheck,
   CosmeticOffsets,
+  CreatorCosmeticType,
   UpdateCreatorShopItemInput,
 } from '~/server/schema/creator-shop.schema';
 import {
-  COSMETIC_PRICE_FLOOR,
+  cosmeticPriceFloor,
+  STICKER_DEFAULT_USES,
+  STICKER_MIN_BUZZ_PER_USE,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
+  isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
 // flags, artwork drop handling, and the create/update mutations. Keeps the modal
@@ -39,10 +46,20 @@ export function useSubmitCreatorShopForm({
   const { submitItem, updateItem } = useMutateCreatorShop();
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
-  const [type, setTypeState] = useState<CosmeticType>(item?.cosmetic.type ?? CosmeticType.Badge);
+  const [type, setTypeState] = useState<CreatorCosmeticType>(
+    item?.cosmetic.type && isCreatorCosmeticType(item.cosmetic.type)
+      ? item.cosmetic.type
+      : CosmeticType.Badge
+  );
+  const [uses, setUses] = useState<number>(
+    ((item?.cosmetic.data as { uses?: number } | null)?.uses ?? STICKER_DEFAULT_USES) as number
+  );
+  const [slug, setSlug] = useState<string>(
+    ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
+  );
   const [name, setName] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
-  const [price, setPrice] = useState<number>(item?.unitAmount ?? COSMETIC_PRICE_FLOOR);
+  const [price, setPrice] = useState<number>(item?.unitAmount ?? cosmeticPriceFloor(type));
   const [quantity, setQuantity] = useState<number | undefined>(
     item?.availableQuantity ?? undefined
   );
@@ -56,6 +73,10 @@ export function useSubmitCreatorShopForm({
   );
   const [sellableByOthers, setSellableByOthers] = useState(false);
   const [sellerShare, setSellerShare] = useState(0);
+  const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
+    ?.acceptsBlueBuzz;
+  const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
+  const acceptsBlueBuzzChanged = acceptsBlueBuzz !== itemAcceptsBlueBuzz;
   // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
   const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
     (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
@@ -74,7 +95,45 @@ export function useSubmitCreatorShopForm({
   const supportsAnimated =
     type === CosmeticType.Badge ||
     type === CosmeticType.ProfileDecoration ||
-    type === CosmeticType.ProfileBackground;
+    type === CosmeticType.ProfileBackground ||
+    type === CosmeticType.Sticker;
+
+  // Mirrors the server's authoritative floor so a creator sees it before submit.
+  const priceFloor = cosmeticPriceFloor(type);
+
+  const isSticker = type === CosmeticType.Sticker;
+  // Consumables must clear a per-use floor as well as the listing floor.
+  const usesFloor = isSticker ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
+  const usesError =
+    isSticker && price < usesFloor
+      ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+      : null;
+  // Same normalization the server applies, so what's validated here is what's saved.
+  const normalizedSlug = slug.trim().toLowerCase();
+  // Matches the server rule: the slug is the token owners type, so it's fixed
+  // once the sticker is live.
+  const slugLocked = isEdit && item?.status === CosmeticShopItemStatus.Published;
+  const slugFormatOk = isValidStickerSlug(normalizedSlug);
+  const slugError =
+    isSticker && normalizedSlug.length > 0 && !slugFormatOk ? STICKER_SLUG_ERROR : null;
+
+  // Convenience only — it saves a creator filling in the whole form for a slug
+  // someone else already has. The submit-time check and the partial unique index
+  // are what actually decide; a slug can be claimed between this and the submit.
+  const [debouncedSlug] = useDebouncedValue(normalizedSlug, 400);
+  const slugCheckEnabled = isSticker && !slugLocked && isValidStickerSlug(debouncedSlug);
+  const { data: slugCheck, isFetching: slugChecking } = trpc.creatorShop.checkStickerSlug.useQuery(
+    { slug: debouncedSlug, excludeCosmeticId: item?.cosmetic.id },
+    { enabled: slugCheckEnabled }
+  );
+  const slugTaken = slugCheckEnabled && slugCheck?.available === false;
+  const slugStatus: 'idle' | 'checking' | 'available' | 'taken' = !slugCheckEnabled
+    ? 'idle'
+    : slugChecking || debouncedSlug !== normalizedSlug
+    ? 'checking'
+    : slugTaken
+    ? 'taken'
+    : 'available';
 
   const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
@@ -98,8 +157,11 @@ export function useSubmitCreatorShopForm({
     setChecks([]);
   };
 
-  const setType = (next: CosmeticType) => {
+  const setType = (next: CreatorCosmeticType) => {
     setTypeState(next);
+    // Floors are per-type: a price valid for the old type can be below the new
+    // one's. Harmless while every type is 500, wrong the moment they diverge.
+    setPrice((current) => Math.max(current, cosmeticPriceFloor(next)));
     clearArt();
     setArtReplaced(true);
   };
@@ -138,7 +200,12 @@ export function useSubmitCreatorShopForm({
     resetFiles();
   };
 
-  const canSubmit = artOk && !!name.trim() && price >= COSMETIC_PRICE_FLOOR && canAffordFee;
+  const canSubmit =
+    artOk &&
+    !!name.trim() &&
+    price >= priceFloor &&
+    canAffordFee &&
+    (!isSticker || (slugFormatOk && !slugTaken && !usesError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -174,6 +241,15 @@ export function useSubmitCreatorShopForm({
           payload.animated = animated;
         }
         if (offsetsChanged) payload.offsets = normalizedOffsets;
+        // Send the slug on any artwork swap too: the server rebuilds `data`
+        // from scratch and would otherwise fall back to the stored value.
+        if (
+          isSticker &&
+          (artReplaced ||
+            normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
+        )
+          payload.slug = normalizedSlug;
+        if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
         await submitItem.mutateAsync({
@@ -187,7 +263,10 @@ export function useSubmitCreatorShopForm({
           buzzType,
           sellableByOthers,
           sellerShare: sellableByOthers ? sellerShare : 0,
+          acceptsBlueBuzz,
           offsets: normalizedOffsets,
+          slug: isSticker ? normalizedSlug : undefined,
+          uses: isSticker ? uses : undefined,
         });
       }
       resetFiles();
@@ -203,7 +282,7 @@ export function useSubmitCreatorShopForm({
     type,
     source: CosmeticSource.Purchase,
     description: description || null,
-    data: imageId ? buildData(type, imageId, animated, normalizedOffsets) : {},
+    data: imageId ? buildData(type, imageId, animated, normalizedOffsets, slug) : {},
   } as unknown as PreviewCosmetic;
 
   const earn = Math.floor(price * CREATOR_SHOP_CREATOR_SHARE);
@@ -214,6 +293,16 @@ export function useSubmitCreatorShopForm({
     isEdit,
     type,
     setType,
+    priceFloor,
+    isSticker,
+    uses,
+    setUses,
+    usesError,
+    slug,
+    setSlug,
+    slugError,
+    slugLocked,
+    slugStatus,
     name,
     setName,
     description,
@@ -229,6 +318,9 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    acceptsBlueBuzz,
+    setAcceptsBlueBuzz,
+    acceptsBlueBuzzChanged,
     offsets,
     setOffset,
     offsetsChanged,

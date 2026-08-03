@@ -62,6 +62,18 @@ pnpm run test:ui          # Run tests with UI
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
 
+#### Prefer `importOriginal` over hand-listed `vi.mock` exports
+A `vi.mock` that lists exports by hand couples the test to the **entire transitive import graph** of the thing under test, and nothing warns you when that graph grows. Adding one service import can drag in a module that builds `pLimit`/prom collectors at load (e.g. `~/server/search-index` → `meilisearch/client`), and the suite then fails to load with an error far from the change — `pnpm typecheck` and `pnpm lint` stay green, so **only CI catches it**. Spread the real module and override only what you need:
+```ts
+vi.mock('~/server/prom/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromClient>()),
+  dbReadFallbackCounter: { inc: vi.fn() },
+}));
+```
+Use a top-level `import type * as PromClient` — an inline `typeof import('...')` trips `consistent-type-imports`.
+
+**Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
+
 ### Database
 ```bash
 pnpm run db:migrate:empty  # Create an empty migration file
@@ -183,6 +195,12 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 - Don't describe nearby code's current behavior (e.g. "this gates on X so Y happens"). That is exactly what goes stale when the other code changes. Comment the surprising fact, not the mechanics.
 - No process/banner noise: no change-log narration (`// added to fix...`), no "I changed X", no section-divider banners, no commented-out code.
 - When you do comment, keep it to a line or two. A long block almost always means the code or naming should be clearer instead.
+
+**Explain decisions in your response, not in the file.** Rationale for a choice you just made — why you picked this shape, what you deliberately left out, what you considered and rejected — belongs in your reply to us, where we're already reading it. A comment justifying your work to a reviewer is the single most common way this section gets violated. If you catch yourself writing something you'd also say in chat, say it in chat only.
+
+**Comment in a separate pass.** Write the code first with no comments, then reread it and add back only what's needed. Comments written while authoring never get evaluated — the reasoning is fresh, so it feels non-obvious when it isn't. Judge them against code you're reading, not code you're writing.
+
+**The keep test.** For every comment that survives, you should be able to name the specific future edit that goes wrong without it. If the answer is "it's helpful context" or "it explains why this is correct," delete it. Being unable to name the failure means the code already says it — or should.
 
 **Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
 

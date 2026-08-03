@@ -249,15 +249,18 @@
 {#if !data.summary}
   <div class="placeholder">Earnings are temporarily unavailable — please try again shortly.</div>
 {:else if !hasBuzzEarnings}
+  <!-- Buzz earnings are NOT Creator-Program-gated: tips and early access sales accrue to any creator, so
+       the empty state reads the same either way. Only the extra CP earning channels are upsold below. -->
   <div class="placeholder flex flex-col items-center justify-center h-full">
-    {#if data.membership.isCreatorProgramMember}
-      <span
-        >No buzz earnings {periodLabel}. Set licensing fees or access prices on
-        <a href="/models" class="underline">your models</a> to start earning.</span
-      >
-    {:else}
-      <span>You're not in the Creator Program yet, so there's nothing to show here.</span>
-      <span><a href="/join" class="underline">Join to start earning</a> from your models.</span>
+    <span
+      >No buzz earnings {periodLabel}. Set access prices on
+      <a href="/models" class="underline">your models</a> to start earning.</span
+    >
+    {#if !data.membership.isCreatorProgramMember}
+      <span>
+        <a href="/join" class="underline">Join the Creator Program</a> to add licensing fees and turn
+        buzz into cash.
+      </span>
     {/if}
   </div>
 {:else}

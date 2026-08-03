@@ -39,7 +39,9 @@ import type {
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -1214,6 +1216,9 @@ export type CollectionItemsResult = {
   nextCursor?: string;
 };
 
+// The AI review job stamps this as the reviewer on items it hands to a human.
+export const AI_REVIEW_SYSTEM_USER_ID = -1;
+
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
@@ -1228,6 +1233,7 @@ export const getCollectionItemsByCollectionId = async ({
     collectionId,
     cursor,
     forReview,
+    awaitingHumanReview,
     reviewSort,
     collectionTagId,
   } = input;
@@ -1262,6 +1268,12 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
+
+  // The system user stamps every item it touches, accept and reject included, so the stamp alone
+  // means "the AI saw this". Only a stamped item still sitting in REVIEW is waiting on a person.
+  const awaitingHumanCondition = awaitingHumanReview
+    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID} AND ci.status = 'REVIEW'::"CollectionItemStatus"`
+    : Prisma.sql``;
 
   // For contest mode, use hash-based random ordering with cursor support
   let collectionItems: {
@@ -1336,6 +1348,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
@@ -1413,6 +1426,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
@@ -1825,14 +1839,64 @@ export const getAvailableCollectionItemsFilterForUser = ({
   return { AND, rawAND };
 };
 
+export const COLLECTION_AI_REVIEW_KEY_PREFIX = 'collection-ai-review:';
+export const collectionAiReviewKey = (collectionId: number) =>
+  `${COLLECTION_AI_REVIEW_KEY_PREFIX}${collectionId}`;
+
+export const getCollectionAiReview = async (collectionId: number) => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: collectionAiReviewKey(collectionId) },
+    select: { value: true },
+  });
+  if (!row) return null;
+
+  const parsed = collectionAiReviewSchema.safeParse(row.value);
+  return parsed.success ? parsed.data : null;
+};
+
+export const setCollectionAiReview = async ({
+  collectionId,
+  aiReview,
+}: SetCollectionAiReviewInput) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  // updateCollectionItemsStatus only notifies on Contest collections, so anywhere else the job
+  // would reject people silently — and the beggars cron deletes rejected rows within the hour.
+  if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
+    throw throwBadRequestError(
+      'AI review can only be enabled on Contest collections; submitters would not be notified of a rejection.'
+    );
+
+  const key = collectionAiReviewKey(collectionId);
+  await dbWrite.keyValue.upsert({
+    where: { key },
+    create: { key, value: aiReview },
+    update: { value: aiReview },
+  });
+
+  return aiReview;
+};
+
 export const updateCollectionItemsStatus = async ({
   input,
   userId,
   isModerator,
+  isSystem,
+  reason,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  /**
+   * In-process callers (the AI review job) act as the system user, which holds no contributor row.
+   * Never accept this from a tRPC input.
+   */
+  isSystem?: boolean;
+  reason?: string;
 }) => {
   const { collectionId, collectionItemIds, status } = input;
 
@@ -1844,14 +1908,18 @@ export const updateCollectionItemsStatus = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  const { manage, isOwner } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
+  if (!isSystem) {
+    const { manage, isOwner } = await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    });
 
-  if (!manage && !isOwner)
-    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
+    if (!manage && !isOwner)
+      throw throwAuthorizationError(
+        'You do not have permissions to manage contributor item status.'
+      );
+  }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
 
@@ -1942,6 +2010,7 @@ export const updateCollectionItemsStatus = async ({
           key: `${notificationType}:${item.id}:${uuid()}`,
           details: {
             status,
+            reason,
             collectionId: collection.id,
             collectionName: collection.name,
             imageId: item.imageId,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
+  buildModelVersionTerms,
   generationOpenToNonBuyers,
   generationPrice,
   generationTrialLimit,
@@ -9,8 +10,25 @@ import {
   isPaidAccessActive,
   isTimedGateActive,
   paidGenerationGrant,
+  CAP_TIERS,
+  nextCapTier,
+  shouldUpsellCap,
+  cappedTerms,
+  maxPaidAccessPrice,
+  maxPermanentAccessModels,
+  tierCapRows,
   type ModelVersionTerms,
 } from './paid-access';
+import {
+  MAX_LICENSING_FEE,
+  feeToRatio,
+  VIDEO_CAP_MULTIPLIER,
+  effectiveLicensingFee,
+  maxLicensingFee,
+  maxLicensingFeeCeiling,
+  suggestedFeePerImage,
+} from './licensing-fee';
+import { capMediaType } from './media-type';
 
 const NOW = new Date('2026-07-28T00:00:00.000Z');
 const PAST = new Date('2026-07-27T00:00:00.000Z');
@@ -38,7 +56,10 @@ describe('isPaidAccessActive / isTimedGateActive — the endsAt boundary', () =>
 describe('generation terms predicates', () => {
   const free: ModelVersionTerms = { generation: { free: true } };
   const bundled: ModelVersionTerms = { download: { price: 500 } }; // no generation key = must buy
-  const paidGen: ModelVersionTerms = { download: { price: 500 }, generation: { price: 200, trialLimit: 5 } };
+  const paidGen: ModelVersionTerms = {
+    download: { price: 500 },
+    generation: { price: 200, trialLimit: 5 },
+  };
   const paidGenNoTrial: ModelVersionTerms = { generation: { price: 200, trialLimit: 0 } };
   const paidGenAbsentTrial: ModelVersionTerms = { generation: { price: 200 } };
 
@@ -86,7 +107,10 @@ describe('generationPrice — effective generation-only purchase price', () => {
 
 describe('grantsGeneration — the full access decision', () => {
   const bundled: ModelVersionTerms = { download: { price: 500 } };
-  const trial: ModelVersionTerms = { download: { price: 500 }, generation: { price: 200, trialLimit: 5 } };
+  const trial: ModelVersionTerms = {
+    download: { price: 500 },
+    generation: { price: 200, trialLimit: 5 },
+  };
   const free: ModelVersionTerms = { generation: { free: true } };
 
   it('owner/mod always may generate, even on a bundled must-buy gate', () => {
@@ -103,5 +127,174 @@ describe('grantsGeneration — the full access decision', () => {
   });
   it('free generation is open to everyone', () => {
     expect(grantsGeneration(free, { isOwnerOrMod: false, hasBought: false })).toBe(true);
+  });
+});
+
+describe('buildModelVersionTerms — the three generation grants', () => {
+  it('bundles generation with the download when no generation price is given', () => {
+    expect(buildModelVersionTerms({ accessPrice: 500, freePreviewGenerations: 10 })).toEqual({
+      download: { price: 500 },
+      generation: { trialLimit: 10 },
+    });
+  });
+
+  it('writes a cheaper generation-only tier when a price is given', () => {
+    expect(
+      buildModelVersionTerms({ accessPrice: 500, generationPrice: 200, freePreviewGenerations: 10 })
+    ).toEqual({ download: { price: 500 }, generation: { price: 200, trialLimit: 10 } });
+  });
+
+  // The point of the free grant: gate the download, leave generation open, earn per generation via a
+  // licensing fee instead. It carries no price and no trial limit — there is nothing to sample toward.
+  it('writes a free generation grant, dropping price and trial limit', () => {
+    const terms = buildModelVersionTerms({
+      accessPrice: 500,
+      generationPrice: 200,
+      freePreviewGenerations: 1000,
+      freeGeneration: true,
+    });
+    expect(terms).toEqual({ download: { price: 500 }, generation: { free: true } });
+    expect(isFreeGeneration(terms)).toBe(true);
+    expect(paidGenerationGrant(terms)).toBeUndefined();
+    expect(generationPrice(terms)).toBeUndefined();
+    expect(grantsGeneration(terms, { isOwnerOrMod: false, hasBought: false })).toBe(true);
+  });
+
+  // A gen-only version has no download tier, so generation IS what's being sold — free would leave
+  // nothing to charge for, and assertPaidAccessInput rejects that shape.
+  it('ignores freeGeneration for a generation-only version', () => {
+    expect(
+      buildModelVersionTerms({
+        accessPrice: 500,
+        freePreviewGenerations: 10,
+        genOnly: true,
+        freeGeneration: true,
+      })
+    ).toEqual({ generation: { price: 500, trialLimit: 10 } });
+  });
+});
+
+describe('video pricing — every ceiling is 5x on a video model', () => {
+  it('multiplies the licensing-fee cap for each tier and model type', () => {
+    for (const tier of CAP_TIERS) {
+      for (const modelType of ['Checkpoint', 'LORA']) {
+        expect(maxLicensingFee(tier, modelType, 'video')).toBe(
+          maxLicensingFee(tier, modelType, 'image') * VIDEO_CAP_MULTIPLIER
+        );
+      }
+    }
+  });
+
+  it('multiplies the paid-access price cap, leaving gold unlimited', () => {
+    expect(maxPaidAccessPrice('free', 'video')).toBe(maxPaidAccessPrice('free') * 5);
+    expect(maxPaidAccessPrice('silver', 'video')).toBe(maxPaidAccessPrice('silver') * 5);
+    expect(maxPaidAccessPrice('gold', 'video')).toBe(Infinity);
+  });
+
+  it('multiplies the suggested default, so a new video model is not seeded too low', () => {
+    expect(suggestedFeePerImage('Checkpoint', 'video')).toBe(
+      suggestedFeePerImage('Checkpoint') * VIDEO_CAP_MULTIPLIER
+    );
+    expect(suggestedFeePerImage('LORA', 'video')).toBeCloseTo(
+      suggestedFeePerImage('LORA') * VIDEO_CAP_MULTIPLIER,
+      5
+    );
+  });
+
+  it('does NOT multiply the permanent-gate allowance — it counts gates, it does not price them', () => {
+    expect(maxPermanentAccessModels('free')).toBe(3);
+    expect(tierCapRows().find((r) => r.tier === 'free')?.permanentGates).toBe(3);
+  });
+
+  it('gold video is no longer clamped by the image ceiling', () => {
+    // The whole point of raising the ceiling: 5 x 100 must survive rather than saturating at 100.
+    expect(maxLicensingFee('gold', 'Checkpoint', 'video')).toBe(500);
+    expect(maxLicensingFeeCeiling('video')).toBe(500);
+    expect(maxLicensingFeeCeiling('image')).toBe(MAX_LICENSING_FEE);
+  });
+
+  it('clamps a stored fee against the video cap, not the image one', () => {
+    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'image')).toBe(1);
+    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'video')).toBe(5);
+  });
+
+  it('prices gate terms against the video cap', () => {
+    const terms = { download: { price: 5000 } };
+    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'image' })).toEqual({
+      download: { price: 500 },
+    });
+    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'video' })).toEqual({
+      download: { price: 2500 },
+    });
+    // A timed early-access window has no ceiling — stored is what buyers pay.
+    expect(cappedTerms(terms, 'free', { permanent: false, mediaType: 'image' })).toEqual(terms);
+  });
+});
+
+describe('capMediaType — which column a base model lands in', () => {
+  it('resolves a video ecosystem to video', () => {
+    expect(capMediaType('Hunyuan Video')).toBe('video');
+    expect(capMediaType('LTXV')).toBe('video');
+  });
+
+  it('resolves an image ecosystem to image', () => {
+    expect(capMediaType('SDXL 1.0')).toBe('image');
+    expect(capMediaType('Flux.1 D')).toBe('image');
+  });
+
+  it('falls back to image for anything unmatched — a miss must never widen a ceiling', () => {
+    expect(capMediaType(undefined)).toBe('image');
+    expect(capMediaType(null)).toBe('image');
+    expect(capMediaType('')).toBe('image');
+    expect(capMediaType('Other')).toBe('image');
+    expect(capMediaType('not-a-real-base-model')).toBe('image');
+  });
+});
+
+// The caps table renders each ceiling through feeToRatio, so a cap that can't be expressed as whole Buzz
+// over 1 or 10 generations would render as an unusable ratio the editor can't accept.
+it('every licensing cap is a whole number of Buzz over 1 or 10 generations', () => {
+  for (const tier of CAP_TIERS)
+    for (const mediaType of ['image', 'video'] as const)
+      for (const modelType of ['Checkpoint', 'LORA']) {
+        const { buzz, images } = feeToRatio(maxLicensingFee(tier, modelType, mediaType));
+        expect([1, 10]).toContain(images);
+        expect(Number.isInteger(buzz)).toBe(true);
+      }
+});
+
+describe('shouldUpsellCap — nudge only when the ceiling is actually in the way', () => {
+  it('offers an upgrade once the value reaches 80% of the cap', () => {
+    expect(shouldUpsellCap({ value: 79, cap: 100, tier: 'free' })).toBe(false);
+    expect(shouldUpsellCap({ value: 80, cap: 100, tier: 'free' })).toBe(true);
+    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'free' })).toBe(true);
+  });
+
+  it('stays quiet for an empty or comfortably-low value', () => {
+    expect(shouldUpsellCap({ value: null, cap: 100, tier: 'free' })).toBe(false);
+    expect(shouldUpsellCap({ value: 0, cap: 100, tier: 'free' })).toBe(false);
+    expect(shouldUpsellCap({ value: 10, cap: 100, tier: 'free' })).toBe(false);
+  });
+
+  it('never upsells gold — there is nothing above it', () => {
+    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'gold' })).toBe(false);
+    expect(nextCapTier('gold')).toBeNull();
+  });
+
+  // Normalising a raw tier string (founder, unknown, lapsed) is resolveCapTier's job and is tested there;
+  // nextCapTier takes the canonical tier that produces, so it only has to walk the ladder.
+  it('walks one step up the ladder', () => {
+    expect(nextCapTier('free')).toBe('bronze');
+    expect(nextCapTier('bronze')).toBe('silver');
+    expect(nextCapTier('silver')).toBe('gold');
+  });
+
+  // 99999 >= Infinity * 0.8 is false by arithmetic, so an Infinity case would pass even without the
+  // guard. cap: 0 is the one that actually pins it — reachable via maxFeeBuzzForRatio at the free/other
+  // cap of 0.1 with a denominator of 1, where floor() yields 0.
+  it('never upsells against an unlimited or zero cap', () => {
+    expect(shouldUpsellCap({ value: 99999, cap: Infinity, tier: 'silver' })).toBe(false);
+    expect(shouldUpsellCap({ value: 0, cap: 0, tier: 'free' })).toBe(false);
+    expect(shouldUpsellCap({ value: 5, cap: 0, tier: 'free' })).toBe(false);
   });
 });

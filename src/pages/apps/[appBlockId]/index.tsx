@@ -30,7 +30,10 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
-import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import {
+  approvedListingSlugQuery,
+  resolveLegacyAppRoute,
+} from '~/components/Apps/resolveLegacyAppRedirect';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -45,14 +48,69 @@ import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
+import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
 /**
- * F-E E2 — per-app marketplace detail page (`/apps/<appBlockId>`).
+ * 🔴 RETIRED (S8 / PR-2) — this route no longer renders. `getServerSideProps`
+ * redirects it to the unified store detail `/apps/store-preview/<slug>`.
  *
- * 🔒 GATING INVARIANT (E2 — same as E1, do not violate):
+ * WHY: it was a second, diverging detail surface for the same app. It rendered
+ * `by <app name>` where the store correctly renders the owner's username, and its
+ * raw bridge-less `<iframe>` "Live preview" painted a permanent light-theme panel
+ * on a dark page (nothing ever posts `BLOCK_INIT` to that frame, so the block's
+ * shell never learns the host theme). The store detail already covers this page's
+ * whole action set — "Open app" → its `open` branch, "Open live" → its `visit`
+ * fallback, and "Edit manifest" is the SIBLING route `/apps/[appBlockId]/edit*`,
+ * untouched here and independently reachable from `/apps/my-submissions` and the
+ * store card's owner Edit.
+ *
+ * REDIRECT, NOT DELETE — deliberately. The page BODY below is retained for at
+ * least one release so a stale bookmark or an external link resolves through the
+ * hop. FOUR in-repo FILES link here and are all left untouched — five link sites,
+ * because `AppBlockCard.tsx` links twice (its title at ~:204 and its description
+ * at ~:257): `AppBlockCard.tsx` (×2), `ManifestEditForm.tsx` (post-save
+ * "Cancel"), `appListingDetailView.ts`'s `liveAppDetailHref`, and
+ * `[appBlockId]/edit.tsx`'s "Back". Deleting the body and cleaning those up is a
+ * tracked follow-up; keeping it out of this change is what makes this a one-file
+ * change that cannot collide with the parallel work on `appListingDetailView.ts`.
+ * The component is unreachable in the meantime (both SSR and client-side
+ * `/_next/data` navigations honour the redirect) — do not "fix" anything in it.
+ *
+ * ⚠️ The hop DROPS THE QUERY STRING. `getServerSideProps` returns a destination
+ * built from the slug alone, and this page only ever read `router.query.appBlockId`
+ * (a route param, preserved in the destination path), so nothing in-product breaks
+ * — but an external link carrying tracking params (`?utm_*`, `?ref=`) loses them
+ * at the hop. Named so it is a decision, not a surprise; forwarding them is a
+ * one-line change if anyone wants it.
+ *
+ * 🔴 SOMETHING **IS** ORPHANED — an earlier draft of this change claimed nothing
+ * was, and that was wrong. The legacy 5-star `AppBlockReview` WRITE form
+ * (`<AppBlockReviews>` below) has exactly two hosts: this page, and
+ * `AppDetailsModal`. `AppDetailsModal` is opened only from `AppBlockCard`;
+ * `AppBlockCard` renders only from `MarketplaceBody` and `RecentlyOpenedApps`
+ * (whose `RecentlyOpenedAppsView` itself renders only inside `MarketplaceBody`);
+ * and `MarketplaceBody` has had NO importer in app code since `/apps` swapped to
+ * `AppListingsMarketplaceBody` — it is retained purely as a documented one-line
+ * rollback. So after this redirect the whole 5-star review surface has no
+ * reachable entry point. Harmless today — `app_block_reviews` is empty in
+ * production, and the store detail carries the listing review surface — but the
+ * follow-up that deletes this body must decide the legacy review form's fate
+ * explicitly rather than inherit a "still reachable" assumption that is false.
+ *
+ * ⚠️ Two consequences of leaving those callsites alone, known and accepted:
+ *   - An owner backing out of the editor on a PENDING app now lands on a real
+ *     404 rather than a not-found rendered inside the app shell. Same end state,
+ *     blunter presentation; the follow-up that retargets those links fixes it.
+ *   - `liveAppDetailHref` feeds the store detail's own `info`-mode CTA for a
+ *     MODEL-SLOT app, so on that page the primary button now hops back to the
+ *     page the viewer is already on. No live app is in that state today (every
+ *     approved on-site listing declares a page), but it is why the follow-up
+ *     should retarget that branch, not merely delete the route.
+ *
+ * 🔒 GATING INVARIANT (E2 — unchanged, do not violate):
  *   - The SSR resolver runs `resolveAppsPageAccess` FIRST: the `features.appBlocks`
  *     flag gate is the ONLY access control. A real anon / non-mod viewer does not
  *     satisfy the mod-segmented Flipt `app-blocks-enabled` flag, so they get
@@ -68,9 +126,30 @@ import { trpc } from '~/utils/trpc';
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  // Flag gate FIRST and ONLY (no session→login redirect): the detail page renders
-  // for a session-less request BEHIND the flag (dark today; lit at segment-widen).
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  // The decision (gate ordering, param handling, the approved-listing
+  // precondition, the destination) lives in `resolveLegacyAppRoute` with the DB
+  // read injected, so all of it is asserted in the node unit project. This
+  // resolver is only the wiring.
+  //
+  // 🔴 Resolve `AppBlock.id` (the `apb_<ULID>` route param) → the store slug via
+  // `AppListing.slug`, NOT `AppBlock.blockId`. For an on-site app the two hold
+  // the same value today (`mapAppBlockToListing` mints the listing with
+  // `slug: ab.blockId`), so reading `blockId` would usually produce the same
+  // string — but it would answer the WRONG question. The destination
+  // (`appListings.getAppDetail`) resolves BY LISTING, approved-only; a pending,
+  // rejected or never-approved app has a `blockId` and no listing, so a
+  // `blockId`-keyed redirect would bounce that owner to a store URL that refuses
+  // to serve it instead of 404-ing here. Reading the listing row makes the
+  // existence of an approved listing the actual precondition of the redirect —
+  // the decided behaviour — and it stays correct if a slug ever diverges from
+  // its block id (off-site listings already choose their own slugs).
+  resolver: async ({ ctx, features }) =>
+    resolveLegacyAppRoute({
+      features,
+      appBlockId: ctx.params?.appBlockId,
+      findApprovedListingSlug: async (appBlockId) =>
+        (await dbRead.appListing.findFirst(approvedListingSlugQuery(appBlockId)))?.slug ?? null,
+    }),
 });
 
 function slotLabel(slotId?: string): string {
@@ -460,9 +539,7 @@ export default function AppDetailPage() {
                         }
                       >
                         {scopes.map((scope) => (
-                          <List.Item key={scope}>
-                            {SCOPE_DESCRIPTIONS[scope] ?? scope}
-                          </List.Item>
+                          <List.Item key={scope}>{SCOPE_DESCRIPTIONS[scope] ?? scope}</List.Item>
                         ))}
                       </List>
                     )}
