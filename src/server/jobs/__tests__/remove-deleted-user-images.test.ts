@@ -565,7 +565,9 @@ beforeEach(() => {
   deletedPostIds = [];
   blockedUpdates = [];
   batchChecks = {};
-  mockSysRedis.get.mockResolvedValue(null);
+  // The compiled default is inert, so a run only happens if something names a budget: every test
+  // that is not about the budget itself gets a generous one here.
+  mockSysRedis.get.mockResolvedValue('500');
   mockGetJobDate.mockImplementation(async (key: string, defaultValue: Date) => [
     cursorStore[key] ?? defaultValue,
     async (date?: Date) => {
@@ -925,39 +927,59 @@ describe('removeDeletedUserImages budget', () => {
     expect(fixtures[8].images).toHaveLength(10);
   });
 
-  it('falls back to a conservative default when the key is unset', async () => {
+  it('pauses without reading a worklist when the key is unset', async () => {
     mockSysRedis.get.mockResolvedValue(null);
     seed({ 7: { deletedAt: NEWER, images: ids(600), posts: [900] } });
 
     const result = await run();
 
-    expect(DEFAULT_IMAGES_PER_RUN).toBe(500);
-    expect(result.deletedImages).toBe(500);
+    // The drain destroys image rows and their S3 objects, so an operator who never set the key
+    // has to get a job that does nothing rather than one running at a compiled-in rate.
+    expect(DEFAULT_IMAGES_PER_RUN).toBe(0);
+    expect(result.paused).toBe(true);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(fixtures[7].images).toHaveLength(600);
     expect(deletedPostIds).toEqual([]);
   });
 
-  it('falls back to the default when the Redis value is not a number', async () => {
+  it('pauses when the Redis value is not a number', async () => {
     mockSysRedis.get.mockResolvedValue('not-a-number');
     seed({ 7: { deletedAt: NEWER, images: ids(150) } });
 
     const result = await run();
 
-    // A broken fallback that lets a non-finite budget through would cap `remaining`
-    // at NaN and process nothing.
-    expect(result.deletedImages).toBe(150);
-    expect(result.paused).toBeUndefined();
+    // A fallback that let the non-finite value itself through would pass `budget <= 0` and reach
+    // Postgres with `LIMIT NaN`, so the pause has to come from the fallback, not from the gate.
+    expect(result.paused).toBe(true);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(result.deletedImages).toBe(0);
+    expect(fixtures[7].images).toHaveLength(150);
   });
 
-  it('falls back to the default when the Redis value is negative', async () => {
+  it('pauses when the Redis value is negative', async () => {
     mockSysRedis.get.mockResolvedValue('-5');
     seed({ 7: { deletedAt: NEWER, images: ids(150) } });
 
     const result = await run();
 
-    // A broken fallback that lets -5 through would make the job's own `budget <= 0`
-    // gate pause it instead of running with the default.
-    expect(result.deletedImages).toBe(150);
+    expect(result.paused).toBe(true);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(fixtures[7].images).toHaveLength(150);
+  });
+
+  it('runs on a budget an operator sets', async () => {
+    mockSysRedis.get.mockResolvedValue('120');
+    seed({ 7: { deletedAt: NEWER, images: ids(600), posts: [900] } });
+
+    const result = await run();
+
+    // The paired half of the pause tests: an inert default that also ignored a set limit would
+    // satisfy every assertion above.
     expect(result.paused).toBeUndefined();
+    expect(result.deletedImages).toBe(120);
+    expect(imageLimits).toEqual([120]);
   });
 });
 

@@ -15,7 +15,13 @@ import { createJob, getJobDate } from './job';
 
 export const USERS_PER_RUN = 50;
 export const DELETE_BATCH_SIZE = 100;
-export const DEFAULT_IMAGES_PER_RUN = 500;
+
+/**
+ * Inert on purpose: this drain hard-deletes image rows and their S3 objects, so a limit key that
+ * is missing or unreadable has to stop the job rather than run it at some compiled-in rate.
+ * Enabling the drain is the deliberate act — an operator sets a positive limit.
+ */
+export const DEFAULT_IMAGES_PER_RUN = 0;
 
 /**
  * Two cursors because the populations move in opposite directions and one cursor cannot serve
