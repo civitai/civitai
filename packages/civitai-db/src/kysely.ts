@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect } from 'kysely';
+import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
@@ -30,6 +30,34 @@ function registerNumericTypeParsers() {
   numericParsersRegistered = true;
 }
 
+// pg has no built-in parser for arrays of a user-defined enum: enum types get DYNAMIC oids, so a
+// `"SomeEnum"[]` column comes back as the raw Postgres literal string `{a,b}` instead of `string[]`. (Scalar
+// enum columns are fine — plain text.) Prisma parses these itself; the Kysely-over-pg path does not, so
+// without this an enum-array select silently yields a string where the typed result promises an array — a bug
+// EXPLAIN tests can't catch. Discover every enum's array oid from the catalog and register the built-in
+// text-array parser for it (enum values are plain text, so text-array parsing is exactly right).
+//
+// Like registerNumericTypeParsers this mutates pg's PROCESS-GLOBAL registry, so it runs once and benefits
+// every node-postgres pool; Prisma (separate engine) is unaffected. It needs one catalog round-trip, so it is
+// async and MUST be awaited at startup before the first enum-array select. The oids are read from `pool`'s
+// database — in a multi-DB process the same oid can name a different type elsewhere, so register from the
+// primary (schema) pool and only run enum-array selects against DBs that share that schema (the app's
+// primary + its replicas do).
+const TEXT_ARRAY_OID = 1009; // pg's fixed oid for `text[]` (_text); stable across versions
+let enumArrayParsersRegistered = false;
+export async function registerEnumArrayTypeParsers(pool: Pool): Promise<void> {
+  if (enumArrayParsersRegistered) return;
+  const { rows } = await pool.query<{ typarray: number }>(
+    `SELECT typarray FROM pg_type WHERE typtype = 'e' AND typarray <> 0`
+  );
+  // getTypeParser's typed param is pg's builtin-oid union; TEXT_ARRAY_OID is a real oid the runtime accepts.
+  const textArrayParser = types.getTypeParser(
+    TEXT_ARRAY_OID as Parameters<typeof types.getTypeParser>[0]
+  );
+  for (const { typarray } of rows) types.setTypeParser(typarray, textArrayParser);
+  enumArrayParsersRegistered = true;
+}
+
 // Force `sslmode=no-verify` on a connection string: keep SSL on, skip chain verification. node-postgres
 // maps a URL's `sslmode=require` to FULL verification (unlike libpq), which rejects the cnpg pooler's
 // self-signed cert — and a separate `ssl` option is overridden by the URL's sslmode. Centralized here so
@@ -58,6 +86,8 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
    * pre-built pools are passed through untouched (configure SSL where you build them).
    */
   sslNoVerify?: boolean;
+  /** Kysely plugins installed on every client this builds (e.g. the @updatedAt auto-stamp plugin). */
+  plugins?: KyselyPlugin[];
 }
 
 export function createKyselyClients<DB>(
@@ -69,14 +99,23 @@ export function createKyselyClients<DB>(
 ): { db: Kysely<DB> } | KyselyReadWrite<DB> {
   registerNumericTypeParsers();
 
-  const { pool, readPool, replicaConnectionString, singleClient, sslNoVerify, ...poolConfig } =
-    options;
+  const {
+    pool,
+    readPool,
+    replicaConnectionString,
+    singleClient,
+    sslNoVerify,
+    plugins,
+    ...poolConfig
+  } = options;
   if (sslNoVerify && poolConfig.connectionString) {
     poolConfig.connectionString = forceSslNoVerify(poolConfig.connectionString);
   }
-  const replicaString = sslNoVerify ? forceSslNoVerify(replicaConnectionString) : replicaConnectionString;
+  const replicaString = sslNoVerify
+    ? forceSslNoVerify(replicaConnectionString)
+    : replicaConnectionString;
 
-  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }) });
+  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
   const primary = make(pool ?? new Pool(poolConfig));
   if (singleClient) return { db: primary };

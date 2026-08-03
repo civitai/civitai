@@ -11,6 +11,7 @@
     ".": "./src/index.ts",
     "./enums": "./src/enums.ts",
     "./models": "./src/models.ts",
-    "./kysely": "./src/kysely/types.ts"
+    "./kysely": "./src/kysely/types.ts",
+    "./kysely/updated-at-tables": "./src/kysely/updated-at-tables.ts"
   }
 }
