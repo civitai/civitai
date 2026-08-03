@@ -1,6 +1,7 @@
 import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -154,8 +155,13 @@ export const upsertComment = async ({
   entityId,
   parentThreadId,
   isModerator,
+  track,
   ...data
-}: UpsertCommentV2Input & { userId: number; isModerator?: boolean }) => {
+}: UpsertCommentV2Input & {
+  userId: number;
+  isModerator?: boolean;
+  track?: Parameters<typeof recordStickerUsage>[0]['track'];
+}) => {
   await throwOnBlockedLinkDomain(data.content);
   if (!data.id) await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
   // only check for threads on comment create
@@ -166,8 +172,25 @@ export const upsertComment = async ({
 
   if (thread?.locked) throw throwBadRequestError('comment thread locked');
 
+  // An edit that adds stickers must pay for the ones it added, or posting an
+  // empty comment and editing stickers in would be free. The spend runs inside
+  // the same transaction as the write below — charging in its own transaction
+  // would debit uses and then lose the comment to any failure in between.
+  const previous = data.id
+    ? await dbWrite.commentV2.findUnique({ where: { id: data.id }, select: { content: true } })
+    : null;
+  const chargeStickers = (tx: Prisma.TransactionClient) =>
+    spendStickerUses({
+      userId,
+      surface: 'comment',
+      content: data.content ?? '',
+      previousContent: previous?.content ?? '',
+      tx,
+    });
+
   if (!data.id) {
     return await dbWrite.$transaction(async (tx) => {
+      const chargedStickers = await chargeStickers(tx);
       if (!thread) {
         const parentThread = parentThreadId
           ? await tx.thread.findUnique({ where: { id: parentThreadId } })
@@ -182,7 +205,7 @@ export const upsertComment = async ({
           select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
         });
       }
-      return await tx.commentV2.create({
+      const created = await tx.commentV2.create({
         data: {
           userId,
           ...data,
@@ -190,9 +213,34 @@ export const upsertComment = async ({
         },
         select: commentV2Select,
       });
+      recordStickerUsage({
+        track,
+        userId,
+        charged: chargedStickers,
+        entityType: 'comment',
+        entityId: created.id,
+      });
+      return created;
     });
   }
-  return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
+  // Wrapped so the edit's charge and the edit itself commit together.
+  const { updated, charged } = await dbWrite.$transaction(async (tx) => {
+    const chargedStickers = await chargeStickers(tx);
+    const row = await tx.commentV2.update({
+      where: { id: data.id },
+      data,
+      select: commentV2Select,
+    });
+    return { updated: row, charged: chargedStickers };
+  });
+  recordStickerUsage({
+    track,
+    userId,
+    charged,
+    entityType: 'comment',
+    entityId: updated.id,
+  });
+  return updated;
 };
 
 export const getComment = async ({ id }: GetByIdInput): Promise<Comment> => {

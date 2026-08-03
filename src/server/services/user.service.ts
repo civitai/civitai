@@ -68,7 +68,7 @@ import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
-import { userModelCountCache } from '~/server/redis/caches';
+import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -97,16 +97,13 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type {
-  BountyEngagementType,
-  CosmeticType,
-  ModelEngagementType,
-} from '~/shared/utils/prisma/enums';
+import type { BountyEngagementType, ModelEngagementType } from '~/shared/utils/prisma/enums';
 import {
   ArticleEngagementType,
   CollectionMode,
   CollectionType,
   CosmeticSource,
+  CosmeticType,
   ModelStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
@@ -2329,6 +2326,7 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
   await dbWrite.userCosmetic.create({
     data: { userId, cosmeticId: cosmetic.id },
   });
+  await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
@@ -2370,6 +2368,10 @@ export async function equipCosmetic({
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
+  // Stickers are owned, not equipped — everything you own is already in the
+  // picker, so equipping has nothing to mean. Guarded here and not only in the
+  // UI so an equipped sticker can't exist for the buckets to have to explain.
+  if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
 
   await dbWrite.$transaction([
     dbWrite.userCosmetic.updateMany({

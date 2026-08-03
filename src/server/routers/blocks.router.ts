@@ -159,7 +159,10 @@ import {
 // itself is imported by `workflow.schema` for the wire enum, which must stay
 // import-light. Dispatches on the entry's declared `moderationPosture`, so this
 // router keeps no per-posture branch either.
-import { runStepModeration } from '~/server/services/blocks/steps/moderation';
+import {
+  attachModeratedStepTextOutputs,
+  runStepModeration,
+} from '~/server/services/blocks/steps/moderation';
 // Instrument-only: records EVERY prepaidFixed step price check at submit —
 // `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
 // from a detector that never ran. Never throws.
@@ -3071,7 +3074,40 @@ export const blocksRouter = router({
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
+      // generated text: it publishes `imageUrls` off `extractOutput`, which a
+      // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
+      // never`, registry clause 8-ii, and the posture gate on the extractor call
+      // itself). So this wrapper is the only producer of `textOutputs`, and it
+      // scans before it produces.
+      //
+      // 🔴 IT IS NOT THE ONLY BLOCK-REACHABLE READ OF A WORKFLOW, and an earlier
+      // revision of this comment said "the poll is the surface that matters",
+      // which is an overclaim a reviewer would stop checking at. THREE other
+      // procedures reach `projectAppWorkflow` unwrapped:
+      //   - `queryAppWorkflows` — returns up to 50 projections per call.
+      //   - `cancelAppWorkflow` — returns one.
+      //   - `publishGenerationOutputs` — the SHARPEST of the three, and the one
+      //     an enumeration is most likely to miss because it returns no
+      //     projection to the block at all: it reads `projectAppWorkflow(...)
+      //     .images`, then FETCHES each selected `url` server-side and uploads
+      //     it into a public civitai `Image` row. A smuggled url would not just
+      //     be displayed, it would be ingested.
+      // What makes all three safe is stated at each of them (`AppWorkflow`
+      // carries no text field and its `images` are posture-gated, so a text step
+      // contributes nothing — not even a url), not this sentence.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          // 🔴 The token's server-minted maturity ceiling — same source the
+          // submit-phase prompt audit uses. Never a request-body field.
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          appBlockId: claims.blockId,
+        }
+      );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
       // The orchestrator completion callback (`workflow-completed.ts`) is not
       // wired to fire, so `block_workflows` rows otherwise stay `pending`
@@ -3203,7 +3239,19 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      // Same output-moderation boundary as `pollWorkflow`. A CANCEL still
+      // returns a snapshot of whatever the orchestrator had produced, so it is a
+      // real text-publishing surface and not a formality.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          appBlockId: claims.blockId,
+        }
+      );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
       // accrued cost (orchestrator-side, non-refundable), so settle refunds the
       // reserved CEILING down to that accrued `cost.total` on BOTH reservation
@@ -3295,6 +3343,26 @@ export const blocksRouter = router({
         cursor: input.cursor ?? undefined,
         hideMatureContent: false,
       });
+      // 🔴 DELIBERATELY *NOT* WRAPPED IN `attachModeratedStepTextOutputs`, and
+      // here is exactly what makes that safe — stated as what it is, so nobody
+      // reads a structural guarantee where there is a narrower one.
+      //
+      //   1. `AppWorkflow` HAS NO TEXT FIELD. The projection's return type is
+      //      `{ workflowId, status, images, cost, createdAt }` — there is no
+      //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
+      //      have nowhere to put a verdict. A block that wants a text step's
+      //      output polls `pollWorkflow`, which is wrapped.
+      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
+      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
+      //      text-posture entry cannot declare one at all
+      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
+      //      So a text step contributes NOTHING here — not even a url.
+      //
+      // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
+      // for symmetry": this returns up to 50 workflows per call, so wrapping
+      // would mean up to 50 inline xGuard scans on a rate-limited read path.
+      // If `AppWorkflow` ever GAINS a text field, wrapping stops being optional
+      // and the per-page fan-out has to be solved, not skipped.
       return {
         workflows: items.map(projectAppWorkflow),
         cursor: nextCursor ?? null,
@@ -3389,6 +3457,13 @@ export const blocksRouter = router({
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      // 🔴 UNWRAPPED, for the SAME two reasons `queryAppWorkflows` is (see the
+      // note there): `AppWorkflow` carries no text field, and its `images` are
+      // posture-gated so a text step contributes nothing. The cost argument does
+      // NOT apply here — this is one workflow, not a page — so if `AppWorkflow`
+      // ever gains a text field, THIS is the cheap one to wrap first. (The
+      // sibling `blocks.cancelWorkflow`, which returns a full snapshot rather
+      // than this projection, IS wrapped.)
       return { workflow: projectAppWorkflow(canceled) };
     }),
 
@@ -3477,6 +3552,19 @@ export const blocksRouter = router({
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
       // outputs with a non-null url are present (dead/pending blobs are dropped).
+      //
+      // 🔴 UNWRAPPED BY `attachModeratedStepTextOutputs`, and this is the
+      // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
+      // consumers (see the enumeration at `pollWorkflow`): the urls below are
+      // not merely returned, they are FETCHED and re-uploaded into public
+      // civitai `Image` rows. What makes it safe is the same posture gate the
+      // others rely on — `projectAppWorkflow` calls a registered entry's
+      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // text-posture entry may not declare one at all
+      // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
+      // `'textOutput'` step contributes NO url here to be ingested. If that gate
+      // ever loosens, THIS is the call site that turns a smuggled string into
+      // published content.
       const outputs = projectAppWorkflow(workflow).images;
       if (outputs.length === 0) {
         throw new TRPCError({

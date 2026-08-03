@@ -4,6 +4,7 @@ import {
   Button,
   Divider,
   Group,
+  Loader,
   Modal,
   NumberInput,
   Paper,
@@ -14,8 +15,9 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { IconAlertTriangle, IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -28,14 +30,20 @@ import { CosmeticStandardsModal } from '~/components/CreatorShop/CosmeticStandar
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
-  COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
   computeCreatorShopSplit,
+  isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CREATOR_GRANT_USES_MULTIPLIER, stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
+const stickerSurfaces = stickerSurfaceLabels();
+const joinLabels = (labels: string[]) =>
+  labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
@@ -45,6 +53,16 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const {
     isEdit,
     type,
+    isSticker,
+    slug,
+    setSlug,
+    slugError,
+    slugLocked,
+    slugStatus,
+    priceFloor,
+    uses,
+    setUses,
+    usesError,
     name,
     description,
     price,
@@ -87,7 +105,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const isDirty = isEdit
     ? name !== (item?.title ?? '') ||
       description !== (item?.description ?? '') ||
-      price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
+      price !== (item?.unitAmount ?? priceFloor) ||
       offsetsChanged ||
       form.acceptsBlueBuzzChanged ||
       !!localUrl
@@ -113,6 +131,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
       },
     });
   };
+
+  const features = useFeatureFlags();
+  // Mirrors the server gate: no point offering a type the submit will reject.
+  const typeOptions = features.stickers
+    ? cosmeticTypeOptions
+    : cosmeticTypeOptions.filter((o) => o.value !== CosmeticType.Sticker);
 
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
@@ -151,14 +175,68 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             </Alert>
             <Select
               label="Cosmetic type"
-              data={cosmeticTypeOptions}
+              data={typeOptions}
               value={type}
-              onChange={(v) => v && form.setType(v as CosmeticType)}
+              onChange={(v) => {
+                const next = v as CosmeticType | null;
+                if (next && isCreatorCosmeticType(next)) form.setType(next);
+              }}
               allowDeselect={false}
               withAsterisk
               disabled={isEdit}
               description={isEdit ? 'Type cannot be changed after submission' : undefined}
             />
+
+            {isSticker && (
+              <TextInput
+                label="Slug"
+                placeholder="party_cat"
+                value={slug}
+                onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+                error={slugError ?? (slugStatus === 'taken' ? 'That slug is taken' : undefined)}
+                disabled={slugLocked}
+                rightSection={
+                  slugStatus === 'checking' ? (
+                    <Loader size="xs" />
+                  ) : slugStatus === 'available' ? (
+                    <IconCheck size={16} className="text-green-6" />
+                  ) : null
+                }
+                description={
+                  slugLocked
+                    ? 'Locked once published — owners already type this to use your sticker'
+                    : 'What people type between colons to use your sticker, e.g. :party_cat:'
+                }
+                withAsterisk
+              />
+            )}
+
+            {isSticker && (
+              <NumberInput
+                label={
+                  <Group gap={4} wrap="nowrap">
+                    <span>Uses per purchase</span>
+                    <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                      <Text size="xs">
+                        A use is spent when a buyer places your sticker in{' '}
+                        {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
+                        {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
+                        out they can buy the sticker again.
+                      </Text>
+                    </InfoPopover>
+                  </Group>
+                }
+                description={`How many times a buyer can place this sticker. They buy more by buying it again. You'll receive ${numberWithCommas(
+                  uses * CREATOR_GRANT_USES_MULTIPLIER
+                )} uses of your own once it's approved.`}
+                value={uses}
+                onChange={(v) => setUses(typeof v === 'number' ? v : 1)}
+                min={1}
+                step={10}
+                error={usesError}
+                withAsterisk
+              />
+            )}
 
             {!artLocked && !localUrl && !imageId && <CosmeticStudioCallout />}
 
@@ -246,13 +324,24 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           <NumberInput
             label="Sell price"
             withAsterisk
-            min={COSMETIC_PRICE_FLOOR}
+            min={priceFloor}
             value={price}
-            onChange={(v) => form.setPrice(typeof v === 'number' ? v : COSMETIC_PRICE_FLOOR)}
+            onChange={(v) => form.setPrice(typeof v === 'number' ? v : priceFloor)}
             leftSection={<IconBolt size={16} />}
           />
           <NumberInput
-            label="Quantity (optional)"
+            label={
+              <Group gap={4} wrap="nowrap">
+                <span>Quantity (optional)</span>
+                <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                  <Text size="xs">
+                    The most that will ever be sold. Once it sells out the item is gone for good,
+                    which makes it more exclusive for the people who bought one. Leave it empty to
+                    keep selling without a limit.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
             min={1}
             value={quantity}
             onChange={(v) => form.setQuantity(typeof v === 'number' ? v : undefined)}
@@ -261,8 +350,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
         </Group>
         <Group justify="space-between">
           <Text size="xs" c="dimmed">
-            Minimum {COSMETIC_PRICE_FLOOR} Buzz · You keep{' '}
-            {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
+            Minimum {priceFloor} Buzz · You keep {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
           </Text>
           <Text size="xs" fw={600} c="green">
             You earn ≈ {numberWithCommas(earn)} Buzz per sale

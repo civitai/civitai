@@ -46,7 +46,8 @@ function ManageShopPage() {
 
   const { items, isLoading } = useQueryCreatorShopManage(queriesEnabled, manageUserId);
   const { settings } = useQueryCreatorShopSettings(queriesEnabled, manageUserId);
-  const { archiveItem, unarchiveItem, deleteItem, updateSettings } = useMutateCreatorShop();
+  const { archiveItem, setItemListed, unarchiveItem, deleteItem, updateSettings } =
+    useMutateCreatorShop();
   const { status, setStatus, search, setSearch, sort, setSort, filtered, stats } =
     useManageItems(items);
 
@@ -98,6 +99,7 @@ function ManageShopPage() {
         <ManageItemsTable
           items={filtered}
           archiveItem={archiveItem}
+          setItemListed={setItemListed}
           unarchiveItem={unarchiveItem}
           deleteItem={deleteItem}
         />

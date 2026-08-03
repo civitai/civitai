@@ -99,6 +99,7 @@ export const upsertCommentV2Handler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      track: ctx.track,
     });
     if (!input.id) {
       if (type && type !== 'Article' && type !== 'Challenge') {

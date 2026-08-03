@@ -50,6 +50,7 @@ import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
+  StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
   WithClaimKey,
@@ -1206,6 +1207,8 @@ export const getUserCosmeticsHandler = async ({
             ...sharedData,
             data: data as ProfileBackgroundCosmetic['data'],
           });
+        else if (type === CosmeticType.Sticker)
+          acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
 
         return acc;
       },
@@ -1215,6 +1218,7 @@ export const getUserCosmeticsHandler = async ({
         profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
         profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
         contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
+        sticker: [] as WithClaimKey<StickerCosmetic>[],
       }
     );
 

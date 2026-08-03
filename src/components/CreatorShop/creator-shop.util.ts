@@ -153,6 +153,19 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to archive item'),
   });
 
+  const setItemListed = trpc.creatorShop.setItemListed.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      // Delisting can strip a featured slot server-side, and both of these
+      // filter on `listed`.
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
+    },
+    onError: onError('Failed to update listing'),
+  });
+
   const unarchiveItem = trpc.creatorShop.unarchiveItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
@@ -223,6 +236,7 @@ export const useMutateCreatorShop = () => {
     submitItem,
     updateItem,
     archiveItem,
+    setItemListed,
     unarchiveItem,
     deleteItem,
     addResoldItem,

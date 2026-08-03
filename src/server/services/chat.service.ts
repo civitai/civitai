@@ -19,7 +19,9 @@ import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
 } from '~/server/services/blocklist.service';
+import { getOwnedStickerCosmetics } from '~/server/services/cosmetic.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker-token';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
@@ -283,10 +285,30 @@ export const createMessage = async ({
     }
   }
 
+  // The client's `:slug:` resolution is optimistic; this is the authority.
+  if (userId !== -1) {
+    const owned = await getOwnedStickerCosmetics(userId);
+    const ownedIds = new Set(owned.map((x) => x.id));
+    const ownedBySlug = new Map<string, number>();
+    for (const sticker of owned)
+      if (!ownedBySlug.has(sticker.slug)) ownedBySlug.set(sticker.slug, sticker.id);
+
+    content = resolveStickerTokens(content, {
+      resolveSlug: (slug) => ownedBySlug.get(slug),
+      isOwnedId: (id) => ownedIds.has(id),
+    }).trim();
+
+    if (!content.length) {
+      throw throwBadRequestError('Message cannot be empty');
+    }
+  }
+
   // Enforce blocklists and rate limits on message content
   if (userId !== -1 && !isModerator) {
-    await throwOnBlockedLinkDomain(content);
-    await throwOnBlockedMessagePattern(content);
+    // Sticker tokens are stripped, not split around: `fu:sticker:1:ck` must still read as one word.
+    const scannableContent = stripStickerTokens(content);
+    await throwOnBlockedLinkDomain(scannableContent);
+    await throwOnBlockedMessagePattern(scannableContent);
 
     // Rate limit messages — stricter for new accounts
     const user = await dbRead.user.findUnique({
@@ -306,11 +328,14 @@ export const createMessage = async ({
   });
 
   withSignals(() =>
-    fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(resp as ChatAllMessages[number]),
-    })
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resp as ChatAllMessages[number]),
+      }
+    )
   ).catch(() => undefined);
 
   if (userId !== -1) {

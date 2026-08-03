@@ -1940,6 +1940,7 @@ export type CosmeticShopItem = {
   reviewedById: number | null;
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
+  listed: Generated<boolean>;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -3626,6 +3627,7 @@ export type UserCosmetic = {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
 };
 export type UserCosmeticShopPurchases = {
   userId: number;

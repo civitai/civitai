@@ -1,5 +1,9 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
+  checkStickerSlugSchema,
   getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
@@ -9,12 +13,14 @@ import {
   getReviewQueueSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
+  setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
 } from '~/server/schema/creator-shop.schema';
 import {
   archiveCreatorShopItem,
+  setCreatorShopItemListed,
   deleteCreatorShopItem,
   getCommunityCosmetics,
   getCreatorShop,
@@ -32,6 +38,7 @@ import {
   updateCreatorShopItem,
   updateCreatorShopSettings,
 } from '~/server/services/creator-shop.service';
+import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -47,11 +54,19 @@ import {
 // gate.
 const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop'));
 
+// Creating stickers is flag-gated; rendering and owning them are not, so this
+// guards the write paths only.
+const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => {
+  if (type === CosmeticType.Sticker && !features.stickers)
+    throw throwAuthorizationError('Stickers are not available yet');
+};
+
 export const creatorShopRouter = router({
   // #region [Creator: submit & manage]
-  submitItem: creatorShopProcedure
-    .input(submitCreatorShopItemSchema)
-    .mutation(({ input, ctx }) => submitCreatorShopItem({ ...input, userId: ctx.user.id })),
+  submitItem: creatorShopProcedure.input(submitCreatorShopItemSchema).mutation(({ input, ctx }) => {
+    assertStickersEnabled(ctx.features, input.cosmeticType);
+    return submitCreatorShopItem({ ...input, userId: ctx.user.id });
+  }),
   updateItem: creatorShopProcedure
     .input(updateCreatorShopItemSchema)
     .mutation(({ input, ctx }) =>
@@ -64,6 +79,16 @@ export const creatorShopRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+  setItemListed: creatorShopProcedure
+    .input(setCreatorShopItemListedSchema)
+    .mutation(({ input, ctx }) =>
+      setCreatorShopItemListed({
+        id: input.id,
+        listed: input.listed,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   unarchiveItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
     unarchiveCreatorShopItem({
       id: input.id,
@@ -85,9 +110,16 @@ export const creatorShopRouter = router({
     })
   ),
   // Cross-creator selling: browse public cosmetics + list one in your own shop.
-  getPublicShopItems: creatorShopProcedure
-    .input(getPublicShopItemsSchema)
-    .query(({ input, ctx }) => getPublicShopItemsForResale({ ...input, userId: ctx.user.id })),
+  getPublicShopItems: creatorShopProcedure.input(getPublicShopItemsSchema).query(({ input, ctx }) =>
+    getPublicShopItemsForResale({
+      ...input,
+      userId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    })
+  ),
+  checkStickerSlug: creatorShopProcedure
+    .input(checkStickerSlugSchema)
+    .query(({ input }) => isStickerSlugAvailable(input)),
   getResoldItems: creatorShopProcedure.query(({ ctx }) =>
     getResoldItemsForManage({ userId: ctx.user.id })
   ),
@@ -107,6 +139,7 @@ export const creatorShopRouter = router({
       getCreatorShop({
         ...input,
         viewerId: ctx.user?.id,
+        stickersEnabled: ctx.features.stickers,
         isModerator: ctx.user?.isModerator,
         preview: input.preview && !!ctx.user?.isModerator,
       })
@@ -119,7 +152,13 @@ export const creatorShopRouter = router({
   getCommunityCosmetics: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getCommunityCosmeticsSchema)
-    .query(({ input, ctx }) => getCommunityCosmetics({ ...input, viewerId: ctx.user?.id })),
+    .query(({ input, ctx }) =>
+      getCommunityCosmetics({
+        ...input,
+        viewerId: ctx.user?.id,
+        stickersEnabled: ctx.features.stickers,
+      })
+    ),
   // #endregion
 
   // #region [Shop settings]

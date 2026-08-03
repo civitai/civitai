@@ -60,7 +60,13 @@ describe('getCommunityCosmetics', () => {
   });
 
   it('only queries published creator items from public shops', async () => {
-    await getCommunityCosmetics({ limit: 40, cosmeticTypes: ['Badge' as never] });
+    // stickersEnabled so the flag's type exclusion doesn't muddy the assertion
+    // that the caller's requested types pass through.
+    await getCommunityCosmetics({
+      limit: 40,
+      cosmeticTypes: ['Badge' as never],
+      stickersEnabled: true,
+    });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     expect(where.status).toBe('Published');
     expect(where.cosmetic.createdById).toEqual({ not: null });
