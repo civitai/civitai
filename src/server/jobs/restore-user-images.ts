@@ -30,7 +30,7 @@ async function isRestored(userId: number) {
  */
 export const restoreUserImages = createJob(
   'restore-user-images',
-  '2-58/2 * * * *',
+  '*/2 * * * *',
   async () => {
     const pending = await readPendingImageRestores();
     if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, stillDeleted: 0 };
