@@ -3286,7 +3286,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "MiniMax's video generation model with cinematic quality",
     type: 'video',
     ecosystemId: ECO.MiniMaxH3,
-    hidden: true,
     licenseId: 33,
   },
 
