@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import {
+  acceptablePosturesFor,
   assertOrchestratorTypesUnique,
   assertStepInvariants,
   containsAirReference,
@@ -18,6 +19,7 @@ import {
   REGISTERED_STEP_IDS,
   STEP_BILLING_MODES,
   STEP_MODERATION_POSTURES,
+  STEP_TYPE_ACCEPTABLE_POSTURES,
   STRICTNESS_PROBE_KEY,
   type AnyBlockStep,
   type BlockStep,
@@ -829,5 +831,113 @@ describe('containsAirReference — the entitlement probe', () => {
     ).toBe(false);
     expect(containsAirReference(null)).toBe(false);
     expect(containsAirReference(42)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clause 1b — posture ↔ orchestrator `$type` agreement.
+//
+// 🔴 WHY THIS BLOCK EXISTS AT ALL. Every other moderation clause checks the
+// declared posture against ITSELF. This one is the only check that reads it
+// against something the entry author did not also write, so it is the only one
+// that can catch a `chatCompletion` entry declaring `'promptAudit'` — a
+// declaration that audits the input and ships the output unscanned while
+// passing clauses 1, 1a and 5a.
+//
+// Every rejection below is paired with a NEGATIVE CONTROL asserting the SAME
+// fixture passes when only the `$type` changes, so each failure is provably the
+// `$type` constraint rather than the fixture being broken some other way.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('block step registry — posture ↔ orchestratorType agreement (clause 1b)', () => {
+  it('REACHABILITY: a chatCompletion entry declaring promptAudit is rejected by THIS clause', () => {
+    // The fixture is otherwise fully valid — it passes clause 1 (promptAudit IS
+    // implemented) and clause 1a (auditableText is declared and non-empty), so
+    // reaching this rejection proves no earlier clause wins first.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({ orchestratorType: 'chatCompletion' })
+      )
+    ).toThrow(/requires moderationPosture 'textOutput'.*declares 'promptAudit'/s);
+  });
+
+  it('NEGATIVE CONTROL: the identical fixture passes on an unconstrained $type', () => {
+    expect(() => assertStepInvariants('fixture-step', makeAuditedFixtureStep())).not.toThrow();
+  });
+
+  it('rejects a text-producing $type declaring the no-surface posture', () => {
+    for (const orchestratorType of ['chatCompletion', 'mediaCaptioning', 'transcription']) {
+      expect(() =>
+        assertStepInvariants('fixture-step', makeFixtureStep({ orchestratorType }))
+      ).toThrow(/does not cover the moderation surface this step actually produces/);
+    }
+  });
+
+  it('the HONEST declaration still reports clause 1, not clause 1b', () => {
+    // `chatCompletion` + `'textOutput'` is the correct declaration; it cannot
+    // register because the posture has no handler yet. The author must see THAT
+    // reason, not a type mismatch — which is the whole point of ordering 1b
+    // after 1. If this flips, the honest entry gets a misleading error.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({ orchestratorType: 'chatCompletion', moderationPosture: 'textOutput' })
+      )
+    ).toThrow(/has no implemented handler/);
+  });
+
+  it('accepts EITHER acceptable posture for a multi-valued type, and rejects the others', () => {
+    // textToSpeech takes free text IN and emits audio, so promptAudit is the
+    // floor rather than the only answer.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeAuditedFixtureStep({ orchestratorType: 'textToSpeech' })
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertStepInvariants('fixture-step', makeFixtureStep({ orchestratorType: 'textToSpeech' }))
+    ).toThrow(/requires moderationPosture 'promptAudit' or 'textOutput'/);
+  });
+
+  it('a non-own key reads as UNCONSTRAINED, not as data (prototype seam)', () => {
+    // A bare index would return `Object.prototype.toString` — truthy, and
+    // `.includes` on a function would throw rather than fail closed.
+    expect(acceptablePosturesFor('toString')).toBeUndefined();
+    expect(acceptablePosturesFor('constructor')).toBeUndefined();
+    expect(acceptablePosturesFor('__proto__')).toBeUndefined();
+    expect(() =>
+      assertStepInvariants('fixture-step', makeFixtureStep({ orchestratorType: 'toString' }))
+    ).not.toThrow();
+  });
+
+  it('the map is NON-EMPTY and covers chatCompletion — emptying it silently disables the gate', () => {
+    const keys = Object.keys(STEP_TYPE_ACCEPTABLE_POSTURES);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys).toContain('chatCompletion');
+    // Every listed posture must be a DECLARED posture, or the constraint names
+    // a value no entry could ever satisfy.
+    for (const postures of Object.values(STEP_TYPE_ACCEPTABLE_POSTURES)) {
+      expect(postures.length).toBeGreaterThan(0);
+      for (const p of postures) expect(STEP_MODERATION_POSTURES).toContain(p);
+    }
+  });
+
+  it('no constrained $type is natively extracted — that would make the constraint unreachable', () => {
+    // Clause 9 rejects a natively-extracted `$type` outright, so listing one
+    // here would be a constraint no entry could ever reach.
+    for (const t of Object.keys(STEP_TYPE_ACCEPTABLE_POSTURES)) {
+      expect(NATIVELY_EXTRACTED_STEP_TYPES).not.toContain(t);
+    }
+  });
+
+  it('every SHIPPED entry satisfies the constraint for its own $type', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      const acceptable = acceptablePosturesFor(step.orchestratorType);
+      if (acceptable === undefined) continue;
+      expect(acceptable, `${id} declares ${step.moderationPosture}`).toContain(
+        step.moderationPosture
+      );
+    }
   });
 });
