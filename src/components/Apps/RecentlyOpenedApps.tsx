@@ -12,10 +12,10 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
-import { IconExternalLink, IconEye, IconPlayerPlay } from '@tabler/icons-react';
 import Link from 'next/link';
 import clsx from 'clsx';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
+import { ACTION_GLYPH_ICONS, recentRailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import {
   getRecentRailAction,
   getRecentRailTarget,
@@ -202,13 +202,6 @@ export interface RecentlyOpenedListingsViewProps {
   onOpenRecent?: (entry: ResolvedRecentApp) => void;
 }
 
-/** Icon per action — the SAME vocabulary the store card's CTA row uses. */
-const RECENT_ACTION_ICONS = {
-  open: IconPlayerPlay,
-  visit: IconExternalLink,
-  view: IconEye,
-} as const;
-
 /**
  * One compact recents tile: app icon + name + an icon CTA. Kept deliberately
  * smaller than `AppListingCard` (no cover, no CTA row, no recommend rollup) —
@@ -266,7 +259,14 @@ function RecentTile({
   const reduceMotion = useReducedMotion();
   const target = getRecentRailTarget(entry, { canOpenPage });
   const { action, label: actionLabel } = getRecentRailAction(entry, { canOpenPage });
-  const ActionGlyph = RECENT_ACTION_ICONS[action];
+  // 🔴 SINGLE-SOURCED. This tile used to carry its own private
+  // `RECENT_ACTION_ICONS` record — the third copy of a glyph mapping
+  // `appListingActionGlyph.ts` already owned for the store card and the listing
+  // detail, and the one `AppListingCard`'s CTA comment named as the outstanding
+  // consolidation. Resolve through `recentRailActionGlyph` so the rail, the card
+  // and the detail page cannot drift: an eye here and an eye there are now the
+  // same lookup, not two literals that happen to agree today.
+  const ActionGlyph = ACTION_GLYPH_ICONS[recentRailActionGlyph(action)];
   const label = entry.name ?? entry.slug;
   // External targets are https-guarded upstream (`safeExternalHref`) and get the
   // standard new-tab hardening; internal ones route through next/link. `Anchor`

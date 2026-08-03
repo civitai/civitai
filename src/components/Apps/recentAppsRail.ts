@@ -162,13 +162,30 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     `appBlocks` is the block-runtime kill-switch, so pages-on/blocks-off is a
  *     reachable state that still 404s). 🔴 THIS IS THE LOAD-BEARING ONE.
  *     `/apps/run/<slug>` 404s fail-closed for a viewer missing either flag
- *     (`src/pages/apps/run/[slug]/[[...path]].tsx`), yet BOTH writers that
- *     feed this menu — the detail page's "Open live" CTA and the legacy
- *     `MarketplaceBody.recordRecent` — record on-site `{hasPage:true}` entries
- *     flag-blind. Without this gate a dark-flag viewer is offered a menu of
- *     guaranteed-404 links. Dark → the whole section is hidden (the menu has no
- *     second link shape to fall back to; the `/apps` rail, which does, keeps
- *     showing the same entries via `getRecentRailTarget`).
+ *     (`src/pages/apps/run/[slug]/[[...path]].tsx`), and NOTHING upstream of
+ *     this filter carries flag state: every writer of `recordRecentlyOpenedApp`
+ *     records what the app IS, never what the viewer is currently allowed to
+ *     open. So an entry reaches this menu with `blockId` set and no evidence
+ *     whatsoever that `/apps/run/<blockId>` will resolve for THIS viewer — and
+ *     a viewer's flags can go dark after the entry was written in any case.
+ *     Without this gate that viewer is offered a menu of guaranteed-404 links.
+ *
+ *     🔴 NOTE WHAT THE FILTER BELOW ACTUALLY READS — `kind` and `blockId`, NOT
+ *     `hasPage`. That matters because the writers do not agree on what they
+ *     record. `toRecentAppFromListing` (the detail page's "Open live" CTA, the
+ *     card's new-tab CTA) and the run page both write `kind` AND `hasPage`; the
+ *     legacy `MarketplaceBody.recordRecent` writes only
+ *     `{id, blockId, name, iconUrl}` — NEITHER field. Its entries are therefore
+ *     admitted here by ABSENCE (`undefined !== 'offsite'` is true), carrying no
+ *     page evidence at all, which makes them the strongest case for the gate
+ *     rather than an exception to it. Do not "tighten" this by adding a
+ *     `hasPage` test: that would silently drop every legacy entry, which is the
+ *     empty-a-returning-viewer's-list failure `resolveRecentApp` exists to
+ *     avoid.
+ *
+ *     Dark → the whole section is hidden (the menu has no second link shape to
+ *     fall back to; the `/apps` rail, which does, keeps showing the same entries
+ *     via `getRecentRailTarget`).
  *  2. not the app currently being viewed (nothing to "return" to).
  *  3. on-site with a `blockId`. Off-site listings have no AppBlock at all, so
  *     they would render `/apps/run/undefined`; an off-site entry carrying a

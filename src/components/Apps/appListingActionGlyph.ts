@@ -8,6 +8,7 @@ import {
 import type { Icon } from '@tabler/icons-react';
 import type { ListingCtaAction } from '~/components/Apps/appListingCardView';
 import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
+import type { RecentRailAction } from '~/components/Apps/recentAppsRail';
 
 /**
  * The primary-action GLYPH vocabulary — the single source of truth for "which
@@ -54,7 +55,8 @@ export const ACTION_GLYPH_ICONS: Record<PrimaryActionGlyph, Icon> = {
    *
    * 🔴 Distinct from `info`, and it must stay `IconEye`. #3539's product-feedback
    * pass shipped `IconEye` for the card's "View details" CTA and for the recents
-   * rail's `view` action (`RECENT_ACTION_ICONS` in `RecentlyOpenedApps.tsx`), so
+   * rail's `view` action (then a private `RECENT_ACTION_ICONS` map in
+   * `RecentlyOpenedApps.tsx`, since folded into `recentRailActionGlyph` below), so
    * this is the SITE's established vocabulary, not a fresh choice. `info` is the
    * detail page's *inert* affordance ("Runs on model pages" — no href at all);
    * collapsing the two would silently repaint every card's View-details CTA.
@@ -117,6 +119,48 @@ export function cardActionGlyph(action: ListingCtaAction): PrimaryActionGlyph {
       // repainted every such CTA — a regression against a deliberate product call,
       // introduced by a module written to be wired up. Corrected before its first
       // caller (this file's own card) exists.
+      return 'view';
+  }
+}
+
+/**
+ * Recents-rail tile CTA action → glyph. The THIRD and last consumer of the
+ * vocabulary; `AppListingCard`'s CTA comment named folding it in as the
+ * outstanding consolidation.
+ *
+ * `RecentlyOpenedApps.tsx` used to carry its own private `RECENT_ACTION_ICONS`
+ * record — a third, drift-capable copy of a mapping this module already owned.
+ * It is deleted; the rail now reads `ACTION_GLYPH_ICONS` through here.
+ *
+ * 🔴 PROVEN, not assumed, to be a pure refactor. Before the fold-in, the private
+ * map resolved `open → IconPlayerPlay`, `visit → IconExternalLink`,
+ * `view → IconEye`, which are the byte-same components this function reaches via
+ * `launch` / `external` / `view`. That equality was measured by reference (with a
+ * deliberately mis-mapped source as the positive control, to prove the check
+ * could observe a disagreement at all) rather than asserted from reading the two
+ * literals side by side.
+ *
+ * 🔴 NO `default` ARM, deliberately — that is the enforcement, not a style
+ * choice. This repo's only merge-blocking gates are `Typecheck` and
+ * ESLint/Prettier on added files (`Unit tests` is `continue-on-error`), so a
+ * `switch` with no fallback, whose return type forbids `undefined`, is the ONE
+ * mechanism that makes a newly added `RecentRailAction` a BUILD failure here
+ * instead of a tile that silently renders no glyph. A `default` — or a
+ * `?? someFallback` at the call site — would trade a compile error for a
+ * production defect nothing in CI can catch.
+ *
+ * Note `RecentRailAction`'s names are the RAIL's ('open'/'visit'/'view'), not the
+ * glyph vocabulary's ('launch'/'external'/'view'); the two agree on `view` and
+ * differ on the other two, which is exactly why the translation belongs in a
+ * named function rather than being spelled as an index.
+ */
+export function recentRailActionGlyph(action: RecentRailAction): PrimaryActionGlyph {
+  switch (action) {
+    case 'open':
+      return 'launch';
+    case 'visit':
+      return 'external';
+    case 'view':
       return 'view';
   }
 }
