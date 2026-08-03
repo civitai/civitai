@@ -404,8 +404,68 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             of who is looking at it. */}
         <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="nowrap">
           {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". This is the
-              flexible side: it may truncate so the actions never do. */}
-          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
+              flexible side: it may truncate so the actions never do.
+
+              🔴 …but ONLY DOWN TO A FLOOR. Truncation is the designed behaviour and
+              stays; what this container query removes is the state BELOW it, where
+              the rollup is squeezed so hard that the surviving glyphs say nothing.
+              Measured on this tree (main + #3547), OWNER card, the widest CTA
+              ("View details"), the store's real 4-column geometry:
+
+                | card | container | actions | rollup | text px / natural | truncated |
+                |------|-----------|---------|--------|-------------------|-----------|
+                |  280 |       248 |     184 |     54 |          37 / 79  | YES       |
+                |  300 |       268 |     184 |     74 |          57 / 79  | yes       |
+                |  314 |       282 |     184 |     88 |          71 / 79  | yes       |
+                |  330 |       298 |     184 |     96 |          79 / 79  | no        |
+
+              (Widths are `getBoundingClientRect`; "truncated" is `scrollWidth >
+              clientWidth` on the `<Text truncate>`. Character counts below are
+              DERIVED from the text px at 12px, not read off a screenshot — the
+              live report is what confirmed the top row renders as "No ...".)
+
+              A 37px stub of "No reviews yet" is strictly worse than no rollup: it
+              occupies the slot, reads as a rendering bug, and carries no
+              information. 54px is the state the live 1200px-viewport store is in
+              today: card 280 is `(1200 − 32 container padding − 3×16 gutter) / 4`,
+              i.e. the 4-column `lg` span at a 1200px viewport.
+
+              🔴 THRESHOLD 264px, DERIVED NOT GUESSED. The floor we want is a rollup
+              box of ~70px = the 13px thumb glyph + its 4px gap + ~53px of 12px text,
+              which is ~9 characters — enough for "No reviews…" / "91% recom…" to
+              read as a phrase rather than as debris. The owner action set at its
+              WIDEST (icon-only Edit + "View details") measures 184px, and the row
+              gap is 8px, so the container width at which the rollup hits that floor
+              is 184 + 8 + 70 = 262 → 264. The model predicts the measured table
+              above to within ~2px at every row, which is why it is stated as
+              arithmetic instead of as a round number that happened to look right.
+
+              🔴 A CONTAINER query, for the same reason the owner-Edit swap below is
+              one: card width is NOT monotonic in viewport width (at `base` the grid
+              is ONE column, so a 390px phone gives a ~356px card — wider than the
+              280px a 1200px laptop gets at four columns). A `max-width` media query
+              would hide the rollup on exactly the viewports with the most room.
+
+              🔴 OWNER CARDS ONLY (`showEdit`). A non-owner card has no Edit control,
+              so its actions are 138px and the rollup never drops below 96px at any
+              width the store produces — it is byte-unchanged by this and must stay
+              that way.
+
+              ⚠️ ACCEPTED COLLATERAL, on the record rather than discovered later: the
+              query cannot see WHICH CTA rendered, and the narrow "Open" CTA (actions
+              140px) leaves the rollup its full 96px even at container 248 — measured,
+              untruncated at every width in the sweep. So an owner card
+              whose CTA is "Open"/"Visit" loses a rollup that would have fit, across
+              container 248–264 (viewport ~1200–1264 at four columns). Encoding a
+              second per-CTA threshold to reclaim that 64px band buys a second magic
+              number and a CTA-width classification in the render path; one rule that
+              is occasionally conservative is the better trade. */}
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            className={showEdit ? 'hidden @[264px]:flex' : undefined}
+          >
             <IconThumbUp
               size={13}
               style={{ flexShrink: 0 }}
@@ -416,7 +476,18 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {/* 🔴 `marginLeft: 'auto'` is what keeps the actions RIGHT-ALIGNED when the
+              rollup above is `display: none`. `justify="space-between"` distributes
+              a SINGLE remaining flex item to flex-START, so without this the whole
+              action group jumps to the left edge of the card the moment the rollup
+              is hidden — the exact left-alignment failure the block comment above
+              warns wrapping would cause, reintroduced by a different mechanism.
+              With BOTH children present it is a no-op: auto margins absorb free
+              space before `justify-content` is applied, and one auto margin on the
+              second of two items lands them in precisely the space-between
+              positions. Verified by measurement at both container widths, not
+              assumed. */}
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
                 kind (manifest editor for on-site, submit editor for off-site).
