@@ -10,8 +10,9 @@ export function getOrchestratorClient(): OrchestratorClient {
   if (!client) {
     client = createCivitaiClient({
       baseUrl: env.ORCHESTRATOR_ENDPOINT ?? '',
-      // Match the main app, which defaults ORCHESTRATOR_MODE to 'dev' (a dev token on 'prod' → 401).
-      env: (env.ORCHESTRATOR_MODE ?? 'dev') === 'prod' ? 'prod' : 'dev',
+      // Default 'prod' (the dev orchestrator is effectively unused); the token's env must match this mode
+      // or the orchestrator 401s.
+      env: (env.ORCHESTRATOR_MODE ?? 'prod') === 'dev' ? 'dev' : 'prod',
       auth: env.ORCHESTRATOR_ACCESS_TOKEN ?? '',
     });
   }
