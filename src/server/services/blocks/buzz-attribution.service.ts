@@ -1393,16 +1393,50 @@ export async function getRevenueForOwner({
 }
 
 /**
+ * Why there is exactly ONE reason value and not two.
+ *
+ * `getRevenueForOwner` never *computes* ownership — it scopes every aggregate
+ * with `appOwnerUserId: ownerUserId` in the WHERE clause. So a caller who asks
+ * for an appBlockId they do not own gets a zero-row aggregate, and those zeros
+ * are a truthful measurement ("your attributed revenue on that app is zero"),
+ * not a fabricated one. There is no not-owned branch in the revenue path that
+ * could report `notOwned`, so adding that value would declare a state nothing
+ * can ever produce and force an unreachable branch into every renderer — the
+ * same "declared but never satisfied" trap that let the analytics bug hide.
+ *
+ * The dark `appBlocks` flag is therefore the only path that returns zeros it
+ * never measured, hence the single `notEntitled`. If revenue ever grows a real
+ * ownership probe, widen this union AND add the matching renderer branch in the
+ * same change.
+ */
+export type RevenueUnavailableReason = 'notEntitled';
+
+export type RevenuePayload = {
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+  recentAttributions: [];
+  /**
+   * Present ONLY when the zeroed buckets are a placeholder rather than a
+   * measurement. A genuinely-measured result omits it even when every bucket is
+   * 0 — without it a publisher who has simply earned nothing yet and a caller
+   * who was never allowed to query are byte-identical, and the dashboard
+   * presents never-queried zeros as earnings.
+   */
+  unavailable: RevenueUnavailableReason;
+};
+
+/**
  * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue.
  * Mirrors getRevenueForOwner's `{ summary, topApps }` (+ empty attributions
  * feed) with every bucket at zero so a flag-off caller gets no data and we
  * run NO aggregate queries. Pure constant; no DB access.
+ *
+ * The `unavailable` discriminator is baked in rather than passed by the caller:
+ * this helper exists SOLELY for the dark-flag short-circuit, so there is no
+ * legitimate way to build this payload without the flag, and a future second
+ * call site cannot silently omit it.
  */
-export function emptyRevenue(): {
-  summary: RevenueSummary;
-  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
-  recentAttributions: [];
-} {
+export function emptyRevenue(): RevenuePayload {
   const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
   return {
     summary: {
@@ -1413,6 +1447,7 @@ export function emptyRevenue(): {
     },
     topApps: [],
     recentAttributions: [],
+    unavailable: 'notEntitled',
   };
 }
 

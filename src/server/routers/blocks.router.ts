@@ -5206,6 +5206,15 @@ export const blocksRouter = router({
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
       // marks the ctx → return the zeroed revenue shape WITHOUT running any
       // aggregate, so a flag-off moderator gets no live revenue data.
+      //
+      // `emptyRevenue()` carries `unavailable: 'notEntitled'`. It MUST, or the
+      // all-zero buckets are indistinguishable from a publisher who has simply
+      // earned nothing yet, and the dashboard renders fabricated zeros as
+      // earnings. This is reachable even though both revenue pages also guard on
+      // `features.appBlocks` client-side: that is a SEPARATE evaluation of the
+      // flag from this middleware's, and the page-level author gate is a
+      // DIFFERENT flag again (`appBlocksAuthor`) — so a caller can be entitled
+      // to render the page while this proc short-circuits.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return emptyRevenue();
       }
