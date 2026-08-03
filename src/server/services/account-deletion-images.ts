@@ -8,6 +8,8 @@ import {
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
@@ -129,5 +131,49 @@ export async function unblockAccountDeletionImages(userId: number) {
       passes,
     }).catch(() => undefined);
 
-  return { unblocked, stillBlocked, skipped };
+  return { unblocked, stillBlocked, skipped, drained };
+}
+
+export async function countPendingAccountDeletionImageRestores(userId: number) {
+  const [row] = await dbWrite.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(*)::int AS count
+    FROM "Image"
+    WHERE "userId" = ${userId}
+      AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      AND "metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+  `;
+  return row?.count ?? 0;
+}
+
+/**
+ * Names an account for `restore-user-images` instead of leaving the job to find it. A failure
+ * costs the images their automatic return, not the restore — which has already committed, and
+ * which a moderator cannot retry because the account no longer reads as deleted — so it is logged
+ * rather than thrown, and the breadcrumbs still say what to undo.
+ */
+export async function recordPendingImageRestore(userId: number) {
+  try {
+    await sysRedis.sAdd(REDIS_SYS_KEYS.SYSTEM.PENDING_IMAGE_RESTORES, String(userId));
+    return true;
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'account-deletion-image-restore',
+      message: 'could not queue the account for image restore',
+      error: (error as Error)?.message,
+      userId,
+    }).catch(() => undefined);
+    return false;
+  }
+}
+
+export async function readPendingImageRestores() {
+  const members = await sysRedis.sMembers(REDIS_SYS_KEYS.SYSTEM.PENDING_IMAGE_RESTORES);
+  return (members ?? [])
+    .map((member) => Number(decodeRedisString(member)))
+    .filter((userId) => Number.isInteger(userId));
+}
+
+export async function clearPendingImageRestore(userId: number) {
+  await sysRedis.sRem(REDIS_SYS_KEYS.SYSTEM.PENDING_IMAGE_RESTORES, String(userId));
 }

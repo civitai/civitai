@@ -1789,6 +1789,16 @@ export const REDIS_SYS_KEYS = {
       default applies.
      */
     DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    /*
+      Set of userIds whose grace-blocked images are waiting on the
+      restore-user-images job. `restoreUser` adds an id once its restore
+      transaction commits; the job drops it once the reversal runs out of rows
+      to claim. Only a worklist — `Image.metadata` holds the durable
+      breadcrumbs, so a lost set means the images stay hidden until
+      unblockAccountDeletionImages is called for that account again, not that
+      the reversal is unrecoverable.
+     */
+    PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

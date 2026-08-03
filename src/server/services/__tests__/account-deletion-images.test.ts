@@ -6,12 +6,14 @@ const {
   mockQueueSearchIndex,
   mockBustCachesForPosts,
   mockLogToAxiom,
+  mockSysRedis,
 } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockResetNsfwLevel: vi.fn(async () => undefined),
   mockQueueSearchIndex: vi.fn(async () => undefined),
   mockBustCachesForPosts: vi.fn(async () => undefined),
   mockLogToAxiom: vi.fn(async () => undefined),
+  mockSysRedis: { sAdd: vi.fn(), sMembers: vi.fn(), sRem: vi.fn() },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
@@ -21,10 +23,16 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: mockBustCachesForPosts }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+vi.mock('~/server/redis/client', () => ({
+  sysRedis: mockSysRedis,
+  REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'pending-restores' } },
+}));
 
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
+  countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  recordPendingImageRestore,
   unblockAccountDeletionImages,
   MAX_RESTORE_BATCHES,
   RESTORE_BATCH_SIZE,
@@ -153,8 +161,12 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
   return claimed.map(({ id, postId, ingestion }) => ({ id, postId, ingestion }));
 }
 
-/** Same discipline for the audit count: predicates are read out, not assumed. */
-function countUnreadableBreadcrumbs(sql: string, values: unknown[]) {
+/**
+ * Same discipline for the counts — the reversal's own skipped-row audit and the pending count
+ * `restoreUser` reports: predicates are read out, not assumed, so a count that widens or narrows
+ * its scope answers off a different set of rows here.
+ */
+function countMatchingImages(sql: string, values: unknown[]) {
   const params = [...values];
   const predicates = sql
     .slice(sql.indexOf('WHERE') + 5)
@@ -168,7 +180,7 @@ function countUnreadableBreadcrumbs(sql: string, values: unknown[]) {
         return (row: ImageRow) => row.metadata[args[0] as string] != null;
       if (/^\s*"metadata"->>\?::text NOT IN /.test(clause) && ENUM_RANGE.test(clause))
         return (row: ImageRow) => !INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
-      throw new Error(`unrecognized breadcrumb-audit predicate: ${clause.trim()}`);
+      throw new Error(`unrecognized image-count predicate: ${clause.trim()}`);
     });
 
   return [{ count: images.filter((row) => predicates.every((holds) => holds(row))).length }];
@@ -199,13 +211,13 @@ beforeEach(() => {
   images = [];
   queue = [];
   claimedPerPass = [];
+  mockSysRedis.sAdd.mockResolvedValue(1);
 
   mockDbWrite.$queryRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = strings.join('?');
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
-      if (sql.includes('SELECT COUNT(*)'))
-        return Promise.resolve(countUnreadableBreadcrumbs(sql, values));
+      if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
       throw new Error(`unexpected read: ${sql}`);
     }
   );
@@ -344,7 +356,7 @@ describe('unblockAccountDeletionImages', () => {
 
     const result = await unblockAccountDeletionImages(7);
 
-    expect(result).toEqual({ unblocked: 0, stillBlocked: 0, skipped: 0 });
+    expect(result).toEqual({ unblocked: 0, stillBlocked: 0, skipped: 0, drained: true });
     expect(mockResetNsfwLevel).not.toHaveBeenCalled();
     expect(mockBustCachesForPosts).not.toHaveBeenCalled();
   });
@@ -376,7 +388,7 @@ describe('unblockAccountDeletionImages', () => {
       ingestion: 'Blocked',
       metadata: { [PRIOR_INGESTION_KEY]: 'Scannned' },
     });
-    expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1 });
+    expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1, drained: true });
     expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3]);
   });
 
@@ -398,6 +410,9 @@ describe('unblockAccountDeletionImages', () => {
 
     expect(claimedPerPass).toHaveLength(MAX_RESTORE_BATCHES);
     expect(result.unblocked).toBe(0);
+    // `restore-user-images` drops the account off its worklist on this flag; reported as finished,
+    // a reversal stopped at the ceiling is never resumed.
+    expect(result.drained).toBe(false);
     expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ drained: false }));
   });
 
@@ -436,6 +451,53 @@ describe('unblockAccountDeletionImages', () => {
 
     // A bust racing the reset lets a reader re-cache the Blocked level for the whole cache TTL.
     expect(order).toEqual(['reset', 'bust']);
+  });
+});
+
+describe('countPendingAccountDeletionImageRestores', () => {
+  it('counts the images this account is still waiting on', async () => {
+    images = [
+      hidden(1, 'Scanned'),
+      hidden(2, 'Pending'),
+      // Unblocked already, so no longer waiting on anything.
+      hidden(3, 'Scanned', { ingestion: 'Scanned', blockedFor: null, metadata: {} }),
+      // A moderator block, which the restore deliberately leaves alone.
+      {
+        id: 4,
+        userId: 7,
+        postId: null,
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        metadata: {},
+      },
+      { ...hidden(5, 'Scanned'), userId: 8 },
+    ];
+
+    expect(await countPendingAccountDeletionImageRestores(7)).toBe(2);
+  });
+
+  it('reports nothing pending for a deletion that blocked no images', async () => {
+    images = [
+      { id: 1, userId: 7, postId: null, ingestion: 'Scanned', blockedFor: null, metadata: {} },
+    ];
+
+    expect(await countPendingAccountDeletionImageRestores(7)).toBe(0);
+  });
+});
+
+describe('recordPendingImageRestore', () => {
+  it('names the account on the job worklist', async () => {
+    expect(await recordPendingImageRestore(7)).toBe(true);
+    expect(mockSysRedis.sAdd).toHaveBeenCalledWith('pending-restores', '7');
+  });
+
+  it('swallows a Redis failure rather than failing a restore that already committed', async () => {
+    mockSysRedis.sAdd.mockRejectedValueOnce(new Error('sysRedis down'));
+
+    // Thrown, this surfaces as a failed restore — and the retry is locked out by restoreUser's own
+    // guard, because the account no longer reads as deleted.
+    expect(await recordPendingImageRestore(7)).toBe(false);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ userId: 7 }));
   });
 });
 
