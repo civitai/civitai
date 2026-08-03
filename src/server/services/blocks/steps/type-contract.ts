@@ -129,14 +129,66 @@ type _RejectsUnknownResourcePolicy = Expect<
   >
 >;
 
-// ── `extractOutput` is REQUIRED ──────────────────────────────────────────────
+// ── `extractOutput` is REQUIRED on a MEDIA-posture entry ─────────────────────
 // 🔴 This is what makes "register a step" and "its result is retrievable" ONE
 // action. Without it, both `workflow.service` extractors `continue` past the new
 // `$type` and the capability is inert AFTER the caller has been charged — which
 // is exactly what shipped. If this assertion ever fails, a new entry can be
 // registered with no way to return its output.
+//
+// `CompleteStep` declares `moderationPosture: 'none'`, so this is the MEDIA
+// member of `StepOutputSurface` — the requirement is unchanged for it.
 type _RequiresExtractOutput = Expect<
   NotAssignable<Omit<CompleteStep, 'extractOutput'>, BlockStep<Params>>
+>;
+
+// ── a MEDIA entry must NOT declare `extractText` ─────────────────────────────
+// The reverse of clause 1c, at the type level: an extractor under a posture that
+// never scans reads as generated-text coverage and is never called.
+type _MediaStepRejectsExtractText = Expect<
+  NotAssignable<CompleteStep & { extractText(step: unknown): string[] }, BlockStep<Params>>
+>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE `'textOutput'` OUTPUT SURFACE — media XOR text, at the type level.
+//
+// 🔴 THESE THREE ASSERTIONS ARE THE STRUCTURAL HALF OF THE ANTI-SMUGGLING FIX.
+// Before it, `extractOutput` was unconditionally required and clause 8
+// unconditionally demanded ≥1 media item with a non-empty url, so an honest
+// text-producing entry COULD NOT REGISTER — while the same entry with prose
+// stuffed into `media.url` registered cleanly and published that prose through
+// `snapshot.imageUrls` / `AppWorkflow.images[].url`, neither of which passes
+// through the output scan. `_TextStepRejectsExtractOutput` is what makes writing
+// that field impossible rather than merely detected.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A complete, well-formed TEXT-output entry. The CONTROL for the two below. */
+type CompleteTextStep = Omit<CompleteStep, 'moderationPosture' | 'extractOutput'> & {
+  moderationPosture: 'textOutput';
+  extractText(step: unknown): string[];
+};
+
+// 🔴 THE CONTROL, and the assertion that pins "the posture is ADOPTABLE". If
+// this stops compiling, a text-producing step cannot be registered honestly
+// again and the next author reaches for the media-url workaround.
+type _TextControl = Expect<CompleteTextStep extends BlockStep<Params> ? true : false>;
+
+// ── a TEXT entry must declare `extractText` ──────────────────────────────────
+type _TextStepRequiresExtractText = Expect<
+  NotAssignable<Omit<CompleteTextStep, 'extractText'>, BlockStep<Params>>
+>;
+
+// ── 🔴 a TEXT entry must NOT declare `extractOutput` ─────────────────────────
+// `StepOutputMedia.url` is a bare string, never URL-validated, that flows to
+// `snapshot.imageUrls` and `AppWorkflow.images[].url` WITHOUT meeting
+// `attachModeratedStepTextOutputs`. A text entry able to declare a media
+// extractor could therefore publish the model's reply as a "url" with every
+// moderation gate green. If this assertion ever fails, that channel is open.
+type _TextStepRejectsExtractOutput = Expect<
+  NotAssignable<
+    CompleteTextStep & { extractOutput(step: unknown): StepOutputMedia[] },
+    BlockStep<Params>
+  >
 >;
 
 // ── `canonicalOutputFor` is REQUIRED ─────────────────────────────────────────

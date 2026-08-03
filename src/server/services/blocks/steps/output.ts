@@ -23,6 +23,14 @@
  * projection's job and stays in exactly one place
  * (`nsfwLevelFromContentRating`) — a registry entry must not be able to invent
  * its own mapping.
+ *
+ * 🔴 `url` IS A BARE STRING AND NOTHING VALIDATES IT AS A URL. It reaches
+ * `snapshot.imageUrls` and `AppWorkflow.images[].url` unfiltered, and NEITHER of
+ * those passes through `attachModeratedStepTextOutputs` — so anything an entry
+ * puts here is published unscanned. That is why the registry forbids a
+ * text-posture entry from declaring `extractOutput` at all
+ * (`TextOutputSurface`, registry clause 8-ii, and the posture gate on both
+ * `workflow.service` extractors) rather than trying to police the string.
  */
 export type StepOutputMedia = {
   url: string;

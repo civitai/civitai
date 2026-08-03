@@ -139,7 +139,10 @@ const blockTextToImageBodySchema = z.object({
   // LoRA-type model version that the server entitlement-gates per-resource and
   // base-model-family-matches against the checkpoint before any spend. Capped
   // at MAX_ADDITIONAL_RESOURCES for the iframe posture above.
-  additionalResources: z.array(blockAdditionalResourceSchema).max(MAX_ADDITIONAL_RESOURCES).optional(),
+  additionalResources: z
+    .array(blockAdditionalResourceSchema)
+    .max(MAX_ADDITIONAL_RESOURCES)
+    .optional(),
   // Optional img2img init/source image (App Blocks IMAGE bridge).
   // When present, the block bridge emits an img2img graph workflow whose VARIANT
   // is chosen from the checkpoint's ecosystem (buildImageWorkflowInput /
@@ -393,4 +396,84 @@ export type BlockWorkflowSnapshot = {
     applied: number;
     reason: ModelSubstitutionReason;
   }>;
+  /**
+   * Generated FREE TEXT produced by a registered step whose `moderationPosture`
+   * is `'textOutput'` — and which has PASSED an output moderation scan.
+   *
+   * 🔴 EVERY STRING HERE HAS BEEN SCANNED. That is a property of how the field
+   * is produced, not a promise about who sets it. The single producer is
+   * `attachModeratedStepTextOutputs` (`services/blocks/steps/moderation`), which
+   * runs the scan and strips any incoming value of this field before merging its
+   * own. Do NOT set it anywhere else; doing so would be publishing unscanned
+   * model output, which is the one thing the `'textOutput'` posture exists to
+   * prevent.
+   *
+   * 🔴 BE EXACT ABOUT WHAT ENFORCES THAT — AN EARLIER REVISION OF THIS COMMENT
+   * WAS WRONG, AND IT IS RECORDED RATHER THAN QUIETLY REPLACED BECAUSE THIS IS
+   * THE WIRE-CONTRACT DOC AN ENTRY AUTHOR AND THE `@civitai/app-sdk`
+   * MIRROR-WRITER READ. It said `snapshotFromWorkflow` and `projectAppWorkflow`
+   * "are pure and synchronous and read only `extractOutput`, which returns MEDIA
+   * — neither can put prose in a snapshot at all". `StepOutputMedia.url` is a
+   * bare `string`, never URL-validated, and it reaches `snapshot.imageUrls` /
+   * `AppWorkflow.images[].url` without meeting the scan — so
+   * `extractOutput: () => [{ url: theModelsReply, … }]` on a text entry WOULD
+   * have published unscanned generated text with every gate green. Anyone
+   * trusting the old sentence would conclude a media extractor on a text entry
+   * is structurally harmless and propose relaxing registry clause 8-ii. It is
+   * not harmless; 8-ii is load-bearing.
+   *
+   * WHAT ACTUALLY HOLDS IT (all three off the one `stepOutputShape` predicate,
+   * and spelled out at `attachModeratedStepTextOutputs`): the TYPE
+   * (`TextOutputSurface.extractOutput?: never`), the LOAD-time registry clause
+   * 8-ii, and the READ path (both `workflow.service` extractors call
+   * `extractOutput` only when `postureProducesMedia(...)`). The original
+   * structural point does still stand on its own — a scan is an async network
+   * call and both projections are pure and synchronous, so neither could perform
+   * one — but it bounds only WHO CAN SCAN, never what a media extractor can
+   * smuggle.
+   *
+   * WHERE IT APPEARS: `blocks.pollWorkflow` and `blocks.cancelWorkflow` — the
+   * two procedures wrapped by `attachModeratedStepTextOutputs`, and therefore
+   * the only two that can carry THIS FIELD.
+   *
+   * 🔴 THE EARLIER WORDING CALLED THEM "the two surfaces a block reads a
+   * finished generation from", WHICH IS AN OVERCLAIM — corrected at the poll
+   * itself for the same reason, and recorded here too. Three further procedures
+   * read a finished workflow on a block's behalf, UNWRAPPED:
+   * `blocks.queryAppWorkflows`, `blocks.cancelAppWorkflow` and
+   * `blocks.publishGenerationOutputs` (note these are DIFFERENT procedures from
+   * the similarly-named wrapped pair). What makes those three safe is stated at
+   * each of them — `AppWorkflow` has no text field, and its `images` are
+   * posture-gated — not here.
+   *
+   * NOT on the submit replies, and that is not an oversight: the step submit
+   * passes no `wait`, so the reply is a freshly-queued workflow with no `output`
+   * to publish. It is also not load-bearing — a submit reply is built by
+   * `snapshotFromWorkflow`, which does not produce this field, so an
+   * orchestrator that started answering submits with completed output would
+   * degrade to "the block polls once more", never to "unscanned text ships".
+   *
+   * OMITTED entirely when there is no text, so every existing snapshot stays
+   * byte-identical.
+   *
+   * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
+   * mirrors, exactly like `modelSubstitutions` above. The SDK's inbound
+   * validator does not know it yet, so a block reads it only once that type is
+   * widened in the SDK repo — tracked separately; nothing here edits another repo.
+   */
+  textOutputs?: string[];
+  /**
+   * Set when generated text WAS produced but is being withheld — a content-policy
+   * hit, or a scanner error/timeout (the scan fails CLOSED).
+   *
+   * `reason` is a user-facing message, deliberately generic: it does not name the
+   * labels that triggered. The triggering labels + scores go to the per-app
+   * trigger log instead, which is where the actionable signal lives (an app whose
+   * outputs trigger constantly is telling you about its system prompt).
+   *
+   * Independent of `textOutputs` rather than mutually exclusive: a workflow with
+   * two text steps can release one and withhold the other, and both fields then
+   * appear.
+   */
+  textOutputWithheld?: { reason: string };
 };
