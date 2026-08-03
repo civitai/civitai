@@ -1269,10 +1269,10 @@ export const getCollectionItemsByCollectionId = async ({
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
 
-  // AI review leaves items it will not decide in REVIEW, stamped by the system user, so this is
-  // exactly the set waiting on a person.
+  // The system user stamps every item it touches, accept and reject included, so the stamp alone
+  // means "the AI saw this". Only a stamped item still sitting in REVIEW is waiting on a person.
   const awaitingHumanCondition = awaitingHumanReview
-    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID}`
+    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID} AND ci.status = 'REVIEW'::"CollectionItemStatus"`
     : Prisma.sql``;
 
   // For contest mode, use hash-based random ordering with cursor support
