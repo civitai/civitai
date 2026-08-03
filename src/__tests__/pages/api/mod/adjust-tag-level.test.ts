@@ -9,8 +9,17 @@ const { mockQuery, mockTagCache, mockTagCacheByName } = vi.hoisted(() => {
   };
 });
 
+// This factory must export EVERY binding `~/server/db/pgDb` really exports that
+// a transitively-imported module destructures at load time. `~/server/db/kyselyDb`
+// does `import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb'`, and
+// Vitest throws `No "<name>" export is defined on the ... mock` for any omitted
+// binding — a module-load error that fails the whole FILE (0 tests collected), not
+// a single assertion. Only `pgDbWrite.query` is actually exercised here; the other
+// two are inert placeholders that just satisfy the destructure.
 vi.mock('~/server/db/pgDb', () => ({
   pgDbWrite: { query: mockQuery },
+  pgDbRead: {},
+  pgDbReadLong: {},
 }));
 
 vi.mock('~/server/redis/caches', () => ({

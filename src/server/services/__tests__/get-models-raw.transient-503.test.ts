@@ -69,7 +69,16 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 // linux-nixos query engine) — a false-positive vector Vitest flags. Stubbing
 // them keeps the run clean without touching the code under test.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+// NOTE: this factory must export EVERY binding `~/server/db/pgDb` really
+// exports that a transitively-imported module destructures at load time.
+// `~/server/db/kyselyDb` (reached via model.service -> db-lag-helpers) does
+// `import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb'`, and
+// Vitest throws `No "<name>" export is defined on the ... mock` for any binding
+// the factory omits — which surfaces as EVERY test in this file failing with an
+// error that has nothing to do with the Meili catch under test. `pgDbReadLong`
+// was added to kyselyDb.ts on 2026-07-15 (b96b7c7772) and silently broke this
+// suite. Keep this list in sync with pgDb.ts's exports.
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 // Keep the REAL REDIS_KEYS (the ~/server/redis/caches module reads nested keys
 // like REDIS_KEYS.*.RESOURCE_DATA at module load), but stub the redis/sysRedis
 // CLIENTS so no real connection opens. importOriginal here does not connect
