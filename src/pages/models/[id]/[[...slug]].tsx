@@ -517,6 +517,29 @@ export default function ModelDetailsV2({
       showErrorNotification({ error: new Error(error.message) });
     },
   });
+  const handleUnpublishModel = async () => {
+    try {
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch({ id });
+      if (refund.purchaseCount > 0) {
+        openConfirmModal({
+          title: 'Refund early access buyers',
+          children: `${
+            refund.buyerCount
+          } member(s) purchased early access to this model. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access. Do you want to continue?`,
+          centered: true,
+          labels: { confirm: 'Refund & Unpublish', cancel: 'Cancel' },
+          confirmProps: { color: 'yellow' },
+          onConfirm: () => unpublishModelMutation.mutate({ id, refundEarlyAccess: true }),
+        });
+      } else {
+        unpublishModelMutation.mutate({ id });
+      }
+    } catch (error) {
+      showErrorNotification({
+        error: error instanceof Error ? error : new Error('Could not check early access purchases'),
+      });
+    }
+  };
   const publishModelMutation = trpc.model.publish.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
@@ -1018,7 +1041,7 @@ export default function ModelDetailsV2({
                           <Menu.Item
                             leftSection={<IconBan size={14} stroke={1.5} />}
                             color="yellow"
-                            onClick={() => unpublishModelMutation.mutate({ id })}
+                            onClick={handleUnpublishModel}
                             disabled={unpublishModelMutation.isPending}
                           >
                             Unpublish

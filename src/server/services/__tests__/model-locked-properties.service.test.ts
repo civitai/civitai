@@ -67,6 +67,11 @@ vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: vi.fn(),
   getLastAuctionReset: vi.fn(),
 }));
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getUserBuzzAccountByAccountTypes: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
+}));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
