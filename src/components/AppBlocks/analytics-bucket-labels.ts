@@ -13,20 +13,29 @@ import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
  * prefix-based, needs no `detail`, and already maps all four endpoint tokens, so it is
  * the function a reader will reach for. Two reasons it cannot serve these cards:
  *   1. REGISTER. It names a single past event ("Generated an image"), which is wrong
- *      against a count — "Generated an image … 245" does not read. These cards need
- *      plural nouns, so the strings differ BY DESIGN.
- *   2. PASS-THROUGH. Roughly half of `topEndpoints` is REST paths from
- *      `normalizeEndpoint(req.url)`, which that function has no arm for: it would fall
- *      to its scope→label map and, called with no meaningful scope, yield ''  — a blank
- *      row. It also cannot distinguish the legacy per-id buckets below.
+ *      against a count — "Generated an image … 245" does not read. The WRITE labels here
+ *      are plural nouns instead, so those strings differ BY DESIGN.
+ *   2. PASS-THROUGH. A substantial share of `topEndpoints` is REST paths from
+ *      `normalizeEndpoint(req.url)` (proportion not measured — it depends entirely on
+ *      what the app does), which that function has no arm for: it would fall to its
+ *      scope→label map and, called with no meaningful scope, yield '' — a blank row. It
+ *      also cannot distinguish the legacy per-id buckets below.
  * (`humaniseScopeEndpoint`, the Detail-column labeller, is unsuitable for a further
  * reason — it resolves a per-ROW id out of `detail`, which an aggregate bucket has
  * none of. Both are pinned by tests calling the real functions.)
  *
- * 🔴 VOCABULARY. The nouns here are the PLURALISED forms of what the Activity tab
- * already says, so one event is not named two different things across two tabs of the
- * same page. If you change a label here, change it there too — `humaniseScopeInvocation`
- * and `describeBlockAction` are the other two places these operations are named.
+ * 🔴 VOCABULARY, and where it is deliberately INCONSISTENT. The write labels are the
+ * pluralised forms of what the Activity tab already says, so one event is not named two
+ * different things across two tabs of the same page. If you change one, change it there
+ * too — `humaniseScopeInvocation` and `describeBlockAction` are the other two places
+ * these operations are named.
+ * READ scopes are the exception: `scopeBucketLabel` returns the SHARED
+ * `READ_SCOPE_LABELS` strings verbatim, which are imperative permission phrases ("Read
+ * your viewer profile"), not plural nouns. So the scopes card does mix two registers.
+ * That is a deliberate trade — reusing the shared registry keeps one source of truth and
+ * matches the Activity tab exactly, and forking it to pluralise would create the fourth
+ * vocabulary this change exists to avoid. Argument 1 above therefore holds for the write
+ * half only; do not read it as a claim about the whole card.
  *
  * Lives in its own module (not inside AppAnalyticsPanel.tsx) so these pure assertions
  * run in the `unit` project; importing the panel would drag in Mantine + chart.js.
@@ -37,9 +46,9 @@ import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
  *
  * A `Map`, deliberately not a `Record`: an object index is prototype-reachable, so
  * `labels['constructor']` returns a FUNCTION and a truthy check on it would hand React
- * a non-string child. Unreachable from any current writer (every non-literal value
- * comes from `normalizeEndpoint` and contains a `/`), but the `Record` signature was
- * lying about it.
+ * a non-string child. No current writer can produce such a value — the non-literal
+ * values reaching this card come from `normalizeEndpoint` and contain a `/` — but the
+ * `Record` signature was lying about it.
  *
  * Kept in lockstep with the server by `analytics-bucket-labels.drift.test.ts`, which
  * greps the `recordScopeInvocation` call sites rather than trusting this comment.
@@ -57,10 +66,14 @@ const TAILED = /^(workflow:submit|storage:set|storage:delete):(.+)$/;
 /**
  * `'pending'` is NOT a workflow id. Pre-#3561 the writer was
  * `` `workflow:submit:${snapshot.workflowId || 'pending'}` ``, so it is the historical
- * stand-in for "no id was captured" on an OTHERWISE COMPLETED submit. Rendering it as
- * `(pending)` would tell an author those submits are still in flight — the opposite of
- * what the row means. `humaniseScopeEndpoint` carves out the same sentinel for the same
- * reason; if you touch one, read the other.
+ * stand-in for "no id was captured at write time".
+ *
+ * Deliberately labelled `(no id)` — which asserts nothing about status — rather than
+ * `(pending)`, which an author reads as a workflow state. Note the row genuinely MIGHT
+ * have been in flight (`snapshot.status` can be 'pending' and still writes a 200), so the
+ * point is not that "pending is wrong about status"; it is that the field never encoded
+ * status at all, and reusing the word implies it did. `humaniseScopeEndpoint` carves out
+ * the same sentinel for the same reason; if you touch one, read the other.
  */
 const NO_ID_SENTINEL = 'pending';
 
@@ -76,7 +89,18 @@ export function endpointBucketLabel(endpoint: string): string {
   // returned.
   const tailed = endpoint.match(TAILED);
   if (tailed) {
-    const base = ENDPOINT_LABELS.get(tailed[1]) as string;
+    // No `as string` here: TAILED's alternation and ENDPOINT_LABELS are hand-kept in
+    // sync, and asserting that would be the same type dishonesty the Map above exists to
+    // remove — if a tail-capable token were ever dropped from the map, the cast would
+    // render the literal text "undefined (my-key)" with nothing catching it.
+    const base = ENDPOINT_LABELS.get(tailed[1]);
+    // 🔴 UNREACHABLE DEFENSIVE BRANCH, AND NO TEST COVERS IT. Measured: deleting this
+    // line leaves the whole suite green, because reaching it requires TAILED and
+    // ENDPOINT_LABELS to disagree and both are in this file, two lines apart. Kept
+    // because it is free and the alternative is a lying cast — but do not count it as
+    // tested, and if you ever make the two independently configurable, add a case that
+    // actually reaches it.
+    if (!base) return endpoint;
     return tailed[2] === NO_ID_SENTINEL ? `${base} (no id)` : `${base} (${tailed[2]})`;
   }
 
@@ -97,8 +121,16 @@ export function endpointBucketLabel(endpoint: string): string {
 const WRITE_SCOPE_LABELS = new Map<string, string>([
   ['ai:write:budgeted', 'AI workflow submits'],
   ['apps:storage', 'App-local storage calls'],
+  ['apps:storage:shared:write', 'Shared storage writes'],
+  ['collections:write:self', 'Collection updates'],
   ['user-settings:write', 'Block settings saves'],
-  ['block:settings:write', 'Block settings saves'],
+  // Distinct label ON PURPOSE, even though it is the same operation as the row above.
+  // `block:settings:write` is the pre-#3212 scope for that write, so a range spanning
+  // #3212 returns BOTH as separate buckets with separate counts. Giving them one
+  // identical label would produce two visually identical rows with unexplained
+  // different numbers — the exact failure the endpoint card's legacy-tail handling and
+  // its test deliberately avoid, so the two halves of this module must not disagree.
+  ['block:settings:write', 'Block settings saves (legacy scope)'],
   ['social:tip:self', 'Tips'],
   // Not a scope — the middleware's literal placeholder for a route that requires only a
   // valid block token and no particular scope (`opts.requiredScope ?? '(any-token)'`).

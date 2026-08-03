@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { humaniseScopeEndpoint, humaniseScopeInvocation } from '~/components/Apps/AppActivityPanel';
+import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
 
 import { endpointBucketLabel, scopeBucketLabel } from '../analytics-bucket-labels';
 
@@ -36,11 +37,14 @@ describe('endpointBucketLabel — legacy tailed buckets (no data migration was r
   });
 
   /**
-   * 🔴 `pending` is a "no id captured" sentinel, NOT a status. Pre-#3561 the writer was
-   * `workflow:submit:${snapshot.workflowId || 'pending'}`, so these are COMPLETED submits
-   * whose id was not recorded. Surfacing the literal "pending" would tell an author they
-   * are still in flight — the opposite of the truth. The row-level humaniser carves out
-   * the same sentinel (asserted below), so the two agree.
+   * 🔴 `pending` is a "no id captured at write time" sentinel — it never encoded STATUS.
+   * Pre-#3561 the writer was `workflow:submit:${snapshot.workflowId || 'pending'}`.
+   *
+   * Careful about the reason: such a row genuinely might have been in flight
+   * (`snapshot.status` can be 'pending' and still writes a 200), so the objection is NOT
+   * "pending is factually wrong about status" — it is that reusing the word implies the
+   * field carried status information, which it did not. `(no id)` asserts nothing about
+   * status. The row-level humaniser carves out the same sentinel (asserted below).
    */
   it('does NOT surface the `pending` sentinel as if it were an id or a status', () => {
     expect(endpointBucketLabel('workflow:submit:pending')).toBe('Generations (no id)');
@@ -86,20 +90,43 @@ describe('scopeBucketLabel', () => {
   it.each([
     ['ai:write:budgeted', 'AI workflow submits'],
     ['apps:storage', 'App-local storage calls'],
+    ['apps:storage:shared:write', 'Shared storage writes'],
+    ['collections:write:self', 'Collection updates'],
     ['(any-token)', 'Any-token routes (no scope required)'],
   ])('%s -> %s', (scope, expected) => {
     expect(scopeBucketLabel(scope)).toBe(expected);
   });
 
-  it('labels a read scope from the shared READ_SCOPE_LABELS registry', () => {
-    // Not restated literally here — the point is that it comes from the shared registry
-    // rather than a fourth copy, so assert it is mapped and not passed through.
-    expect(scopeBucketLabel('buzz:read:self')).not.toBe('buzz:read:self');
-    expect(scopeBucketLabel('user:read:self')).not.toBe('user:read:self');
+  /**
+   * The two settings-write scopes are the SAME operation (`block:settings:write` is the
+   * pre-#3212 name) and arrive as SEPARATE buckets with separate counts. They must not
+   * share one label — two visually identical rows with different numbers is exactly what
+   * the endpoint card's legacy-tail handling avoids, and the two halves of this module
+   * must not hold opposite policies.
+   */
+  it('disambiguates the legacy settings-write scope from the current one', () => {
+    expect(scopeBucketLabel('user-settings:write')).toBe('Block settings saves');
+    expect(scopeBucketLabel('block:settings:write')).toBe('Block settings saves (legacy scope)');
+    expect(scopeBucketLabel('user-settings:write')).not.toBe(
+      scopeBucketLabel('block:settings:write')
+    );
   });
 
-  it('passes an unmapped scope through rather than guessing', () => {
-    expect(scopeBucketLabel('publisher_all_my_models')).toBe('publisher_all_my_models');
+  it('takes read labels from the SHARED registry, not a fourth private copy', () => {
+    // Pin the identity, not merely "it changed" — a hardcoded duplicate in
+    // WRITE_SCOPE_LABELS would also satisfy `not.toBe(raw)`, so that assertion could not
+    // see what its comment claimed.
+    expect(scopeBucketLabel('buzz:read:self')).toBe(READ_SCOPE_LABELS['buzz:read:self']);
+    expect(scopeBucketLabel('user:read:self')).toBe(READ_SCOPE_LABELS['user:read:self']);
+    expect(scopeBucketLabel('apps:storage:shared:read')).toBe(
+      READ_SCOPE_LABELS['apps:storage:shared:read']
+    );
+  });
+
+  it('passes a genuinely unmapped scope through rather than guessing', () => {
+    // A shape no writer produces. (`publisher_all_my_models` would be a misleading
+    // example: it is an ATTRIBUTION scope and never reaches this card at all.)
+    expect(scopeBucketLabel('some:future:scope')).toBe('some:future:scope');
   });
 
   it.each(['constructor', '__proto__', 'toString'])(
@@ -127,7 +154,7 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     expect(endpointBucketLabel('workflow:submit')).toBe('Generations');
   });
 
-  it('humaniseScopeInvocation has NO arm for a REST path, which is half of this card', () => {
+  it('humaniseScopeInvocation has NO arm for a REST path, a large share of this card', () => {
     // Falls through to its scope→label map; with no meaningful scope that is a blank cell,
     // which is strictly worse than showing the path.
     expect(humaniseScopeInvocation('', '/api/v1/blocks/submissions')).toBe('');
@@ -137,6 +164,15 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
   it('humaniseScopeEndpoint resolves a per-ROW id an aggregate bucket does not have', () => {
     expect(humaniseScopeEndpoint('workflow:submit')).toBe('(no workflow id)');
     expect(humaniseScopeEndpoint('user-settings:write')).toBe('');
+  });
+
+  it('humaniseScopeInvocation had the SAME prototype hazard, now guarded too', () => {
+    // It shares READ_SCOPE_LABELS with us, and `??` does not reject a non-nullish
+    // prototype hit — this used to return Object.prototype.constructor (a function).
+    for (const key of ['constructor', 'toString', 'valueOf']) {
+      expect(typeof humaniseScopeInvocation(key)).toBe('string');
+      expect(humaniseScopeInvocation(key)).toBe(key);
+    }
   });
 
   it('and it agrees with us that `pending` is not an id', () => {
