@@ -19,6 +19,7 @@ import {
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
 import {
+  getAutoFlaggedMinorDetailSchema,
   getAutoFlaggedMinorModelsSchema,
   getMinorHashMatchDetailSchema,
   getMinorHashMatchesSchema,
@@ -42,6 +43,7 @@ import {
 import {
   confirmMinorHashAutoFlag,
   dismissMinorHashMatch,
+  getAutoFlaggedMinorDetail,
   getAutoFlaggedMinorModels,
   getMinorHashMatchDetail,
   getMinorHashMatchesForReview,
@@ -92,6 +94,9 @@ export const modRouter = router({
     queryAutoFlaggedMinorModels: moderatorProcedure
       .input(getAutoFlaggedMinorModelsSchema)
       .query(({ input }) => getAutoFlaggedMinorModels(input)),
+    queryAutoFlaggedMinorDetail: moderatorProcedure
+      .input(getAutoFlaggedMinorDetailSchema)
+      .query(({ input }) => getAutoFlaggedMinorDetail(input)),
     confirmMinorHashAutoFlag: moderatorProcedure
       .input(getByIdSchema)
       .mutation(({ input, ctx }) =>

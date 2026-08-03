@@ -20,3 +20,10 @@ export const getMinorHashMatchDetailSchema = z.object({
   modelId: z.number(),
   minorModelId: z.number(),
 });
+
+// No minorModelId: an auto-flagged row has no stored pointer to its match, so the
+// seed is resolved server-side from the model's own hashes.
+export type GetAutoFlaggedMinorDetailInput = z.infer<typeof getAutoFlaggedMinorDetailSchema>;
+export const getAutoFlaggedMinorDetailSchema = z.object({
+  modelId: z.number(),
+});

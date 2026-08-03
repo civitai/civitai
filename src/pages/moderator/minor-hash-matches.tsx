@@ -19,7 +19,10 @@ import { MantineReactTable } from 'mantine-react-table';
 import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
-import type { MinorHashReviewRow } from '~/server/services/minor-hash.service';
+import type {
+  MinorHashMatchDetail,
+  MinorHashReviewRow,
+} from '~/server/services/minor-hash.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -47,36 +50,59 @@ const statusColors: Record<string, string> = {
   Deleted: 'red',
 };
 
-function DetailPanel({ row }: { row: MinorHashReviewRow }) {
-  const { data, isLoading } = trpc.moderator.models.queryMinorHashMatchDetail.useQuery({
-    modelId: row.modelId,
-    minorModelId: row.minorModelId,
-  });
+type PanelModel = {
+  id: number;
+  name: string;
+  versionId?: number | null;
+  status: string;
+  username: string | null;
+  userId: number;
+};
 
+type PanelMatch = {
+  id: number;
+  name: string | null;
+  versionId?: number | null;
+  userId?: number | null;
+  hash: string;
+};
+
+function MatchDetail({
+  detail,
+  model,
+  match,
+  isLoading,
+}: {
+  detail: MinorHashMatchDetail | null;
+  model: PanelModel;
+  match: PanelMatch | null;
+  isLoading: boolean;
+}) {
   if (isLoading) return <Loader size="sm" />;
 
   return (
     <div className="flex flex-wrap gap-6 p-2">
       <div className="flex gap-3">
-        {data?.modelCoverUrl && (
+        {detail?.modelCoverUrl && (
           <EdgeMedia
-            src={data.modelCoverUrl}
-            type={(data.modelCoverType ?? 'image') as MediaType}
+            src={detail.modelCoverUrl}
+            type={(detail.modelCoverType ?? 'image') as MediaType}
             width={140}
           />
         )}
         <Stack gap={2}>
-          <Text fw={600}>{row.modelName}</Text>
+          <Text fw={600}>{model.name}</Text>
           <Text size="xs" c="dimmed">
-            Uploaded {row.createdAt ? formatDate(row.createdAt) : 'unknown'} · {row.status}
+            Uploaded {detail?.modelCreatedAt ? formatDate(detail.modelCreatedAt) : 'unknown'} ·{' '}
+            {model.status}
           </Text>
           <Text size="xs" c="dimmed">
-            {row.username ?? row.userId} · {data?.uploaderModelCount ?? 0} models · joined{' '}
-            {data?.uploaderJoinedAt ? formatDate(data.uploaderJoinedAt) : 'unknown'}
+            {model.username ?? model.userId} · {detail?.uploaderModelCount ?? 0} models · joined{' '}
+            {detail?.uploaderJoinedAt ? formatDate(detail.uploaderJoinedAt) : 'unknown'}
           </Text>
           <Anchor
             component={NextLink}
-            href={modelHref(row.modelId, row.modelVersionId)}
+            href={modelHref(model.id, model.versionId)}
             target="_blank"
             size="xs"
           >
@@ -87,47 +113,96 @@ function DetailPanel({ row }: { row: MinorHashReviewRow }) {
         </Stack>
       </div>
 
-      <div className="flex gap-3">
-        {data?.minorModelCoverUrl && (
-          <EdgeMedia
-            src={data.minorModelCoverUrl}
-            type={(data.minorModelCoverType ?? 'image') as MediaType}
-            width={140}
-          />
-        )}
-        <Stack gap={2}>
-          <Text fw={600}>Matches: {row.minorModelName ?? `#${row.minorModelId}`}</Text>
-          <Text size="xs" c="dimmed">
-            {data?.minorUsername ?? row.minorUserId} · {data?.minorModelStatus ?? 'unknown'}
-          </Text>
-          {/* Only 2 of ~13.5k minor-locked models have a setMinor ModActivity row, so
-              rendering a placeholder here would read as missing data on every row. */}
-          {data?.minorFlaggedAt && (
-            <Text size="xs" c="dimmed">
-              Set minor {formatDate(data.minorFlaggedAt)}
-              {data.minorFlaggedByUsername ? ` by ${data.minorFlaggedByUsername}` : ''}
-            </Text>
-          )}
-          <Anchor
-            component={NextLink}
-            href={modelHref(row.minorModelId, row.minorModelVersionId)}
-            target="_blank"
-            size="xs"
-          >
-            <Group gap={4}>
-              Open flagged model <IconExternalLink size={12} />
-            </Group>
-          </Anchor>
-        </Stack>
-      </div>
+      {match ? (
+        <>
+          <div className="flex gap-3">
+            {detail?.minorModelCoverUrl && (
+              <EdgeMedia
+                src={detail.minorModelCoverUrl}
+                type={(detail.minorModelCoverType ?? 'image') as MediaType}
+                width={140}
+              />
+            )}
+            <Stack gap={2}>
+              <Text fw={600}>Matches: {match.name ?? `#${match.id}`}</Text>
+              <Text size="xs" c="dimmed">
+                {detail?.minorUsername ?? match.userId ?? 'unknown'} ·{' '}
+                {detail?.minorModelStatus ?? 'unknown'}
+              </Text>
+              {/* The gap between this and the copy's upload date is the evidence; a
+                  "Deleted" badge alone doesn't show they happened minutes apart. */}
+              {detail?.minorModelDeletedAt && (
+                <Text size="xs" c="dimmed">
+                  Deleted {formatDate(detail.minorModelDeletedAt)}
+                </Text>
+              )}
+              {/* Only 2 of ~13.5k minor-locked models have a setMinor ModActivity row, so
+                  rendering a placeholder here would read as missing data on every row. */}
+              {detail?.minorFlaggedAt && (
+                <Text size="xs" c="dimmed">
+                  Set minor {formatDate(detail.minorFlaggedAt)}
+                  {detail.minorFlaggedByUsername ? ` by ${detail.minorFlaggedByUsername}` : ''}
+                </Text>
+              )}
+              <Anchor
+                component={NextLink}
+                href={modelHref(match.id, match.versionId)}
+                target="_blank"
+                size="xs"
+              >
+                <Group gap={4}>
+                  Open flagged model <IconExternalLink size={12} />
+                </Group>
+              </Anchor>
+            </Stack>
+          </div>
 
-      <Stack gap={2}>
-        <Text size="xs" fw={600}>
-          Shared SHA256
-        </Text>
-        <Code>{row.hash}</Code>
-      </Stack>
+          <Stack gap={2}>
+            <Text size="xs" fw={600}>
+              Shared SHA256
+            </Text>
+            <Code>{match.hash}</Code>
+          </Stack>
+        </>
+      ) : (
+        <Alert color="yellow" title="No matching flagged model">
+          <Text size="sm">
+            Nothing a moderator has flagged minor still shares a file with this model. The match is
+            resolved live, so this means the model it matched has since been unflagged or its
+            hashes were permanently deleted — worth checking before you keep the flag.
+          </Text>
+        </Alert>
+      )}
     </div>
+  );
+}
+
+function ReviewDetailPanel({ row }: { row: MinorHashReviewRow }) {
+  const { data, isLoading } = trpc.moderator.models.queryMinorHashMatchDetail.useQuery({
+    modelId: row.modelId,
+    minorModelId: row.minorModelId,
+  });
+
+  return (
+    <MatchDetail
+      isLoading={isLoading}
+      detail={data ?? null}
+      model={{
+        id: row.modelId,
+        name: row.modelName,
+        versionId: row.modelVersionId,
+        status: row.status,
+        username: row.username,
+        userId: row.userId,
+      }}
+      match={{
+        id: row.minorModelId,
+        name: row.minorModelName,
+        versionId: row.minorModelVersionId,
+        userId: row.minorUserId,
+        hash: row.hash,
+      }}
+    />
   );
 }
 
@@ -141,6 +216,40 @@ type AutoFlaggedRow = {
   prevNsfw: boolean | null;
   prevGalleryLevel: number | null;
 };
+
+// The flag is already in force on these rows, so the evidence matters more here
+// than on the review queue, where nothing has happened to the model yet.
+function AutoFlaggedDetailPanel({ row }: { row: AutoFlaggedRow }) {
+  const { data, isLoading } = trpc.moderator.models.queryAutoFlaggedMinorDetail.useQuery({
+    modelId: row.modelId,
+  });
+  const match = data?.match;
+
+  return (
+    <MatchDetail
+      isLoading={isLoading}
+      detail={data?.detail ?? null}
+      model={{
+        id: row.modelId,
+        name: row.modelName,
+        versionId: match?.modelVersionId,
+        status: row.status,
+        username: row.username,
+        userId: row.userId,
+      }}
+      match={
+        match
+          ? {
+              id: match.minorModelId,
+              name: match.minorModelName,
+              versionId: match.minorModelVersionId,
+              hash: match.hash,
+            }
+          : null
+      }
+    />
+  );
+}
 
 // Models the scan hook flagged with no human in the loop. Confirming records the
 // moderator's own setMinor, which both clears the row from here and stops a bulk
@@ -304,6 +413,7 @@ function AutoFlaggedTable() {
         enableGlobalFilter
         enableFacetedValues
         layoutMode="grid"
+        renderDetailPanel={({ row }) => <AutoFlaggedDetailPanel row={row.original} />}
         renderEmptyRowsFallback={() => (
           <Text p="xl" ta="center" c="dimmed">
             Nothing auto-flagged awaiting review.
@@ -529,7 +639,7 @@ export default function MinorHashMatches() {
               enableGlobalFilter
               enableFacetedValues
               layoutMode="grid"
-              renderDetailPanel={({ row }) => <DetailPanel row={row.original} />}
+              renderDetailPanel={({ row }) => <ReviewDetailPanel row={row.original} />}
               renderEmptyRowsFallback={() => (
                 <Text p="xl" ta="center" c="dimmed">
                   No matches pending review.

@@ -398,6 +398,7 @@ export type MinorHashMatchDetail = {
   minorModelCoverUrl: string | null;
   minorModelCoverType: string | null;
   minorModelStatus: string | null;
+  minorModelDeletedAt: Date | null;
   minorUsername: string | null;
   minorFlaggedAt: Date | null;
   minorFlaggedByUsername: string | null;
@@ -434,6 +435,7 @@ export async function getMinorHashMatchDetail({
       ${coverSql(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${coverSql(minorModelId, 'type')} AS "minorModelCoverType",
       mm.status::text AS "minorModelStatus",
+      mm."deletedAt" AS "minorModelDeletedAt",
       mu.username AS "minorUsername",
       ma."createdAt" AS "minorFlaggedAt",
       fu.username AS "minorFlaggedByUsername"
@@ -448,6 +450,57 @@ export async function getMinorHashMatchDetail({
   `;
 
   return detail ?? null;
+}
+
+export type AutoFlaggedMinorMatch = {
+  minorModelId: number;
+  minorModelName: string | null;
+  minorModelVersionId: number | null;
+  minorModelDeletedAt: Date | null;
+  hash: string;
+  modelVersionId: number | null;
+};
+
+// The auto-flag path stores no pointer to what it matched — captureMinorFlagSnapshot
+// records pre-state only — so the seed is re-derived from the hash on demand. That
+// also means this reports the seed's CURRENT state: if the seed has since been
+// unflagged the panel goes empty, which is the signal a moderator weighing Revert
+// wants, not a defect.
+//
+// Deliberately not `minorSrcCte`: that materializes every seed (~17k models, ~0.5s)
+// and this runs per expanded row. Starting from the one model's hashes keeps it on
+// `modelFileHash_hash_cs` in both directions.
+export async function getAutoFlaggedMinorMatch({ modelId }: { modelId: number }) {
+  const [match] = await dbRead.$queryRaw<AutoFlaggedMinorMatch[]>`
+    SELECT m.id AS "minorModelId", m.name AS "minorModelName",
+           smv.id AS "minorModelVersionId", m."deletedAt" AS "minorModelDeletedAt",
+           mfh.hash, mv.id AS "modelVersionId"
+    FROM "ModelFileHash" mfh
+    JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId" AND mv."modelId" = ${modelId}
+    JOIN "ModelFileHash" smfh ON smfh.hash = mfh.hash AND smfh.type = 'SHA256'
+    JOIN "ModelFile" smf ON smf.id = smfh."fileId" AND smf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelVersion" smv ON smv.id = smf."modelVersionId"
+    JOIN "Model" m ON m.id = smv."modelId"
+    WHERE mfh.type = 'SHA256'
+      AND m.id <> ${modelId}
+      AND ${moderatorMinorSeedPredicate}
+    ORDER BY mfh.hash, m.id, smv.id
+    LIMIT 1
+  `;
+
+  return match ?? null;
+}
+
+// The Auto-flagged tab's detail panel. Two queries rather than one join so the
+// second is the exact same `getMinorHashMatchDetail` the review queue expands
+// with — the panels stay identical by construction, not by being kept in step.
+export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }) {
+  const match = await getAutoFlaggedMinorMatch({ modelId });
+  if (!match) return { match: null, detail: null };
+
+  const detail = await getMinorHashMatchDetail({ modelId, minorModelId: match.minorModelId });
+  return { match, detail };
 }
 
 export type AutoFlaggedMinorModel = {

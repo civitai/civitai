@@ -37,6 +37,9 @@ import {
   dismissMinorHashMatch,
   rollbackMinorHashAutoFlags,
   getAutoFlaggedMinorModels,
+  getAutoFlaggedMinorMatch,
+  getAutoFlaggedMinorDetail,
+  getMinorHashMatchDetail,
   confirmMinorHashAutoFlag,
   revertMinorHashAutoFlag,
   minorSrcCte,
@@ -696,6 +699,116 @@ describe('getAutoFlaggedMinorModels', () => {
 
     expect(result.items).toHaveLength(2);
     expect(result.truncated).toBe(true);
+  });
+});
+
+// The auto-flag path records no pointer to what it matched — captureMinorFlagSnapshot
+// stores pre-state only — so the seed has to be re-derived from the hash to show a
+// moderator the evidence behind a flag that is already in force.
+describe('getAutoFlaggedMinorMatch', () => {
+  it('re-derives the seed from the shared hash rather than a stored pointer', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getAutoFlaggedMinorMatch({ modelId: 2186217 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('smfh.hash = mfh.hash');
+    expect(values).toContain(2186217);
+    // The whole seed set is ~17k models; a per-row panel must not build that CTE.
+    expect(text).not.toContain('minor_src');
+  });
+
+  it('never reports the flagged model as its own match', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getAutoFlaggedMinorMatch({ modelId: 2186217 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('m.id <> ');
+  });
+
+  // Same gate as minor_src: without it a model auto-flagged off this one would come
+  // back as its own justification once a second copy landed.
+  it('only accepts human-decided flags as the seed', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getAutoFlaggedMinorMatch({ modelId: 2186217 });
+
+    const [, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const rendered = values
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(rendered).toContain(`'minor' = ANY(m."lockedProperties")`);
+  });
+
+  it('returns null when no seed still carries the hash', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await expect(getAutoFlaggedMinorMatch({ modelId: 2186217 })).resolves.toBeNull();
+  });
+
+  it('returns the matched seed when one exists', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        minorModelId: 2176413,
+        minorModelName: 'FIRE EMBLEM series3',
+        minorModelVersionId: 2451000,
+        minorModelDeletedAt: new Date('2025-12-02'),
+        hash: 'B62D6EFF',
+        modelVersionId: 2461616,
+      },
+    ]);
+
+    await expect(getAutoFlaggedMinorMatch({ modelId: 2186217 })).resolves.toMatchObject({
+      minorModelId: 2176413,
+      hash: 'B62D6EFF',
+    });
+  });
+});
+
+describe('getAutoFlaggedMinorDetail', () => {
+  it('resolves the seed before loading the shared detail for it', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      { minorModelId: 2176413, hash: 'B62D6EFF', modelVersionId: 2461616 },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ minorModelStatus: 'Deleted' }]);
+
+    const result = await getAutoFlaggedMinorDetail({ modelId: 2186217 });
+
+    const [, ...detailValues] = mockDbRead.$queryRaw.mock.calls[1];
+    expect(detailValues).toContain(2176413);
+    expect(result.match?.minorModelId).toBe(2176413);
+    expect(result.detail?.minorModelStatus).toBe('Deleted');
+  });
+
+  // Nothing to describe and no minorModelId to query with — issuing the detail
+  // query anyway would join against model 0.
+  it('skips the detail query when no seed resolves', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    const result = await getAutoFlaggedMinorDetail({ modelId: 2186217 });
+
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ match: null, detail: null });
+  });
+});
+
+// Same-uploader re-uploads usually follow a delete of the flagged original, so the
+// deletion date is what makes the sequence legible; a bare status badge doesn't
+// show that the copy went up the same day.
+describe('getMinorHashMatchDetail', () => {
+  it('reports when the matched model was deleted', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorHashMatchDetail({ modelId: 2186217, minorModelId: 2176413 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"minorModelDeletedAt"');
+    expect(text).toContain('mm."deletedAt"');
   });
 });
 
