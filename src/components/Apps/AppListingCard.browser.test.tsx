@@ -761,6 +761,29 @@ describe('AppListingCard', () => {
         } satisfies ListingCard['kindData'],
       };
 
+      /**
+       * 🔴 THE SAME WIDEST-CTA CARD BUT WITH **NO REVIEWS** — deliberately a second
+       * fixture rather than a tweak of the one above, because `OFFSITE_CONNECT`
+       * spreads `REVIEWED` and that is easy to miss: a test that reads as "the
+       * no-reviews case" while passing `OFFSITE_CONNECT` is silently measuring
+       * "91% recommend (100)" (122px of text) instead of "No reviews yet" (79px).
+       * That mistake was made and caught here by a red baseline, not by review.
+       *
+       * "No reviews yet" is the SHORT label — the least the rollup can ever say —
+       * which is exactly why it is the right fixture for the truncation floor: if
+       * even this does not fit, the deficit is structural.
+       */
+      const OFFSITE_CONNECT_NO_REVIEWS = {
+        kind: 'offsite' as const,
+        recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+        reviewCount: 0,
+        kindData: {
+          kind: 'offsite',
+          subKind: 'connect',
+          externalUrl: null,
+        } satisfies ListingCard['kindData'],
+      };
+
       test('🔴 owner + "View details" keeps a LEGIBLE recommend rollup', async () => {
         mocks.currentUser = { id: 5, username: 'alice' };
         renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
@@ -797,37 +820,109 @@ describe('AppListingCard', () => {
        *
        * Measured through the real `AppsPageLayout` + `Grid` at a 1200 viewport:
        * container 1200 -> grid column 296 -> CARD 280 -> action-row content box
-       * **246**. So "280px" in the original report is the card's OUTER width; the
-       * box the action row actually gets is 246, and a 314px wrapper (content box
-       * 280) corresponds to roughly a 1345 viewport. Testing only at 280 would
-       * have left the real 1200 case unguarded and 34px tighter than anything
-       * asserted.
+       * **248**. So "280px" in the original report is the card's OUTER width; the
+       * box the action row actually gets is 248, and a 314px wrapper (content box
+       * 282) corresponds to roughly a 1345 viewport.
+       *
+       * 🔴 THIS TEST'S EXPECTATION WAS INVERTED (rollup-floor pass, on main+#3547).
+       * It used to assert the rollup SURVIVES here at >= 50px, and it passed: the
+       * measured value on this tree is 54.1px. That IS the defect. At 54px the
+       * rollup is a 13px thumb glyph, a 4px gap and 37px of 12px text, so the
+       * shortest label it can carry — "No reviews yet", 79px natural — renders as a
+       * ~5-character stub. A stub is strictly worse than nothing: it holds the
+       * slot, reads as a rendering bug, and communicates nothing. Below a 264px
+       * container the rollup is now HIDDEN instead, and the actions keep the right
+       * edge.
+       *
+       * Measured on main+#3547 (owner, widest CTA, no reviews), pre-change:
+       *   container 248 -> rollup 54 (text 37 / 79 natural, TRUNCATED)
+       *   container 268 -> rollup 74 (text 57 / 79, truncated)
+       *   container 282 -> rollup 88 (text 71 / 79, truncated)
+       *   container 298 -> rollup 96 (text 79 / 79, full)
        */
-      test('🔴 at the REAL 1200 geometry (246px content box) the rollup still survives', async () => {
+      test('🔴 at the REAL 1200 geometry an owner card DROPS the rollup instead of crushing it', async () => {
         mocks.currentUser = { id: 5, username: 'alice' };
-        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT)} />);
+        // 🔴 NO reviews — the label the live report caught, and the SHORT one (79px
+        // of text vs 122px for "91% recommend (100)"). Using the short label is
+        // what makes this structural rather than an artefact of a long string:
+        // even the least the rollup can ever say does not fit here.
+        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT_NO_REVIEWS)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        await expect.element(page.getByText('No reviews yet')).toBeInTheDocument();
+        const { row, actions, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(248); // 280 - 2x16 padding (no border since S4)
+
+        // 🔴 THE GUARD. Pre-change this element measured 54.1px and computed
+        // `display: flex`. Asserted FIRST, so a mutation that re-shrinks the rollup
+        // fails HERE on this guard's own assertion rather than being killed by the
+        // alignment check below (which passes either way while the rollup exists).
+        expect(getComputedStyle(rollup).display).toBe('none');
+        expect(rollup.getBoundingClientRect().width).toBe(0);
+
+        // 🔴 A SEPARATE failure mode, deliberately in the same test because only
+        // this geometry exposes it: with the rollup out of layout the row holds ONE
+        // flex item, and `justify="space-between"` puts a lone item at flex-START.
+        // The actions group carries `marginLeft: 'auto'` for exactly that; delete
+        // the margin and the assertions above stay green while the whole CTA
+        // cluster jumps to the card's left edge.
+        expect(actions.getBoundingClientRect().right).toBeCloseTo(
+          row.getBoundingClientRect().right,
+          0
+        );
+        expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      /**
+       * ⚠️ INVARIANT GUARD, NOT regression coverage — it passes on pre-change code
+       * too (the rollup measured 88.1px here before and after). It earns its place
+       * by BOUNDING the hide above: the fix must remove the rollup only where it is
+       * debris, and this is the first real store geometry above the threshold.
+       * Without it, widening the threshold to "hide it on any narrow owner card"
+       * would pass unnoticed.
+       */
+      test('⚠️ INVARIANT: just ABOVE the 264px threshold the owner rollup is back and legible', async () => {
+        mocks.currentUser = { id: 5, username: 'alice' };
+        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
         await expect
           .element(page.getByRole('link', { name: 'View details', exact: true }))
           .toBeInTheDocument();
         const { row, rollup } = actionRow('View details');
         assertLayoutIsReal(row);
-        expect(Math.round(row.clientWidth)).toBe(248); // 280 - 2x16 padding (no border since S4)
-        /**
-         * Measured: 3.6px before the fix, 52.1px after — the glyph (13) + gap (4)
-         * + ~35px of text, i.e. "91%…". Floor set at 50 from that measurement.
-         *
-         * 🔴 STATED HONESTLY: at this, the tightest geometry the store actually
-         * produces, the figure is HARD TRUNCATED. That is a real limitation, not
-         * a clean win — but it is truncation (the documented, designed behaviour
-         * of the flexible side) rather than the total disappearance the icons
-         * caused. Recovering the full "91% recommend (100)" here would mean
-         * shrinking the PRIMARY CTA too, which changes non-owner cards and is out
-         * of scope for this fix.
-         */
-        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(50);
+        expect(Math.round(row.clientWidth)).toBe(282); // 282 >= the 264 threshold
+        expect(getComputedStyle(rollup).display).toBe('flex');
+        // 80px is the literal floor from the pre-existing measured table.
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
         const glyph = rollup.querySelector('svg') as SVGElement;
         expect(glyph.getBoundingClientRect().width).toBeGreaterThan(0);
         expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+      });
+
+      /**
+       * ⚠️ INVARIANT GUARD, NOT regression coverage — a non-owner card measured
+       * 95.7px here before the change and measures 95.7px after. It is here because
+       * the whole fix is owner-scoped (`showEdit`), and a version that dropped that
+       * condition would delete the rollup from every public shopper's card at the
+       * single most common desktop geometry — a failure no other test in this file
+       * could see.
+       */
+      test('⚠️ INVARIANT: at the SAME 1200 geometry a NON-owner card keeps its full rollup', async () => {
+        mocks.currentUser = null;
+        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT_NO_REVIEWS)} />);
+        await expect
+          .element(page.getByRole('link', { name: 'View details', exact: true }))
+          .toBeInTheDocument();
+        const { row, rollup } = actionRow('View details');
+        assertLayoutIsReal(row);
+        expect(Math.round(row.clientWidth)).toBe(248);
+        expect(getComputedStyle(rollup).display).toBe('flex');
+        // Literal pin from the measured table: 95.7px, i.e. the full natural width,
+        // because a non-owner action set is 138px rather than 184px.
+        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(95);
+        const text = rollup.querySelector('[data-truncate]') as HTMLElement;
+        expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
       });
 
       test('owner + "Open" (the narrower CTA) also keeps the rollup legible', async () => {

@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, test } from 'vitest';
 import {
   APPS_FULL_BLEED_PAGES,
+  APPS_NARROW_TABLE_PAGE_WIDTH,
   APPS_PAGE_WIDTHS,
   APPS_READABLE_PAGE_WIDTH,
   APPS_REDIRECT_ONLY_PAGES,
@@ -26,9 +27,24 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_PAGE_WIDTHS['/apps']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/installed']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/review']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
     expect(APPS_PAGE_WIDTHS['/apps/revenue']).toBe(1920);
+  });
+
+  test('the /apps/review QUEUE is the narrow-table width (1400), not the wide one', () => {
+    // Four short columns (Kind / App / Submitter / Submitted) + a Review button
+    // cannot spend 1920: the table pads Submitter out to ~380px for a short
+    // username and opens a large dead gap before the action. Literal values, not
+    // derived from the module's own constant arithmetic.
+    expect(APPS_NARROW_TABLE_PAGE_WIDTH).toBe(1400);
+    expect(APPS_PAGE_WIDTHS['/apps/review']).toBe(1400);
+    // 🔴 The DETAIL route is deliberately NOT moved with it — it renders
+    // side-by-side diff panels + a live preview, which do use the width. If a
+    // later pass narrows the queue further, this is the pin that stops the detail
+    // page being dragged along by association.
+    expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
+    // …and my-submissions keeps 1920: its table has a real 1424px scroll floor.
+    expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
   });
 
   test('the form/detail surfaces are all the READABLE width (1100)', () => {
@@ -50,13 +66,22 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_REDIRECT_ONLY_PAGES).toContain('/apps/[appBlockId]');
   });
 
-  test('every width is one of the TWO decided values — no third hand-picked number', () => {
-    // The whole point of the module is that there are two classes of apps page,
+  test('every width is one of the THREE decided values — no fourth hand-picked number', () => {
+    // The whole point of the module is that there are a few CLASSES of apps page,
     // not eleven bespoke widths. A new page must join a class (or the class list
-    // must grow deliberately, failing here first).
+    // must grow deliberately, failing here first — which is exactly what happened
+    // when `/apps/review` needed the narrow-table class).
     for (const [route, width] of Object.entries(APPS_PAGE_WIDTHS)) {
-      expect([APPS_WIDE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH], `${route}`).toContain(width);
+      expect(
+        [APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH],
+        `${route}`
+      ).toContain(width);
     }
+    // Pin the class list itself, as literals. Without this the check above is
+    // satisfied by ANY set of constants, including a fourth one added silently.
+    expect([APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH]).toEqual([
+      1920, 1400, 1100,
+    ]);
   });
 
   test('a route is classified exactly once (no overlap between the three lists)', () => {

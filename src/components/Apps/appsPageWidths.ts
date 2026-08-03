@@ -48,6 +48,30 @@ export const APPS_WIDE_PAGE_WIDTH = 1920;
 export const APPS_READABLE_PAGE_WIDTH = 1100;
 
 /**
+ * The NARROW-TABLE width — a table surface with few, short columns, where 1920 is
+ * not "full width" but "stretched".
+ *
+ * `/apps/review` is the case this exists for. It renders FOUR narrow columns
+ * (Kind / App / Submitter / Submitted) plus a Review button. At 1920 the columns
+ * cannot spend the space, so the table distributes it as padding: Submitter grows
+ * to ~380px to hold a short username, and a large dead gap opens between the last
+ * column and the Review button, which is the action the moderator is actually
+ * aiming at. The same table reads well at 1200.
+ *
+ * 1400 rather than 1200: it keeps the page wider than the readable/form width and
+ * still fills a 1440 laptop edge-to-edge, while stopping short of the width where
+ * the row's two ends stop reading as one row.
+ *
+ * 🔴 This is a THIRD class, deliberately — not a one-off number. The module's rule
+ * is "a page joins a class, or the class list grows on purpose"; the guard in
+ * `__tests__/appsPageWidths.test.ts` enumerates the classes, so adding a fourth
+ * bespoke width still fails there first. `/apps/my-submissions` is NOT moved here:
+ * its table is genuinely wide (a 1424px scroll floor), so 1920 is load-bearing for
+ * it in a way it is not for `/apps/review`.
+ */
+export const APPS_NARROW_TABLE_PAGE_WIDTH = 1400;
+
+/**
  * Container width per `/apps/*` route, keyed by the NEXT ROUTE PATHNAME (the
  * `src/pages` path, `[param]` segments included) so a reader can map an entry to
  * a file without guessing.
@@ -87,7 +111,13 @@ export const APPS_PAGE_WIDTHS = {
    * remains the safety net below 1424 + chrome.
    */
   '/apps/my-submissions': APPS_WIDE_PAGE_WIDTH,
-  '/apps/review': APPS_WIDE_PAGE_WIDTH,
+  /**
+   * NARROW TABLE, not wide. Four short columns (Kind / App / Submitter /
+   * Submitted) cannot spend 1920 — see {@link APPS_NARROW_TABLE_PAGE_WIDTH}. The
+   * DETAIL route below stays wide: it renders side-by-side diff panels + a live
+   * preview, which do use the space.
+   */
+  '/apps/review': APPS_NARROW_TABLE_PAGE_WIDTH,
   '/apps/review/[publishRequestId]': APPS_WIDE_PAGE_WIDTH,
   '/apps/revenue': APPS_WIDE_PAGE_WIDTH,
 
