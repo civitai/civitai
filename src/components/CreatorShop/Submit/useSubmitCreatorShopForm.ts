@@ -113,14 +113,24 @@ export function useSubmitCreatorShopForm({
   const priceFloor = cosmeticPriceFloor(type);
 
   const isSticker = type === CosmeticType.Sticker;
-  // A cross-lister may never change another creator's economics — the server
-  // refuses it — so requiring the fields of them would disable their save with
-  // an error attached to a field they cannot act on. Published is deliberately
-  // NOT part of this: the server permits economics changes after publish, and a
-  // sticker predating per-use pricing can only be repaired by its creator here.
-  const isOriginalCreator =
-    !isEdit || !item?.cosmetic.createdById || item.cosmetic.createdById === currentUser?.id;
-  const economicsEditable = isSticker && isOriginalCreator;
+  // Mirrors the server's rule verbatim (`isModerator || createdById === userId`,
+  // creator-shop.service.ts). Named for what it decides rather than for who the
+  // user is: the server has its own `isOriginalCreator` that counts moderators
+  // as one, and two predicates sharing that name across the boundary is how the
+  // client came to be stricter than the server — hiding fields from the very
+  // people who repair stickers the v1 artwork bug damaged.
+  //
+  // A cross-lister is excluded because the server refuses their economics edits
+  // outright; requiring the fields of them would disable their save over a field
+  // they may not touch. Published is deliberately NOT part of this: the server
+  // allows economics changes after publish, and a sticker predating per-use
+  // pricing can only be repaired if someone can still reach the field.
+  const canEditEconomics =
+    !isEdit ||
+    !!currentUser?.isModerator ||
+    !item?.cosmetic.createdById ||
+    item.cosmetic.createdById === currentUser?.id;
+  const economicsEditable = isSticker && canEditEconomics;
   // Consumables must clear a per-use floor as well as the listing floor.
   const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
   // An unset economic field is an error the creator can see, not a field that

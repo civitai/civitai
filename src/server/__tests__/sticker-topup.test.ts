@@ -11,6 +11,7 @@ const refundMultiAccountTransaction = vi.fn();
 const createBuzzTransaction = vi.fn();
 const getBlockedPairIds = vi.fn();
 const refreshOwnedStickerCache = vi.fn();
+const logToAxiom = vi.fn();
 
 // Every read in this path decides whether to charge or how much, so none may
 // come off the replica. `dbRead` throws rather than returning data: a lagging
@@ -44,7 +45,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/server/redis/caches', () => ({
   refreshOwnedStickerCache: (...args: unknown[]) => refreshOwnedStickerCache(...args),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+// Returns a promise, like the real one — which awaits its ingest with no
+// internal guard, so a degraded Axiom rejects.
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: (...args: unknown[]) => logToAxiom(...args),
+}));
 
 const { purchaseStickerUses } = await import('~/server/services/sticker.service');
 
@@ -73,8 +78,10 @@ describe('purchaseStickerUses', () => {
       createBuzzTransaction,
       getBlockedPairIds,
       refreshOwnedStickerCache,
+      logToAxiom,
     ])
       fn.mockReset();
+    logToAxiom.mockResolvedValue(undefined);
 
     findCosmetic.mockResolvedValue({
       id: COSMETIC_ID,
@@ -289,6 +296,35 @@ describe('purchaseStickerUses', () => {
     expect(createBuzzTransaction).toHaveBeenCalled();
   });
 
+  // Both failures co-occur precisely during a multi-service incident: the
+  // logger awaits its ingest with no internal guard, so a degraded Axiom hands
+  // back a rejecting promise inside the very catch that exists to keep the
+  // payout reachable.
+  it('survives a rejecting logger inside the bookkeeping catch', async () => {
+    // Honest about its own strength: this pins that the purchase resolves and
+    // the payout still runs, and it does NOT discriminate the `.catch()` on the
+    // logger — removing that catch leaves this green, because vitest's harness
+    // absorbs the rejection that would end the process in Node. The catch is
+    // kept on the library's contract (`logToAxiom` awaits its ingest with no
+    // internal guard), not on the strength of this test.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      findHoldings
+        .mockResolvedValueOnce([{ remaining: 0 }])
+        .mockRejectedValueOnce(new Error('pool timeout'));
+      logToAxiom.mockRejectedValue(new Error('axiom down'));
+
+      await expect(call({ quantity: 10 })).resolves.toBeTruthy();
+      expect(createBuzzTransaction).toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('still pays the creator when the post-grant balance read throws', async () => {
     findHoldings
       .mockResolvedValueOnce([{ remaining: 0 }])
@@ -298,11 +334,15 @@ describe('purchaseStickerUses', () => {
   });
 
   it('falls back to the top-up row when the balance read fails', async () => {
+    // The row holds 14 — 4 left over from an earlier top-up plus the 10 just
+    // bought — so falling back to `quantity` instead of the row's own balance
+    // would report 10 and fail here. Equal numbers could not tell them apart.
+    queryRaw.mockResolvedValue([{ remaining: 14 }]);
     findHoldings
-      .mockResolvedValueOnce([{ remaining: 0 }])
+      .mockResolvedValueOnce([{ remaining: 4 }])
       .mockRejectedValueOnce(new Error('pool timeout'));
     const result = await call({ quantity: 10 });
-    expect(result.remaining).toBe(10);
+    expect(result.remaining).toBe(14);
   });
 
   // A creator topping up their own sticker would otherwise send 70% back to

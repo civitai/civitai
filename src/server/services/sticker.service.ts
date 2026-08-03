@@ -350,11 +350,15 @@ export async function purchaseStickerUses({
     remaining = holdingsAfter.reduce((sum, h) => sum + (h.remaining ?? 0), 0);
     await refreshOwnedStickerCache([userId]);
   } catch (error) {
-    logToAxiom({
+    // `.catch`, not `await`: logToAxiom awaits its ingest with no internal
+    // guard, so a degraded Axiom returns a rejecting promise. Unattached that
+    // is an unhandled rejection; awaited it would throw past the payout — the
+    // exact failure this catch exists to prevent, defeated by its own logger.
+    void logToAxiom({
       level: 'error',
       message: 'Sticker top-up bookkeeping failed after the grant committed',
       data: { cosmeticId, userId, transactionId, error },
-    });
+    }).catch(() => undefined);
   }
 
   // Payout follows the sale, never the buyer's own money back: a creator
@@ -391,11 +395,11 @@ export async function purchaseStickerUses({
     } catch (error) {
       // The buyer already has their uses; a failed payout is recoverable from
       // the ledger and must not undo the purchase.
-      logToAxiom({
+      void logToAxiom({
         level: 'error',
         message: 'Failed to distribute sticker top-up funds',
         data: { cosmeticId, userId, transactionId, error },
-      });
+      }).catch(() => undefined);
     }
   }
 
