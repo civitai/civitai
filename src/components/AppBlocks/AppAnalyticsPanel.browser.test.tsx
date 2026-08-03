@@ -46,9 +46,7 @@ describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
     await expect.element(page.getByText('Analytics unavailable')).toBeInTheDocument();
-    await expect
-      .element(page.getByText(/not a report of zero activity/i))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/not a report of zero activity/i)).toBeInTheDocument();
     // The fabricated dashboard must be gone entirely.
     expect(page.getByText('Active installs').elements()).toHaveLength(0);
     expect(page.getByText('Runs (range)').elements()).toHaveLength(0);
