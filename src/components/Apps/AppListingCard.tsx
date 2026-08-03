@@ -572,10 +572,11 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 🔴 The mapping itself is NOT restated here — it lives in
                 `appListingActionGlyph.ts` and is read above via `CtaGlyph`. A copy
                 of it in this comment is exactly how the card and the detail page
-                drifted apart in the first place. The rail tile's icon button still
-                carries its own copy (`RECENT_ACTION_ICONS` in
-                `RecentlyOpenedApps.tsx`, driven by `getRecentRailAction`); folding
-                that third one in is the remaining consolidation.
+                drifted apart in the first place. The rail tile's icon button used
+                to carry a third copy (`RECENT_ACTION_ICONS` in
+                `RecentlyOpenedApps.tsx`); it now resolves through the same module
+                via `recentRailActionGlyph`, so all three surfaces are single-
+                sourced and the consolidation is complete.
 
                 🔴 The icon is DECORATIVE — the label text stays the accessible
                 name. Tabler icons render `<svg>` with no `<title>`, so they
