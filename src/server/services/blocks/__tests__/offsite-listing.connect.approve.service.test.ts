@@ -298,6 +298,72 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
     });
   });
 
+  it('🔴 a REVISION that would strip the live listing\'s destination is REFUSED — nothing copied', async () => {
+    // The "break an already-live listing" case. A revision writes NO status, so the
+    // status-transition gates never see it — but it copies `externalUrl` /
+    // `connectClientId` straight onto an approved parent. A shadow with no
+    // destination would therefore turn a working live listing into a dead CTA.
+    //
+    // 🔴 This also pins WHERE the gate is asserted. It must run on the POST-COPY
+    // projection (parent kind/slug + SHADOW url/client). A gate that re-read the
+    // PARENT instead would see the parent's still-valid URL, pass, and then
+    // overwrite it — passing this scenario while permitting exactly the regression.
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_r',
+      status: 'pending',
+      kind: 'offsite',
+      slug: 'parent-slug',
+      appListingId: 'apl_shadow',
+    });
+    mockRead.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      if (args.where.id === 'apl_shadow') {
+        return {
+          id: 'apl_shadow',
+          status: 'draft',
+          externalUrl: null, // the revision REMOVES the destination
+          iconId: 1,
+          coverId: 2,
+          revisionOfId: 'apl_parent',
+          connectClientId: CLIENT_ID,
+          connectRequestedScopes: REQUESTED,
+          connectScopeJustifications: JUSTIFIED,
+          userId: CALLER,
+          name: 'Connect App',
+          slug: 'parent-slug',
+        };
+      }
+      // The LIVE parent still has a perfectly good destination.
+      return {
+        id: 'apl_parent',
+        slug: 'parent-slug',
+        status: 'approved',
+        kind: 'offsite',
+        externalUrl: CONNECT_URL,
+      };
+    });
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      externalUrl: null,
+      connectClientId: CLIENT_ID,
+      connectRequestedScopes: REQUESTED,
+      connectScopeJustifications: JUSTIFIED,
+      connectClient: { allowedScopes: CEILING },
+      iconId: 1,
+      coverId: 2,
+    });
+
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    // Nothing was copied onto the live parent — it keeps serving its old, working content.
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('in-tx subset-of-ceiling on the REVISION: a shadow requesting a scope beyond the (shrunk) client ceiling → REJECT inside the tx, NO copy', async () => {
     // N2: mirror the first-time approve's in-tx subset re-assert on the revision path.
     // The revision's scopes are all justified, so this is caught ONLY by the
