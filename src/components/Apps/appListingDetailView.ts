@@ -28,9 +28,18 @@
  *     second button shipping the viewer to `<slug>.civit.ai` is pure redundancy.
  *   - on-site + hasPage + !canOpenPage + an https liveUrl → **Open live ↗** to
  *     the raw `<slug>.civit.ai` origin. 🔴 This escape hatch is deliberately
- *     RETAINED for exactly this state: with `appBlocksPages` dark (today's live
- *     posture) it is the ONLY route to the app from the store. The store detail
- *     briefly also carried an in-page `<iframe>` preview; it was REMOVED because
+ *     RETAINED for exactly this state — it is the only route to the app when a
+ *     viewer can see the store but cannot open `/apps/run`. ⚠️ **No production
+ *     viewer is in that state today** (measured 2026-08-02 against live Flipt):
+ *     `app-blocks-enabled`, `app-listings` and `app-blocks-pages-enabled` are
+ *     all base `enabled: false` with the SAME rollout segments
+ *     `[moderators, app-dev-testers]`, and the store page gates on
+ *     `appListings || appBlocks` while `canOpenPage` is `appBlocksPages` — so
+ *     everyone who can reach the detail also has `canOpenPage === true` and gets
+ *     `Open` above, never this branch. Do not read "appBlocksPages is dark" as
+ *     meaning this branch is the live one; it is reachable only if those cohorts
+ *     ever diverge. The store detail briefly also carried an in-page `<iframe>`
+ *     preview; it was REMOVED because
  *     nothing posted the framed block a `BLOCK_INIT`, so it never initialised
  *     and only painted the block's pre-init light-theme shell. Its note used to
  *     read "…You can also run it in the live preview below" — do not reinstate
@@ -116,11 +125,15 @@ export function getDetailPrimaryAction(
       };
     }
     if (kd.hasPage) {
-      // Page app, but this viewer can't launch the in-host page (appBlocksPages
-      // dark). The raw-origin "Open live" escape hatch is then the ONLY way to
-      // run the app from the store, exactly as the legacy `/apps/[appBlockId]`
-      // page offered it; it is hidden only in the `canOpenPage` branch above,
-      // where the app opens properly in-page.
+      // Page app, but this viewer can't launch the in-host page. The raw-origin
+      // "Open live" escape hatch is then the only way to run the app from the
+      // store, exactly as the legacy `/apps/[appBlockId]` page offered it; it is
+      // hidden in the `canOpenPage` branch above, where the app opens in-page.
+      //
+      // ⚠️ Unreached in production today: the store-visibility flags and
+      // `app-blocks-pages-enabled` share one cohort, so any viewer who can see
+      // this page also has `canOpenPage === true`. See the flag note in the
+      // module docstring before reasoning about this branch as the live one.
       //
       // 🔴 The note must not promise a surface this page does not have. It used
       // to end "…You can also run it in the live preview below", pointing at an

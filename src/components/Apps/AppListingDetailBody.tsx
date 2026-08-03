@@ -96,8 +96,12 @@ import type {
  * `<BlockGate>` landing keys on `window.self === window.top` (false in a frame).
  * A future preview here needs a real host bridge — the moderator review surface
  * (`ReviewBlockPreviewHost`) is the working reference — not another raw iframe.
- * The "Open live" primary action (`getDetailPrimaryAction`) is the supported way
- * to run an on-site app from this page while `appBlocksPages` is dark.
+ * To run an on-site app from this page the viewer takes the kind-aware primary
+ * action (`getDetailPrimaryAction`): today that is `Open` → `/apps/run/<slug>`
+ * for every viewer who can reach this page — see the flag note on
+ * `appListingDetailView`. Structurally pinned in the node `unit` project
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"),
+ * because CI does not run the browser `component` suite.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   canOwnerEditListing,
@@ -308,6 +310,70 @@ describe('getDetailPrimaryAction — off-site', () => {
     expect(action.href).toBeUndefined();
     expect(action.external).toBe(false);
     expect(action.note).toBeTruthy();
+  });
+});
+
+/**
+ * 🔴 SOURCE-LEVEL GATE — no raw `<iframe>` may return to the store detail.
+ *
+ * `AppListingDetailBody`'s docstring states this in 🔴 terms, and the ONLY other
+ * check on it is an absence assertion in `AppListingDetailBody.browser.test.tsx`
+ * — which lives in the browser `component` project, **which CI does not run**
+ * (see this file's header and `recentAppsRail.test.ts`). Without the check
+ * below, re-adding `<iframe src={liveUrl}>` would pass every gate that runs.
+ *
+ * This replaces the equivalent gate that lived in the now-deleted
+ * `appListingPreview.test.ts` — that one pinned the frame's hardening
+ * attributes; this one pins that there is no frame at all.
+ *
+ * Structural, not behavioural, and deliberately so: rendering the component in
+ * the node project would mean booting Mantine + next/link + tRPC to count
+ * elements. The repo already uses source-level unit gates for this shape of
+ * invariant (`no-io-in-transaction`, `no-wholesale-module-mock`, and the
+ * `AppBlockChrome is actually WIRED to this gate` block in
+ * `recentAppsRail.test.ts`).
+ *
+ * SCOPE, honestly: this catches a literal `<iframe` in JSX. It does NOT catch a
+ * frame introduced via a wrapper component, `dangerouslySetInnerHTML`, or
+ * `document.createElement('iframe')`.
+ */
+describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
+  const SOURCE = path.resolve(__dirname, '../AppListingDetailBody.tsx');
+
+  /** Strip block + line comments. Load-bearing, not cosmetic: the component's
+   *  own docstring names `<iframe src={liveUrl}>` verbatim (that is the whole
+   *  point of the note), so an unstripped match would report the DOC, not the
+   *  code — a permanent false red that would get this gate deleted. */
+  const stripComments = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+  const countIframes = (s: string) => [...s.matchAll(/<iframe\b/g)].length;
+
+  it('the matcher and the comment-stripper both actually work (positive control)', () => {
+    // Without this, a `countIframes` that can never match anything — a typo'd
+    // regex, say — would make the real assertion below a green that means
+    // nothing. Drive both directions through the same two helpers.
+    expect(countIframes('<div>\n  <iframe src={x} />\n</div>')).toBe(1);
+    const commented = '/* <iframe src={liveUrl}> */\nconst a = 1;\n';
+    expect(countIframes(commented)).toBe(1); // …unstripped, the DOC matches,
+    expect(countIframes(stripComments(commented))).toBe(0); // …stripped, it doesn't.
+  });
+
+  it('🔴 the component source contains no <iframe> element', () => {
+    const code = stripComments(fs.readFileSync(SOURCE, 'utf8'));
+    expect(
+      countIframes(code),
+      'A raw <iframe> is back in AppListingDetailBody.tsx. A block at ' +
+        '<slug>.civit.ai does not boot from its URL — it needs a host to post ' +
+        'BLOCK_INIT — so a bare frame renders the pre-init light-theme shell ' +
+        'and nothing else. See the file docstring; ReviewBlockPreviewHost is ' +
+        'the bridged reference.'
+    ).toBe(0);
+  });
+
+  it('the deleted preview view-model is not imported back', () => {
+    const code = stripComments(fs.readFileSync(SOURCE, 'utf8'));
+    expect(code).not.toMatch(/appListingPreview/);
   });
 });
 
