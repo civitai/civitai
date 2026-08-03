@@ -261,7 +261,7 @@
                 aria-label={`Select ${cosmetic.name}`}
               />
             </TableCell>
-            <TableCell>
+            <TableCell class="whitespace-normal">
               <div class="flex max-w-sm flex-col">
                 <span class="font-medium">{cosmetic.name}</span>
                 {#if cosmetic.description}

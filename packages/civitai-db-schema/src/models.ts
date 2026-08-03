@@ -5123,6 +5123,14 @@ export interface Outbox {
   attempts: number | null;
 }
 
+export interface AppPageAccess {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Date;
+}
+
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
 
 type Decimal = { valueOf(): string };

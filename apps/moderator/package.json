@@ -18,6 +18,7 @@
     "@civitai/clickhouse": "workspace:*",
     "@civitai/client": "0.2.0-beta.78",
     "@civitai/db": "workspace:*",
+    "@civitai/db-queries": "workspace:*",
     "@civitai/email": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/mod-utils": "workspace:*",

@@ -1139,6 +1139,9 @@ importers:
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema

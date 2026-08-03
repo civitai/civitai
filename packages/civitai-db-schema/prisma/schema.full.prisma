@@ -7432,3 +7432,18 @@ model Outbox {
   details    Json?
   attempts   Int?
 }
+
+/// Per-app, per-page list of the roles allowed to reach a page, keyed by the app's own path strings.
+/// `roles` is authoritative wherever a row exists — an empty array means nobody, which is why this is one
+/// row per page rather than one per grant. A missing row means the app has never been told about the page
+/// and falls back to whatever its code declares. Roles are bare strings and `updatedById` has no FK on
+/// purpose: any app on this database can use the table with its own role vocabulary.
+model AppPageAccess {
+  app         String
+  path        String
+  roles       String[]
+  updatedById Int?
+  updatedAt   DateTime @default(now())
+
+  @@id([app, path])
+}

@@ -1602,6 +1602,11 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  APP: {
+    // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
+    // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
+    PAGE_ACCESS: 'app:page-access',
+  },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
     ACCOUNTS: 'device:accounts',

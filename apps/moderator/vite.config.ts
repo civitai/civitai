@@ -25,6 +25,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/client',
         '@civitai/clickhouse',
         '@civitai/db',
+        '@civitai/db-queries',
         '@civitai/db-schema',
         '@civitai/mod-utils',
         '@civitai/moderation',

@@ -1,7 +1,8 @@
 import type { Handle } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
-import { canAccess } from '$lib/server/access';
+import { applyGrants, canAccess } from '$lib/server/access';
+import { loadPageAccessGrants } from '$lib/server/page-access';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -37,6 +38,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.user = result.user;
+
+  applyGrants(await loadPageAccessGrants());
 
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →

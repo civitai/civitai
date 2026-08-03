@@ -441,6 +441,13 @@ export type AppListingScreenshot = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppPageAccess = {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Generated<Timestamp>;
+};
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
@@ -3943,6 +3950,7 @@ export type DB = {
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
