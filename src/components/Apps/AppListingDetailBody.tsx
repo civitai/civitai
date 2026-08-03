@@ -20,7 +20,6 @@ import {
   IconArrowLeft,
   IconInfoCircle,
   IconPencil,
-  IconPlayerPlay,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -39,12 +38,6 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
 } from '~/components/Apps/appListingDetailView';
-import {
-  getListingPreview,
-  LISTING_PREVIEW_HEIGHT,
-  LISTING_PREVIEW_SANDBOX,
-  shouldMountPreviewIframe,
-} from '~/components/Apps/appListingPreview';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { RelatedListings } from '~/components/Apps/RelatedListings';
@@ -90,6 +83,25 @@ import type {
  * no INSTALL surface, so a model-slot app — one that installs into a slot rather
  * than opening a page — has nowhere on the store detail to install from. Vacuous
  * today (every approved on-site listing declares a page).
+ *
+ * 🔴 THERE IS NO IN-PAGE LIVE PREVIEW HERE, AND ONE MUST NOT BE RE-ADDED AS A
+ * BARE `<iframe src={liveUrl}>`. This body used to mount exactly that (inherited
+ * verbatim from the retired `/apps/[appBlockId]` page, whose own docstring
+ * already named the defect). A block at `<slug>.civit.ai` does not boot from its
+ * URL alone — it waits for a host to post `BLOCK_INIT` over the block bridge.
+ * Nothing posted it to that frame, so the frame only ever painted the block's
+ * pre-init LIGHT-theme shell (`#FEFEFE`) inside a dark listing page. Neither
+ * escape hatch fires from inside a frame either: the build-recipe edge redirect
+ * keys on `Sec-Fetch-Dest: document` (an iframe sends `iframe`) and the SDK
+ * `<BlockGate>` landing keys on `window.self === window.top` (false in a frame).
+ * A future preview here needs a real host bridge — the moderator review surface
+ * (`ReviewBlockPreviewHost`) is the working reference — not another raw iframe.
+ * To run an on-site app from this page the viewer takes the kind-aware primary
+ * action (`getDetailPrimaryAction`): today that is `Open` → `/apps/run/<slug>`
+ * for every viewer who can reach this page — see the flag note on
+ * `appListingDetailView`. Structurally pinned in the node `unit` project
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"),
+ * because CI does not run the browser `component` suite.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
@@ -237,130 +249,6 @@ function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryS
             <ScreenshotTile key={`${shot.url}-${i}`} shot={shot} name={name} index={i} />
           ))}
         </SimpleGrid>
-      </Stack>
-    </>
-  );
-}
-
-/**
- * In-page LIVE PREVIEW — poster first, iframe only on click.
- *
- * 🔴 The `<iframe>` is NOT in the tree until the viewer activates it. Booting a
- * third-party app frame on page load would make every shopper pay that app's
- * full JS/network cost just to read the listing, on every listing. Before the
- * click we show a static poster (the listing's own cover → first screenshot →
- * a neutral placeholder) with an explicit activate affordance.
- *
- * "No poster available" is a normal case (several approved listings ship neither
- * a cover nor screenshots) — the placeholder still activates, so a listing
- * without art never loses its preview.
- *
- * SANDBOX/REFERRER PARITY with the preview on the now-retired
- * `/apps/[appBlockId]` page. The block is served from its OWN `<slug>.civit.ai`
- * origin, so `allow-same-origin` grants the frame ITS OWN origin — not
- * civitai.com's — which is what lets the block use its own storage. See
- * `appListingPreview.ts` for the full note; the token list itself is
- * single-sourced there.
- *
- * 🔴 NOT an HTTP-caching change. Block HTML is deliberately `Cache-Control:
- * no-store` at the platform layer so CSP/CORS changes propagate; "cache the
- * preview" here means poster-then-activate and nothing else.
- */
-function LivePreview({ detail }: { detail: ListingDetail }) {
-  const [activated, setActivated] = useState(false);
-  const preview = getListingPreview(detail);
-  if (!preview) return null;
-  const mounted = shouldMountPreviewIframe({ preview, activated });
-
-  return (
-    <>
-      <Divider />
-      <Stack gap="xs" data-testid="apps-listing-preview">
-        <Title order={4}>Live preview</Title>
-        <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
-          {mounted ? (
-            <iframe
-              src={preview.liveUrl}
-              title={preview.frameTitle}
-              sandbox={LISTING_PREVIEW_SANDBOX}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              data-testid="apps-listing-preview-frame"
-              style={{
-                width: '100%',
-                height: LISTING_PREVIEW_HEIGHT,
-                border: 0,
-                display: 'block',
-              }}
-            />
-          ) : (
-            <Box
-              component="button"
-              type="button"
-              onClick={() => setActivated(true)}
-              aria-label={`Start the live preview of ${detail.name}`}
-              data-testid="apps-listing-preview-activate"
-              style={{
-                position: 'relative',
-                display: 'block',
-                width: '100%',
-                height: LISTING_PREVIEW_HEIGHT,
-                padding: 0,
-                border: 0,
-                cursor: 'pointer',
-                // No poster → the listing's own seeded gradient (same identity
-                // the cover/icon placeholders use), never a blank grey box.
-                background: preview.posterUrl
-                  ? undefined
-                  : listingPlaceholderGradient({
-                      slug: detail.slug,
-                      category: detail.category,
-                      surface: 'cover',
-                    }),
-              }}
-            >
-              {preview.posterUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={preview.posterUrl}
-                  alt=""
-                  aria-hidden
-                  loading="lazy"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }}
-                />
-              )}
-              {/* Activate affordance, above the poster. */}
-              <Group
-                justify="center"
-                style={{ position: 'relative', height: '100%' }}
-                data-testid="apps-listing-preview-poster"
-              >
-                <Group
-                  gap={8}
-                  wrap="nowrap"
-                  px="md"
-                  py="xs"
-                  style={{
-                    borderRadius: 'var(--mantine-radius-xl)',
-                    background: 'rgba(0,0,0,0.65)',
-                    color: 'var(--mantine-color-white)',
-                  }}
-                >
-                  <IconPlayerPlay size={18} />
-                  <Text size="sm" fw={600} c="white">
-                    Run live preview
-                  </Text>
-                </Group>
-              </Group>
-            </Box>
-          )}
-        </Card>
       </Stack>
     </>
   );
@@ -625,12 +513,6 @@ export function AppListingDetailBody({
           <AppListingReviews appListingId={detail.id} />
         </>
       )}
-
-      {/* IN-PAGE LIVE PREVIEW (poster → click to activate). Placed above the
-          screenshot gallery: a runnable app outranks static stills. Omitted in
-          read-only mod preview along with every other live surface — a shadow
-          listing's block may not even be deployed. */}
-      {!preview && <LivePreview detail={detail} />}
 
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 

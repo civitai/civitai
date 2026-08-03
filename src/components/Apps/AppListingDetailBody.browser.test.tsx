@@ -1,5 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -206,8 +206,7 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('apps-listing-owner-edit').elements().length).toBe(0);
     // The primary action is gone too.
     expect(page.getByTestId('apps-listing-open-live').elements().length).toBe(0);
-    // …as is the in-page preview and the discovery rail (both live surfaces).
-    expect(page.getByTestId('apps-listing-preview').elements().length).toBe(0);
+    // …as is the discovery rail (a live, tRPC-backed surface).
     expect(page.getByTestId('apps-related-rail').elements().length).toBe(0);
     // Back-to-store nav is gone.
     expect(page.getByText('Back to store').elements().length).toBe(0);
@@ -222,9 +221,8 @@ describe('AppListingDetailBody', () => {
     await expect.element(page.getByTestId('mock-review-button')).toBeInTheDocument();
     // Primary action present. base() is an on-site page app whose viewer CAN'T
     // open the in-host page route (appBlocksPages is false in the mocked flags),
-    // so the raw-origin "Open live" escape hatch is the primary action — the
-    // sandboxed in-page preview alone can't run a block that needs a form /
-    // popup / download.
+    // so the raw-origin "Open live" escape hatch is the primary action — and,
+    // with the in-page preview removed, the only way to run the app from here.
     const openLive = page.getByTestId('apps-listing-open-live');
     await expect.element(openLive).toBeInTheDocument();
     await expect.element(openLive).toHaveAttribute('href', 'https://my-app.civit.ai');
@@ -232,52 +230,54 @@ describe('AppListingDetailBody', () => {
     await expect.element(openLive).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  // ── In-page live preview (poster → click to activate) ───────────────────────
+  // ── The in-page live preview is REMOVED ─────────────────────────────────────
+  //
+  // 🔴 THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. It pins an invariant
+  // the original defect never violated — the old code rendered the section and
+  // the frame, so this assertion could not have caught the bug it documents. It
+  // exists to stop the pattern being reinstated, nothing more.
+  //
+  // What was actually wrong: `LivePreview` mounted a bare
+  // `<iframe src={liveUrl}>` at `<slug>.civit.ai`. A block does not boot from
+  // its URL — it waits for a host to post `BLOCK_INIT` over the block bridge,
+  // and nothing posted it to that frame, so it painted the block's pre-init
+  // LIGHT-theme shell (#FEFEFE) on a dark page and stopped. The two escape
+  // hatches are both frame-blind: the build-recipe edge redirect keys on
+  // `Sec-Fetch-Dest: document` (a frame sends `iframe`) and the SDK
+  // `<BlockGate>` landing keys on `window.self === window.top` (false in a
+  // frame). The moderator review preview (`ReviewBlockPreviewHost`) is a
+  // different, working surface with a real bridge and is untouched.
 
-  test('🔴 does NOT mount an iframe before the click, and DOES after', async () => {
+  test('🔴 renders NO in-page preview section and NO iframe (invariant guard)', async () => {
+    // The live posture (not `preview`), on the on-site page app that used to
+    // render the preview — i.e. the exact case that previously mounted it.
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
+    // Anchor on a real awaited element first, so the sync DOM reads below are
+    // not racing the mount.
+    await expect.element(page.getByTestId('apps-listing-open-live')).toBeInTheDocument();
 
-    await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();
-    // Before activation: a poster + activate control, and NO iframe anywhere in
-    // the document (the direct encoding of "no third-party frame boots on load").
-    await expect.element(page.getByTestId('apps-listing-preview-activate')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-preview').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-preview-activate').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-listing-preview-frame').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-preview-poster').elements()).toHaveLength(0);
+    // No third-party frame of any kind, however it might be re-added.
     expect(document.querySelectorAll('iframe')).toHaveLength(0);
-
-    await userEvent.click(page.getByTestId('apps-listing-preview-activate'));
-
-    const frame = page.getByTestId('apps-listing-preview-frame');
-    await expect.element(frame).toBeInTheDocument();
-    await expect.element(frame).toHaveAttribute('src', 'https://my-app.civit.ai');
-    await expect.element(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
-    await expect.element(frame).toHaveAttribute('referrerpolicy', 'no-referrer');
-    await expect.element(frame).toHaveAttribute('loading', 'lazy');
+    // …and no copy pointing at a section that does not exist.
+    const text = document.body.textContent ?? '';
+    expect(text).not.toContain('Live preview');
+    expect(text).not.toContain('Run live preview');
+    expect(text).not.toContain('live preview below');
   });
 
-  test('a listing with NO cover and NO screenshots still gets an activatable preview', async () => {
+  test('a listing with NO cover and NO screenshots renders no preview either', async () => {
+    // The poster-fallback path was the last thing that could still have mounted
+    // a frame for an art-less listing.
     renderWithProviders(
       <AppListingDetailBody detail={base({ coverUrl: null, screenshots: [] })} />
     );
-    await userEvent.click(page.getByTestId('apps-listing-preview-activate'));
-    await expect.element(page.getByTestId('apps-listing-preview-frame')).toBeInTheDocument();
-  });
-
-  test('an OFF-SITE listing gets no preview section at all', async () => {
-    renderWithProviders(
-      <AppListingDetailBody
-        detail={base({
-          kind: 'offsite',
-          kindData: {
-            kind: 'offsite',
-            subKind: 'external-link',
-            externalUrl: 'https://ext.app',
-            connectClientId: null,
-          },
-        })}
-      />
-    );
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     expect(page.getByTestId('apps-listing-preview').elements()).toHaveLength(0);
+    expect(document.querySelectorAll('iframe')).toHaveLength(0);
   });
 
   test('canOpenPage → the in-host Open button, and the raw-origin escape hatch is HIDDEN', async () => {
@@ -290,7 +290,7 @@ describe('AppListingDetailBody', () => {
 
   test('the VERBOSE legacy preview copy is gone (the escape-hatch button is not)', async () => {
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-open-live')).toBeInTheDocument();
     const text = document.body.textContent ?? '';
     expect(text).not.toContain('Preview of the standalone block at');
     expect(text).not.toContain('The live block on a model page runs with your granted permissions');
