@@ -8,8 +8,8 @@ import {
 import { createJob } from './job';
 
 /**
- * Bounds a run rather than the backlog: a set this long only happens if Redis is holding ids for
- * accounts that were re-deleted, and every id the cap defers is still there on the next tick.
+ * Bounds a run rather than the backlog: every id the cap defers is still in the set on the next
+ * tick.
  */
 export const RESTORE_USERS_PER_RUN = 25;
 
@@ -33,17 +33,18 @@ export const restoreUserImages = createJob(
   '*/2 * * * *',
   async () => {
     const pending = await readPendingImageRestores();
-    if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, stillDeleted: 0 };
+    if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, reDeleted: 0 };
 
     let unblocked = 0;
     let finished = 0;
-    let stillDeleted = 0;
+    let reDeleted = 0;
 
     for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
-      // An account can be deleted again between the restore and this run, in which case the
-      // reversal would undo a grace block that is once more the correct state.
+      // Re-deletion is terminal for this entry, not a state to wait out: the grace block is once
+      // more correct, and `restoreUser` re-queues the id if the account is ever restored again.
       if (!(await isRestored(userId))) {
-        stillDeleted++;
+        await clearPendingImageRestore(userId);
+        reDeleted++;
         continue;
       }
 
@@ -68,7 +69,7 @@ export const restoreUserImages = createJob(
       }
     }
 
-    return { pending: pending.length, finished, unblocked, stillDeleted };
+    return { pending: pending.length, finished, unblocked, reDeleted };
   },
   { lockExpiration: 30 * 60, dedicated: true }
 );

@@ -104,7 +104,7 @@ beforeEach(() => {
   mockUnblock.mockResolvedValue({ unblocked: 3, stillBlocked: 0, skipped: 0, drained: true });
 });
 
-type RunResult = { pending: number; finished: number; unblocked: number; stillDeleted: number };
+type RunResult = { pending: number; finished: number; unblocked: number; reDeleted: number };
 
 const run = () => (restoreUserImages as unknown as () => Promise<RunResult>)();
 
@@ -133,7 +133,7 @@ describe('restoreUserImages', () => {
     expect(result).toMatchObject({ finished: 1, unblocked: 3 });
   });
 
-  it('leaves an account that is deleted again alone', async () => {
+  it('drops an account that is deleted again instead of reversing it', async () => {
     users = [{ id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') }];
     pendingSet = ['7'];
 
@@ -142,8 +142,34 @@ describe('restoreUserImages', () => {
     // Reversing here would undo the grace block `remove-deleted-user-images` is once again
     // correct to have written.
     expect(mockUnblock).not.toHaveBeenCalled();
-    expect(pendingSet).toEqual(['7']);
-    expect(result).toMatchObject({ stillDeleted: 1, finished: 0 });
+    // Kept, the id costs a `User` round-trip every other minute forever, and nothing ever
+    // reclaims it; `restoreUser` re-adds it if the account genuinely comes back.
+    expect(mockSysRedis.sRem).toHaveBeenCalledWith('pending-restores', '7');
+    expect(pendingSet).toEqual([]);
+    expect(result).toMatchObject({ reDeleted: 1, finished: 0 });
+  });
+
+  it('does not query again for an account it dropped as re-deleted', async () => {
+    users = [{ id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') }];
+    pendingSet = ['7'];
+
+    await run();
+    const second = await run();
+
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(second).toMatchObject({ pending: 0, reDeleted: 0 });
+  });
+
+  it('still takes on the accounts behind one it drops as re-deleted', async () => {
+    users = [{ id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') }, restored(8)];
+    pendingSet = ['7', '8'];
+
+    const result = await run();
+
+    // The drop is a `continue`, so getting it wrong strands every account queued behind it.
+    expect(mockUnblock).toHaveBeenCalledWith(8);
+    expect(pendingSet).toEqual([]);
+    expect(result).toMatchObject({ reDeleted: 1, finished: 1 });
   });
 
   it('drops the account off the worklist once its reversal drains', async () => {
