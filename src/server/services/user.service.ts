@@ -2625,22 +2625,28 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
   const keys = Object.keys(toSet);
   if (!keys.length) return;
 
-  await dbWrite.$executeRawUnsafe(`
+  // Parameterised: the payload is bound, not spliced into a string literal.
+  // `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding an
+  // apostrophe used to close the literal early and corrupt the statement.
+  await dbWrite.$executeRaw`
       UPDATE "User"
-      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
+      SET settings = COALESCE(settings, '{}'::jsonb) || ${JSON.stringify(toSet)}::jsonb
       WHERE id = ${userId}
-    `);
+    `;
   userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
-    .map(([key]) => `'${key}'`);
+    .map(([key]) => key);
   if (toRemove.length) {
-    await dbWrite.$executeRawUnsafe(`
+    // `jsonb - text[]` drops every listed key in one go, so the key names bind as a
+    // single array. The previous form hand-quoted them into a chain of `- 'key'`
+    // and emitted a trailing `}`, which made the statement unparseable.
+    await dbWrite.$executeRaw`
       UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}
+      SET settings = settings - ${toRemove}::text[]
       WHERE id = ${userId}
-    `);
+    `;
     userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
