@@ -1,4 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// 🔴 NOT ABOUT THIS FILE'S ASSERTIONS — it is about its EXIT CODE. The code
+// under test is pure, but it is reached through a module that imports
+// `~/server/db/client` at module scope, which instantiates Prisma and leaves an
+// UNHANDLED rejection. That rejection fails no test; it only makes the runner
+// exit non-zero, so `rc` here did not describe the tests and any mutation sweep
+// reading it reported every mutant killed. Nothing below touches a database.
+vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+
 import {
   rollupImageScoreDeltas,
   foldImageDeltasOntoStored,
