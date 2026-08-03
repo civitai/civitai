@@ -27,7 +27,12 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { v4 as uuid } from 'uuid';
-import { CacheTTL, CONTEST_SNAPSHOT_KEY_PREFIX, KEY_VALUE_KEYS } from '~/server/common/constants';
+import {
+  CacheTTL,
+  CONTEST_SCORE_CODE_VERSION,
+  CONTEST_SNAPSHOT_KEY_PREFIX,
+  KEY_VALUE_KEYS,
+} from '~/server/common/constants';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -76,12 +81,6 @@ type Signal = ContestScoreSignal;
  */
 const utc = (d: Date) => Prisma.sql`(${d}::timestamptz AT TIME ZONE 'UTC')`;
 const nowUtc = Prisma.raw(`(NOW() AT TIME ZONE 'UTC')`);
-
-/**
- * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
- * a disputed result can be traced to the code that produced it.
- */
-export const CONTEST_SCORE_CODE_VERSION = 5;
 
 /**
  * Comments and tips are deliberately unweighted: both are trivially launderable
@@ -2070,7 +2069,26 @@ export type ContestSnapshot = {
   score: ContestCommunityScore;
 };
 
-export type ContestSnapshotSummary = Omit<ContestSnapshot, 'config' | 'score'> & {
+/**
+ * The READ shape, and deliberately weaker than the write shape above. A stored row is
+ * whatever the code that wrote it produced, and it is cast through unvalidated — so
+ * every field added after the first snapshot is optional here.
+ *
+ * `ContestSnapshot` describes what we WRITE today; this describes what we may FIND.
+ * Conflating the two is what let a missing field be dereferenced and take down the
+ * whole results panel. A field added later must not typecheck as present on a row
+ * written before it existed.
+ */
+export type StoredContestSnapshot = Omit<
+  ContestSnapshot,
+  'codeVersion' | 'baseModels' | 'baseModelSource'
+> & {
+  codeVersion?: number;
+  baseModels?: string[];
+  baseModelSource?: ResolvedBaseModels['source'];
+};
+
+export type ContestSnapshotSummary = Omit<StoredContestSnapshot, 'config' | 'score'> & {
   key: string;
   window: ContestCommunityScore['window'];
   entryCount: number;
@@ -2079,7 +2097,7 @@ export type ContestSnapshotSummary = Omit<ContestSnapshot, 'config' | 'score'> &
 const snapshotKey = (collectionId: number, takenAt: string, source: string | null) =>
   [CONTEST_SNAPSHOT_KEY_PREFIX, collectionId, ...(source ? [source] : []), takenAt].join(':');
 
-function toSnapshotSummary(key: string, snapshot: ContestSnapshot): ContestSnapshotSummary {
+function toSnapshotSummary(key: string, snapshot: StoredContestSnapshot): ContestSnapshotSummary {
   // `config` — and therefore the weights — is dropped here. It is stored for audit,
   // never served.
   const { config: _config, score, ...rest } = snapshot;
@@ -2233,7 +2251,7 @@ export async function getContestSnapshot({
     const row = await dbRead.keyValue.findUnique({ where: { key }, select: { value: true } });
     if (!row) throw new ContestScoringError('Snapshot not found.');
 
-    const snapshot = row.value as unknown as ContestSnapshot;
+    const snapshot = row.value as unknown as StoredContestSnapshot;
     // `config` — and therefore the weights — is dropped by toSnapshotSummary. It is
     // stored for audit, never served.
     return { ...toSnapshotSummary(key, snapshot), score: snapshot.score };

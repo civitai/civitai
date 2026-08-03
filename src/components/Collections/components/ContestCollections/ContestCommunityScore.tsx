@@ -31,6 +31,14 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ContestScoringConfigEditor } from '~/components/Collections/components/ContestCollections/ContestScoringConfigEditor';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
+// Value imports here must never reach `~/server/services/contest-score.service`: it pulls
+// `~/server/db/client` and `~/env/server`, neither of which can be tree-shaken (both run
+// side effects at import), and the resulting client bundle only fails at `next build`.
+// Every other import from that module in this file is `import type` and erases.
+import {
+  CONTEST_SCORE_CODE_VERSION,
+  CONTEST_VERSION_SCOPING_CODE_VERSION,
+} from '~/server/common/constants';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type {
   ContestScoreRunState,
@@ -42,7 +50,6 @@ import type {
   ContestScoreCategory,
   ContestScoreEntry,
 } from '~/server/services/contest-score.service';
-import { CONTEST_SCORE_CODE_VERSION } from '~/server/services/contest-score.service';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -73,9 +80,6 @@ type StoredScore = Omit<ContestCommunityScoreResult, 'eligibility' | 'categories
   eligibility?: ContestCommunityScoreResult['eligibility'];
   categories: StoredCategory[];
 };
-
-/** Version scoping landed here; anything older counted every version of the model. */
-const VERSION_SCOPING_CODE_VERSION = 3;
 
 // Display-only banding for the qualification gap. Purely how loudly a row asks for
 // staff eyes — it is not a scoring input and nothing is disqualified automatically.
@@ -414,14 +418,21 @@ function WindowSummary({ score }: { score: StoredScore }) {
 }
 
 /**
- * `codeVersion` is only passed for a STORED snapshot — a live result is current by
- * definition. It is the one thing that distinguishes a snapshot which counted every
- * version of a model from one that did not, and until now it was stored and shown
- * nowhere.
+ * `snapshot` is passed only for a STORED result — a live one is current by definition.
+ * Its `codeVersion` is what distinguishes a snapshot that counted every version of a
+ * model from one that did not, and an absent version is treated as the oldest case
+ * rather than the newest: a row too old to record it is certainly older than the fix.
  */
-function ScoreBody({ score, codeVersion }: { score: StoredScore; codeVersion?: number }) {
-  const stale = codeVersion !== undefined && codeVersion < CONTEST_SCORE_CODE_VERSION;
-  const preVersionScoping = codeVersion !== undefined && codeVersion < VERSION_SCOPING_CODE_VERSION;
+function ScoreBody({
+  score,
+  snapshot,
+}: {
+  score: StoredScore;
+  snapshot?: { codeVersion?: number };
+}) {
+  const codeVersion = snapshot?.codeVersion;
+  const stale = !!snapshot && (codeVersion ?? 0) < CONTEST_SCORE_CODE_VERSION;
+  const preVersionScoping = !!snapshot && (codeVersion ?? 0) < CONTEST_VERSION_SCOPING_CODE_VERSION;
 
   return (
     <Stack gap="lg">
@@ -437,7 +448,8 @@ function ScoreBody({ score, codeVersion }: { score: StoredScore; codeVersion?: n
           {preVersionScoping
             ? 'Counts here include every version of each model, not only versions created during the contest on a qualifying base model. Entries carrying an older, unrelated version are overstated. Do not compare these standings to a current run.'
             : 'Scoring has changed since this snapshot was taken, so its standings are not directly comparable to a current run.'}{' '}
-          (scorer v{codeVersion}, current v{CONTEST_SCORE_CODE_VERSION})
+          (scorer {codeVersion === undefined ? 'version not recorded' : `v${codeVersion}`}, current
+          v{CONTEST_SCORE_CODE_VERSION})
         </Alert>
       )}
       <WindowSummary score={score} />
@@ -716,16 +728,18 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                       Partial
                     </Badge>
                   )}
-                  {snapshot.codeVersion < CONTEST_SCORE_CODE_VERSION && (
+                  {(snapshot.codeVersion ?? 0) < CONTEST_SCORE_CODE_VERSION && (
                     <Tooltip label="Scoring has changed since this snapshot was taken" withArrow>
                       <Badge color="red" variant="light" size="xs">
-                        Scorer v{snapshot.codeVersion}
+                        {snapshot.codeVersion === undefined
+                          ? 'Scorer version unknown'
+                          : `Scorer v${snapshot.codeVersion}`}
                       </Badge>
                     </Tooltip>
                   )}
                   {snapshot.note && <Badge variant="light">{snapshot.note}</Badge>}
                 </Group>
-                <ScoreBody score={snapshot.score} codeVersion={snapshot.codeVersion} />
+                <ScoreBody score={snapshot.score} snapshot={snapshot} />
               </>
             )}
           </Stack>
