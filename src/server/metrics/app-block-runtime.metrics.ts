@@ -72,9 +72,10 @@ export type AppBlockRenderResult = 'ok' | 'error';
  * imported so this module never pulls a client module into the server graph.
  *
  * 🔴 It is also the cardinality bound, and it is CODE-OWNED: the `phase` label
- * is never taken from the beacon body. The client sends three named numeric
- * fields; this module maps them onto these three literals. A client cannot
- * invent a fourth.
+ * is never taken from the beacon body. The client sends named numeric fields;
+ * this module maps them onto these literals. A client cannot invent a third —
+ * including by sending `frameFetchMs`, which is deliberately not mapped (see the
+ * DEFERRED note in launchTimings.ts) and is pinned by a test.
  */
 export const APP_BLOCK_LAUNCH_PHASES = ['token_mint', 'init_wait'] as const;
 export type AppBlockLaunchPhase = (typeof APP_BLOCK_LAUNCH_PHASES)[number];
@@ -207,10 +208,11 @@ export function normalizeErrorClass(
  * 🔴 THE TWO RULES THIS ENCODES, both of which produce a *plausible wrong
  * number* rather than an error when violated:
  *
- *   1. NEVER OBSERVE A ZERO. A leg that was not measured (no
- *      `Timing-Allow-Origin`, no resource entry, a mark never taken) arrives as
- *      0 or absent. A 0 in a latency histogram is indistinguishable from an
- *      instant leg and drags every percentile toward the bottom bucket — in the
+ *   1. NEVER OBSERVE A ZERO. A leg that was not measured — a mark never taken
+ *      (no token ever arrived, BLOCK_INIT never posted), a sub-millisecond delta
+ *      that rounds to 0, or a hand-rolled client sending 0 — arrives as 0 or
+ *      absent. A 0 in a latency histogram is indistinguishable from an instant
+ *      leg and drags every percentile toward the bottom bucket, in the
  *      reassuring direction, which is why nobody notices.
  *   2. DROP, NEVER CLAMP, AN OUT-OF-RANGE SAMPLE. Mirrors
  *      `observeCustomComfyWallclockSeconds`: a clamp folds junk onto the `+Inf`
@@ -304,23 +306,38 @@ type Bundle = {
 // sample above 10s was "structurally impossible on the success path" because the
 // ready timeout fires first. That is true of ONE ATTEMPT and false of a LAUNCH:
 // the host emits exactly one `ok` for the whole bounded auto-retry sequence,
-// whichever attempt produced it (MAX_AUTO_RETRIES = 2, backoffs 2s + 5s), so a
-// success on attempt 3 can legitimately total ~47s. `+Inf − le=15` therefore
-// means "recovered slowly", which is a real and interesting population, not a
-// broken emitter.
+// whichever attempt produced it, so a success can legitimately total up to
+// `worstReachableLaunchMs()` = 57s. `+Inf − le=15` therefore means "recovered
+// slowly", which is a real and interesting population, not a broken emitter.
+//
+// 🟡 KNOWN LIMITATION — the 15-60s tail is ONE undifferentiated bucket. Every
+// auto-retry-recovered launch lands in `+Inf` with no resolution between "16s"
+// and "57s", so the histogram can say THAT a launch was slow-recovered but not
+// how slow. Deliberate: extra edges up there would cost series on every app for
+// a population that is rare by construction (it takes two failed attempts), and
+// `_sum`/`_count` still give a usable mean for it. Revisit only if that bucket
+// turns out to carry real volume.
 const APP_BLOCK_LAUNCH_BUCKETS = [0.1, 0.25, 0.4, 0.6, 0.8, 1.2, 1.8, 2.5, 4, 6, 8, 10, 15];
 
 /**
  * Upper sanity bound on a single launch sample, in seconds.
  *
- * 🔴 DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED. This was 30s, justified as
- * "well above TOKEN_WAIT_TIMEOUT_MS (15s), the longest leg that can legitimately
- * complete" — a justification that silently assumed a launch is ONE attempt. It
- * is not: the host emits one `ok` for the whole bounded sequence, so the worst
- * reachable success is ~47s (15 + 2 + 15 + 5 + ~10). A 30s cap dropped real slow
- * successes, and did so in a slowness-correlated way — trimming exactly the tail
- * the metric exists to show. 60s clears the computed bound with margin while
- * still rejecting a clock anomaly. Mirrors `MAX_LAUNCH_SAMPLE_MS` client-side.
+ * 🔴 DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED — and the derivation is CODE,
+ * in `worstReachableLaunchMs()` (`~/components/AppBlocks/pageBlockHostLogic`), not
+ * this comment. A test asserts this cap exceeds it, so widening any of the five
+ * host constants it reads fails loudly instead of silently walking past the cap.
+ *
+ * The arithmetic has been wrong in a comment twice: first at 30s ("well above
+ * TOKEN_WAIT_TIMEOUT_MS (15s), the longest leg that can legitimately complete",
+ * which assumed a launch is ONE attempt — it is not, the host emits one `ok` for
+ * the whole bounded sequence), then at "~47s" (a sequence with two consecutive
+ * `no_token`s, which `MAX_AUTO_REMINTS = 1` makes unreachable). The real worst
+ * reachable success is 57s. 🔴 The margin here is therefore ~3s — deliberately
+ * tight and test-guarded rather than padded.
+ *
+ * The 30s cap was dropping real slow successes in a slowness-correlated way,
+ * trimming exactly the tail the metric exists to show. Mirrors
+ * `MAX_LAUNCH_SAMPLE_MS` client-side.
  *
  * DROPPED, not clamped (see `launchSampleSeconds`).
  */
@@ -508,12 +525,19 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
 
   // ── LAUNCH LATENCY — TWO histograms, deliberately, not one ──────────────────
   //
-  // 🔴 THE SPLIT IS THE CARDINALITY DESIGN, not a stylistic choice. A single
-  // combined {app_block_id, phase} histogram would be ~51 apps × 2 phases × 15
-  // bucket series ≈ 1,530 series PER POD, across ~130 scraped dp-prod pods — and
+  // 🔴 THE SPLIT IS THE CARDINALITY DESIGN, not a stylistic choice.
+  //
+  // Count a histogram label set as 16 SERIES, not 15: 13 finite bucket edges
+  // + `+Inf` + `_sum` + `_count`. And `app_block_id` spans ~52 values at A=50
+  // approved apps, because `boundAppBlockIdLabel` adds BOTH 'dev' and 'other'.
+  //
+  // A single combined {app_block_id, phase} histogram would then be
+  // 52 × 2 × 16 = 1,664 series PER POD, across ~130 scraped dp-prod pods — and
   // prom-client retains every distinct label set in the Node heap forever (the
-  // --max-old-space-size exit-139 OOM class). Split as below it is ~765 + 30
-  // ≈ 795/pod at full app saturation, in line with the existing
+  // --max-old-space-size exit-139 OOM class). Split as below it is
+  // 52 × 16 = 832 plus 2 × 16 = 32, i.e. ~864/pod at full app saturation
+  // (an earlier revision said 795 — it undercounted both factors), in line with
+  // the existing
   // `civitai_app_block_request_duration_seconds{app_block_id, endpoint}`
   // precedent rather than an order of magnitude past it.
   //

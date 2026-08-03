@@ -132,6 +132,13 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
  * browser test cannot discriminate it by magnitude. This is where it is pinned.
  */
 describe('shouldResetLaunchMarks', () => {
+  /**
+   * INVARIANT GUARD, not regression coverage: the host seeds `launchInstanceRef`
+   * at render time, so `previousInstanceId` is never actually `null` by the time
+   * the effect runs. This pins the predicate's contract for any future caller
+   * that does not seed eagerly; the real first-mount protection is the WIRING,
+   * gated in launchSampleBound.test.ts.
+   */
   it('🔴 does NOT reset on first mount (there is no previous instance)', () => {
     expect(shouldResetLaunchMarks(null, 'page_apb_a')).toBe(false);
   });

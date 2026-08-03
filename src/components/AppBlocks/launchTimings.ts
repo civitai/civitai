@@ -37,24 +37,28 @@ export type LaunchPhase = (typeof LAUNCH_PHASES)[number];
 /**
  * Upper sanity bound on any single launch sample, in milliseconds.
  *
- * 🔴 60 s IS DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED. An earlier draft used
- * 30 s, justified as "comfortably above TOKEN_WAIT_TIMEOUT_MS (15 s), the longest
- * leg that can legitimately complete". That justification was WRONG, because a
- * successful launch is not one attempt: `MAX_AUTO_RETRIES = 2` means the host
- * emits ONE `ok` for the whole bounded sequence, whichever attempt produced it.
- * Worst reachable success:
+ * 🔴 DERIVED FROM THE AUTO-RETRY BOUND, NOT PICKED — and the derivation is CODE,
+ * in `worstReachableLaunchMs()` (pageBlockHostLogic), not this comment. A test
+ * asserts this cap exceeds it, so widening any of `MAX_AUTO_RETRIES`,
+ * `MAX_AUTO_REMINTS`, `AUTO_RETRY_BACKOFF_MS`, `TOKEN_WAIT_TIMEOUT_MS` or
+ * `BLOCK_READY_TIMEOUT_MS` fails loudly instead of silently walking past the cap.
  *
- *     15 s (attempt 1 -> no_token at TOKEN_WAIT_TIMEOUT_MS)
- *   +  2 s (AUTO_RETRY_BACKOFF_MS[0])
- *   + 15 s (attempt 2 -> no_token)
- *   +  5 s (AUTO_RETRY_BACKOFF_MS[1])
- *   + ~10 s (attempt 3 finally reaches BLOCK_READY)
- *   = ~47 s
+ * That test exists because the arithmetic has been wrong in a comment TWICE.
+ * First at 30 s, justified as "comfortably above TOKEN_WAIT_TIMEOUT_MS (15 s), the
+ * longest leg that can legitimately complete" — which quietly assumed a launch is
+ * ONE attempt. It is not: the host emits one `ok` for the whole bounded sequence,
+ * whichever attempt produced it. Then at "~47 s", from a sequence with two
+ * consecutive `no_token`s, which `MAX_AUTO_REMINTS = 1` makes UNREACHABLE.
  *
- * A 30 s cap therefore DROPPED real slow successes — and the drop was
- * slowness-correlated, i.e. it silently trimmed exactly the tail the metric
- * exists to show. 60 s clears the computed bound with margin while still
- * rejecting a clock anomaly or a `performance.now()` discontinuity.
+ * The real worst reachable success is 57 s (see `worstReachableLaunchMs` for the
+ * sequence and why the naive `3 x (15 + 10) + backoffs` = 82 s over-states it).
+ * 🔴 So the margin here is ~3 s, not "comfortable" — it is deliberately tight and
+ * test-guarded rather than padded.
+ *
+ * The 30 s cap was therefore DROPPING real slow successes, and the drop was
+ * slowness-correlated: it trimmed exactly the tail the metric exists to show. At
+ * 60 s there is no live drop, while a clock anomaly or a `performance.now()`
+ * discontinuity is still rejected.
  *
  * 🔴 DROPPED, NEVER CLAMPED — mirrors `observeCustomComfyWallclockSeconds`. A
  * clamp folds junk onto the `+Inf` edge and poisons `_sum` and every tail
@@ -219,16 +223,24 @@ export function computeLaunchTimings(marks: LaunchMarks): LaunchTimingsPayload |
 // number its name claimed.
 //
 // 1. WITHOUT `Timing-Allow-Origin`, `responseEnd` FOR A CROSS-ORIGIN SUBFRAME IS
-//    THE FRAME'S `load` EVENT, NOT THE DOCUMENT RESPONSE. The HTML spec's iframe
-//    load steps set the fallback "response end time" to the current time when the
-//    subframe's load event fires, and the TAO check is what selects between that
-//    fallback and the real document timing. So the SAME field carries two
-//    different quantities depending on a header we do not send: with TAO (or
-//    same-origin) it is document-response completion; without, it is the whole
-//    subframe load, including the block's own JS, CSS, fonts and images.
+//    THE FRAME'S `load` EVENT, NOT THE DOCUMENT RESPONSE. The iframe load-event
+//    steps set the fallback "response end time" to the current high resolution
+//    time, and the TAO check is what selects between that fallback and the real
+//    document timing. So the SAME field carries two different quantities
+//    depending on a header we do not send: with TAO (or same-origin) it is
+//    document-response completion; without, it is the whole subframe load,
+//    including the block's own JS, CSS, fonts and images.
+//
+//    Sources — spec-pinned, not folklore:
+//      - WHATWG HTML §4.8.5 (iframe load event steps set the fallback response
+//        end time) and §7.4.6 (a TAO pass skips the fallback);
+//      - Chromium since M111: `HTMLFrameOwnerElement::DispatchLoad()` ->
+//        `ReportFallbackResourceTimingIfNeeded()`;
+//      - WPT `resource-timing/nested-nav-fallback-timing.html`, which asserts
+//        exactly this behaviour.
 //    Measured on Chromium 144 and 150 against a child page holding one
-//    subresource: the no-TAO duration tracked the delay 1:1 (657 / 2053 /
-//    5066 ms for 500 / 2000 / 5000 ms held) while TAO and same-origin stayed at
+//    subresource: the no-TAO duration tracked the delay 1:1 — 657 / 2053 /
+//    5066 ms for 500 / 2000 / 5000 ms held — while TAO and same-origin stayed at
 //    3-9 ms. Practical effect on a real block: the phase reads close to `total`,
 //    seconds not milliseconds, and visually dominates any phase panel while
 //    measuring roughly what `total` already measures.
@@ -248,10 +260,24 @@ export function computeLaunchTimings(marks: LaunchMarks): LaunchTimingsPayload |
 // changes WHICH QUANTITY the field carries, it may be a genuine prerequisite
 // rather than a nice-to-have.
 //
-// If the phase comes back, the seam is small: add the literal to LAUNCH_PHASES
-// here and to APP_BLOCK_LAUNCH_PHASES server-side, add one optional
-// `frameFetchMs` number to the beacon schema, and populate it in
-// `computeLaunchTimings`. Nothing else in this module is shaped around its
-// absence. Whatever is added must state plainly WHICH of the two quantities it
-// measures, and must publish its own coverage denominator rather than being
-// quoted as a fleet number.
+// If the phase comes back, the seam is FIVE edits — and the two easy ones to miss
+// are the last two, because without them the phase is PERMITTED but emits
+// nothing, which is a silent no-op for exactly the reader this note serves:
+//
+//   1. add the literal to `LAUNCH_PHASES` here;
+//   2. add it to `APP_BLOCK_LAUNCH_PHASES` in app-block-runtime.metrics;
+//   3. add an optional `frameFetchMs` number to `blockRenderSchema`
+//      (track.schema.ts) and populate it in `computeLaunchTimings` below;
+//   4. 🔴 add `frameFetchMs?: unknown` to `AppBlockLaunchTimings` in
+//      app-block-runtime.metrics — otherwise the server type has no such field;
+//   5. 🔴 add the `['frame_fetch', timings.frameFetchMs]` tuple to the `phases`
+//      array in `observeAppBlockLaunch` — the array, not the enum, is what
+//      actually observes.
+//
+// Two tests currently pin the absence and will go red as soon as you start
+// (that is intended, not an obstacle): "ignores a client-sent frameFetchMs" in
+// app-block-launch.metrics.test.ts and "never emits a frameFetchMs field" here.
+//
+// Nothing else in this module is shaped around the absence. Whatever is added
+// must state plainly WHICH of the two quantities it measures, and must publish
+// its own coverage denominator rather than being quoted as a fleet number.

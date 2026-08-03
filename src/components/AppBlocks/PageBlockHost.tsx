@@ -10,6 +10,8 @@ import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
+  BLOCK_READY_TIMEOUT_MS,
+  TOKEN_WAIT_TIMEOUT_MS,
   decideAutoRetry,
   advanceReviewConsentLatch,
   buildReviewConsentNotification,
@@ -154,9 +156,14 @@ function storageErrorMessage(err: unknown): string {
  * out for real cost ~99s in one file and was the single largest contributor to the
  * component suite overrunning its CI budget; importing the real constants keeps the
  * tests pinned to the host's actual windows rather than to copies that can drift.
+ *
+ * 🔴 They now LIVE in `pageBlockHostLogic` and are re-exported here. That module
+ * is plain TS with no React graph, so a NODE test can import them — which is what
+ * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
+ * windows instead of from a hard-coded literal in a comment. Importing them from
+ * this file would drag the whole component graph into the `unit` project.
  */
-export const BLOCK_READY_TIMEOUT_MS = 10_000;
-export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly

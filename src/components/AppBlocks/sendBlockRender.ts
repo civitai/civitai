@@ -67,9 +67,16 @@ export type BlockRenderBeaconInput = {
   // same rule, but do not rely on that.
   //
   // Server-side these drive `civitai_app_block_launch_total_seconds{app_block_id}`
-  // and `civitai_app_block_launch_phase_seconds{phase,conn,tao}` — and, like
+  // and `civitai_app_block_launch_phase_seconds{phase}` — and, like
   // status/errorClass/secondary, they are STRIPPED from the ClickHouse insert by
   // BOTH writers (`blockRenderTrackerPayload`).
+  //
+  // 🔴 NUMBERS ONLY. The `phase` label is code-owned and mapped server-side from
+  // these field NAMES; nothing here is ever used as a label value, so a public
+  // beacon body cannot touch cardinality. (An earlier draft of this comment
+  // advertised `{phase,conn,tao}`. Those labels never shipped — they belonged to
+  // a TAO-gated frame-fetch phase that was designed and then dropped; see the
+  // DEFERRED note in launchTimings.ts.)
   timings?: LaunchTimingsPayload;
 };
 
