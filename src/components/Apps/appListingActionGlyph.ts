@@ -1,5 +1,6 @@
 import {
   IconExternalLink,
+  IconEye,
   IconInfoCircle,
   IconPlayerPlay,
   IconPlugConnected,
@@ -28,7 +29,7 @@ import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
  * mapping, and the invariant worth pinning is that the in-site and off-site
  * glyphs are DIFFERENT.
  */
-export type PrimaryActionGlyph = 'launch' | 'external' | 'connect' | 'info';
+export type PrimaryActionGlyph = 'launch' | 'external' | 'connect' | 'info' | 'view';
 
 /**
  * Glyph → Tabler icon.
@@ -46,8 +47,19 @@ export const ACTION_GLYPH_ICONS: Record<PrimaryActionGlyph, Icon> = {
   external: IconExternalLink,
   /** OAuth connect affordance (stubbed until the cutover wires it). */
   connect: IconPlugConnected,
-  /** Informational — no launch, no navigation off-site. */
+  /** Informational — no launch, no navigation off-site, and no target to go to. */
   info: IconInfoCircle,
+  /**
+   * "Read about it" — an in-site hop to the unified listing detail.
+   *
+   * 🔴 Distinct from `info`, and it must stay `IconEye`. #3539's product-feedback
+   * pass shipped `IconEye` for the card's "View details" CTA and for the recents
+   * rail's `view` action (`RECENT_ACTION_ICONS` in `RecentlyOpenedApps.tsx`), so
+   * this is the SITE's established vocabulary, not a fresh choice. `info` is the
+   * detail page's *inert* affordance ("Runs on model pages" — no href at all);
+   * collapsing the two would silently repaint every card's View-details CTA.
+   */
+  view: IconEye,
 };
 
 /**
@@ -82,17 +94,13 @@ export function detailActionGlyph(mode: DetailActionMode): PrimaryActionGlyph {
  * Store-card CTA action → glyph. Same vocabulary as the detail page, so a card
  * and the detail it links to can never disagree about what an app's CTA means.
  *
- * `detail` ("View details" — the unified listing detail) is informational, so it
- * shares the `info` glyph with the detail page's own informational mode.
+ * `detail` ("View details" — the unified listing detail) maps to `view`
+ * (`IconEye`), NOT `info`. See the `view` entry above: `IconEye` is what the site
+ * already ships for this action, on both the card and the recents rail.
  *
- * 🔴 NO LIVE CALLER YET. This half is consumed by the store-card PR that follows
- * (the card CTA collapse); it ships here so that PR imports this module rather
- * than editing it — the two changes are otherwise the same-file collision that
- * silently dropped a hunk from `GetStartedBody.tsx`. Its tests are therefore a
- * contract pin, not a regression gate, until the card reads through it.
- * Separately, `getListingCta` does not currently emit `'connect'` at all (the
- * off-site OAuth case routes to `'detail'`), so that arm is unreachable from
- * live data even after the card lands; it is mapped for totality over the type.
+ * `AppListingCard` is the live caller. `getListingCta` still does not emit
+ * `'connect'` (the off-site OAuth case routes to `'detail'`), so that arm remains
+ * unreachable from live data; it is mapped for totality over the type.
  */
 export function cardActionGlyph(action: ListingCtaAction): PrimaryActionGlyph {
   switch (action) {
@@ -103,6 +111,12 @@ export function cardActionGlyph(action: ListingCtaAction): PrimaryActionGlyph {
     case 'connect':
       return 'connect';
     case 'detail':
-      return 'info';
+      // 🔴 'view' (IconEye), NOT 'info'. This arm shipped as 'info' in #3540 while
+      // it had no caller; #3539 had meanwhile shipped IconEye on the card's real
+      // "View details" CTA. Wiring the card to the old mapping would have silently
+      // repainted every such CTA — a regression against a deliberate product call,
+      // introduced by a module written to be wired up. Corrected before its first
+      // caller (this file's own card) exists.
+      return 'view';
   }
 }

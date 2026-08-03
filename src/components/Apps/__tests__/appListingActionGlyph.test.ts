@@ -63,8 +63,14 @@ describe('cardActionGlyph', () => {
     expect(cardActionGlyph('open')).toBe('launch');
     expect(cardActionGlyph('visit')).toBe('external');
     expect(cardActionGlyph('connect')).toBe('connect');
-    // "View details" → the unified listing detail. Informational, not a launch.
-    expect(cardActionGlyph('detail')).toBe('info');
+    // 🔴 "View details" → `view` (IconEye), NOT `info`. This arm shipped as `info`
+    // in #3540 while it had no caller, and #3539 had meanwhile shipped IconEye on
+    // the card's real View-details CTA — so wiring the card to the module would
+    // have silently repainted every one of them. Pinned to the value, and to the
+    // DISTINCTION from `info`, so the two can't be collapsed again.
+    expect(cardActionGlyph('detail')).toBe('view');
+    expect(cardActionGlyph('detail')).not.toBe(detailActionGlyph('info'));
+    expect(ACTION_GLYPH_ICONS.view).not.toBe(ACTION_GLYPH_ICONS.info);
   });
 
   test('every card action gets a distinct glyph', () => {
