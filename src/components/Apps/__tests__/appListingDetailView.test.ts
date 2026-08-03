@@ -336,14 +336,27 @@ describe('getDetailPrimaryAction — off-site', () => {
  * SCOPE, honestly — every clause below was MEASURED by mutating the component,
  * not reasoned about:
  *   - CAUGHT: a literal `<iframe` anywhere in the JSX.
- *   - CAUGHT: a literal `<iframe` inside a template literal passed to
- *     `dangerouslySetInnerHTML` (an earlier draft of this paragraph claimed the
- *     opposite — it was wrong; the token is still in the source text).
- *   - CAUGHT: a `/*` inside a string literal placed before the frame. That one
- *     DID evade the stripped-source count (the non-greedy comment regex runs
- *     from that `/*` up to the next block-comment terminator and swallows the
- *     frame), which is why the second, strip-free positional assertion below
- *     exists. That is the check that kills this mutant.
+ *   - CAUGHT: a literal `<iframe` in a SINGLE-LINE template literal passed to
+ *     `dangerouslySetInnerHTML`. (An earlier draft said this form was NOT
+ *     caught — wrong; the token is still in the source text. It also said it
+ *     unqualified, which was also wrong: see the multi-line cases below.)
+ *   - CAUGHT: a `/*` inside a string literal placed before the frame. This DID
+ *     evade the stripped-source count (the non-greedy comment regex runs from
+ *     that `/*` up to the next block-comment terminator and swallows the frame),
+ *     which is why the strip-free positional assertion exists; that assertion is
+ *     what kills it.
+ *   - CAUGHT (only after narrowing the tolerated prefix to `*`): a MULTI-LINE
+ *     `dangerouslySetInnerHTML` template whose `<iframe` line begins with `//`
+ *     or `/*`. While those prefixes were tolerated, the positional check was
+ *     correlated with `stripComments` — which deletes exactly those two — so
+ *     both assertions went green on a real rendering frame.
+ *   - 🔴 NOT caught, KNOWN AND ACCEPTED: a `/*` inside a string literal combined
+ *     with a `*`-led `<iframe` line inside a multi-line template literal. The
+ *     over-strip hides it from (a) and the `*` prefix is tolerated by (b).
+ *     Irreducible without a string-literal-aware tokenizer, which is declined
+ *     deliberately: a hand-rolled scanner desyncs on regex literals and on
+ *     apostrophes in JSX text, and those failures point toward false GREEN —
+ *     trading a named, documented leak for unnamed ones.
  *   - NOT caught: HTML assembled so the token never appears literally
  *     (`'<' + 'iframe'`), a frame rendered by a wrapper component, or
  *     `document.createElement('iframe')`.
@@ -361,25 +374,38 @@ describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
   const countIframes = (s: string) => [...s.matchAll(/<iframe\b/g)].length;
 
   /**
-   * Lines holding `<iframe` that are NOT positioned inside a comment.
+   * Lines holding `<iframe` that do NOT begin with a block-comment continuation
+   * marker (` * `).
    *
    * 🔴 STRIPS NOTHING — that is the entire point. The count above depends on
    * `stripComments`, so it inherits every way that regex can remove too much;
-   * this one only asks where the token sits. A block-comment continuation line
-   * (` * …`) or a `//` line is fine — the file docstring legitimately names
-   * `<iframe src={liveUrl}>` twice. JSX never starts a line with `*`, so a real
-   * frame cannot hide here. Its only failure mode is a FALSE RED (an inline
-   * trailing block comment naming an iframe on a code line), which is the safe
-   * direction.
+   * this one only asks where the token sits, and so fails differently.
+   *
+   * 🔴 `*` IS THE ONLY TOLERATED PREFIX, DELIBERATELY. An earlier version also
+   * allowed `//` and `/*` — which are exactly the two things `stripComments`
+   * already deletes, so for those prefixes the two assertions were CORRELATED,
+   * not independent, and a frame on a `//`- or `/*`-led line went green on both.
+   * Measured, with a real rendering frame: a multi-line `dangerouslySetInnerHTML`
+   * template whose `<iframe` line started with `//` or `/*` evaded the whole
+   * gate. Narrowing to `*` alone closed those. Do not re-widen this list.
+   *
+   * FAILURE MODES, measured rather than assumed:
+   *   - FALSE RED (safe): a legitimate line comment or trailing block comment
+   *     that names an iframe. Move it into the ` * ` docstring; the file's two
+   *     real occurrences already are.
+   *   - FALSE GREEN (the residual leak): the token sits on a line starting with
+   *     `*` AND `stripComments` over-strips it, so (a) misses it too. "JSX never
+   *     starts a line with `*`" is true of JSX — but NOT of template-literal
+   *     CONTENT, which is where the leak lives. Reachable only by combining a
+   *     `/*` inside a string literal with a `*`-led line inside a template
+   *     literal; see SCOPE. Closing it needs a string-literal-aware tokenizer,
+   *     which is declined on purpose (see SCOPE).
    */
   const uncommentedIframeLines = (s: string) =>
     s
       .split('\n')
       .filter((l) => l.includes('<iframe'))
-      .filter((l) => {
-        const t = l.trimStart();
-        return !(t.startsWith('*') || t.startsWith('//') || t.startsWith('/*'));
-      });
+      .filter((l) => !l.trimStart().startsWith('*'));
 
   const WHY =
     'A raw <iframe> is back in AppListingDetailBody.tsx. A block at ' +
@@ -405,9 +431,17 @@ describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
     expect(stripComments('const a = 1;')).toContain('const a = 1;');
 
     // The strip-free positional check must be able to SEE a frame, and must not
-    // fire on the docstring shape it exists to tolerate.
+    // fire on the ONE shape it exists to tolerate (the file's own docstring).
     expect(uncommentedIframeLines('  <iframe src={x} />')).toHaveLength(1);
     expect(uncommentedIframeLines(' * <iframe src={liveUrl}> — in a docstring')).toHaveLength(0);
+
+    // 🔴 ANTI-RE-WIDENING. `//` and `/*` must stay INTOLERATED: they are exactly
+    // what `stripComments` deletes, so tolerating them makes this check
+    // correlated with the count instead of independent of it — and a frame on
+    // such a line inside a template literal then passes BOTH assertions. That
+    // was a real, measured hole. These two lines are what stop it coming back.
+    expect(uncommentedIframeLines('  // <iframe src={x} />')).toHaveLength(1);
+    expect(uncommentedIframeLines('  /* <iframe src={x} /> */')).toHaveLength(1);
   });
 
   it('🔴 the component source contains no <iframe> element', () => {
