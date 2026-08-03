@@ -1,11 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// 🔴 NOT ABOUT THIS FILE'S ASSERTIONS — it is about its EXIT CODE. The code
-// under test is pure, but it is reached through a module that imports
-// `~/server/db/client` at module scope, which instantiates Prisma and leaves an
-// UNHANDLED rejection. That rejection fails no test; it only makes the runner
-// exit non-zero, so `rc` here did not describe the tests and any mutation sweep
-// reading it reported every mutant killed. Nothing below touches a database.
+// Mocked for the EXIT CODE, not the assertions. Reached transitively, this
+// module instantiates Prisma — and in a worktree without the repo's flake
+// dev-shell that leaves an unhandled rejection which fails no test but still
+// sets rc=1, so a mutation sweep reading rc scores every mutant as killed.
+// Nothing below touches a database. See civitai#3576.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { classifyDecision } from '~/server/games/new-order/consensus-backfill';
