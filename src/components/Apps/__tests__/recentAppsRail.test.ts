@@ -10,6 +10,7 @@ import {
   selectChromeRecentApps,
   selectRecentRailEntries,
   toRecentAppFromListing,
+  type RecentHealMemo,
 } from '~/components/Apps/recentAppsRail';
 import type { RecentApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -958,5 +959,200 @@ describe('reconcileRecentApps', () => {
     const entries = [legacy({ id: 'ab_pv', blockId: 'prompt-vault' }), legacy()];
     const out = reconcileRecentApps(entries, [onsiteCard()]);
     expect(out.map((e) => e.id)).toEqual(['ab_pv', 'ab_gm']);
+  });
+
+  it('🔴 an OFF-SITE entry does NOT consult the slug join — it would heal to the WRONG app', () => {
+    // An off-site listing has no AppBlock, so its `blockId` names nothing. No
+    // writer produces this shape today, but `coerce` accepts it, so a future one
+    // reopens the hole. Every value here is pairwise distinct EXCEPT the
+    // collision under test: the entry's stray `blockId` equals the ON-SITE
+    // card's slug, and the entry's own listing is not on the loaded pages.
+    const ghost: RecentApp = {
+      id: 'lst_ghost',
+      kind: 'offsite',
+      blockId: 'gen-matrix', // ← the collision: an on-site card's slug
+      slug: 'ghost-app',
+      name: 'Ghost App',
+      externalUrl: 'https://ghost.example/a',
+    };
+    const out = reconcileRecentApps([ghost], [onsiteCard()]);
+
+    // Untouched — not merged, not partially overwritten, not rebuilt.
+    expect(out[0]).toBe(ghost);
+    // The specific harm the gate prevents: taking the other app's identity.
+    expect(out[0].slug).toBe('ghost-app');
+    expect(out[0].name).toBe('Ghost App');
+    expect(out[0].kind).toBe('offsite');
+    // …and therefore never offering the on-site app's run link under this tile.
+    const resolved = resolveRecentApp(out[0])!;
+    expect(getRecentRailTarget(resolved, { canOpenPage: true }).href).toBe(
+      'https://ghost.example/a'
+    );
+  });
+
+  /**
+   * 🔴 MONOTONIC HEALING. Everything above reconciles against ONE card set. The
+   * caller's card set is filter- and page-scoped (`listAvailable` is keyed on
+   * `{kind, category, sort, limit}` with no `keepPreviousData`), so it EMPTIES on
+   * every sort/filter change and NARROWS whenever the viewer's app is on page 2
+   * or behind the active filter. These pin that neither can un-heal a tile.
+   */
+  describe('the `healed` memo — a match is a one-way ratchet across renders', () => {
+    /** The action a viewer sees for `entry`, through the real resolver. */
+    const actionOf = (entry: RecentApp) =>
+      getRecentRailAction(resolveRecentApp(entry)!, { canOpenPage: true }).action;
+
+    it('🔴 a healed entry SURVIVES the card set emptying (the sort/filter flip)', () => {
+      const healed: RecentHealMemo = new Map();
+      const [first] = reconcileRecentApps([legacy()], [onsiteCard()], healed);
+      expect(first).toMatchObject({ kind: 'onsite', hasPage: true, slug: 'gen-matrix' });
+
+      // The viewer changed `sort`. `data` goes undefined, so the caller passes
+      // []. WITHOUT the memo the `cards.length === 0` early return hands back the
+      // raw legacy entry and the tile reverts to an eye.
+      const [second] = reconcileRecentApps([legacy()], [], healed);
+      expect(second).toEqual(first);
+      expect(actionOf(second)).toBe('open');
+    });
+
+    it('🔴 THE ROUND-TRIP THE VIEWER SEES: play→eye→play never happens', () => {
+      const healed: RecentHealMemo = new Map();
+      const step = (cards: ListingCard[]) =>
+        actionOf(reconcileRecentApps([legacy()], cards, healed)[0]);
+
+      expect(step([])).toBe('view'); // first paint — the query has not resolved
+      expect(step([onsiteCard()])).toBe('open'); // heals
+      expect(step([])).toBe('open'); // sort change — pre-fix this was 'view'
+      expect(step([onsiteCard()])).toBe('open'); // the new page resolves
+    });
+
+    it('🔴 …and the card set merely NARROWING cannot un-heal either (page 2 / filtered out)', () => {
+      // Distinct from the empty case above: here cards ARE loaded, just not this
+      // app's, so no early return is involved — the entry simply matches nothing.
+      const healed: RecentHealMemo = new Map();
+      const other = onsiteCard({
+        id: 'lst_pv',
+        slug: 'prompt-vault',
+        name: 'Prompt Vault',
+        kindData: {
+          kind: 'onsite',
+          appBlockId: 'ab_pv',
+          hasPage: false,
+          liveUrl: 'https://prompt-vault.civit.ai',
+        },
+      });
+      reconcileRecentApps([legacy()], [onsiteCard()], healed);
+      const [out] = reconcileRecentApps([legacy()], [other], healed);
+      expect(actionOf(out)).toBe('open');
+      expect(out.slug).toBe('gen-matrix');
+      // Emphatically NOT the other app's identity.
+      expect(out.name).toBe('Gen Matrix');
+    });
+
+    it('🔴 a MATCH still BEATS the memo — correcting DOWN survives monotonicity', () => {
+      // The mutation-sensitive direction. An implementation where the memo wins
+      // passes every test above and fails this one, having pinned a play glyph on
+      // an app that has since lost its page — a guaranteed 404 under "Open".
+      const healed: RecentHealMemo = new Map();
+      reconcileRecentApps([legacy()], [onsiteCard()], healed);
+      const lostItsPage = onsiteCard({
+        kindData: {
+          kind: 'onsite',
+          appBlockId: 'ab_gm',
+          hasPage: false,
+          liveUrl: 'https://gen-matrix.civit.ai',
+        },
+      });
+      const [out] = reconcileRecentApps([legacy()], [lostItsPage], healed);
+      expect(out.hasPage).toBe(false);
+      expect(actionOf(out)).toBe('view');
+    });
+
+    it('🔴 THE BOUND: the memo holds one value per RECENTS entry, never the catalog', () => {
+      // 50 filter changes, each loading a different page of cards. If the
+      // implementation accumulated CARDS this would grow without limit.
+      const healed: RecentHealMemo = new Map();
+      const entries = [legacy(), legacy({ id: 'ab_pv', blockId: 'prompt-vault' })];
+      for (let i = 0; i < 50; i++) {
+        const page = onsiteCard({
+          id: `lst_${i}`,
+          slug: `app-${i}`,
+          kindData: {
+            kind: 'onsite',
+            appBlockId: `ab_${i}`,
+            hasPage: true,
+            liveUrl: 'https://x.civit.ai',
+          },
+        });
+        reconcileRecentApps(entries, [page, onsiteCard()], healed);
+        expect(healed.size).toBeLessThanOrEqual(entries.length);
+      }
+      // Only the entry that actually matched is remembered — one, not 51.
+      expect([...healed.keys()]).toEqual(['ab_gm']);
+    });
+
+    it('🔴 THE BOUND: an id the recents no longer contain is DROPPED, not retained', () => {
+      const healed: RecentHealMemo = new Map();
+      reconcileRecentApps([legacy()], [onsiteCard()], healed);
+      expect([...healed.keys()]).toEqual(['ab_gm']);
+
+      // The viewer ran 8 other apps; `ab_gm` rolled off the capped store. It can
+      // never be consulted again, so keeping it is pure leak.
+      reconcileRecentApps([legacy({ id: 'ab_pv', blockId: 'prompt-vault' })], [], healed);
+      expect(healed.has('ab_gm')).toBe(false);
+      expect(healed.size).toBe(0);
+    });
+
+    it('the memo is only ever WRITTEN from a card — an unmatched entry seeds nothing', () => {
+      const healed: RecentHealMemo = new Map();
+      reconcileRecentApps(
+        [legacy({ id: 'ab_pv', blockId: 'prompt-vault' })],
+        [onsiteCard()],
+        healed
+      );
+      expect(healed.size).toBe(0);
+    });
+
+    it('OMITTING the memo is exactly the old behaviour (the 2-arg calls above still hold)', () => {
+      // Invariant guard, not a regression test: it pins that adding the
+      // parameter changed nothing for a caller that does not pass it.
+      const entries = [legacy()];
+      expect(reconcileRecentApps(entries, [])).toBe(entries);
+      expect(reconcileRecentApps(entries, [onsiteCard()])).toEqual(
+        reconcileRecentApps(entries, [onsiteCard()], new Map())
+      );
+    });
+  });
+
+  /**
+   * 🔴 The memo is an OPTIONAL parameter, so the un-healing bug is one deleted
+   * argument away and would pass every test above. This scans the one production
+   * call site, the same way the chrome-mount gate is scanned earlier in this file.
+   */
+  describe('the /apps store is actually WIRED to the monotonic form', () => {
+    const source = fs
+      .readFileSync(
+        path.resolve(__dirname, '../../..', 'components/Apps/AppListingsMarketplaceBody.tsx'),
+        'utf8'
+      )
+      // Strip comments — that file's prose names these symbols repeatedly, and
+      // matching prose would scope the assertion to a doc-comment, not to code.
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+
+    it('found the call site (the scan itself must not silently match nothing)', () => {
+      expect(source.length).toBeGreaterThan(1000);
+      expect(source).toMatch(/reconcileRecentApps\(/);
+    });
+
+    it('🔴 passes a cross-render memo — a two-arg call restores the un-healing bug', () => {
+      expect(source).toMatch(/reconcileRecentApps\(\s*recents,\s*items,\s*[A-Za-z0-9_.]+\s*\)/);
+    });
+
+    it('🔴 holds that memo in a REF — module state would leak across mounts', () => {
+      // `useState`/a module-level Map would either not survive re-render or would
+      // outlive the mount and be shared between two stores.
+      expect(source).toMatch(/useRef<RecentHealMemo>\(\s*new Map\(\)\s*\)/);
+    });
   });
 });
