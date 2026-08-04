@@ -68,7 +68,11 @@ export default defineConfig({
           name: 'unit',
           globals: true,
           environment: 'node',
-          include: ['src/**/*.test.ts'],
+          // `scripts/` is included so the typecheck wrapper's outcome
+          // classifier (scripts/typecheck.mjs) is covered — it is the thing that
+          // decides whether a run counts as a pass, so it needs a suite of its
+          // own rather than a one-off manual check.
+          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
           exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
           setupFiles: ['src/__tests__/setup.ts'],
           // Several unit tests cold-`await import(...)` a large Next API-page / service
