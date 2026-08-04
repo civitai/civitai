@@ -95,8 +95,10 @@ import {
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
+  paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
+import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
@@ -467,6 +469,7 @@ export const upsertModelVersion = async ({
   templateId,
   paidAccess,
   donationGoal,
+  rightsAffirmed,
   meta: metaInput,
   tracker,
   actorUserId,
@@ -568,7 +571,22 @@ export const upsertModelVersion = async ({
 
   assertPaidAccessInput(paidAccess);
 
-  if (!id || templateId) {
+  // Selling access — or charging per generation — needs the creator on record as holding the rights to
+  // do so. Both channels are gated here because both are settable from this one write.
+  // `versionId` must be the row this write will actually land on. A templated write creates a NEW
+  // version even with an `id` present (see the branch below), so reading the affirmation off `id`
+  // would let one affirmed version vouch for unlimited new monetized ones.
+  const createsNewVersion = !id || !!templateId;
+  const rightsAffirmation = await resolveRightsAffirmation({
+    userId: actorUserId ?? model.userId,
+    ownerId: model.userId,
+    versionId: createsNewVersion ? undefined : id,
+    monetizes: hasLicensingFee || paidAccessCharges(paidAccess),
+    rightsAffirmed,
+    isModerator,
+  });
+
+  if (createsNewVersion) {
     const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
@@ -592,7 +610,10 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
-          meta: (metaInput as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
+          meta:
+            ((rightsAffirmation
+              ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+              : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
           flags: flagsOverride,
           availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
             (s) => s === data?.status
@@ -689,12 +710,14 @@ export const upsertModelVersion = async ({
       );
     }
 
-    const mergedMeta = metaInput
-      ? {
-          ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
-          ...(metaInput as Record<string, unknown>),
-        }
-      : undefined;
+    const mergedMeta =
+      metaInput || rightsAffirmation
+        ? {
+            ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
+            ...((metaInput as Record<string, unknown> | null) ?? {}),
+            ...(rightsAffirmation ? { rightsAffirmation } : {}),
+          }
+        : undefined;
 
     const version = await dbWrite.modelVersion.update({
       where: { id },
@@ -842,6 +865,7 @@ export const updateModelVersionPaidAccess = async ({
   id,
   paidAccess,
   donationGoal,
+  rightsAffirmed,
   tracker,
   actorUserId,
   isModerator,
@@ -857,6 +881,7 @@ export const updateModelVersionPaidAccess = async ({
       baseModel: true,
       usageControl: true,
       modelId: true,
+      meta: true,
       model: { select: { userId: true } },
     },
   });
@@ -884,6 +909,15 @@ export const updateModelVersionPaidAccess = async ({
 
   assertPaidAccessInput(paidAccess);
 
+  const rightsAffirmation = await resolveRightsAffirmation({
+    userId: actorUserId ?? existingVersion.model.userId,
+    ownerId: existingVersion.model.userId,
+    versionId: id,
+    monetizes: paidAccessCharges(paidAccess),
+    rightsAffirmed,
+    isModerator,
+    existingMeta: existingVersion.meta,
+  });
   const { modelId } = existingVersion;
   const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
@@ -894,6 +928,16 @@ export const updateModelVersionPaidAccess = async ({
     paidAccess,
     donationGoal
   );
+
+  // After the gate write, so a failed write can't leave the version marked as having affirmed a price
+  // it never got. Merged in SQL rather than read-modify-write: `meta` is shared with moderation flags
+  // (needsReview / declinedReason), and rewriting the whole object would clobber a concurrent change.
+  if (rightsAffirmation)
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion"
+      SET meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify({ rightsAffirmation })}::jsonb
+      WHERE id = ${id}
+    `;
 
   if (tracker) {
     const changeRows = diffEntityChanges({

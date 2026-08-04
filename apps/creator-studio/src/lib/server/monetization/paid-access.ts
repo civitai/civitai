@@ -61,7 +61,8 @@ export async function setPaidAccessConfig(
   cookie: string,
   versionId: number,
   config: PaidAccessConfig | null,
-  genOnly = false
+  genOnly = false,
+  rightsAffirmed = false
 ): Promise<PaidAccessResult> {
   try {
     // Map the editor's PaidAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
@@ -93,7 +94,7 @@ export async function setPaidAccessConfig(
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ id: versionId, paidAccess, donationGoal }),
+      body: JSON.stringify({ id: versionId, paidAccess, donationGoal, rightsAffirmed }),
     });
 
     if (res.ok) return { ok: true };
@@ -165,7 +166,8 @@ export type BulkPaidAccessResult =
 export async function bulkSetPermanentAccess(
   cookie: string,
   versionIds: number[],
-  pricing: { accessPrice: number; generationPrice?: number; freePreviewGenerations: number }
+  pricing: { accessPrice: number; generationPrice?: number; freePreviewGenerations: number },
+  rightsAffirmed = false
 ): Promise<BulkPaidAccessResult> {
   const usageRows = await dbRead
     .selectFrom('ModelVersion')
@@ -199,7 +201,7 @@ export async function bulkSetPermanentAccess(
       donationGoalEnabled: false,
       donationGoal: undefined,
     };
-    const res = await setPaidAccessConfig(cookie, id, config, genOnly);
+    const res = await setPaidAccessConfig(cookie, id, config, genOnly, rightsAffirmed);
     if (res.ok) updated++;
     else {
       failed++;

@@ -19,6 +19,7 @@
     CREATOR_USAGE_CONTROLS,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
+  import { MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT } from '@civitai/buzz';
 
   import type { CreatorModelVersion } from '$lib/server/models';
   import type { CreatorCaps } from '$lib/server/membership';
@@ -64,6 +65,11 @@
   }
   // Seed once from the version at mount (the parent remounts via `{#key version.id}` on open).
   let ea = $state(untrack(() => seed(version)));
+  let rightsAffirmed = $state(false);
+  // Mirrors the save action's turnOff rule: a timed gate with no duration clears the gate rather than
+  // selling anything, so it must not demand an affirmation to switch monetization OFF.
+  const willTurnOff = $derived(!ea.permanent && !((ea.timeframe ?? 0) > 0));
+  const mustAffirm = $derived(!version.rightsAffirmed && !willTurnOff && (ea.accessPrice ?? 0) > 0);
 
   // Resolved per version AND per gate kind: a page-level cap can't know this version's media type, and a
   // timed early-access window has no price ceiling at all — only a permanent gate does.
@@ -475,8 +481,22 @@
         <p class="text-xs text-dark-2">A duration of 0 turns early access off when you save.</p>
       {/if}
 
+      {#if mustAffirm}
+        <label class="flex items-start gap-2 text-xs text-dark-1">
+          <input
+            type="checkbox"
+            name="rightsAffirmed"
+            bind:checked={rightsAffirmed}
+            class="mt-0.5 shrink-0"
+          />
+          <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
+        </label>
+      {/if}
+
       <SheetFooter class="flex-col gap-2 p-0">
-        <Button type="submit">{ea.permanent ? 'Save paid access' : 'Save early access'}</Button>
+        <Button type="submit" disabled={mustAffirm && !rightsAffirmed}>
+          {ea.permanent ? 'Save paid access' : 'Save early access'}
+        </Button>
         {#if version.paidAccessConfig}
           <Button type="submit" name="clear" value="true" variant="outline">
             {ea.permanent ? 'Turn off paid access' : 'Turn off early access'}
