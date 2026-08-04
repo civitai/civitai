@@ -135,11 +135,24 @@ const SFW_ONLY_WITHHOLD_KEYS: ReadonlySet<string> = new Set(
   SFW_ONLY_WITHHOLD_LABELS.map(normalizeLabel)
 );
 
-/** The per-label result shape this policy reads off an XGuard scan. */
+/**
+ * The per-label result shape this policy reads off an XGuard scan.
+ *
+ * 🔴 `error` IS PART OF THE READ SHAPE, AND ITS ABSENCE HERE WAS A FAIL-OPEN.
+ * See {@link erroredRequestedLabels}. `finishReason` is declared so the field is
+ * visible to a reader of this type rather than invisible — it is deliberately
+ * NOT acted on; the reasoning is on that function.
+ *
+ * Every field is `unknown` because this is untrusted data off a network
+ * boundary: the generated client's declared types describe the contract, not
+ * what actually arrives.
+ */
 export type XGuardLabelResultLike = {
   label?: unknown;
   score?: unknown;
   triggered?: unknown;
+  error?: unknown;
+  finishReason?: unknown;
 };
 
 /** The scan output shape this policy reads. */
@@ -164,6 +177,16 @@ export type TextOutputScanVerdict = {
    * {@link missingRequestedLabels}.
    */
   missingLabels: string[];
+  /**
+   * 🔴 REQUESTED labels the scanner ATTEMPTED and FAILED on. NON-EMPTY FORCES A
+   * WITHHOLD, regardless of what did come back. See
+   * {@link erroredRequestedLabels}.
+   *
+   * DISJOINT FROM `missingLabels` for any one label, and that is the point of
+   * having two fields: an errored label IS present in `results[]`, so it is not
+   * drift, and its remedy is not drift's remedy.
+   */
+  erroredLabels: string[];
 };
 
 /**
@@ -247,6 +270,106 @@ export function missingRequestedLabels(
 }
 
 /**
+ * Does this `results[]` entry report that the scanner FAILED on its label?
+ *
+ * 🔴 READ BY PRESENCE, NOT BY VALUE. `error` is `null | string` in the generated
+ * client, but this is untrusted data off a network boundary — so anything
+ * present and non-null that is not an empty string is a failure, INCLUDING a
+ * shape we did not expect. A value we cannot interpret is a non-answer, and the
+ * whole point of this guard is that a non-answer never reads as clean.
+ *
+ * 🔴 THE ONE DELIBERATE LOOSENING: an EMPTY (or whitespace) string is NOT a
+ * failure. `modelReason` — the field immediately beside this one in the same
+ * type — came back EMPTY on every probe against the deployed scanner, so a
+ * scanner that populates `error: ''` on the HEALTHY path is a live possibility,
+ * not a hypothetical. Treating `''` as a fault would withhold 100% of generated
+ * output from the first adopting entry: the same day-one capability outage the
+ * pre-adoption gate on `missingRequestedLabels` warns about, arrived at from the
+ * other direction. A scanner that reports failures at all will populate a
+ * message.
+ */
+function labelResultErrored(entry: XGuardLabelResultLike): boolean {
+  const err = entry.error;
+  if (err === null || err === undefined) return false;
+  if (typeof err === 'string') return err.trim().length > 0;
+  return true;
+}
+
+/**
+ * The requested labels the scan came back with an ERROR on.
+ *
+ * 🔴 THIS CLOSES A SECOND FAIL-OPEN OF EXACTLY THE SHAPE
+ * {@link missingRequestedLabels} CLOSES, ON A DIFFERENT AXIS — and the drift
+ * guard cannot see it. `XGuardLabelResult` carries `error?: null | string`. A
+ * label the scanner ATTEMPTED and FAILED on comes back as a PRESENT `results[]`
+ * entry with `triggered: false` and an `error` string. That entry:
+ *
+ *   (a) satisfies the drift guard — whose only question is whether a `label`
+ *       came back at all, so the entry lands in its `evaluated` set and
+ *       `missingLabels` stays empty; and
+ *   (b) contributes nothing to `triggered`, because `triggered` is false.
+ *
+ * So the pre-fix policy read it as a CLEAN ANSWER and RELEASED. A scan where all
+ * fifteen labels errored was indistinguishable, to this policy, from a scan
+ * where all fifteen came back clean — which is precisely the invariant
+ * `missingRequestedLabels` states in so many words: *"we did not get the answer
+ * we asked for, and 'no answer' must never read as 'clean'"*. Drift is a label
+ * that was never EVALUATED; an error is a label whose evaluation FAILED. Both
+ * are non-answers, and every other branch in this file (scanner throw, hard
+ * deadline, no-verdict, over-cap, drift) already withholds on one.
+ *
+ * 🔴 WHY THIS IS A SEPARATE SIGNAL FROM `missingLabels` RATHER THAN FOLDED INTO
+ * IT. Folding it in is one line shorter and produces WORSE telemetry, which is
+ * the whole cost of the choice. `stage: 'label-drift'` means "a label in
+ * `TEXT_OUTPUT_SCAN_LABELS` is not one the scanner knows about" — the remedy is
+ * to fix this file's constant or the orchestrator's label config, and it is a
+ * deploy. `stage: 'label-error'` means "the scanner knows the label and its
+ * backend failed" — the remedy is to look at scanner health, and it typically
+ * clears by itself. Aggregating the two would send whoever reads the alert to
+ * the wrong place and would make each stage's rate a mix of two unrelated
+ * faults. This file already made exactly this call once, for exactly this
+ * reason, when it gave drift its own stage instead of reusing `'error'`.
+ *
+ * 🔴 `finishReason` IS DELIBERATELY NOT TREATED THE SAME WAY. It sits beside
+ * `error` in the same generated type, it is also `null | string`, and it
+ * plausibly carries a comparable signal — an LLM-judged label whose output was
+ * truncated has also produced a degraded answer. It is excluded because, unlike
+ * `error`, it CANNOT BE READ BY PRESENCE: a `finishReason` is emitted on the
+ * healthy path too, so acting on it requires knowing which VALUES mean "fine".
+ * That value set is orchestrator-side configuration this codebase does not
+ * control and has never observed — the same category `normalizeLabel`'s own
+ * comment warns about for label strings. Guessing it too strictly (say, "only
+ * `'stop'` is fine") withholds 100% of output the moment the scanner spells the
+ * healthy value differently; guessing it too loosely reintroduces the fail-open
+ * this function exists to close. THE GATE, if someone wants to act on it: probe
+ * the deployed scanner over benign content and read the `finishReason`
+ * distribution across all fifteen labels; if a healthy value is established,
+ * `labelResultErrored` is the one place to extend, and the extension belongs in
+ * the `'label-error'` stage rather than a third one.
+ *
+ * Compared on the NORMALIZED key, and scoped to the REQUESTED labels, both for
+ * the same reasons `missingRequestedLabels` gives: casing is orchestrator-side,
+ * and this policy makes claims only about the labels it actually sent. (The
+ * scoping is unreachable from `screenGeneratedText`, which always sends the full
+ * list; it is pinned by a test so it stays a decision rather than an accident.)
+ */
+export function erroredRequestedLabels(
+  output: XGuardScanOutputLike | null | undefined,
+  requestedLabels: readonly string[]
+): string[] {
+  const errored = new Set<string>();
+  const rawResults = output?.results;
+  if (Array.isArray(rawResults)) {
+    for (const entry of rawResults as XGuardLabelResultLike[]) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (typeof entry.label !== 'string' || entry.label.trim().length === 0) continue;
+      if (labelResultErrored(entry)) errored.add(normalizeLabel(entry.label));
+    }
+  }
+  return requestedLabels.filter((label) => errored.has(normalizeLabel(label)));
+}
+
+/**
  * The scan → verdict decision. PURE: no IO, no throws, fully mutation-testable
  * without an orchestrator.
  *
@@ -318,12 +441,20 @@ export function decideTextOutputVerdict(
   // client documents ("silently ignored"); see `missingRequestedLabels`.
   const missingLabels = missingRequestedLabels(output, opts.requestedLabels);
 
+  // 🔴 A LABEL WE ASKED FOR AND THE SCANNER FAILED ON WITHHOLDS, on its own, for
+  // the same reason a missing one does: it is a NON-ANSWER, and the entry it
+  // comes back as (`triggered: false` plus an `error`) is otherwise
+  // indistinguishable from a clean answer. See `erroredRequestedLabels`.
+  const erroredLabels = erroredRequestedLabels(output, opts.requestedLabels);
+
   return {
-    released: withholdingLabels.length === 0 && missingLabels.length === 0,
+    released:
+      withholdingLabels.length === 0 && missingLabels.length === 0 && erroredLabels.length === 0,
     withholdingLabels,
     triggeredLabels,
     scores,
     missingLabels,
+    erroredLabels,
   };
 }
 
@@ -400,9 +531,13 @@ export type TextOutputScreenResult =
 /**
  * Scan generated text and decide whether it may be released.
  *
- * 🔴 FAIL CLOSED. A scanner error, a timeout, a submit that returns no workflow,
- * a workflow that returns no `xGuardModeration` output — every one of these
- * WITHHOLDS.
+ * 🔴 FAIL CLOSED, ON EVERY BRANCH THAT IS NOT A CLEAN ANSWER. A scanner error, a
+ * timeout, a submit that returns no workflow, a workflow that returns no
+ * `xGuardModeration` output, content over the size cap, a requested label the
+ * scan never evaluated (`'label-drift'`), and a requested label the scanner
+ * evaluated and FAILED on (`'label-error'`) — every one of these WITHHOLDS. The
+ * unifying rule, and the one to apply to any branch added later: "no answer"
+ * must never read as "clean".
  *
  * 🔴 THIS IS THE EXACT OPPOSITE OF `auditPromptServer`, AND THE ASYMMETRY IS
  * DELIBERATE — DO NOT "FIX" IT FOR CONSISTENCY. `auditPromptServer` fails SOFT:
@@ -475,11 +610,12 @@ export async function screenGeneratedText(opts: {
   //     and including them would defeat the memo across the poll loop of a
   //     multi-tab viewer for no safety gain. Nothing leaks: a hit requires
   //     presenting the identical content, which the caller already holds.
-  // Only CONTENT verdicts are stored — never an error, timeout, missing output
-  // or label drift. Caching those would be fail-closed but would also pin a
-  // withhold through a recovery, turning a blip into a five-minute outage of the
-  // capability. (The drift case is the one that was inconsistent until the
-  // ordering fix below; see the `stage: 'label-drift'` branch.)
+  // Only CONTENT verdicts are stored — never an error, timeout, missing output,
+  // label drift or per-label scanner error. Caching those would be fail-closed
+  // but would also pin a withhold through a recovery, turning a blip into a
+  // five-minute outage of the capability. (The drift case is the one that was
+  // inconsistent until the ordering fix below; see the `stage: 'label-drift'`
+  // and `stage: 'label-error'` branches, both of which sit ABOVE the write.)
   //
   // 🔴 KNOWN COST OF THE KEY, RECORDED RATHER THAN LEFT FOR SOMEONE TO
   // DISCOVER: dropping `appId` also drops PER-APP TELEMETRY on a hit. A hit logs
@@ -588,6 +724,37 @@ export async function screenGeneratedText(opts: {
   // guard's own comment claims. Not caching keeps one line per observation.
   if (verdict.missingLabels.length > 0) {
     logScan({ ...opts, stage: 'label-drift', missingLabels: verdict.missingLabels });
+    return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+  }
+
+  // 🔴 A PER-LABEL SCANNER FAILURE, TREATED EXACTLY LIKE DRIFT AND FOR THE
+  // IDENTICAL REASONS — its own stage, and NOT MEMOIZED, checked here rather
+  // than after `writeCachedVerdict`.
+  //
+  // It is an OPERATIONAL fault, not a content hit, so it must not be aggregated
+  // into the per-app trigger rates; and it is recoverable in precisely the way
+  // the error branch's comment describes — a label backend that fails on one
+  // call answers on the next — so caching the withhold would pin a blip into a
+  // five-minute outage of the capability. The second-order argument is the same
+  // too: a memo HIT logs nothing at all, so caching this would emit the
+  // `'label-error'` line for the FIRST observation only and then go silent,
+  // exactly when a rate is what tells you a label backend is degraded.
+  //
+  // 🔴 ORDERED AFTER DRIFT, AND THE ORDER IS ARBITRARY BUT DETERMINISTIC. The
+  // two sets are disjoint for any ONE label (an errored entry is present in
+  // `results[]`, so it is never also missing), but a single scan can exhibit
+  // both across DIFFERENT labels. Drift is checked first only because it was
+  // here first; either fault alone is enough to withhold, and both log a label
+  // list, so nothing actionable is lost by the one that does not fire.
+  //
+  // 🔴 THE ERROR MESSAGES THEMSELVES ARE NOT LOGGED — only the label NAMES. The
+  // names are this file's own constants and carry nothing. An error STRING is
+  // scanner-supplied text from the other side of a network boundary and may
+  // quote the content being scanned, and this log store must never hold the text
+  // this posture is in the act of withholding. Which label failed is the
+  // actionable half; the message lives in the scanner's own logs.
+  if (verdict.erroredLabels.length > 0) {
+    logScan({ ...opts, stage: 'label-error', erroredLabels: verdict.erroredLabels });
     return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
   }
 
