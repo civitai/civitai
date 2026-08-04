@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -20,6 +20,7 @@ import {
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
+import { getAllImagesIndex } from '~/server/services/image.service';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
@@ -178,6 +179,11 @@ type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
 };
 type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>[number];
 
+/** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
+export type FeedBlockItems =
+  | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
+
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
@@ -198,9 +204,33 @@ export type HomeBlockWithData = {
   cosmeticShopSection?: GetShopSectionsWithItems;
   featuredModels?: GetModelsWithImagesAndModelVersions[];
   pickedCollections?: PickedFeaturedCollection[];
+  feedItems?: FeedBlockItems;
 };
 
+// Baseline feed inputs a Feed block always applies. These are the shape the feed
+// services require, not policy — anything a block should be able to vary belongs in
+// the metadata allowlist instead.
+const imageFeedDefaults = {
+  period: MetricTimeframe.Week,
+  periodMode: 'published',
+  sort: ImageSort.MostReactions,
+  browsingLevel: sfwBrowsingLevelsFlag,
+  include: [] as never[],
+  withMeta: false,
+  types: undefined,
+} as const;
+
+const modelFeedDefaults = {
+  period: MetricTimeframe.Week,
+  periodMode: 'published',
+  sort: ModelSort.HighestRated,
+  browsingLevel: sfwBrowsingLevelsFlag,
+  favorites: false,
+  hidden: false,
+} as const;
+
 const readThroughTypes: HomeBlockType[] = [
+  HomeBlockType.Feed,
   HomeBlockType.Leaderboard,
   HomeBlockType.CosmeticShop,
   HomeBlockType.FeaturedCollections,
@@ -305,6 +335,45 @@ export const getHomeBlockData = async ({
             return aIndex - bIndex;
           }),
       };
+    }
+    case HomeBlockType.Feed: {
+      const feed = sourceMetadata?.feed ?? metadata.feed;
+      if (!feed) return null;
+
+      // Overfetch so `maxPerUser` has a pool to thin, matching how Collection blocks
+      // pair a larger fetch limit with their cap.
+      const limit = feed.maxPerUser ? Math.min(feed.limit * 3, 200) : feed.limit;
+
+      if (feed.entity === 'images') {
+        const { items } = await getAllImagesIndex({
+          ...imageFeedDefaults,
+          limit,
+          domain: input.domain,
+          sort: (feed.sort as ImageSort) ?? ImageSort.MostReactions,
+          period: feed.period ?? MetricTimeframe.Week,
+          newCreators: feed.newCreators,
+          types: feed.types,
+          user,
+          headers: { src: 'getHomeBlockData:feed' },
+        });
+
+        return { ...homeBlock, metadata, feedItems: { entity: 'images' as const, items } };
+      }
+
+      const { items } = await getModelsWithImagesAndModelVersions({
+        input: {
+          ...modelFeedDefaults,
+          limit,
+          sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
+          period: feed.period ?? MetricTimeframe.Week,
+          newCreators: feed.newCreators,
+          baseModels: feed.baseModels,
+        },
+        user,
+        domain: input.domain,
+      });
+
+      return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
     }
     case HomeBlockType.CosmeticShop: {
       const cosmeticShopSectionMeta =

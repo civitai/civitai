@@ -16,6 +16,7 @@ const CACHE_EXPIRY = {
   [HomeBlockType.CosmeticShop]: 60 * 3, // 3 min
   [HomeBlockType.FeaturedModelVersion]: 60 * 60, // 1 hour
   [HomeBlockType.FeaturedCollections]: 60 * 3, // 3 min — random pick rotates on refresh
+  [HomeBlockType.Feed]: 60 * 10, // 10 min — a live feed slice, so shorter than a board
 };
 
 type HomeBlockForCache = {
@@ -43,6 +44,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
     case HomeBlockType.FeaturedModelVersion:
       return 'default';
     case HomeBlockType.FeaturedCollections:
+    case HomeBlockType.Feed:
       return homeBlock.id;
   }
 }

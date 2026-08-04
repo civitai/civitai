@@ -4408,6 +4408,7 @@ enum HomeBlockType {
   CosmeticShop
   FeaturedModelVersion
   FeaturedCollections
+  Feed
 }
 
 model HomeBlock {

@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { DomainColor, HomeBlockType } from '~/shared/utils/prisma/enums';
+import {
+  DomainColor,
+  HomeBlockType,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
@@ -44,6 +49,23 @@ export const homeBlockMetaSchema = z
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),
+    // Generic feed slice: run one of the existing feeds under saved filters and render
+    // the result like a Collection block. Filters are an explicit allowlist rather than
+    // a passthrough of the feed input — home-block metadata is mod-editable, and a
+    // passthrough would let a config change reach every knob those services expose.
+    feed: z.object({
+      entity: z.enum(['images', 'models']),
+      limit: z.number().int().min(1).max(100).default(28),
+      rows: z.number().int().min(1).max(4).default(2),
+      maxPerUser: z.number().int().positive().optional(),
+      sort: z.string().optional(),
+      period: z.enum(MetricTimeframe).optional(),
+      newCreators: z.boolean().optional(),
+      // images only
+      types: z.array(z.enum(MediaType)).optional(),
+      // models only
+      baseModels: z.array(z.string()).optional(),
+    }),
     announcements: z.object({
       ids: z.array(z.number()).optional(),
       limit: z.number().optional(),
