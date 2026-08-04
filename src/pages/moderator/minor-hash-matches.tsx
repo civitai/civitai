@@ -18,6 +18,7 @@ import type { MRT_ColumnDef } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { MinorFlagAppealActions } from '~/components/Moderation/MinorFlagAppealActions';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type {
   MinorFlagAppealRow,
@@ -568,67 +569,18 @@ function AppealsTable() {
         enableColumnFilter: false,
         enableColumnActions: false,
         Cell: ({ row: { original } }) => (
-          <Group gap="xs" justify="flex-end" wrap="nowrap">
-            <Button
-              size="compact-sm"
-              loading={
-                resolveMutation.isPending &&
-                resolveMutation.variables?.modelId === original.modelId &&
-                resolveMutation.variables?.uphold === true
-              }
-              onClick={() =>
-                openConfirmModal({
-                  title: 'Deny review request',
-                  centered: true,
-                  labels: { confirm: 'Keep flagged', cancel: 'Cancel' },
-                  children: (
-                    <Text size="sm">
-                      Keep <strong>{original.modelName}</strong> flagged as minor and tell the
-                      uploader their request was denied. This also records your sign-off, so a bulk
-                      rollback can no longer undo the flag.
-                    </Text>
-                  ),
-                  onConfirm: () =>
-                    resolveMutation.mutate({ modelId: original.modelId, uphold: true }),
-                })
-              }
-            >
-              Keep flagged
-            </Button>
-            <Button
-              size="compact-sm"
-              variant="light"
-              color="red"
-              loading={
-                resolveMutation.isPending &&
-                resolveMutation.variables?.modelId === original.modelId &&
-                resolveMutation.variables?.uphold === false
-              }
-              onClick={() =>
-                openConfirmModal({
-                  title: 'Grant review request',
-                  centered: true,
-                  labels: { confirm: 'Unflag', cancel: 'Cancel' },
-                  confirmProps: { color: 'red' },
-                  children: (
-                    <Text size="sm">
-                      Unflag <strong>{original.modelName}</strong>, restore the settings it had
-                      before it was flagged
-                      {original.prevNsfw ? ', including its NSFW flag' : ''}
-                      {original.prevGalleryLevel != null
-                        ? ` and gallery level ${original.prevGalleryLevel}`
-                        : ''}
-                      , and tell the uploader their request was granted.
-                    </Text>
-                  ),
-                  onConfirm: () =>
-                    resolveMutation.mutate({ modelId: original.modelId, uphold: false }),
-                })
-              }
-            >
-              Unflag
-            </Button>
-          </Group>
+          <MinorFlagAppealActions
+            row={original}
+            pending={
+              resolveMutation.isPending &&
+              resolveMutation.variables?.modelId === original.modelId
+                ? resolveMutation.variables.uphold
+                  ? 'uphold'
+                  : 'overturn'
+                : undefined
+            }
+            onResolve={(uphold) => resolveMutation.mutate({ modelId: original.modelId, uphold })}
+          />
         ),
       },
     ],
