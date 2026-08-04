@@ -15,6 +15,7 @@ import {
   getAuctionBySlug,
   getMyBids,
   getMyRecurringBids,
+  moveRecurringBidToLatest,
   togglePauseRecurringBid,
   updateAuctionBase,
 } from '~/server/services/auction.service';
@@ -62,6 +63,10 @@ export const auctionRouter = router({
     .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(deleteBidInput)
     .mutation(({ input, ctx }) => deleteRecurringBid({ ...input, userId: ctx.user.id })),
+  moveRecurringBidToLatest: auctionProcedure
+    .meta({ requiredScope: TokenScope.BountiesWrite })
+    .input(deleteBidInput)
+    .mutation(({ input, ctx }) => moveRecurringBidToLatest({ ...input, userId: ctx.user.id })),
   togglePauseRecurringBid: auctionProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(togglePauseRecurringBidInput)

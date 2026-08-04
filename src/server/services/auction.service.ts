@@ -38,7 +38,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { AuctionType, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -427,6 +426,11 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
   }
 };
 
+type MoveToLatestInfo =
+  | { status: 'available'; targetId: number; targetName: string }
+  | { status: 'targetTaken'; targetName: string }
+  | null;
+
 export type GetMyRecurringBidsReturn = AsyncReturnType<typeof getMyRecurringBids>;
 export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
   try {
@@ -455,7 +459,65 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
 
     const enhancedBids = await getAuctionMVData(bids);
 
-    return enhancedBids.sort(
+    const modelIds = uniq(enhancedBids.map((b) => b.entityData?.model.id).filter(isDefined));
+    const [candidateVersions, allRecurring] = modelIds.length
+      ? await Promise.all([
+          dbWrite.modelVersion.findMany({
+            where: {
+              modelId: { in: modelIds },
+              status: ModelStatus.Published,
+              availability: { not: Availability.Private },
+            },
+            orderBy: { index: 'asc' },
+            select: { id: true, name: true, modelId: true, baseModel: true },
+          }),
+          // The unique constraint also spans inactive/expired rows, so the taken-check
+          // can't reuse the active-filtered `bids` above.
+          dbWrite.bidRecurring.findMany({
+            where: { userId },
+            select: { auctionBaseId: true, entityId: true, accountType: true },
+          }),
+        ])
+      : [[], []];
+
+    // Display hint only; moveRecurringBidToLatest re-validates with the full gates.
+    const withMoveTarget = enhancedBids.map((bid) => {
+      const model = bid.entityData?.model;
+      let moveToLatest: MoveToLatestInfo = null;
+      if (
+        model &&
+        bid.auctionBase.type === AuctionType.Model &&
+        !model.cannotPromote &&
+        !model.poi &&
+        !(bid.accountType === 'green' && (model.nsfw || model.minor))
+      ) {
+        const matchAllowed = getModelTypesForAuction(bid.auctionBase).find(
+          (a) => a.type === model.type
+        );
+        const checkEcosystem =
+          !!bid.auctionBase.ecosystem && bid.auctionBase.ecosystem !== miscAuctionName;
+        const target = matchAllowed
+          ? candidateVersions.find(
+              (v) =>
+                v.modelId === model.id &&
+                (!checkEcosystem || (matchAllowed.baseModels ?? []).includes(v.baseModel))
+            )
+          : undefined;
+        if (target && target.id !== bid.entityId) {
+          moveToLatest = allRecurring.some(
+            (r) =>
+              r.auctionBaseId === bid.auctionBase.id &&
+              r.entityId === target.id &&
+              r.accountType === bid.accountType
+          )
+            ? { status: 'targetTaken', targetName: target.name }
+            : { status: 'available', targetId: target.id, targetName: target.name };
+        }
+      }
+      return { ...bid, moveToLatest };
+    });
+
+    return withMoveTarget.sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.amount - a.amount
     );
   } catch (error) {
@@ -1115,6 +1177,116 @@ export const deleteRecurringBid = async ({
   await dbWrite.bidRecurring.delete({
     where: { id: bidId },
   });
+};
+
+export const moveRecurringBidToLatest = async ({
+  userId,
+  bidId,
+}: DeleteBidInput & { userId: number }) => {
+  const bid = await dbWrite.bidRecurring.findFirst({
+    where: { id: bidId },
+    select: {
+      id: true,
+      userId: true,
+      entityId: true,
+      amount: true,
+      startAt: true,
+      endAt: true,
+      isPaused: true,
+      accountType: true,
+      auctionBase: { select: auctionBaseSelect },
+    },
+  });
+  if (!bid || bid.userId !== userId) throw throwNotFoundError('Bid not found.');
+  if (bid.auctionBase.type !== AuctionType.Model)
+    throw throwBadRequestError('Only model bids can be moved to a latest version.');
+
+  const currentMv = await dbWrite.modelVersion.findFirst({
+    where: { id: bid.entityId },
+    select: { modelId: true },
+  });
+  if (!currentMv) throw throwNotFoundError('Model version not found.');
+
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { modelId: currentMv.modelId },
+    orderBy: { index: 'asc' },
+    select: {
+      id: true,
+      name: true,
+      baseModel: true,
+      availability: true,
+      status: true,
+      model: {
+        select: { type: true, meta: true, poi: true, minor: true, status: true, nsfw: true },
+      },
+    },
+  });
+
+  // Keep in sync with createBid's inline eligibility gates (deliberately not shared —
+  // extracting them would touch the live charging path).
+  const allowedTypeData = getModelTypesForAuction(bid.auctionBase);
+  const target = versions.find((mv) => {
+    if (mv.availability === Availability.Private) return false;
+    if (mv.status !== ModelStatus.Published) return false;
+    if (mv.model.status !== ModelStatus.Published) return false;
+    if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true) return false;
+    if (mv.model.poi) return false;
+    const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
+    if (!matchAllowed) return false;
+    if (!!bid.auctionBase.ecosystem && bid.auctionBase.ecosystem !== miscAuctionName) {
+      if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel)) return false;
+    }
+    if (bid.accountType === 'green' && (mv.model.nsfw || mv.model.poi || mv.model.minor))
+      return false;
+    return true;
+  });
+
+  if (!target) throw throwBadRequestError('No eligible version was found for this model.');
+  if (target.id === bid.entityId)
+    throw throwBadRequestError('This recurring bid is already on the latest eligible version.');
+
+  const existing = await dbWrite.bidRecurring.findFirst({
+    where: {
+      auctionBaseId: bid.auctionBase.id,
+      userId,
+      entityId: target.id,
+      accountType: bid.accountType,
+    },
+    select: { id: true },
+  });
+  if (existing)
+    throw throwBadRequestError(
+      'You already have a recurring bid on the latest version of this model.'
+    );
+
+  // Today's already-charged Bid is deliberately untouched — the nightly job picks up
+  // the new target tomorrow, which keeps this off the refund path.
+  try {
+    const [, created] = await dbWrite.$transaction([
+      dbWrite.bidRecurring.delete({ where: { id: bid.id } }),
+      dbWrite.bidRecurring.create({
+        data: {
+          userId,
+          entityId: target.id,
+          amount: bid.amount,
+          startAt: bid.startAt,
+          endAt: bid.endAt,
+          isPaused: bid.isPaused,
+          auctionBaseId: bid.auctionBase.id,
+          accountType: bid.accountType,
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    return { id: created.id, entityId: target.id, name: target.name };
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
+      throw throwBadRequestError(
+        'You already have a recurring bid on the latest version of this model.'
+      );
+    throw e;
+  }
 };
 
 export const togglePauseRecurringBid = async ({
