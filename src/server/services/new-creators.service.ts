@@ -2,8 +2,13 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { CacheTTL } from '~/server/common/constants';
-import { leaderboardPopulatedKey } from '~/server/services/leaderboard.service';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+
+// KeyValue key holding the last date `prepare-leaderboard` finished populating a
+// board. Defined in this module rather than leaderboard.service or the job itself:
+// both of those reach ~/server/trpc (prom collectors at import) and this file sits on
+// the image/model feed path, which touches neither today.
+export const leaderboardPopulatedKey = (id: string) => `leaderboard:populated:${id}`;
 
 export const newCreatorEntities = ['images', 'models'] as const;
 export type NewCreatorEntity = (typeof newCreatorEntities)[number];

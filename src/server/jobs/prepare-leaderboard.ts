@@ -7,10 +7,8 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
-import {
-  isLeaderboardPopulated,
-  leaderboardPopulatedKey,
-} from '~/server/services/leaderboard.service';
+import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -128,7 +126,15 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
  * Only the job knows when it is done.
  *
  * Written AFTER the population call returns, so a crash mid-populate leaves the
- * previous date marked and readers keep serving the last complete board.
+ * previous date marked and readers keep serving the last complete board. The
+ * `hasData` early return above deliberately skips this: a retry that finds a
+ * half-written board must not bless it.
+ *
+ * Re-evaluates `current_date + interval` rather than reusing the value the INSERTs
+ * used, so a run spanning midnight UTC would mark a date its rows aren't on. The job
+ * currently finishes ~2 minutes after its 23:00 cron (measured across four nights),
+ * leaving ~58 minutes of margin — fixing it properly means threading one date through
+ * every population path, which is a change to shared cron behavior for all 34 boards.
  */
 async function markLeaderboardPopulated(id: string, addDays: number) {
   const { rows } = await pgDbWrite.query<{ date: string }>(

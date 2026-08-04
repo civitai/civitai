@@ -12,11 +12,6 @@ import type {
 } from '~/server/schema/leaderboard.schema';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
-// KeyValue key holding the last date `prepare-leaderboard` finished populating a
-// board. Lives here rather than in the job so the feed read doesn't pull the cron
-// module's import graph into its path.
-export const leaderboardPopulatedKey = (id: string) => `leaderboard:populated:${id}`;
-
 export async function isLeaderboardPopulated() {
   const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
       SELECT (
