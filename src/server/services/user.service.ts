@@ -1488,6 +1488,11 @@ export const updateLeaderboardRank = async ({
         JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
         WHERE lr.date = current_date
           AND lr.position <= 100
+          -- UserRank is a single global table but the badge (title + cosmetic) renders
+          -- on every domain, so a domain-scoped board would leak its name sitewide —
+          -- e.g. "Creators (mature)" on civitai.com. Only boards visible everywhere
+          -- can back the badge.
+          AND l.domain @> ARRAY['all']::"DomainColor"[]
           ${leaderboardFilter}
           AND (
             u."leaderboardShowcase" IS NULL

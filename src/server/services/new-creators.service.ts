@@ -15,6 +15,11 @@ const FEED_CREATOR_LIMIT = 200;
 // Which board backs each (entity, domain) pair. Red gets its own board because a
 // SFW-scored board misrepresents creators whose traction is on mature content;
 // green/blue share the SFW board. An unresolved domain falls back to SFW.
+//
+// `domain` MUST come from `getRequestBoardDomainColor`, not `getRequestDomainColor`:
+// the latter never returns `red` in production (civitai.red is configured as both
+// blue and red, and the color walk hits blue first), which would silently pin every
+// host to the SFW board.
 const BOARD_IDS: Record<NewCreatorEntity, { sfw: string; red: string }> = {
   images: { sfw: 'images-new', red: 'images-new-red' },
   models: { sfw: 'new_creators', red: 'new_creators-red' },
@@ -32,8 +37,10 @@ export function getNewCreatorBoardId(entity: NewCreatorEntity, domain?: DomainCo
  * endpoint that takes an arbitrary userId array is a general-purpose
  * "content from these N users" filter, which is not what we're shipping.
  *
- * Reads the most recent populated date rather than today's, so the feed keeps
- * working through a failed or still-running nightly `prepare-leaderboard`.
+ * Reads the most recent COMPLETE date rather than the newest one. `prepare-leaderboard`
+ * inserts in batches, so the newest date can be half-written for the duration of a run;
+ * taking it unconditionally would pin a truncated creator list for the whole cache TTL.
+ * A date is considered complete once it holds at least the slice the feed consumes.
  */
 export async function getNewCreatorUserIds({
   entity,
@@ -48,12 +55,19 @@ export async function getNewCreatorUserIds({
     `${REDIS_KEYS.CACHES.NEW_CREATORS}:${boardId}`,
     async () => {
       const results = await dbRead.$queryRaw<{ userId: number }[]>`
+        WITH complete_date AS (
+          SELECT date
+          FROM "LeaderboardResult"
+          WHERE "leaderboardId" = ${boardId}
+          GROUP BY date
+          HAVING COUNT(*) >= ${FEED_CREATOR_LIMIT}
+          ORDER BY date DESC
+          LIMIT 1
+        )
         SELECT lr."userId"
         FROM "LeaderboardResult" lr
         WHERE lr."leaderboardId" = ${boardId}
-          AND lr.date = (
-            SELECT MAX(date) FROM "LeaderboardResult" WHERE "leaderboardId" = ${boardId}
-          )
+          AND lr.date = (SELECT date FROM complete_date)
         ORDER BY lr.position
         LIMIT ${FEED_CREATOR_LIMIT}
       `;

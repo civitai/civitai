@@ -109,7 +109,7 @@ UPDATE "Leaderboard" SET
     ic.userId AS userId,
     uniq(r.userId) AS raters,
     uniq(ic.id) AS images,
-    1 - pow(least(1, greatest(0, dateDiff(''day'', min(nc.firstPublish), now()) / 90)), 2) AS freshness,
+    1 - pow(least(1, greatest(0, (toUnixTimestamp(now()) - toUnixTimestamp(min(nc.firstPublish))) / (90 * 86400))), 2) AS freshness,
     toInt32(round(sqrt(greatest(raters, 1)) * 1000 * freshness)) AS score,
     toJSONString(map(''raterCount'', toInt32(raters), ''imageCount'', toInt32(images))) AS metrics
   FROM (
@@ -253,7 +253,7 @@ Newer creators weighted higher',
     ic.userId AS userId,
     uniq(r.userId) AS raters,
     uniq(ic.id) AS images,
-    1 - pow(least(1, greatest(0, dateDiff(''day'', min(nc.firstPublish), now()) / 90)), 2) AS freshness,
+    1 - pow(least(1, greatest(0, (toUnixTimestamp(now()) - toUnixTimestamp(min(nc.firstPublish))) / (90 * 86400))), 2) AS freshness,
     toInt32(round(sqrt(greatest(raters, 1)) * 1000 * freshness)) AS score,
     toJSONString(map(''raterCount'', toInt32(raters), ''imageCount'', toInt32(images))) AS metrics
   FROM (

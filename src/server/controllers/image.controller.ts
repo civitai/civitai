@@ -46,6 +46,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -352,7 +353,7 @@ export const getInfiniteImagesHandler = async ({
       return await getAllImages({
         ...input,
         user,
-        domain: ctx.domain,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
@@ -407,7 +408,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
           buildFliptContext(user)
         );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    const useIndex = useBitdex || features.imageIndexFeed;
+    // `newCreators` filters on a resolved set of user ids and the images index has no
+    // filterable `user.id`, so the index would silently return the UNFILTERED feed.
+    // No UI sends it here today, but this is a public procedure that accepts the field.
+    const useIndex = (useBitdex || features.imageIndexFeed) && !input.newCreators;
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true
@@ -435,6 +439,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // (modelVersionId filter) stay on BitDex where they're needed.
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
+        domain: getRequestBoardDomainColor(ctx.req),
         // Don't filter by model version/model for pinned posts â€” we already have
         // exact postIds. The ImageResourceNew join that modelVersionId triggers
         // excludes videos and other media that lack resource-detection entries,
@@ -478,6 +483,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         cursor,
         ids: fetchHidden ? versionHiddenImages : undefined,

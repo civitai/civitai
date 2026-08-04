@@ -17,7 +17,7 @@ import {
   removeCollectionFromFeaturedPoolHandler,
   setHomeBlocksOrderHandler,
 } from '~/server/controllers/home-block.controller';
-import { applyRequestDomainColor, edgeCacheIt, noEdgeCache } from '~/server/middleware.trpc';
+import { applyRequestBoardDomainColor, edgeCacheIt, noEdgeCache } from '~/server/middleware.trpc';
 import {
   getHomeBlocksInputSchema,
   getHomeBlockByIdInputSchema,
@@ -33,7 +33,7 @@ export const homeBlockRouter = router({
   getHomeBlocks: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHomeBlocksInputSchema)
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .use(isFlagProtected('alternateHome'))
     .use(noEdgeCache({ authedOnly: true }))
     .query(getHomeBlocksHandler),
@@ -45,7 +45,7 @@ export const homeBlockRouter = router({
   getHomeBlock: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHomeBlockByIdInputSchema)
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .use(isFlagProtected('alternateHome'))
     .use(edgeCacheIt({ ttl: 60 }))
     .query(getHomeBlocksByIdHandler),

@@ -1,5 +1,5 @@
 import { CacheTTL } from '~/server/common/constants';
-import { applyRequestDomainColor, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyRequestBoardDomainColor, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import type { GetLeaderboardInput } from '~/server/schema/leaderboard.schema';
 import {
   getLeaderboardPositionsSchema,
@@ -26,14 +26,14 @@ export const leaderboardRouter = router({
   getLeaderboards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardsSchema.pick({ domain: true }).default({}))
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .query(({ input, ctx }) =>
       getLeaderboards({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),
   getLeaderboardPositions: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardPositionsSchema)
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .use(cacheIt({ ttl: CacheTTL.day, tags: () => ['leaderboard', 'leaderboard-positions'] }))
     .query(({ input, ctx }) =>
       getLeaderboardPositions({
@@ -45,7 +45,7 @@ export const leaderboardRouter = router({
   getLeaderboard: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardSchema)
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -59,7 +59,7 @@ export const leaderboardRouter = router({
   getLeadboardLegends: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardSchema)
-    .use(applyRequestDomainColor)
+    .use(applyRequestBoardDomainColor)
     .use(
       cacheIt({
         ttl: CacheTTL.day,

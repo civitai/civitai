@@ -7,8 +7,11 @@
 -- `moreHref` sends the card's "More" button into the pre-filtered feed rather than
 -- the board's own page: browsing what these creators are posting is the point,
 -- the ranking is just how they got selected.
+-- `HomeBlock.id` is a serial with no natural key to conflict on, so guard on the
+-- title instead: these migrations are applied by hand across preview/dev/prod and a
+-- double-apply would otherwise put two identical blocks on the home page.
 INSERT INTO "HomeBlock" ("createdAt", "updatedAt", "userId", index, type, metadata, permanent, "sourceId")
-VALUES (
+SELECT
   now(),
   now(),
   -1,
@@ -28,6 +31,11 @@ VALUES (
   }'::jsonb,
   false,
   NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM "HomeBlock"
+  WHERE "userId" = -1
+    AND type = 'Leaderboard'
+    AND metadata->>'title' = 'New & Upcoming Creators'
 );
 
 -- The catch-all "Top Creators" block still lists these two boards; drop them so a

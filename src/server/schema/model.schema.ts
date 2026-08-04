@@ -30,7 +30,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
@@ -111,7 +111,9 @@ export const getAllModelsSchema = z.object({
   followed: z.coerce.boolean().optional(),
   // Restrict to creators currently on the "new & upcoming" board. Server resolves
   // the board from this flag plus the request domain; the client sends no user list.
-  newCreators: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: the REST endpoint parses raw query strings,
+  // where coerce makes `?newCreators=false` truthy.
+  newCreators: booleanString().optional(),
   archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
