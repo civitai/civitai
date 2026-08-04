@@ -123,3 +123,19 @@ describe('filterModelMetaForClient', () => {
     expect(input.minorFlagSnapshot).toBeDefined();
   });
 });
+
+describe('stripMinorHashMeta — accepted stamp', () => {
+  // It records that a moderator queue let the flag stand, same class of
+  // information as the dismissal and clear stamps.
+  it('removes minorHashAccepted', () => {
+    const meta = {
+      minorHashAccepted: { at: '2026-08-04T00:00:00.000Z' },
+      description: 'kept',
+    } as ModelMeta;
+
+    const result = stripMinorHashMeta(meta);
+
+    expect(result).not.toHaveProperty('minorHashAccepted');
+    expect(result).toHaveProperty('description', 'kept');
+  });
+});

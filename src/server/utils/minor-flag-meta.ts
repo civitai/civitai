@@ -20,6 +20,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorFlagSnapshot: _snapshot,
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
+    minorHashAccepted: _accepted,
     ...rest
   } = meta;
 

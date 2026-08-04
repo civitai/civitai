@@ -298,6 +298,7 @@ export type ModelMeta = Partial<{
   minorFlagSnapshot: MinorFlagSnapshot;
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
+  minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean;
