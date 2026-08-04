@@ -43,6 +43,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const homeBlockSelect = {
@@ -217,7 +218,9 @@ export const getHomeBlockData = async ({
     userId?: number;
     sourceId?: number | null;
   };
-  input: GetHomeBlocksInputSchema;
+  // `domain` isn't part of the public getHomeBlocks input — it's supplied by the
+  // by-id cached path, which is the only caller whose blocks are domain-scoped.
+  input: GetHomeBlocksInputSchema & { domain?: DomainColor };
   // Session user required because it's passed down to collection get items service
   // which requires it for models/posts/etc
   user?: SessionUser;

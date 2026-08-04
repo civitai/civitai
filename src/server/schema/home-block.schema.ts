@@ -83,9 +83,6 @@ export const getHomeBlocksInputSchema = z
     ownedOnly: z.boolean().optional(),
     excludedSystemHomeBlockIds: z.array(z.number()).optional(),
     systemHomeBlockIds: z.array(z.number()).optional(),
-    // Stamped by `applyRequestDomainColor`; gates which leaderboards a Leaderboard
-    // home block may surface.
-    domain: z.enum(DomainColor).optional(),
   })
   .partial()
   .default({ limit: 8 });

@@ -60,7 +60,13 @@ export async function getNewCreatorUserIds({
           FROM "LeaderboardResult"
           WHERE "leaderboardId" = ${boardId}
           GROUP BY date
-          HAVING COUNT(*) >= ${FEED_CREATOR_LIMIT}
+          -- Contiguous prefix from position 1, not a row count: prepare-leaderboard
+          -- inserts in concurrent 500-row batches that land OUT OF ORDER, so a count
+          -- alone is satisfied by a mid-board batch and would serve positions
+          -- 501-700 as if they were the top. A gapless 1..N prefix is exactly what
+          -- this read needs and is already final once written — and it accepts a
+          -- legitimately small board, which a fixed threshold would reject forever.
+          HAVING MIN(position) = 1 AND COUNT(*) = MAX(position)
           ORDER BY date DESC
           LIMIT 1
         )

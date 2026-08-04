@@ -15,8 +15,10 @@ vi.mock('~/env/server', () => ({
   env: {
     SERVER_DOMAIN_GREEN: 'civitai.com',
     SERVER_DOMAIN_GREEN_ALIASES: '',
+    // Mirrors prod exactly, including the blue alias — `civitaired.com` is a live
+    // front door configured ONLY as a blue alias, while red has no aliases at all.
     SERVER_DOMAIN_BLUE: 'civitai.red',
-    SERVER_DOMAIN_BLUE_ALIASES: '',
+    SERVER_DOMAIN_BLUE_ALIASES: 'civitaired.com',
     SERVER_DOMAIN_RED: 'civitai.red',
     SERVER_DOMAIN_RED_ALIASES: 'www.civitai.red',
   },
@@ -41,6 +43,18 @@ describe('getRequestBoardDomainColor', () => {
   it('resolves red for a red-capable host regardless of case', async () => {
     const { getRequestBoardDomainColor } = await import('../server-domain');
     expect(getRequestBoardDomainColor(req('CIVITAI.RED'))).toBe('red');
+  });
+
+  it('resolves red for an alias of a color whose primary is red-capable', async () => {
+    const { getRequestBoardDomainColor, getRequestDomainColor } = await import('../server-domain');
+
+    // civitaired.com is configured ONLY as a blue alias, so the direct red
+    // membership test misses it. Both front doors must serve the same boards.
+    expect(getRequestDomainColor(req('civitaired.com'))).toBe('blue');
+    expect(getRequestBoardDomainColor(req('civitaired.com'))).toBe('red');
+    expect(getRequestBoardDomainColor(req('civitaired.com'))).toBe(
+      getRequestBoardDomainColor(req('civitai.red'))
+    );
   });
 
   it('leaves a non-red host on its walked color', async () => {

@@ -191,7 +191,17 @@ export function getRequestBoardDomainColor(req: {
 }): ColorDomain | undefined {
   const host = req?.headers?.host?.toLowerCase();
   if (host && isHostForColor(host, 'red')) return 'red';
-  return getRequestDomainColor(req);
+
+  // Second pass, for a host that is an ALIAS of a color whose own primary is
+  // red-capable. Prod ships exactly that: `civitaired.com` is a blue alias, blue's
+  // primary is `civitai.red`, and red has no aliases — so the direct test above
+  // misses it and the walk would hand it the SFW board set while `civitai.red`
+  // itself got the mature one. Two front doors to the same site must agree.
+  const walked = getRequestDomainColor(req);
+  const primary = walked ? serverDomainMap[walked]?.primary : undefined;
+  if (primary && isHostForColor(primary, 'red')) return 'red';
+
+  return walked;
 }
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {

@@ -33,7 +33,6 @@ export const homeBlockRouter = router({
   getHomeBlocks: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHomeBlocksInputSchema)
-    .use(applyRequestBoardDomainColor)
     .use(isFlagProtected('alternateHome'))
     .use(noEdgeCache({ authedOnly: true }))
     .query(getHomeBlocksHandler),
