@@ -24,8 +24,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * Fails before the fix (everything is a raw 500); passes after.
  */
 
-const { mockCompleteMultipartUpload } = vi.hoisted(() => ({
+const { mockCompleteMultipartUpload, mockObjectExists } = vi.hoisted(() => ({
   mockCompleteMultipartUpload: vi.fn(),
+  mockObjectExists: vi.fn(),
 }));
 
 // Keep the REAL module (so the real classifyS3MultipartError runs) and override
@@ -35,6 +36,7 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => {
   return {
     ...actual,
     completeMultipartUpload: mockCompleteMultipartUpload,
+    objectExists: mockObjectExists,
     getUploadS3Client: vi.fn(() => ({})),
     getB2ImageS3Client: vi.fn(() => ({})),
   };
@@ -119,6 +121,8 @@ const s3Error = (props: Record<string, unknown>) =>
 
 beforeEach(() => {
   mockCompleteMultipartUpload.mockReset();
+  mockObjectExists.mockReset();
+  mockObjectExists.mockResolvedValue(false);
 });
 
 describe('/api/upload/complete — error classification', () => {
@@ -130,19 +134,39 @@ describe('/api/upload/complete — error classification', () => {
     expect(res.body).toBe('https://cdn/x');
   });
 
-  it('NoSuchUpload (name + $metadata 404) → 409, not 500', async () => {
-    mockCompleteMultipartUpload.mockRejectedValue(
-      s3Error({
-        name: 'NoSuchUpload',
-        message:
-          'The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.',
-        $metadata: { httpStatusCode: 404 },
-      })
-    );
+  const noSuchUpload = () =>
+    s3Error({
+      name: 'NoSuchUpload',
+      message:
+        'The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.',
+      $metadata: { httpStatusCode: 404 },
+    });
+
+  it('NoSuchUpload with no object in the bucket → 409, not 500', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(noSuchUpload());
+    mockObjectExists.mockResolvedValue(false);
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ error: 'Upload already finalized or aborted' });
+  });
+
+  // A retry whose first attempt actually succeeded: reporting 409 here would strand
+  // a fully uploaded file with no DB row, which is the whole bug this guards.
+  it('NoSuchUpload but the object exists (retry after success) → 200', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(noSuchUpload());
+    mockObjectExists.mockResolvedValue(true);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('NoSuchUpload with an unreachable bucket → 409 (does not assume success)', async () => {
+    mockCompleteMultipartUpload.mockRejectedValue(noSuchUpload());
+    mockObjectExists.mockResolvedValue(null);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(409);
   });
 
   it('InvalidPart (name + $metadata 400) → 422 + no-store, not 500', async () => {
@@ -150,7 +174,7 @@ describe('/api/upload/complete — error classification', () => {
       s3Error({
         name: 'InvalidPart',
         message:
-          'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.',
+          "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
         $metadata: { httpStatusCode: 400 },
       })
     );

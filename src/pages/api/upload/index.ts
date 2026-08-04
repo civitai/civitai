@@ -4,7 +4,12 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';
-import { getMultipartPutUrl, getUploadS3Client, getUploadBucket } from '~/utils/s3-utils';
+import {
+  getMultipartPutUrl,
+  getUploadS3Client,
+  getUploadBucket,
+  getUploadChunkSize,
+} from '~/utils/s3-utils';
 import type { UploadBackend } from '~/utils/s3-utils';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
@@ -52,7 +57,14 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
   const s3 = backend === 'b2' ? getUploadS3Client('b2') : null;
   const bucket = backend === 'b2' ? getUploadBucket('b2') : null;
-  const result = await getMultipartPutUrl(key, req.body.size, s3, bucket);
+  const result = await getMultipartPutUrl(
+    key,
+    req.body.size,
+    s3,
+    bucket,
+    undefined,
+    getUploadChunkSize(req.body.size)
+  );
   await logToAxiom({
     name: 's3-upload',
     userId,
