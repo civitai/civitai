@@ -473,6 +473,31 @@ export function getLatestModelAppeal(modelId: number, userId: number) {
   });
 }
 
+// `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
+// review a second time can only ever be an update of the row they already have.
+export function reopenModelAppeal({
+  entityId,
+  userId,
+  message,
+}: {
+  entityId: number;
+  userId: number;
+  message: string;
+}) {
+  return dbWrite.appeal.update({
+    where: {
+      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
+    },
+    data: {
+      status: AppealStatus.Pending,
+      appealMessage: message,
+      resolvedAt: null,
+      resolvedBy: null,
+      resolvedMessage: null,
+    },
+  });
+}
+
 export function getAppealCount({
   userId,
   status,

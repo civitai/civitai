@@ -22,7 +22,9 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
+  getLatestModelAppeal,
   getReports,
+  reopenModelAppeal,
   resolveEntityAppeal,
   updateReportById,
 } from '~/server/services/report.service';
@@ -368,6 +370,19 @@ export async function createEntityAppealHandler({
         const meta = model.meta as ModelMeta | null;
         if (!model.minor || !meta?.minorFlagSnapshot)
           throw throwBadRequestError('This model is not flagged as depicting a minor');
+
+        // `Appeal` is unique on (entityType, entityId, userId): creating a second
+        // row raises P2002, which is not a TRPCError and reaches the owner as a
+        // raw 500. Asking again after a denial is intended, so reuse the row.
+        const existing = await getLatestModelAppeal(input.entityId, userId);
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this model is already under review');
+        if (existing)
+          return await reopenModelAppeal({
+            entityId: input.entityId,
+            userId,
+            message: input.message,
+          });
 
         skipFee = true;
         break;
