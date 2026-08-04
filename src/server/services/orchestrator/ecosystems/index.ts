@@ -192,7 +192,7 @@ export type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 export type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 
 /** MiniMax (Hailuo) context */
-export type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMax' };
+export type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMaxH3' };
 
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
@@ -468,7 +468,7 @@ async function createEcosystemStep(
       return createKlingInput(normalizedData, handlerCtx);
 
     // MiniMax (Hailuo)
-    case 'MiniMax':
+    case 'MiniMaxH3':
       return createMiniMaxInput(normalizedData, handlerCtx);
 
     // Hunyuan (HyV1)

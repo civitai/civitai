@@ -5,11 +5,17 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   getStepByOrchestratorType,
   isModerationPostureImplemented,
+  listRegisteredSteps,
   posturePhaseRequirements,
   STEP_MODERATION_POSTURES,
+  STEP_TYPE_ACCEPTABLE_POSTURES,
   type AnyBlockStep,
   type StepModerationPosture,
 } from './index';
+import {
+  assertPolicyAgreesWithRegistryMap,
+  assertRegistryEntryAgreesWithPolicy,
+} from './request-time-policy';
 import { screenGeneratedText, TEXT_OUTPUT_WITHHELD_MESSAGE } from './text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +124,37 @@ export type StepOutputModerationRequest = {
   isGreen: boolean;
   /** The OauthClient id off the verified block token — the per-app trigger key. */
   appId: string;
-  /** The block instance id, when the caller has one. */
+  /**
+   * The per-block identifier this scan's telemetry is keyed on. It reaches
+   * exactly one consumer — `logScan`'s Axiom event in
+   * `./text-output-moderation` — and is never written to a column, so nothing
+   * FK-resolves it and a wrong value fails silently.
+   *
+   * 🔴 IT MUST BE `claims.appBlockId`, AND THE THREE ID CLAIMS ON A BLOCK TOKEN
+   * ARE DIFFERENT NAMESPACES — do not "simplify" this to `claims.blockId`.
+   * `block-scope.middleware.ts` documents `appBlockId` as `AppBlock.id`, the
+   * `apb_<ulid>` PK; `blockId` is `AppBlock.blockId` — the publish request's SLUG
+   * (`publish-request.service.ts` writes `id: apb_<ulid>` and
+   * `blockId: request.slug` onto the SAME row); `blockInstanceId` is a third,
+   * per-render claim. Only the PK joins to `AppBlock.id` /
+   * `BlockScopeInvocation.app_block_id`, which is what the per-app trigger-rate
+   * aggregation in `./text-output-moderation` keys on.
+   *
+   * HISTORY, because the failure mode is invisible: both live callers passed
+   * `claims.blockId` until 2026-08-04 — the only 2 of that router's 15
+   * claim-sourced `appBlockId:` assignments doing so — and nothing caught it,
+   * because a wrong value here is neither written nor FK-checked. It is pinned
+   * now by value (not merely by presence) at both call sites in
+   * `routers/__tests__/blocks.router.textOutputModeration.test.ts`, over a
+   * fixture whose three ids are deliberately pairwise distinct.
+   *
+   * On a VERIFIED token this is always a non-empty string (`verifyBlockToken`
+   * rejects a non-string `appBlockId`), so the `?` is for callers that have no
+   * token at all, not for a token that might lack the claim. For a dev-tunnel or
+   * mod-review token the value is a SYNTHETIC non-FK id (`ephemeral-<slug>` /
+   * `pubreq_<ulid>`) — that is still the right key: it is the same id the audit
+   * path records for those tokens.
+   */
   appBlockId?: string;
 };
 
@@ -359,6 +395,42 @@ export function assertModerationHandlerTable(
 }
 
 assertModerationHandlerTable(moderationPostureHandlers);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUEST-TIME POLICY CROSS-CHECK — asserted HERE rather than in `./index`.
+//
+// 🔴 WHY THIS FILE. `./request-time-policy` imports `containsAirReference` and
+// the posture/billing types FROM `./index`, so asserting there would create an
+// import CYCLE between two modules that both run load-time invariants — the
+// shape where one module observes the other half-initialised. This file already
+// imports `./index`, already owns a load-time assert, and is on the router's
+// step submit path, so the cross-check runs in production rather than only under
+// test. Same layering reason `./output` and `./text-output-moderation` are leaf
+// modules.
+//
+// 🔴 WHAT IT PINS. `./request-time-policy` derives the same three decisions
+// (posture, entitlement, billing mode) from the SUBMITTED `$type` instead of
+// from a registered entry's declaration — which is what the App Blocks →
+// orchestrator-types pivot needs, because the declarations disappear with
+// registration. Two tables answering the same question is exactly the setup that
+// drifts, so both directions are pinned at load:
+//   1. every REGISTERED entry's declared posture/billing agrees with the derived
+//      policy for the `$type` it submits, and
+//   2. every `$type` the registry's own posture map licenses derives a posture
+//      that map accepts — a wider population than (1), which sees only the
+//      `$type`s a registered entry currently claims (two: `convertImage` and
+//      `chatCompletion`; the map licenses seven).
+// A disagreement is a BUILD failure, not a Friday surprise on a spend path.
+// ─────────────────────────────────────────────────────────────────────────────
+assertPolicyAgreesWithRegistryMap(STEP_TYPE_ACCEPTABLE_POSTURES);
+for (const [id, step] of listRegisteredSteps()) {
+  assertRegistryEntryAgreesWithPolicy({
+    id,
+    orchestratorType: step.orchestratorType,
+    moderationPosture: step.moderationPosture,
+    billingMode: step.billingMode,
+  });
+}
 
 /**
  * Run the declared moderation posture for a step submit.

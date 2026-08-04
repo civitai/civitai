@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type * as MeiliClient from '~/server/meilisearch/client';
+import type * as RedisClient from '~/server/redis/client';
 
 /**
  * DIRECT test of the transient-error widening in getModelsRaw — the Meili search
@@ -29,7 +31,7 @@ const { mockSearch } = vi.hoisted(() => ({ mockSearch: vi.fn() }));
 // passthrough so whatever `search` rejects with reaches getModelsRaw's catch
 // unchanged.
 vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/meilisearch/client')>();
+  const actual = await importOriginal<typeof MeiliClient>();
   return {
     ...actual,
     searchClient: { index: () => ({ search: mockSearch }) },
@@ -69,13 +71,15 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 // linux-nixos query engine) — a false-positive vector Vitest flags. Stubbing
 // them keeps the run clean without touching the code under test.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+// All three pools: kyselyDb builds a client per tier at module load, so a
+// missing one fails the import rather than the code under test.
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 // Keep the REAL REDIS_KEYS (the ~/server/redis/caches module reads nested keys
 // like REDIS_KEYS.*.RESOURCE_DATA at module load), but stub the redis/sysRedis
 // CLIENTS so no real connection opens. importOriginal here does not connect
 // (the client factory is guarded); it only gives us the key definitions.
 vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
+  const actual = await importOriginal<typeof RedisClient>();
   return {
     ...actual,
     redis: { packed: { get: async () => null, set: async () => undefined } },

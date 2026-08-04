@@ -301,15 +301,112 @@ describe('getDetailPrimaryAction — off-site', () => {
       'info'
     );
   });
-  it('connect → Connect stub (mode connect, no dead href, note set)', () => {
-    const action = getDetailPrimaryAction(offsiteDetail('connect', { connectClientId: 'client-123' }), {
-      canOpenPage: true,
+  /**
+   * COVERAGE ADDED, NOTHING REVERSED — and the distinction matters, because an
+   * earlier version of this comment claimed the opposite and was wrong.
+   *
+   * The test replaced here passed `connectClientId: 'client-123'` and asserted
+   * `href` was undefined. It read like "even with a client_id, produce
+   * nothing", but the fixture defaults `externalUrl` to `null`, so what it
+   * actually pinned was the destination-LESS case: connect + no address → stub.
+   * That behaviour is UNCHANGED — every one of its assertions still holds, and
+   * they are re-pinned below over four absence shapes instead of one.
+   *
+   * What this case adds is the shape nothing covered: connect WITH a valid
+   * https address. `resolveOffsiteSubKind` flips the sub-kind on
+   * `connectClientId != null` alone, so linking an OAuth client was the sole
+   * cause of the dead CTA on three approved, live listings. The destination
+   * decides now — the sub-kind does not.
+   */
+  it('🔴 connect + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
+    const action = getDetailPrimaryAction(
+      offsiteDetail('connect', {
+        connectClientId: 'client-123',
+        externalUrl: 'https://connect.app',
+      }),
+      { canOpenPage: true }
+    );
+    // Byte-identical to the external-link result for the same URL — the point of
+    // the fix is that connect REUSES that path rather than growing a second one.
+    expect(action).toEqual({
+      label: 'Visit',
+      mode: 'visit',
+      href: 'https://connect.app',
+      external: true,
     });
-    expect(action.mode).toBe('connect');
-    expect(action.label).toBe('Connect');
-    expect(action.href).toBeUndefined();
-    expect(action.external).toBe(false);
-    expect(action.note).toBeTruthy();
+  });
+
+  it('🔴 connect and external-link with the SAME url produce the SAME action', () => {
+    // Structural restatement of the rule, independent of the literals above: if
+    // a future change re-branches on sub-kind before the href guard, these two
+    // diverge and this fails — even if it picks copy that satisfies the pins.
+    const url = 'https://same-target.app';
+    expect(
+      getDetailPrimaryAction(
+        offsiteDetail('connect', { connectClientId: 'c1', externalUrl: url }),
+        {
+          canOpenPage: true,
+        }
+      )
+    ).toEqual(
+      getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: url }), {
+        canOpenPage: true,
+      })
+    );
+  });
+
+  it('🔴 connect with NO usable destination → the stub still fails safe', () => {
+    // The stub must stay REACHABLE and must stay hrefless. Enumerated over every
+    // way a destination can be absent, with the client_id present in each — so
+    // this cannot pass by accident of the sub-kind being mis-resolved.
+    // (`undefined` is deliberately absent: the DTO types `externalUrl` as
+    // `string | null`, and the fixture's destructuring default would silently
+    // rewrite it to `null` anyway — a row whose label lied about its input.)
+    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
+      const key = `externalUrl=${String(externalUrl)}`;
+      const action = getDetailPrimaryAction(
+        offsiteDetail('connect', { connectClientId: 'client-123', externalUrl }),
+        { canOpenPage: true }
+      );
+      expect(action.mode, key).toBe('connect');
+      expect(action.label, key).toBe('Connect');
+      expect(action.href, key).toBeUndefined();
+      expect(action.external, key).toBe(false);
+      expect(action.note, key).toBeTruthy();
+    }
+  });
+
+  it('🔴 no off-site listing with an https target is ever left un-navigable', () => {
+    // The off-site analogue of the on-site "no state strands the viewer" matrix.
+    // Anti-vacuity is explicit: count the rows that MUST be navigable and assert
+    // the count, so a change that stopped producing hrefs everywhere cannot make
+    // this green by having nothing to check.
+    const stranded: string[] = [];
+    let navigable = 0;
+    for (const subKind of ['connect', 'external-link'] as const) {
+      for (const externalUrl of ['https://ok.app', 'http://insecure.app', null]) {
+        for (const connectClientId of ['client-123', null]) {
+          const key = `subKind=${subKind} url=${String(externalUrl)} client=${
+            connectClientId ?? 'null'
+          }`;
+          const action = getDetailPrimaryAction(
+            offsiteDetail(subKind, { externalUrl, connectClientId }),
+            { canOpenPage: true }
+          );
+          // `visit` is the only external mode and may only carry an https target.
+          expect(action.external, key).toBe(action.mode === 'visit');
+          if (action.mode === 'visit') {
+            expect(action.href, key).toMatch(/^https:\/\//);
+            navigable++;
+          } else if (externalUrl?.startsWith('https://')) {
+            stranded.push(key);
+          }
+        }
+      }
+    }
+    expect(stranded).toEqual([]);
+    // 2 sub-kinds × 2 client values, all with the https url → 4 navigable rows.
+    expect(navigable).toBe(4);
   });
 });
 
