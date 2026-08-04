@@ -67,6 +67,11 @@ describe('checkQueryScope — statements it confirms', () => {
       'a parenthesized join of allowed tables',
       'SELECT * FROM ("User" JOIN "Model" ON true) LIMIT 5',
     ],
+    ['an inline VALUES list in the FROM list', 'SELECT x FROM (VALUES (1), (2)) AS t(x)'],
+    [
+      'an inline VALUES list joined to an allowed table',
+      'SELECT * FROM (VALUES (1)) AS t(x) JOIN "User" u ON u.id = t.x',
+    ],
     [
       'a sub-select in the FROM list followed by another relation',
       'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x, "Model" m',
@@ -168,6 +173,13 @@ describe('checkQueryScope — relations outside the allowed set', () => {
 
   it('still refuses a disallowed table in the trailing position of a parenthesized join', () => {
     const result = checkQueryScope('SELECT * FROM ("User" JOIN "Session" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table reached from inside an inline VALUES list', () => {
+    const result = checkQueryScope('SELECT * FROM (VALUES ((SELECT id FROM "Session"))) AS t(x)');
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.error).toContain('cannot read "Session"');

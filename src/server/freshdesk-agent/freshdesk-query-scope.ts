@@ -308,21 +308,19 @@ export function checkQueryScope(sql: string): QueryScopeResult {
   const { tokens } = tokenized;
   /** `fromListAtDepth[d]` — is a `FROM` list currently open at paren depth d? */
   const fromListAtDepth: boolean[] = [];
-  /** `parenInRelationPosAtDepth[d]` — was the paren opening depth d itself in relation position? */
-  const parenInRelationPosAtDepth: boolean[] = [];
   let depth = 0;
   let expectRelation = false;
 
   for (const token of tokens) {
     if (token.kind === 'punct' && token.value === '(') {
       depth++;
-      // A paren in relation position is EITHER a sub-select (`FROM (SELECT …)`)
-      // or a parenthesized joined_table (`FROM ("A" JOIN "B" ON …)`), whose
-      // FIRST item is itself a relation. Carry the expectation inward so that
-      // leading relation is still checked; a `SELECT` directly inside is what
-      // marks the sub-select and clears it. Clearing unconditionally here would
-      // let the joined_table's first relation through unchecked.
-      parenInRelationPosAtDepth[depth] = expectRelation;
+      // A paren in relation position is EITHER a sub-query (`FROM (SELECT …)`,
+      // `FROM (VALUES …)`) or a parenthesized joined_table
+      // (`FROM ("A" JOIN "B" ON …)`), whose FIRST item is itself a relation.
+      // Carry the expectation inward so that leading relation is still checked;
+      // the `SELECT`/`VALUES` below is what marks the sub-query and clears it.
+      // Clearing unconditionally here would let a joined_table's first relation
+      // through unchecked.
       continue;
     }
 
@@ -334,10 +332,11 @@ export function checkQueryScope(sql: string): QueryScopeResult {
     }
 
     if (expectRelation) {
-      // Only a `SELECT` immediately inside a paren that stood in relation
-      // position resolves it to a sub-select rather than a joined_table.
-      if (parenInRelationPosAtDepth[depth] && token.kind === 'ident' && token.value === 'select') {
-        parenInRelationPosAtDepth[depth] = false;
+      // `SELECT`/`VALUES` in relation position mean a sub-query rather than a
+      // joined_table, so they resolve the expectation instead of failing it.
+      // Both are reserved words in Postgres and so cannot be a bare relation
+      // name; any relation *inside* the sub-query is still walked by this loop.
+      if (token.kind === 'ident' && (token.value === 'select' || token.value === 'values')) {
         expectRelation = false;
         continue;
       }
