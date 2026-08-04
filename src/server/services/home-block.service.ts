@@ -166,7 +166,11 @@ export const getHomeBlockById = async ({
   );
 };
 
-type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
+// `moreHref` is carried from the block's own metadata, not from the board row, so
+// it has to be grafted onto the service's return type.
+type GetLeaderboardsWithResults = (AsyncReturnType<typeof getLeaderboardsWithResults>[number] & {
+  moreHref?: string;
+})[];
 type GetAnnouncements = AsyncReturnType<typeof getCurrentAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
