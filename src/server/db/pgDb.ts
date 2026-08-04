@@ -20,6 +20,9 @@ declare global {
 export let pgDbWrite: AugmentedPool;
 export let pgDbRead: AugmentedPool;
 export let pgDbReadLong: AugmentedPool;
+// DO NOT MERGE — deliberate CI probe: a new export added WITHOUT updating
+// src/test-utils/pgDbMock.ts, to confirm the type canary reddens `Typecheck`.
+export let pgDbProbeOnly: AugmentedPool;
 
 if (!env.IS_BUILD) {
   const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
