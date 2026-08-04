@@ -57,6 +57,8 @@ import {
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
   PRICE_REVIEW_THRESHOLD,
+  RIGHTS_AFFIRMATION_STATEMENT,
+  RIGHTS_AFFIRMATION_VERSION,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
@@ -207,6 +209,15 @@ const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
   });
 };
 
+// The affirmation is stored with its wording, not just a flag, so a later
+// takedown challenge can show what the submitter actually agreed to.
+const buildRightsAffirmation = (userId: number) => ({
+  userId,
+  affirmedAt: new Date().toISOString(),
+  version: RIGHTS_AFFIRMATION_VERSION,
+  statement: RIGHTS_AFFIRMATION_STATEMENT,
+});
+
 // ---------------------------------------------------------------------------
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
@@ -227,7 +238,13 @@ export const submitCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  rightsAffirmed,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
+  // The zod schema already requires it; this keeps the item from ever being
+  // created without the record if the service is called from anywhere else.
+  if (!rightsAffirmed)
+    throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+
   // The zod floor is the cross-type minimum; this is the real, type-dependent one.
   const priceFloor = cosmeticPriceFloor(cosmeticType);
   if (price < priceFloor)
@@ -311,6 +328,7 @@ export const submitCreatorShopItem = async ({
             sellableByOthers,
             sellerShare: sellableByOthers ? sellerShare : 0,
             acceptsBlueBuzz,
+            rightsAffirmation: buildRightsAffirmation(userId),
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -359,6 +377,7 @@ export const updateCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Rejected is terminal; archived items must be restored before editing.
@@ -450,6 +469,12 @@ export const updateCreatorShopItem = async ({
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
+  // The stored affirmation covers the art it was made against, so swapping the
+  // art needs a fresh one. A moderator swapping art isn't claiming any rights of
+  // their own, so they neither affirm nor overwrite the creator's record.
+  const requiresAffirmation = artChanged && !isModerator;
+  if (requiresAffirmation && !rightsAffirmed)
+    throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
 
   if (slugChange)
     await validateStickerCosmetic({
@@ -557,6 +582,7 @@ export const updateCreatorShopItem = async ({
               imageHash: artwork.imageHash,
             }
           : {}),
+        ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
       } as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,

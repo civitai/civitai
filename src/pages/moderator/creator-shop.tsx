@@ -66,7 +66,7 @@ import {
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
-import { daysFromNow } from '~/utils/date-helpers';
+import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -233,6 +233,13 @@ function CreatorShopReviewPage() {
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  const affirmation = selectedMeta.rightsAffirmation;
+  // The affirmer is normally the submitting creator, but a cross-listed item is
+  // sold by someone else — don't put the creator's name on their affirmation.
+  const affirmedBy =
+    affirmation && affirmation.userId === selected?.cosmetic.creator?.id
+      ? `@${selected?.cosmetic.creator?.username ?? 'unknown'}`
+      : `user #${affirmation?.userId}`;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
   const stickerSlug =
@@ -743,6 +750,25 @@ function CreatorShopReviewPage() {
                             }
                           />
                         )}
+                        <DetailRow
+                          label="Rights affirmed"
+                          value={
+                            affirmation ? (
+                              <Stack gap={2}>
+                                <Text size="sm">“{affirmation.statement}”</Text>
+                                <Text size="xs" c="dimmed">
+                                  {affirmedBy} ·{' '}
+                                  {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
+                                  {affirmation.version}
+                                </Text>
+                              </Stack>
+                            ) : (
+                              <Text size="sm" c="dimmed">
+                                Not recorded — submitted before this confirmation was required.
+                              </Text>
+                            )
+                          }
+                        />
                         <DetailRow
                           label="Description"
                           last
