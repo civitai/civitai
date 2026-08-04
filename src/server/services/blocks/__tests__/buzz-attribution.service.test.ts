@@ -30,7 +30,7 @@ class FakePrismaKnownError extends Error {
 const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
   mockDbRead: {
     oauthClient: { findUnique: vi.fn() },
-    blockBuzzAttribution: { findUnique: vi.fn() },
+    blockBuzzAttribution: { findUnique: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn() },
   },
   mockDbWrite: {
     blockBuzzAttribution: {
@@ -62,6 +62,8 @@ vi.mock('~/server/logging/client', () => ({
 
 import {
   AttributionAppMissingError,
+  emptyRevenue,
+  getRevenueForOwner,
   mintPayoutForOwner,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
@@ -583,5 +585,54 @@ describe('REFUND_WINDOWS_DAYS', () => {
   it('exposes the per-provider refund windows', () => {
     expect(REFUND_WINDOWS_DAYS.stripe).toBeGreaterThan(REFUND_WINDOWS_DAYS.paddle);
     expect(REFUND_WINDOWS_DAYS.paddle).toBeGreaterThan(REFUND_WINDOWS_DAYS.nowpayments);
+  });
+});
+
+/**
+ * The fabricated-zero discriminator. `emptyRevenue()` is the dark-flag
+ * placeholder; `getRevenueForOwner` is the real measurement. Both can return
+ * every bucket at 0, so the ONLY thing a client can branch on is `unavailable`.
+ * This describe is the authority for the real function's behaviour — the router
+ * test mocks `emptyRevenue` at the module boundary and therefore cannot prove it.
+ */
+describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
+  it('flags the dark-flag placeholder as notEntitled', () => {
+    expect(emptyRevenue().unavailable).toBe('notEntitled');
+  });
+
+  it('still zeroes every bucket (the placeholder shape is unchanged otherwise)', () => {
+    const empty = emptyRevenue();
+    expect(empty.summary.pending).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
+    expect(empty.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
+    expect(empty.summary.paidOut).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
+    expect(empty.summary.voided).toEqual({ count: 0, grossCents: 0 });
+    expect(empty.topApps).toEqual([]);
+    expect(empty.recentAttributions).toEqual([]);
+  });
+
+  it('DISCRIMINATOR: a genuinely-measured all-zero result is NOT flagged', async () => {
+    // Every aggregate legitimately returns nothing — a real measurement of "this
+    // publisher has earned nothing yet". It must stay unflagged, or the fix hides
+    // a dashboard the publisher is entitled to see.
+    mockDbRead.blockBuzzAttribution.aggregate.mockReset();
+    mockDbRead.blockBuzzAttribution.aggregate.mockResolvedValue({
+      _count: 0,
+      _sum: { usdAmountCents: null, appOwnerShareCents: null },
+    });
+    mockDbRead.blockBuzzAttribution.groupBy.mockReset();
+    mockDbRead.blockBuzzAttribution.groupBy.mockResolvedValue([]);
+
+    const measured = await getRevenueForOwner({ ownerUserId: APP_OWNER_USER_ID });
+    const placeholder = emptyRevenue();
+
+    // Precondition: the buckets really are identical, so nothing else could tell
+    // these two apart. If this assertion ever fails the discriminator has stopped
+    // being the only signal and this test is no longer proving what it claims.
+    expect(measured.summary).toEqual(placeholder.summary);
+    expect(measured.topApps).toEqual(placeholder.topApps);
+
+    // The measured payload carries no discriminator at all; the placeholder does.
+    expect('unavailable' in measured).toBe(false);
+    expect(placeholder.unavailable).toBe('notEntitled');
   });
 });

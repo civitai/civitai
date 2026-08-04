@@ -148,6 +148,7 @@ import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/rec
 // runs; imported (not re-implemented) so the request-time re-assertion below can
 // never drift from the load-time one — one rule, one place.
 import {
+  AIR_URN_PREFIX,
   containsAirReference,
   estimateStepBuzz,
   getStep,
@@ -3105,7 +3106,12 @@ export const blocksRouter = router({
           // submit-phase prompt audit uses. Never a request-body field.
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // 🔴 `claims.appBlockId` (`AppBlock.id`, `apb_<ulid>`), NOT
+          // `claims.blockId` — which is `AppBlock.blockId`, the publish request's
+          // SLUG, and joins to nothing. The value is telemetry-only (no column, no
+          // FK), so the wrong claim fails silently. See the field's doc on
+          // `StepOutputModerationRequest`.
+          appBlockId: claims.appBlockId,
         }
       );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
@@ -3249,7 +3255,8 @@ export const blocksRouter = router({
           userId,
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // Same as `pollWorkflow`: the `apb_<ulid>` PK, never the slug.
+          appBlockId: claims.appBlockId,
         }
       );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
@@ -5213,6 +5220,15 @@ export const blocksRouter = router({
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
       // marks the ctx → return the zeroed revenue shape WITHOUT running any
       // aggregate, so a flag-off moderator gets no live revenue data.
+      //
+      // `emptyRevenue()` carries `unavailable: 'notEntitled'`. It MUST, or the
+      // all-zero buckets are indistinguishable from a publisher who has simply
+      // earned nothing yet, and the dashboard renders fabricated zeros as
+      // earnings. This is reachable even though both revenue pages also guard on
+      // `features.appBlocks` client-side: that is a SEPARATE evaluation of the
+      // flag from this middleware's, and the page-level author gate is a
+      // DIFFERENT flag again (`appBlocksAuthor`) — so a caller can be entitled
+      // to render the page while this proc short-circuits.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return emptyRevenue();
       }
@@ -6924,13 +6940,39 @@ async function submitStepWorkflow(opts: {
   // too. That is a false positive, and it is the direction we want — refusing a
   // pathological url costs a caller one bounced request; forwarding an
   // unentitled AIR costs the entitlement belt.
+  //
+  // 🔴 THAT COST SENTENCE WAS WRITTEN WHEN EVERY SCANNED STRING WAS A URL THE
+  // APP CONSTRUCTS, AND IT NO LONGER DESCRIBES EVERY ENTRY. `chat-completion`
+  // (registered later) submits `messages[].content` — free prose an END USER
+  // typed — and that prose is the ONLY attacker-controlled string in its built
+  // input; `model` is `z.enum`-bounded and every key is a fixed literal. So for
+  // that entry this guard reduces exactly to "reject any chat message
+  // containing the literal `urn:air:`", and the bounced request is the user's
+  // message rather than the app's own url. The guard is KEPT anyway — see the
+  // FALSE-POSITIVE SURFACE section in `chat-completion.step.ts` for the
+  // orchestrator-side evidence that such prose is inert today, why that
+  // evidence is not sufficient to scope the scan, and the app-side workaround.
+  // What changed here is only the MESSAGE: it used to assert the submitted step
+  // "carries an AIR reference", which is FALSE for prose — the caller typed a
+  // fragment, not a reference — so the rejection read as a platform bug rather
+  // than as something the app can fix in its own payload.
+  //
+  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
+  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
+  // the scan used to recurse over `Object.values` only. See
+  // `containsAirReference` for the mechanism and the depth cap that keeps the
+  // scan total.
   if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message:
-        `step '${step.id}' declares resourcePolicy 'none' but the submitted step carries an ` +
-        'AIR reference — a step that reaches an AIR resource bypasses the generation-graph ' +
-        'entitlement belt',
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step contains the ` +
+        `literal text '${AIR_URN_PREFIX}' — a step that reaches an AIR resource bypasses the ` +
+        'generation-graph entitlement belt. The check is a case-insensitive SUBSTRING scan ' +
+        'over every string, array element, object value AND object key in the step input; it ' +
+        'does not parse, so a value that merely EMBEDS that literal — a url whose path ' +
+        'contains it, or free text a user typed — is rejected too. That is the deliberate ' +
+        'fail-closed direction: strip or escape the literal in the params you submit.',
     });
   }
 

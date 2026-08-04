@@ -14,6 +14,7 @@
     AlertDialogCancel,
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
+  import { MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT } from '@civitai/buzz';
   import NumberInput from '$lib/components/NumberInput.svelte';
   import { monetizationLimits } from '$lib/monetization/paid-access';
   import type { CreatorCaps } from '$lib/server/membership';
@@ -37,6 +38,7 @@
     onSetUsage,
     onSelectAll,
     cancelHref,
+    selectionNeedsAffirmation,
   }: {
     caps: CreatorCaps;
     matchingVersionIds: number[];
@@ -49,6 +51,8 @@
     onSetUsage: (usage: 'download' | 'generation') => void;
     onSelectAll: (ids: number[]) => void;
     cancelHref: string;
+    /** Some selected version has no rights affirmation on record yet. */
+    selectionNeedsAffirmation: boolean;
   } = $props();
 
   const permanentCap = $derived(caps.permanentCap);
@@ -67,6 +71,7 @@
   let bulkGenerationPrice = $state<number | undefined>();
   let bulkFreePreviews = $state<number | undefined>(DEFAULT_GENERATION_TRIAL_LIMIT);
   let showConfirm = $state(false);
+  let rightsAffirmed = $state(false);
   let form = $state<HTMLFormElement>();
 
   const paidAccessEnhance =
@@ -148,6 +153,7 @@
       class="contents"
     >
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
+      <input type="hidden" name="rightsAffirmed" value={rightsAffirmed ? 'on' : ''} />
       <label
         class="flex items-center gap-1.5 text-xs text-dark-1"
         title={bulkGenOnly
@@ -206,7 +212,15 @@
           class="h-7 w-16"
         />
       </label>
-      <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
+      <Button
+        size="sm"
+        disabled={selected.size === 0}
+        onclick={() => {
+          // The bar outlives each apply, so an affirmation ticked for one batch must not carry into the next.
+          rightsAffirmed = false;
+          showConfirm = true;
+        }}
+      >
         Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
       </Button>
       <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm"
@@ -235,9 +249,16 @@
         This uses {slotsConsumed} of your permanent slots.
       </AlertDialogDescription>
     </AlertDialogHeader>
+    {#if selectionNeedsAffirmation}
+      <label class="flex items-start gap-2 text-sm text-dark-1">
+        <input type="checkbox" bind:checked={rightsAffirmed} class="mt-1 shrink-0" />
+        <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
+      </label>
+    {/if}
     <AlertDialogFooter>
       <AlertDialogCancel>Cancel</AlertDialogCancel>
       <AlertDialogAction
+        disabled={selectionNeedsAffirmation && !rightsAffirmed}
         onclick={() => {
           showConfirm = false;
           form?.requestSubmit();

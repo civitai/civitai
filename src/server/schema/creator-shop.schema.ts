@@ -71,6 +71,16 @@ export function computeCreatorShopSplit(price: number, sellerShare = 0) {
   return { creatorPool, sellerAmount, creatorAmount, platformCut };
 }
 
+/**
+ * The rights affirmation a creator must accept before their artwork can be sold.
+ * Bump the version whenever the wording changes — the statement is stored
+ * verbatim on the item, so old records keep the text that was actually agreed to
+ * and the version says which wording it was.
+ */
+export const RIGHTS_AFFIRMATION_VERSION = 1;
+export const RIGHTS_AFFIRMATION_STATEMENT =
+  'I own this artwork, or otherwise hold the rights to sell it, and I accept responsibility for any claim arising from it being sold on Civitai.';
+
 // Animated artwork limits (maximums only — no minimums). Tune freely.
 export const MAX_ANIMATION_FRAMES = 150;
 export const MAX_ANIMATION_FPS = 30;
@@ -233,6 +243,10 @@ export const cosmeticOffsetsSchema = z.object({
   left: cosmeticOffsetSideSchema,
 });
 
+const rightsAffirmedSchema = z
+  .boolean()
+  .refine((value) => value === true, 'You must confirm you have the rights to sell this artwork');
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -264,6 +278,9 @@ export const submitCreatorShopItemSchema = z
     acceptsBlueBuzz: z.boolean().default(false),
     // ProfileDecoration only — per-side fit adjustment (ignored for other types).
     offsets: cosmeticOffsetsSchema.nullish(),
+    // The creator's affirmation that they hold the rights to sell this artwork.
+    // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
+    rightsAffirmed: rightsAffirmedSchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -306,6 +323,9 @@ export const updateCreatorShopItemSchema = z.object({
   slug: z.string().optional(),
   uses: z.number().int().positive().optional(),
   pricePerUse: z.number().int().positive().optional(),
+  // Required by the service when `imageUrl` replaces the artwork: the stored
+  // affirmation covers the art that was submitted, so new art needs a new one.
+  rightsAffirmed: rightsAffirmedSchema.optional(),
 });
 
 export type SetCreatorShopItemListedInput = z.infer<typeof setCreatorShopItemListedSchema>;
@@ -372,6 +392,12 @@ export const reviewCreatorShopItemSchema = z
     message: 'A note is required when rejecting, requesting changes, or reverting',
     path: ['rejectionReason'],
   });
+
+export type TakedownCosmeticShopItemInput = z.infer<typeof takedownCosmeticShopItemSchema>;
+export const takedownCosmeticShopItemSchema = z.object({
+  id: z.number(),
+  reason: z.string().min(1).max(1000),
+});
 
 export type GetReviewQueueInput = z.infer<typeof getReviewQueueSchema>;
 export const getReviewQueueSchema = z.object({

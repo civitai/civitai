@@ -9,22 +9,24 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MouseEvent } from 'react';
 import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
-import { useShopLastViewed } from '~/components/CosmeticShop/cosmetic-shop.util';
+import {
+  useShopLastViewed,
+  useToggleWishlistShopItem,
+} from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { BuzzPill } from '~/components/Shop/BuzzPill';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
@@ -33,35 +35,36 @@ import type { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
-import { IconCheck } from '@tabler/icons-react';
+import { IconCheck, IconHeart, IconHeartFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ShopItem = ({
   item,
   sectionItemCreatedAt,
   alreadyOwned = false,
+  wishlisted,
   viaShopUserId,
   creator,
-  layout = 'shop',
 }: {
   item: CosmeticShopItemGetById;
   sectionItemCreatedAt?: Date;
   alreadyOwned?: boolean;
+  // Undefined (not false) hides the wishlist control, for surfaces that don't
+  // fetch the viewer's wishlist.
+  wishlisted?: boolean;
   // Attributes the purchase to this shop owner (Creator Shop cross-creator resale).
   viaShopUserId?: number;
   // The cosmetic's original creator, shown as attribution (Creator Shop only).
   creator?: UserWithCosmetics | null;
-  // 'shop' = the official /shop cards (default). 'storefront' = the leaner
-  // creator-shop cards: compact artwork, creator avatar attribution, and the
-  // Buzz price on the button instead of beside the title.
-  layout?: 'shop' | 'storefront';
 }) => {
-  const isStorefront = layout === 'storefront';
+  const showWishlist = wishlisted !== undefined;
   const cosmetic = item.cosmetic;
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
+  const { toggleWishlist, togglingWishlist } = useToggleWishlistShopItem();
   const domain = useDomainColor();
   const itemMeta = item.meta as CosmeticShopItemMeta;
 
@@ -83,20 +86,42 @@ export const ShopItem = ({
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
-    <Paper
-      className={clsx(
-        classes.card,
-        isStorefront && classes.cardStorefront,
-        isNew && !isStorefront && classes.newItem
-      )}
-    >
-      {isNew && !isStorefront && (
-        <Badge color="yellow.7" className={classes.newBadge} variant="filled">
-          New!
-        </Badge>
+    <Paper className={clsx(classes.card, isNew && classes.newItem)}>
+      {(isNew || showWishlist) && (
+        <div className={classes.cardControls}>
+          {isNew && (
+            <Badge color="yellow.7" variant="filled">
+              New!
+            </Badge>
+          )}
+          {showWishlist && (
+            <div className={classes.wishlist}>
+              <LoginRedirect reason="shop">
+                <LegacyActionIcon
+                  radius="xl"
+                  color={wishlisted ? 'red' : 'gray'}
+                  loading={togglingWishlist}
+                  aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                  onClick={() => toggleWishlist({ shopItemId: item.id, wishlisted: !wishlisted })}
+                >
+                  <Tooltip
+                    label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                    withArrow
+                  >
+                    {wishlisted ? <IconHeartFilled size={18} /> : <IconHeart size={18} />}
+                  </Tooltip>
+                </LegacyActionIcon>
+              </LoginRedirect>
+            </div>
+          )}
+        </div>
       )}
       {(available !== null || availableTo) && (
-        <Badge color="grape" className={classes.availability} px={6}>
+        <Badge
+          color="grape"
+          className={clsx(classes.availability, showWishlist && classes.availabilityInset)}
+          px={6}
+        >
           <Group justify="space-between" wrap="nowrap" gap={4}>
             {outOfStock ? (
               <Text inherit>Out of Stock</Text>
@@ -151,9 +176,9 @@ export const ShopItem = ({
             }}
             disabled={!isAvailable || outOfStock}
           >
-            <div className={clsx(classes.cardHeader, isStorefront && classes.cardHeaderCompact)}>
+            <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
-                <CosmeticSample cosmetic={cosmetic} size={isStorefront ? 'md' : 'lg'} />
+                <CosmeticSample cosmetic={cosmetic} size="lg" />
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {getDisplayName(item.cosmetic.type)}
@@ -168,45 +193,35 @@ export const ShopItem = ({
               )}
             </div>
           </UnstyledButton>
-          <Stack gap={isStorefront ? 6 : 2}>
+          <Stack gap={2}>
             <div className={classes.titleRow}>
-              <Title
-                order={isStorefront ? 4 : 3}
-                className={clsx(classes.title, isStorefront && classes.titleStorefront)}
-              >
+              <Title order={3} className={classes.title}>
                 {item.title}
               </Title>
-              {!isStorefront && (
-                <CurrencyBadge
-                  currency={Currency.BUZZ}
-                  type={domain === 'green' ? 'green' : 'yellow'}
-                  unitAmount={item.unitAmount}
-                  variant="transparent"
-                  className={clsx('!px-0', classes.price)}
-                />
-              )}
+              <CurrencyBadge
+                currency={Currency.BUZZ}
+                type={domain === 'green' ? 'green' : 'yellow'}
+                unitAmount={item.unitAmount}
+                variant="transparent"
+                className={clsx('!px-0', classes.price)}
+              />
             </div>
-            {creator?.username &&
-              (isStorefront ? (
-                <div onClick={(e: MouseEvent) => e.stopPropagation()}>
-                  <UserAvatar user={creator} withUsername size="sm" linkToProfile />
-                </div>
-              ) : (
-                <Text size="xs" c="dimmed">
-                  by{' '}
-                  <Anchor
-                    component={NextLink}
-                    href={`/user/${creator.username}`}
-                    c="blue.4"
-                    fw={500}
-                    underline="always"
-                    // Don't trigger the card's purchase modal.
-                    onClick={(e: MouseEvent) => e.stopPropagation()}
-                  >
-                    @{creator.username}
-                  </Anchor>
-                </Text>
-              ))}
+            {creator?.username && (
+              <Text size="xs" c="dimmed">
+                by{' '}
+                <Anchor
+                  component={NextLink}
+                  href={`/user/${creator.username}`}
+                  c="blue.4"
+                  fw={500}
+                  underline="always"
+                  // Don't trigger the card's purchase modal.
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  @{creator.username}
+                </Anchor>
+              </Text>
+            )}
           </Stack>
           {!!item.description && (
             <div className={classes.description}>
@@ -217,17 +232,8 @@ export const ShopItem = ({
         <Stack mt="auto" gap={4}>
           <LoginRedirect reason="shop">
             <Button
-              radius={isStorefront ? 'sm' : 'xl'}
-              px={isStorefront ? 10 : undefined}
-              className={
-                isStorefront
-                  ? clsx(
-                      classes.buyButton,
-                      domain === 'green' ? classes.buyButtonSolidGreen : classes.buyButtonSolid
-                    )
-                  : clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)
-              }
-              styles={isStorefront ? { label: { width: '100%' } } : undefined}
+              radius="xl"
+              className={clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)}
               onClick={() => {
                 dialogStore.trigger({
                   component: CosmeticShopItemPreviewModal,
@@ -236,17 +242,7 @@ export const ShopItem = ({
               }}
               disabled={!isAvailable || outOfStock}
             >
-              {isStorefront ? (
-                <span className={classes.buyButtonInner}>
-                  <span className={classes.buyButtonLabel}>Preview</span>
-                  <BuzzPill
-                    amount={item.unitAmount}
-                    variant={domain === 'green' ? 'green' : 'yellow'}
-                  />
-                </span>
-              ) : (
-                'Preview'
-              )}
+              Preview
             </Button>
           </LoginRedirect>
         </Stack>

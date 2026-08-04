@@ -483,8 +483,42 @@ describe('AppListingDetailBody', () => {
   // mutation and an info-branch mutation each be observed on the same run
   // instead of the first one short-circuiting the second.
 
+  test('🔴 a connect listing WITH an https externalUrl renders a real Visit ↗ anchor', async () => {
+    // The rendered reproduction of the bug this change fixes: an approved
+    // off-site listing with a linked OAuth client used to render an INERT
+    // disabled "Connect" button reading "Connecting this app will be available
+    // soon." — the viewer had no way to open the app at all. It now takes the
+    // same `visit` branch as any other off-site listing.
+    //
+    // Asserted through `renderAndSettle`, which keys on the CTA's href: this
+    // test cannot pass unless a real anchor to the app's address exists.
+    const visitBtn = await renderAndSettle(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            subKind: 'connect',
+            externalUrl: 'https://connect.app',
+            connectClientId: 'oauth-client-1',
+          },
+        })}
+      />,
+      'https://connect.app'
+    );
+    expect(visitBtn.textContent?.trim()).toBe('Visit');
+    expect(visitBtn.getAttribute('target')).toBe('_blank');
+    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(glyphOf(visitBtn)).toBe('external-link');
+    // The stub copy must be GONE from this state — it is the exact string a user
+    // reported as a dead end.
+    expect(document.body.textContent).not.toContain('Connecting this app will be available soon');
+  });
+
   test('the connect branch keeps its own glyph', async () => {
-    // off-site OAuth → the `connect` stub (disabled button + note).
+    // off-site OAuth with NO destination (`externalUrl: null`) → the `connect`
+    // stub (disabled button + note). 🔴 The null url is what selects this branch
+    // now, not the sub-kind — see the test above.
     await renderWithProviders(
       <AppListingDetailBody
         detail={base({

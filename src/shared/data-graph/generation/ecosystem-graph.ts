@@ -413,7 +413,7 @@ export const ecosystemGraph = new DataGraph<
     // Video ecosystems - individual families
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
-    { values: ['MiniMax'] as const, graph: minimaxGraph },
+    { values: ['MiniMaxH3'] as const, graph: minimaxGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
     { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },

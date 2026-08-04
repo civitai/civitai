@@ -201,23 +201,27 @@ export async function ensureDonationGoal(
     userId: number;
     title?: string;
   }) {
-  const existing = await dbWrite.donationGoal.findFirst({
-    where: { entityType, entityId },
-    select: { id: true },
-  });
-  if (existing) return;
-  await dbWrite.donationGoal.create({
-    data: {
-      goalAmount: amount,
-      title,
-      active: true,
-      entityType,
-      entityId,
-      // Dual-written until phase 2 drops the FK column (ModelVersion is its only target).
-      modelVersionId: entityType === 'ModelVersion' ? entityId : null,
-      userId,
-    },
-  });
+  // Create-once is enforced by the partial unique index on (entityType, entityId), not by a prior
+  // read: a read-then-create left a window where concurrent early-access writes all saw no goal and
+  // each inserted one, splitting the entity's donations across rows that donationGoalByEntity then
+  // summed one of at random.
+  const inserted = await dbWrite.$executeRaw`
+    INSERT INTO "DonationGoal" ("goalAmount", "title", "active", "entityType", "entityId", "modelVersionId", "userId")
+    VALUES (
+      ${amount},
+      ${title},
+      true,
+      ${entityType}::"PaidAccessEntityType",
+      ${entityId},
+      -- Dual-written until phase 2 drops the FK column (ModelVersion is its only target).
+      ${entityType === 'ModelVersion' ? entityId : null},
+      ${userId}
+    )
+    ON CONFLICT ("entityType", "entityId")
+      WHERE "entityType" IS NOT NULL AND "entityId" IS NOT NULL
+    DO NOTHING
+  `;
+  if (inserted === 0) return;
   // Bust like every PaidAccess writer — the cache seeds a `goal: null` entry for an existing version,
   // so without this the public/owner reads serve "no goal" until the TTL backstop lapses.
   await bustPublicDonationGoalsCache(entityType, entityId);

@@ -28,6 +28,16 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 
+// The impressions read is a ClickHouse call with its own dedicated coverage
+// (app-views.service.test.ts). Here we only care that it is WIRED correctly —
+// so stub the query and keep the real emptyViews/unavailableViews helpers,
+// which emptyAnalytics depends on.
+const { mockGetAppViews } = vi.hoisted(() => ({ mockGetAppViews: vi.fn() }));
+vi.mock('../app-views.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../app-views.service')>();
+  return { ...actual, getAppViews: (...args: unknown[]) => mockGetAppViews(...args) };
+});
+
 // `Prisma.sql` / `Prisma.join` are used by the service to build the raw
 // queries. Provide a minimal shim that records the static SQL strings so
 // the $queryRaw mock can route by content.
@@ -100,6 +110,12 @@ beforeEach(() => {
       { scope: 'models:read', _count: 40 },
     ])
     .mockResolvedValueOnce([{ endpoint: '/api/v1/foo', _count: 70 }]);
+  // Distinct values so a mis-wired field can't pass by coincidence.
+  mockGetAppViews.mockResolvedValue({
+    count: 124,
+    uniqueViewers: 12,
+    anonCount: 40,
+  });
   routeQueryRaw();
 });
 
@@ -177,9 +193,7 @@ describe('getMyAppAnalytics (aggregation)', () => {
     // runs + buzz spent
     expect(result.runs.count).toBe(7);
     expect(result.runs.buzzSpent).toBe(7000);
-    expect(result.runs.series).toEqual([
-      { bucket: '2026-06-01T00:00:00.000Z', value: 7 },
-    ]);
+    expect(result.runs.series).toEqual([{ bucket: '2026-06-01T00:00:00.000Z', value: 7 }]);
     // buzz purchased
     expect(result.buzzPurchased.count).toBe(2);
     expect(result.buzzPurchased.buzzAmount).toBe(5000);
@@ -192,9 +206,7 @@ describe('getMyAppAnalytics (aggregation)', () => {
       { scope: 'ai:write:budgeted', count: 60 },
       { scope: 'models:read', count: 40 },
     ]);
-    expect(result.engagement.topEndpoints).toEqual([
-      { endpoint: '/api/v1/foo', count: 70 },
-    ]);
+    expect(result.engagement.topEndpoints).toEqual([{ endpoint: '/api/v1/foo', count: 70 }]);
   });
 
   it('reports a zero error rate when there are no API calls', async () => {
@@ -253,6 +265,98 @@ describe('emptyAnalytics (measurement vs placeholder discriminator)', () => {
   it('leaves a genuine zero UNflagged', () => {
     expect(emptyAnalytics(range, false).unavailable).toBeUndefined();
     expect('unavailable' in emptyAnalytics(range, false)).toBe(false);
+  });
+
+  // The `views` section carries its OWN unavailable flag (ClickHouse can be
+  // down while Postgres is fine), so it has to track the payload-level one on
+  // these placeholder paths or a client sees a flagged payload whose
+  // impressions claim to be measured.
+  it('propagates the placeholder verdict into views', () => {
+    expect(emptyAnalytics(range, true).views.unavailable).toBe(true);
+    expect(emptyAnalytics(range, false, 'notEntitled').views.unavailable).toBe(true);
+  });
+
+  it('leaves views UNflagged when the payload is a genuine zero', () => {
+    // "You own no apps" is a truthful measured zero for impressions too.
+    const views = emptyAnalytics(range, false).views;
+    expect(views.unavailable).toBeUndefined();
+    expect('unavailable' in views).toBe(false);
+    expect(views).toEqual({ count: 0, uniqueViewers: 0, anonCount: 0 });
+  });
+});
+
+describe('getMyAppAnalytics (impressions wiring)', () => {
+  it('passes the OWNED ids and the resolved range to the impressions read', async () => {
+    const from = new Date('2026-06-01T00:00:00Z');
+    const to = new Date('2026-06-21T00:00:00Z');
+
+    await getMyAppAnalytics({ userId: OWNER_ID, from, to });
+
+    expect(mockGetAppViews).toHaveBeenCalledTimes(1);
+    const arg = mockGetAppViews.mock.calls[0][0];
+    // Ownership is enforced ONCE, upstream — the reader is handed resolved
+    // ids and applies no check of its own, so handing it anything else (the
+    // requested id, say) would be a data leak across authors.
+    expect(arg.appBlockIds).toEqual([OWNED_ID, OWNED_ID_2]);
+    expect(arg.from.getTime()).toBe(from.getTime());
+    expect(arg.to.getTime()).toBe(to.getTime());
+    // No `granularity`: the impressions read is a single rollup with no time
+    // series, so a bucket size would be dead weight passed across the seam.
+    expect(arg.granularity).toBeUndefined();
+  });
+
+  it('narrows the impressions read to a single requested owned id', async () => {
+    await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+
+    expect(mockGetAppViews.mock.calls[0][0].appBlockIds).toEqual([OWNED_ID]);
+  });
+
+  it('never calls the impressions read for a foreign id', async () => {
+    await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: FOREIGN_ID });
+
+    expect(mockGetAppViews).not.toHaveBeenCalled();
+  });
+
+  it('returns the impressions payload verbatim', async () => {
+    const result = await getMyAppAnalytics({ userId: OWNER_ID });
+
+    expect(result.views).toEqual({
+      count: 124,
+      uniqueViewers: 12,
+      anonCount: 40,
+    });
+  });
+
+  it('carries an impressions outage through without touching the other counters', async () => {
+    mockGetAppViews.mockResolvedValue({
+      count: 0,
+      uniqueViewers: 0,
+      anonCount: 0,
+      unavailable: true,
+    });
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID });
+
+    expect(result.views.unavailable).toBe(true);
+    // The whole reason views has its OWN flag: ClickHouse being down says
+    // nothing about the Postgres-derived numbers, which stay measured.
+    expect(result.unavailable).toBeUndefined();
+    expect(result.installs.total).toBe(20);
+    expect(result.runs.count).toBe(7);
+  });
+
+  it('still passes the CLAMPED range on a long request', async () => {
+    // The reader has no bucket size to pick any more, but it must still see the
+    // range the rest of the payload was computed over, or the impression count
+    // would cover a different window than the counters beside it.
+    const to = new Date('2026-06-21T00:00:00Z');
+    const from = new Date(to.getTime() - 120 * 24 * 3600 * 1000);
+
+    await getMyAppAnalytics({ userId: OWNER_ID, from, to });
+
+    const arg = mockGetAppViews.mock.calls[0][0];
+    expect(arg.from.getTime()).toBe(from.getTime());
+    expect(arg.to.getTime()).toBe(to.getTime());
   });
 });
 

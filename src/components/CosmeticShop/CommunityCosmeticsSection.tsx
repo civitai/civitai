@@ -2,6 +2,7 @@ import { Center, Loader } from '@mantine/core';
 import { useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
+import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCommunityCosmetics } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { creatorShopFilterTypes } from '~/components/CreatorShop/Submit/submit.constants';
@@ -34,6 +35,7 @@ export function CommunityCosmeticsSection({
     { cosmeticTypes: debouncedTypes?.length ? debouncedTypes : undefined }
   );
   const ownedCosmeticIds = useOwnedCosmeticIds();
+  const { wishlistedIds } = useQueryWishlistedShopItems();
 
   // Nothing published yet — keep /shop clean rather than showing an empty hub.
   if (!isLoading && !items.length && !filters.cosmeticTypes?.length) return null;
@@ -61,14 +63,14 @@ export function CommunityCosmeticsSection({
           </Center>
         ) : items.length ? (
           <>
-            <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+            <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
               {items.map((item) => (
                 <ShopItem
                   key={item.id}
-                  layout="storefront"
                   item={item as unknown as CosmeticShopItemGetById}
                   sectionItemCreatedAt={item.createdAt}
                   alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+                  wishlisted={wishlistedIds.has(item.id)}
                   // Attribute the purchase to the owner's shop so the creator
                   // keeps their full pool (never the platform-reseller split).
                   viaShopUserId={item.addedById ?? undefined}

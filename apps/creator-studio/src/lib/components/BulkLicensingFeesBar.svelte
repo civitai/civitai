@@ -14,6 +14,7 @@
     AlertDialogCancel,
     AlertDialogAction,
   } from '@civitai/ui/components/ui/alert-dialog/index.js';
+  import { MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT } from '@civitai/buzz';
   import NumberInput from '$lib/components/NumberInput.svelte';
   import {
     feeToRatio,
@@ -32,6 +33,7 @@
     cancelHref,
     onSelectAll,
     limits,
+    selectionNeedsAffirmation,
   }: {
     matchingVersionIds: number[];
     selected: SvelteSet<number>;
@@ -40,12 +42,18 @@
     onSelectAll: (ids: number[]) => void;
     /** Strictest per-image fee cap across the selection — one fee is applied to every picked version. */
     limits: MonetizationLimits;
+    /** Some selected version has no rights affirmation on record yet. */
+    selectionNeedsAffirmation: boolean;
   } = $props();
 
   let bulkBuzz = $state<number | undefined>(1);
   let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
   let showConfirm = $state(false);
+  let rightsAffirmed = $state(false);
   let form = $state<HTMLFormElement>();
+
+  // Clearing a fee monetizes nothing, so it never needs an affirmation.
+  const mustAffirm = $derived(selectionNeedsAffirmation && (bulkBuzz ?? 0) > 0);
 
   const bulkEnhance =
     () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -87,6 +95,7 @@
     class="contents"
   >
     <input type="hidden" name="versionIds" value={[...selected].join(',')} />
+    <input type="hidden" name="rightsAffirmed" value={rightsAffirmed ? 'on' : ''} />
     <NumberInput
       name="buzz"
       min={0}
@@ -116,7 +125,15 @@
       </Select.Content>
     </Select.Root>
     <span class="text-sm text-dark-1">generations</span>
-    <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
+    <Button
+      size="sm"
+      disabled={selected.size === 0}
+      onclick={() => {
+        // The bar outlives each apply, so an affirmation ticked for one batch must not carry into the next.
+        rightsAffirmed = false;
+        showConfirm = true;
+      }}
+    >
       Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
     </Button>
     <Button href={cancelHref} data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button
@@ -149,9 +166,16 @@
         clears the fee.
       </AlertDialogDescription>
     </AlertDialogHeader>
+    {#if mustAffirm}
+      <label class="flex items-start gap-2 text-sm text-dark-1">
+        <input type="checkbox" bind:checked={rightsAffirmed} class="mt-1 shrink-0" />
+        <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
+      </label>
+    {/if}
     <AlertDialogFooter>
       <AlertDialogCancel>Cancel</AlertDialogCancel>
       <AlertDialogAction
+        disabled={mustAffirm && !rightsAffirmed}
         onclick={() => {
           showConfirm = false;
           form?.requestSubmit();

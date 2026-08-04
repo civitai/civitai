@@ -1,6 +1,10 @@
 const plugin = require('tailwindcss/plugin');
 const colors = require('tailwindcss/colors');
-const { breakpoints } = require('./src/utils/tailwind')
+// Shared with app code via `src/utils/tailwind.ts`, which re-exports this same JSON.
+// It must stay a format Node's CommonJS resolver can load on its own: this file is a
+// CJS module, and a plain `require()` of it (a script, a lint rule, a bundler that
+// inlines the config) gets Node's resolver, which cannot resolve `.ts`.
+const breakpoints = require('./src/utils/breakpoints.json');
 
 const fontFamilies = [
   '"-apple-system"',

@@ -440,6 +440,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           labels,
           labelOverrides,
           storeFullResponse: false,
+          includeReasoning: false,
         }
       : {
           mode: 'prompt' as const,
@@ -449,6 +450,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           labels,
           labelOverrides,
           storeFullResponse: false,
+          includeReasoning: false,
         };
 
   // The orchestrator submit can either return `{ data: null, error }` for a

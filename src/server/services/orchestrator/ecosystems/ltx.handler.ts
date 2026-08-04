@@ -80,7 +80,8 @@ function resolveImageDimensions(
 /**
  * Creates videoGen input for LTX (v2 and v2.3) ecosystems.
  * When `enablePromptEnhancer` is on, prepends a promptEnhancement step and
- * wires its `output.enhancedPrompt` into the videoGen step's `prompt` via $ref.
+ * wires its `output.enhancedPrompt` / `output.enhancedNegativePrompt` into the
+ * videoGen step via $ref.
  * Reference images (img2vid / ref2vid) are passed to the enhancer so the
  * vision-capable LLM can ground the rewrite in the input frames.
  */
@@ -89,6 +90,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
 
   const steps: StepInput[] = [];
   let prompt: string = data.prompt;
+  let negativePrompt: string | undefined = data.negativePrompt || undefined;
   if (data.enablePromptEnhancer) {
     // Pull image URLs off `data.images` when present (img2vid + ref2vid carry
     // them; vid2vid uses `data.video` and has no images).
@@ -102,10 +104,15 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
       ? "Audio generation is enabled. Preserve any audio descriptions the user already wrote in the prompt (music, voices, dialogue, sound effects, ambient sounds) — do not remove, replace, or contradict them. If the user's prompt has little or no audio detail, add appropriate audio cues that fit the scene."
       : undefined;
 
-    const { step, prompt: promptRef } = createChainedPromptEnhancementStep(
+    const {
+      step,
+      prompt: promptRef,
+      negativePrompt: negativePromptRef,
+    } = createChainedPromptEnhancementStep(
       {
         ecosystem: data.ecosystem.toLowerCase(),
         prompt: data.prompt,
+        negativePrompt,
         preserveTriggerWords: data.triggerWords,
         images: enhancerImages?.length ? enhancerImages : undefined,
         instruction,
@@ -114,6 +121,9 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
     );
     steps.push(step);
     prompt = promptRef;
+    // Only follow the enhanced-negative ref when the user actually wrote one —
+    // otherwise the step has nothing to enhance and the ref resolves to null.
+    if (negativePrompt) negativePrompt = negativePromptRef;
   }
 
   if (data.ltxVersion === 'v23') {
@@ -146,6 +156,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
             engine: 'ltx2.3',
             operation: 'firstLastFrameToVideo',
             prompt,
+            negativePrompt,
             width,
             height,
             model,
@@ -172,6 +183,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
             engine: 'ltx2.3',
             operation: 'editVideo',
             prompt,
+            negativePrompt,
             width: 'video' in data ? data.video?.metadata?.width : undefined,
             height: 'video' in data ? data.video?.metadata?.height : undefined,
             model,
@@ -199,6 +211,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
             engine: 'ltx2.3',
             operation: 'extendVideo',
             prompt,
+            negativePrompt,
             width: data.video?.metadata?.width,
             height: data.video?.metadata?.height,
             model,
@@ -224,6 +237,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
             engine: 'ltx2.3',
             operation: 'createVideo',
             prompt,
+            negativePrompt,
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
             model,
@@ -264,6 +278,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
         engine: 'ltx2',
         operation: 'firstLastFrameToVideo',
         prompt,
+        negativePrompt,
         width,
         height,
         guidanceScale,
@@ -284,6 +299,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
         engine: 'ltx2',
         operation: 'createVideo',
         prompt,
+        negativePrompt,
         width: data.aspectRatio?.width,
         height: data.aspectRatio?.height,
         guidanceScale,

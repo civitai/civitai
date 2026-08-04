@@ -248,6 +248,7 @@ describe('uses is required for stickers', () => {
     imageUrl: 'img',
     slug: 'party_cat',
     price: 500,
+    rightsAffirmed: true,
   };
 
   it('rejects a sticker submitted without uses', () => {
@@ -435,6 +436,9 @@ describe('per-use price is required for stickers', () => {
     slug: 'party_cat',
     price: 500,
     uses: 100,
+    // Required for every submission since the rights-affirmation change; present
+    // so these cases fail on the per-use price and nothing else.
+    rightsAffirmed: true,
   };
 
   it('rejects a sticker submitted without a per-use price', () => {

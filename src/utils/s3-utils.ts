@@ -475,6 +475,55 @@ export async function deleteModelFileObjects(urls: string[]) {
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_UPLOAD_PARTS = 1000;
+
+/**
+ * Every part URL of a multipart upload is signed up front and expires together, so a
+ * slow client on a huge file races one deadline across every part it hasn't reached
+ * yet. Growing the chunk keeps the part count — and with it both that race and the
+ * odds of hitting at least one transient part failure — bounded regardless of size.
+ */
+export function getUploadChunkSize(size: number) {
+  let chunkSize = FILE_CHUNK_SIZE;
+  while (Math.ceil(size / chunkSize) > MAX_UPLOAD_PARTS) chunkSize *= 2;
+  return chunkSize;
+}
+
+/** Re-sign a single part of an in-flight multipart upload whose original URL expired. */
+export async function getUploadPartUrl({
+  bucket,
+  key,
+  uploadId,
+  partNumber,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const url = await getSignedUrl(
+    s3,
+    new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+    { expiresIn: UPLOAD_EXPIRATION }
+  );
+  if (B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
+  return { url };
+}
+
+/** `null` when the bucket couldn't be consulted, so callers can tell that from a real miss. */
+export async function objectExists(bucket: string, key: string, s3: S3Client | null = null) {
+  if (!s3) s3 = getS3Client();
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return true;
+  } catch (e) {
+    return isNotFoundError(e) ? false : null;
+  }
+}
+
 export async function getMultipartPutUrl(
   key: string,
   size: number,
@@ -508,7 +557,7 @@ export async function getMultipartPutUrl(
   // browser-direct and invisible pod-side.
   if (bucket && B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
 
-  return { urls, bucket, key, uploadId: UploadId };
+  return { urls, bucket, key, uploadId: UploadId, chunkSize };
 }
 
 interface MultipartUploadPart {

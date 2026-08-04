@@ -13,7 +13,12 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { createJob, getJobDate } from './job';
 
-export const USERS_PER_RUN = 50;
+/**
+ * Ceiling on users reached per run, and the second of the two limits on throughput — raising the
+ * image budget alone moves nothing once a page runs out of users. The backlog's median account
+ * holds 2 images, so a page is usually far cheaper than its worst case suggests.
+ */
+export const USERS_PER_RUN = 250;
 export const DELETE_BATCH_SIZE = 100;
 
 /**
@@ -388,7 +393,9 @@ async function drainPage(
 
 export const removeDeletedUserImages = createJob(
   'remove-deleted-user-images',
-  '15 * * * *',
+  // Off the hour: remove-blocked-images runs at :00 and pushes 15K images through the same
+  // deleteImages path, S3 deletes and CDN purges included.
+  '*/10 * * * *',
   async (ctx) => {
     const budget = await getImagePurgeBudget();
     if (budget <= 0) return { paused: true, deletedImages: 0, blockedImages: 0, deletedUsers: 0 };

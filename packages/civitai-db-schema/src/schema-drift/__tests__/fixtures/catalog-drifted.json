@@ -1,0 +1,83 @@
+{
+  "_comment": [
+    "catalog-aligned.json with exactly one deliberate defect per drift class:",
+    "  missing-foreign-key : Comment_postId_fkey removed",
+    "  referential-action  : posts_authorId_fkey ON DELETE Cascade (schema defaults the",
+    "                        REQUIRED Post.author relation to Restrict, not Cascade)",
+    "  referential-action  : Comment_authorId_fkey ON UPDATE NoAction (schema default Cascade)",
+    "  nullability         : Author.name NOT NULL although declared optional",
+    "  nullability         : posts.title NULLABLE although declared required",
+    "  uniqueness          : the Project(projectId, position) unique index removed",
+    "  missing-column      : posts.subtitle absent although the schema declares it",
+    "Comment_authorId_fkey keeps ON DELETE SetNull, which is what Prisma defaults an",
+    "OPTIONAL relation to - so a differ that assumed Cascade would report it and fail."
+  ],
+  "tables": ["Author", "posts", "Comment", "Project", "ProjectSlot", "LegacyThing"],
+  "columns": [
+    { "table": "Author", "column": "id", "notNull": true },
+    { "table": "Author", "column": "email", "notNull": true },
+    { "table": "Author", "column": "name", "notNull": true },
+
+    { "table": "posts", "column": "id", "notNull": true },
+    { "table": "posts", "column": "authorId", "notNull": true },
+    { "table": "posts", "column": "title", "notNull": false },
+    { "table": "posts", "column": "slug", "notNull": true },
+    { "table": "posts", "column": "createdAt", "notNull": true },
+    { "table": "posts", "column": "archived", "notNull": false },
+    { "table": "posts", "column": "body_text", "notNull": false },
+
+    { "table": "Comment", "column": "id", "notNull": true },
+    { "table": "Comment", "column": "postId", "notNull": true },
+    { "table": "Comment", "column": "authorId", "notNull": false },
+    { "table": "Comment", "column": "text", "notNull": true },
+
+    { "table": "Project", "column": "id", "notNull": true },
+    { "table": "Project", "column": "projectId", "notNull": true },
+    { "table": "Project", "column": "position", "notNull": true },
+
+    { "table": "ProjectSlot", "column": "id", "notNull": true },
+    { "table": "ProjectSlot", "column": "projectId", "notNull": true },
+    { "table": "ProjectSlot", "column": "position", "notNull": true },
+
+    { "table": "LegacyThing", "column": "id", "notNull": true },
+    { "table": "LegacyThing", "column": "authorId", "notNull": true }
+  ],
+  "foreignKeys": [
+    {
+      "name": "posts_authorId_fkey",
+      "table": "posts",
+      "columns": ["authorId"],
+      "refTable": "Author",
+      "refColumns": ["id"],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade"
+    },
+    {
+      "name": "Comment_authorId_fkey",
+      "table": "Comment",
+      "columns": ["authorId"],
+      "refTable": "Author",
+      "refColumns": ["id"],
+      "onDelete": "SetNull",
+      "onUpdate": "NoAction"
+    },
+    {
+      "name": "ProjectSlot_projectId_position_fkey",
+      "table": "ProjectSlot",
+      "columns": ["projectId", "position"],
+      "refTable": "Project",
+      "refColumns": ["projectId", "position"],
+      "onDelete": "Cascade",
+      "onUpdate": "Cascade"
+    }
+  ],
+  "uniqueIndexes": [
+    { "table": "Author", "columns": ["id"] },
+    { "table": "Author", "columns": ["email"] },
+    { "table": "posts", "columns": ["id"] },
+    { "table": "posts", "columns": ["slug"] },
+    { "table": "Comment", "columns": ["id"] },
+    { "table": "Project", "columns": ["id"] },
+    { "table": "ProjectSlot", "columns": ["id"] }
+  ]
+}

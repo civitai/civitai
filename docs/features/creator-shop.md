@@ -17,6 +17,14 @@ These override the original HackMD plan where they differ:
 - **Owned / Sold-out** states reuse the existing `CosmeticShop` styling (the `Owned` overlay + out-of-stock disabling the CTA), not bespoke overlays.
 - The shop lives in the **real profile shell** (left sidebar + top tab-nav), as a new **Shop** tab — not a standalone page.
 
+## Rights affirmation
+
+Submitting a cosmetic requires the creator to confirm they own — or otherwise hold — the rights to sell the artwork. It is not just a client-side checkbox: the service records `meta.rightsAffirmation` on the `CosmeticShopItem` (`userId`, `affirmedAt`, `version`, and the `statement` verbatim), so a later takedown challenge can show who agreed to what, and when.
+
+- The wording and version live in `creator-shop.schema.ts` (`RIGHTS_AFFIRMATION_STATEMENT` / `RIGHTS_AFFIRMATION_VERSION`) — bump the version whenever the wording changes; existing records keep the text that was actually agreed to.
+- Replacing artwork on an unpublished item re-affirms (and overwrites the record), because the stored affirmation describes the art it was made against. A moderator swapping artwork does not affirm and does not overwrite the creator's record.
+- The moderator review queue shows the affirmation alongside the automated checks.
+
 ## Screens (mockups in `designs/creator-shop.pen`)
 
 | Screen | Purpose |
@@ -69,6 +77,25 @@ The official shop's sections are a **curated CMS** (banner image, `placement`, `
 - HackMD plan: 3 new tables (`CreatorShopItem`, `CreatorShop`, `CreatorShopListing`).
 - This proposal: **2 additive columns/enum on existing tables (`Cosmetic.createdById`, `CosmeticShopItem.status`+review fields) + shop settings as JSON on `User` (no new tables).** Fewer moving parts, shared purchase/payout path.
 
+## Takedown (IP / TOS)
+
+`creatorShop.takedownItem` (moderator-only, not flag-gated — it covers official shop items too) is the one-shot undo for a cosmetic that has to be pulled. `takedownCosmeticShopItem` in `creator-shop.service.ts`:
+
+1. **Stops sales first** — `status → Archived`, `listed = false`, `meta.takedown = { reason, moderatorId, at }`, official-shop section links deleted, featured slot freed. A taken-down item can never be unarchived back to sale.
+2. **Refunds every buyer** — `refundMultiAccountTransaction` per unrefunded `UserCosmeticShopPurchases` row (returns each color the buyer paid with) and flips `refunded = true`. Buyers are only ever refunded — nothing is charged back to them.
+3. **Takes back what the seller was paid** — `purchaseCosmeticShopItem` records each sale's payouts on `UserCosmeticShopPurchases.meta` (`{ payouts: [{ userId, amount, color, transactionId }], platformCut }`), so the takedown **refunds each payout transaction by id** — reseller cut included. Recorded payouts missing an id (the Buzz service returned none) fall back to a reversing charge from the recipient, one per recipient per color. The result reports `owedBack` / `clawedBack` plus `clawedBackPct`, the share of those sales it represents.
+   - **Legacy sales** (rows written before the payout column existed) have `meta = NULL` and fall back to re-deriving the split from the item: the creator's guaranteed slice only, with a resellable item's seller share reported as `unrecoveredResellerShare` for manual follow-up, since who took it was never recorded.
+4. **Strips ownership** — `revokeCosmeticsFromUsers` for every `UserCosmetic` row of that cosmetic (buyers, gifts, and the creator's own approval grant), which also unequips and refreshes entity caches / search indexes.
+
+The creator's **submission fee is never refunded** — a takedown is a terms violation.
+
+Money moves are best-effort per buyer: each is retried 3× (1s apart) before it's written off, and failures are collected in `failures` (stage + user + amount) instead of aborting the run. Everything lands in Axiom under `name: 'cosmetic-takedown'` — a start record, one `error` per written-off refund/clawback carrying the ids needed to finish it by hand, and a finish record with the run totals (`error` level if anything failed).
+
 ## Changelog
+
+- **2026-08-03** — Purchases now record their payout split **and each payout's transaction id** (`UserCosmeticShopPurchases.meta`, migration `20260803220000_add_cosmetic_purchase_payout_meta` — **apply manually**), so takedowns refund those payouts directly.
+- **2026-08-03** — Takedown + refund + clawback path added (`creatorShop.takedownItem`, moderator review-queue "Take down" action).
+- **2026-08-03** — Cosmetic submissions now require (and record) a creator affirmation of the rights to sell the artwork.
+
 
 - **2026-07-01** — Design phase complete; mockups committed (`da5ff8f1d9`). Data-model assessment done: **extend existing cosmetic-shop tables** (additive `Cosmetic.createdById` + `CosmeticShopItem` status/review fields + shop settings as JSON on `User`) rather than the plan's 3 new tables.

@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
+  CosmeticPurchaseMeta,
   CosmeticShopItemMeta,
   CosmeticShopSectionMeta,
   GetAllCosmeticShopSections,
@@ -14,6 +15,7 @@ import type {
   GetPreviewImagesInput,
   GetShopInput,
   PurchaseCosmeticShopItemInput,
+  ToggleWishlistShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
@@ -41,7 +43,7 @@ import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
 } from '~/server/services/cosmetic-phash.service';
-import { withRetries } from '~/server/utils/errorHandling';
+import { throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -597,6 +599,50 @@ export const getShopSectionsWithItems = async ({
   );
 };
 
+export const getWishlistedShopItemIds = async ({ userId }: { userId: number }) => {
+  const wishlisted = await dbRead.userCosmeticShopItemWishlist.findMany({
+    where: { userId },
+    select: { shopItemId: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return wishlisted.map((w) => w.shopItemId);
+};
+
+export const toggleWishlistShopItem = async ({
+  userId,
+  shopItemId,
+  wishlisted,
+}: ToggleWishlistShopItemInput & { userId: number }) => {
+  const existing = await dbWrite.userCosmeticShopItemWishlist.findUnique({
+    where: { userId_shopItemId: { userId, shopItemId } },
+    select: { shopItemId: true },
+  });
+  const shouldWishlist = wishlisted ?? !existing;
+
+  if (!shouldWishlist) {
+    await dbWrite.userCosmeticShopItemWishlist.deleteMany({ where: { userId, shopItemId } });
+    return { shopItemId, wishlisted: false };
+  }
+
+  if (!existing) {
+    const shopItem = await dbRead.cosmeticShopItem.findUnique({
+      where: { id: shopItemId },
+      select: { id: true },
+    });
+    if (!shopItem) throw throwNotFoundError('Shop item not found');
+
+    // skipDuplicates emits ON CONFLICT DO NOTHING, so two clicks racing past the
+    // read above settle on one row instead of a unique violation.
+    await dbWrite.userCosmeticShopItemWishlist.createMany({
+      data: [{ userId, shopItemId }],
+      skipDuplicates: true,
+    });
+  }
+
+  return { shopItemId, wishlisted: true };
+};
+
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
@@ -888,9 +934,9 @@ export const purchaseCosmeticShopItem = async ({
           ].filter((p) => p.amount > 0);
         });
 
-        await Promise.all(
-          payouts.map((p) =>
-            createBuzzTransaction({
+        const paid = await Promise.all(
+          payouts.map(async (p) => {
+            const { transactionId: payoutTransactionId } = await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: p.userId,
               toAccountType: p.color,
@@ -901,9 +947,25 @@ export const purchaseCosmeticShopItem = async ({
               // same external id.
               externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
-            })
-          )
+            });
+            // The transaction id is what makes a takedown a true refund of this
+            // payout rather than a fresh reversing charge.
+            return { ...p, transactionId: payoutTransactionId ?? undefined };
+          })
         );
+
+        // Record what was actually paid, per recipient and color. A takedown
+        // reverses these rather than re-deriving a split whose reseller context
+        // no longer exists.
+        await dbWrite.userCosmeticShopPurchases.update({
+          where: { buzzTransactionId: transactionId },
+          data: {
+            meta: {
+              payouts: paid,
+              platformCut: price - paid.reduce((sum, p) => sum + p.amount, 0),
+            } satisfies CosmeticPurchaseMeta as Prisma.InputJsonValue,
+          },
+        });
       }, 3);
     } catch (e) {
       // We will NOT stop the user interaction for this.

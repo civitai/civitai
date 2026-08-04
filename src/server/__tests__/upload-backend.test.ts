@@ -43,6 +43,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 
 // Capture which s3 client/bucket the handler resolved so we can corroborate the
 // backend choice at the collaborator level (not just the response echo).
+const CHUNK_SIZE = vi.hoisted(() => 25 * 1024 * 1024);
 const { getUploadS3Client, getUploadBucket, getMultipartPutUrl } = vi.hoisted(() => ({
   getUploadS3Client: vi.fn((backend: string) => ({ __client: backend })),
   getUploadBucket: vi.fn((backend: string) => `bucket-${backend}`),
@@ -57,6 +58,7 @@ vi.mock('~/utils/s3-utils', () => ({
   getUploadS3Client,
   getUploadBucket,
   getMultipartPutUrl,
+  getUploadChunkSize: () => CHUNK_SIZE,
 }));
 
 // NOTE: this test lives under src/server/__tests__ (not co-located beside the
@@ -132,7 +134,9 @@ describe('upload handler — model backend selection (b2-upload-default retired)
       expect.any(String),
       1024,
       { __client: 'b2' },
-      'bucket-b2'
+      'bucket-b2',
+      undefined,
+      CHUNK_SIZE
     );
   });
 
@@ -147,7 +151,14 @@ describe('upload handler — model backend selection (b2-upload-default retired)
     // The default backend resolves no B2 client/bucket (null passed through).
     expect(getUploadS3Client).not.toHaveBeenCalled();
     expect(getUploadBucket).not.toHaveBeenCalled();
-    expect(getMultipartPutUrl).toHaveBeenCalledWith(expect.any(String), 1024, null, null);
+    expect(getMultipartPutUrl).toHaveBeenCalledWith(
+      expect.any(String),
+      1024,
+      null,
+      null,
+      undefined,
+      CHUNK_SIZE
+    );
   });
 
   // The Model branch was deliberately made identical to the training branch when
@@ -179,6 +190,13 @@ describe('upload handler — model backend selection (b2-upload-default retired)
     expect((res.body as { backend?: string })?.backend).toBe('default');
     expect(getUploadS3Client).not.toHaveBeenCalled();
     expect(getUploadBucket).not.toHaveBeenCalled();
-    expect(getMultipartPutUrl).toHaveBeenCalledWith(expect.any(String), 1024, null, null);
+    expect(getMultipartPutUrl).toHaveBeenCalledWith(
+      expect.any(String),
+      1024,
+      null,
+      null,
+      undefined,
+      CHUNK_SIZE
+    );
   });
 });

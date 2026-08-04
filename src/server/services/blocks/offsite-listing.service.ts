@@ -28,6 +28,7 @@ import {
   assertAssetsScanClean,
   assertListingMeetsFloor,
 } from '~/server/services/blocks/app-listing-assets.service';
+import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
@@ -1974,6 +1975,9 @@ export async function approveExternalRequest(opts: {
       userId: true,
       name: true,
       slug: true,
+      // `kind` + `slug` also feed the go-live ACTIONABILITY gate in (4c) — the
+      // check is off-site-only, so it needs the discriminator, not just the URL.
+      kind: true,
     },
   });
   if (!listing) {
@@ -2044,6 +2048,19 @@ export async function approveExternalRequest(opts: {
   // row (`connectClientId == null`); runs for every OAuth-linked external listing.
   assertConnectSensitiveScopesJustified(listing);
 
+  // (4c) 🔴 GO-LIVE ACTIONABILITY gate — an off-site listing may not be published
+  // while the store would render it a primary CTA with nothing to click. This is
+  // the gate that was MISSING when three connect listings were approved onto the
+  // dead "Connecting this app will be available soon." stub (07-24 → 07-28), each
+  // one going live with no way for a user to open the app.
+  //
+  // It re-runs the REAL detail view-model rather than re-deriving a second
+  // "is this actionable?" rule — see `app-listing-actionable.service`. On-site
+  // requests are a no-op (a model-slot app is legitimately non-navigable).
+  // Fail-fast copy on the replica; re-asserted AUTHORITATIVELY on the primary in
+  // (5), same TOCTOU discipline as the floor + scan gates above.
+  assertOffsiteListingActionable(listing);
+
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
   await dbWrite.$transaction(async (tx) => {
@@ -2068,6 +2085,10 @@ export async function approveExternalRequest(opts: {
         connectRequestedScopes: true,
         connectScopeJustifications: true,
         connectClient: { select: { allowedScopes: true } },
+        // Go-live ACTIONABILITY gate (re-asserted below) — off-site-only, so it
+        // needs the kind discriminator; `slug` names the listing in the error.
+        kind: true,
+        slug: true,
       },
     });
     if (!primaryListing) {
@@ -2098,6 +2119,13 @@ export async function approveExternalRequest(opts: {
       },
       tx
     );
+    // AUTHORITATIVE go-live ACTIONABILITY gate on the PRIMARY (`tx`) — row-consistent
+    // with the flip below. `externalUrl` / `connectClientId` are owner-editable in
+    // place while the request sits pending, so an owner who cleared the URL (or
+    // linked an OAuth client) after the replica read in (4c) is caught HERE and the
+    // whole tx rolls back BEFORE anything is approved. Upholds the invariant: no
+    // approved off-site listing may render a primary CTA the viewer cannot click.
+    assertOffsiteListingActionable(primaryListing);
     // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
     // model); a null URL approves fine. See step (4).
     if (primaryListing.externalUrl != null) {
@@ -2389,6 +2417,24 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the request is no longer pending'
       );
     }
+
+    // (2c) 🔴 GO-LIVE ACTIONABILITY gate on the POST-COPY state. A revision is a
+    // CONTENT go-live: it writes no `status`, but the off-site branch below copies
+    // the shadow's `externalUrl` + `connectClientId` straight onto an ALREADY-LIVE
+    // parent — so a revision that clears the URL (or links an OAuth client) is
+    // precisely how a working listing becomes a dead CTA without any status write.
+    //
+    // 🔴 Asserted on the PROJECTED result of the copy — the parent's `kind`/`slug`
+    // (neither is copied) with the SHADOW's URL/client (which are) — NOT on the
+    // parent as it stands. Re-reading the parent here would gate the state we are
+    // about to overwrite and would pass every regression this is meant to stop.
+    // On-site revisions are a no-op: they copy assets only, never these columns.
+    assertOffsiteListingActionable({
+      kind: parent.kind,
+      slug: parent.slug,
+      externalUrl: shadow.externalUrl,
+      connectClientId: shadow.connectClientId,
+    });
 
     // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
     // untouched). KIND-AWARE:
