@@ -642,7 +642,18 @@ describe('approveExternalRequest (revision apply)', () => {
     mockRead.appListing.findUnique.mockImplementation(
       findUniqueById({
         apl_shadow: shadowListing as Row,
-        apl_parent: { id: 'apl_parent', slug: 'cool-app', status: 'approved' } as Row,
+        // 🔴 `kind` IS LOAD-BEARING HERE, not decoration. It is NOT NULL in the
+        // DB, so a row without it cannot exist — and omitting it made the
+        // actionable-CTA gate a silent no-op: the gate skips a non-offsite
+        // listing, so these tests passed with the guard DELETED. It was also
+        // internally inconsistent, since `applyApprovedRevision` took the
+        // off-site copy branch while the off-site gate skipped.
+        apl_parent: {
+          id: 'apl_parent',
+          slug: 'cool-app',
+          status: 'approved',
+          kind: 'offsite',
+        } as Row,
       })
     );
     // In-tx authoritative shadow re-read (dbWrite) — full scalars to copy.
