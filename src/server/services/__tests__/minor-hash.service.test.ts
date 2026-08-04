@@ -46,6 +46,8 @@ import {
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
   MINOR_HASH_CLEARED_KEY,
+  MINOR_HASH_ACCEPTED_KEY,
+  AUTO_FLAG_REVIEW_WINDOW_DAYS,
 } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
@@ -699,6 +701,21 @@ describe('getAutoFlaggedMinorModels', () => {
 
     expect(result.items).toHaveLength(2);
     expect(result.truncated).toBe(true);
+  });
+
+  // The queue is unbounded otherwise — one dev-clone sweep produced 290 rows.
+  it('limits the queue to the 30-day review window and skips accepted flags', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getAutoFlaggedMinorModels({ limit: 1000 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain(`now() - make_interval(days =>`);
+    expect(text).toContain(`->>'at')::timestamptz >`);
+    expect(text).toContain('AND NOT (m.meta ? ');
+    expect(values).toContain(MINOR_HASH_ACCEPTED_KEY);
+    expect(values).toContain(AUTO_FLAG_REVIEW_WINDOW_DAYS);
   });
 });
 

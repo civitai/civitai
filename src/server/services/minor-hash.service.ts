@@ -41,6 +41,13 @@ const moderatorMinorSeedPredicate = Prisma.sql`
 
 export const MINOR_HASH_CLEARED_KEY = 'minorHashCleared';
 
+export const MINOR_HASH_ACCEPTED_KEY = 'minorHashAccepted';
+
+// An unreviewed auto-flag is presumed correct once the owner has had a month to
+// contest it. Without a bound the queue only grows — one dev-clone sweep alone
+// added 290 rows.
+export const AUTO_FLAG_REVIEW_WINDOW_DAYS = 30;
+
 // A rollback is a human deciding the model is NOT minor, and the rollback deletes
 // the snapshot — so without a separate record of it the model drops straight back
 // into the candidate set and the next unattended run flags it again. Verified on
@@ -530,6 +537,9 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
     WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
       AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
       AND NOT ${humanConfirmedPredicate}
+      AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
+      AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz >
+          now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
     ORDER BY (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz DESC, m.id DESC
     LIMIT ${limit + 1}
   `;
