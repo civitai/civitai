@@ -220,54 +220,63 @@ export type TextOutputScanVerdict = {
  * and what comes back is not mistaken for a drop.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * 🔴 AN OVERDUE LIVE PROBE — THIS WAS WRITTEN AS A PRE-ADOPTION GATE AND THE
- * ADOPTION HAS ALREADY HAPPENED. Do not skip it because the tests are green,
- * and do not weaken the guard to hedge it.
+ * 🔴 WHAT THIS GUARD ASSUMES, AND EXACTLY HOW MUCH OF IT HAS BEEN MEASURED.
+ * Two questions live here with two DIFFERENT answers — one is measured, one is
+ * open. Do not collapse them, and do not weaken the guard to hedge either.
  *
- * 🔴 CORRECTED: this note used to read "RUN ONE LIVE PROBE BEFORE THE FIRST
- * `'textOutput'` ENTRY REGISTERS" and to close with "the posture is dormant
- * until then, which is why this is a gate note rather than a defect." Both are
- * FALSE. `stepRegistry` carries `'chat-completion':
- * Object.freeze(chatCompletionStep)` (`./index`), and that entry declares
- * `moderationPosture: 'textOutput'` (`./chat-completion.step`). The posture is
- * REGISTERED and this guard is live on a real read path — so the probe below is
- * not a precondition someone still has time to satisfy, it is a verification
- * that is outstanding on shipped code.
+ * (This note used to be a "PRE-ADOPTION GATE — run the probe BEFORE the first
+ * `'textOutput'` entry registers … the posture is dormant until then". Both
+ * halves were stale. `stepRegistry` carries `'chat-completion'` (`./index`),
+ * which declares `moderationPosture: 'textOutput'` (`./chat-completion.step`),
+ * so the posture is REGISTERED and this guard is live on a real read path — and
+ * the probe has since been run. Nothing here is pending adoption.)
  *
  * THE ASSUMPTION: that the deployed scanner returns a `results[]` entry for
  * EVERY requested label — including the ones that did NOT trigger. The whole
  * guard rests on it, because "requested but absent from `results[]`" is read
  * here as drift.
  *
- * WHY IT IS NOT YET EVIDENCE: the only thing that currently exhibits the shape
- * is this file's own test fixture, which builds `results[]` by mapping over
- * `TEXT_OUTPUT_SCAN_LABELS` — i.e. the fake encodes the same assumption the code
- * does, so the suite cannot disagree with it. That is a both-wrong-blind pair,
- * not a verification.
+ * ✅ MEASURED, AND IT HOLDS — verified by live probe against the production
+ * orchestrator, 2026-08-03: 15 labels requested, 15 returned, every one
+ * `triggered: false`, names matching 15 of 15. POSITIVE CONTROL in the same
+ * probe: a BOGUS label came back ABSENT — so `results[]` genuinely omits what
+ * the scanner did not evaluate, and this guard can actually FIRE rather than
+ * being a branch nothing reaches. That refutes the "every clean scan reads as
+ * total drift, the entry withholds 100% of its output" scenario this note was
+ * originally written to gate against.
  *
- * WHAT HAPPENS IF THE ASSUMPTION IS WRONG: if the scanner returns only
- * TRIGGERED labels, then every clean scan comes back with an empty (or partial)
- * `results[]`, every clean scan reads as total drift, and the registered entry
- * withholds 100% of its output. That is loud, safe and fail-closed — but it is a
- * capability outage, and it will present as "the feature does not work" rather
- * than as a scanner problem.
+ * 🔴 ONE PROBE ON ONE DATE IS A POINT MEASUREMENT, NOT A STANDING GUARANTEE. It
+ * says nothing about the scanner's behaviour after a redeploy, a label-config
+ * change or a model swap, and NOTHING IN THIS REPO CAN DETECT SUCH A CHANGE: the
+ * suite cannot disagree with the assumption, because this file's own fixture
+ * builds `results[]` by mapping over `TEXT_OUTPUT_SCAN_LABELS` and so encodes
+ * the very shape it would need to falsify — a both-wrong-blind pair. If the
+ * behaviour ever does change, the symptom is the loud fail-closed one: every
+ * clean scan reads as total drift and the registered entry withholds all of its
+ * output, presenting as "the feature does not work" rather than as a scanner
+ * problem. That is the correct DIRECTION to fail in, and it is still an outage
+ * — so re-probe whenever anything on the scanner side moves.
  *
- * THE PROBE (one call): submit a text scan through
+ * 🔴 STILL UNPROBED, AND THIS IS THE HALF THAT IS GENUINELY OPEN: the
+ * 2026-08-03 probe did NOT read `error` or `finishReason`. The `error`
+ * population behaviour that {@link erroredRequestedLabels} depends on is
+ * therefore unverified against the deployed scanner. Same one call answers it.
+ *
+ * TO (RE-)PROBE, ONE CALL: submit a text scan through
  * `createXGuardModerationRequest` with `labels: [...TEXT_OUTPUT_SCAN_LABELS]`
  * over benign content that triggers NOTHING, and read the returned step's
- * `output.results`. Expect 15 entries with `triggered: false`. If instead it
- * comes back empty or short, the drift guard needs a different signal for
- * "evaluated" — the fix is to find one the scanner actually emits, NOT to
- * loosen the withhold.
- *
- * 🔴 AND WHILE YOU ARE THERE, READ `error` AND `finishReason` ON THE SAME
- * RESPONSE. The same one call answers all three questions, and the other two are
- * open for the same reason this one is; see {@link erroredRequestedLabels}.
+ * `output.results`. Expect 15 entries with `triggered: false`. Include a BOGUS
+ * label as the positive control and confirm it comes back ABSENT — without that
+ * half, "15 came back" cannot distinguish a scanner that echoes every label it
+ * is handed. Read `error` and `finishReason` on the same response while you are
+ * there. If `results[]` ever comes back empty or short, the drift guard needs a
+ * different signal for "evaluated" — the fix is to find one the scanner actually
+ * emits, NOT to loosen the withhold.
  *
  * 🔴 DO NOT TREAT "the feature seems to work" AS THE PROBE. That inference is
- * only as good as the traffic behind it, and nobody has measured either the
- * traffic or the withhold rate on this path. An unrun probe is unrun in both
- * directions.
+ * only as good as the traffic behind it, and the traffic and withhold rate on
+ * this path have not been measured. It is not a substitute for the call above,
+ * in either direction.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function missingRequestedLabels(
@@ -302,9 +311,16 @@ export function missingRequestedLabels(
  * scanner that populates `error: ''` on the HEALTHY path is a live possibility,
  * not a hypothetical. Treating `''` as a fault would withhold 100% of generated
  * output from the registered `'chat-completion'` entry: the same capability
- * outage the overdue-probe note on `missingRequestedLabels` warns about,
- * arrived at from the other direction. A scanner that reports failures at all
- * will populate a message.
+ * outage the probe note on `missingRequestedLabels` describes, arrived at from
+ * the other direction. A scanner that reports failures at all will populate a
+ * message.
+ *
+ * 🔴 UNVERIFIED AGAINST THE DEPLOYED SCANNER, AND SAY SO RATHER THAN ASSUME.
+ * The 2026-08-03 live probe that settled the `results[]`-completeness question
+ * did NOT read `error`, so whether the deployed scanner populates it on a
+ * per-label failure — and whether it emits `error: ''` when healthy — is still
+ * open. If it never populates `error`, this guard is INERT rather than wrong: it
+ * adds a withhold path, it removes none.
  */
 function labelResultErrored(entry: XGuardLabelResultLike): boolean {
   const err = entry.error;
