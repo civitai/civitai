@@ -6,6 +6,7 @@ import {
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticInput,
   upsertCosmeticShopItemInput,
@@ -20,8 +21,10 @@ import {
   getShopSections,
   getShopSectionsWithItems,
   getUserPreviewImagesForCosmetics,
+  getWishlistedShopItemIds,
   purchaseCosmeticShopItem,
   reorderCosmeticShopSections,
+  toggleWishlistShopItem,
   upsertCosmetic,
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
@@ -122,6 +125,17 @@ export const cosmeticShopRouter = router({
         userId: ctx.user.id,
         buzzType,
       });
+    }),
+  getWishlistedShopItemIds: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => {
+      return getWishlistedShopItemIds({ userId: ctx.user.id });
+    }),
+  toggleWishlistShopItem: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(toggleWishlistShopItemInput)
+    .mutation(({ input, ctx }) => {
+      return toggleWishlistShopItem({ ...input, userId: ctx.user.id });
     }),
   getPreviewImages: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })

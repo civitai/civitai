@@ -156,6 +156,15 @@ export const purchaseCosmeticShopItemInput = z.object({
   payWith: z.enum(['default', 'blue-first']).optional(),
 });
 
+export type ToggleWishlistShopItemInput = z.infer<typeof toggleWishlistShopItemInput>;
+export const toggleWishlistShopItemInput = z.object({
+  shopItemId: z.number(),
+  // Desired end state rather than a blind flip, so a rapid double-click settles
+  // on what the last click asked for instead of racing to an arbitrary value.
+  // Omitted = flip whatever is currently stored.
+  wishlisted: z.boolean().optional(),
+});
+
 export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;
 export const getPreviewImagesInput = z.object({
   browsingLevel: z.number(),

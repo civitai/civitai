@@ -3629,6 +3629,11 @@ export type UserCosmetic = {
   forType: CosmeticEntity | null;
   remaining: number | null;
 };
+export type UserCosmeticShopItemWishlist = {
+  userId: number;
+  shopItemId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmeticShopPurchases = {
   userId: number;
   cosmeticId: number;
@@ -4191,6 +4196,7 @@ export type DB = {
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserCosmetic: UserCosmetic;
+  UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;

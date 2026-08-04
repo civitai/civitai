@@ -18,10 +18,12 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   useCosmeticShopQueryParams,
   useQueryShop,
+  useQueryWishlistedShopItems,
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
-import type { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
+import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
+import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
@@ -73,12 +75,13 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
-  const [filters, setFilters] = useState<GetShopInput & { modifier?: 'owned' | 'notOwned' }>({
+  const [filters, setFilters] = useState<ShopFilters>({
     ...(query ?? {}),
   });
   const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
   const { data: userCosmetics, isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
@@ -146,7 +149,7 @@ export default function CosmeticShopMain() {
             </Text>
           </Stack>
           <div className="ml-auto">
-            <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
+            <ShopFiltersDropdown filters={filters} setFilters={setFilters} showWishlist />
           </div>
           <div className="flex flex-col gap-6">
             {isLoading || loadingOwnedCosmetics ? (
@@ -186,6 +189,10 @@ export default function CosmeticShopMain() {
                     );
                   }
                 }
+                if (filters.wishlisted)
+                  filteredItems = filteredItems.filter((item) =>
+                    wishlistedIds.has(item.shopItem.id)
+                  );
 
                 if (!filteredItems.length) return null;
 
@@ -211,6 +218,7 @@ export default function CosmeticShopMain() {
                             item={shopItem}
                             sectionItemCreatedAt={item.createdAt}
                             alreadyOwned={alreadyOwned}
+                            wishlisted={wishlistedIds.has(shopItem.id)}
                             creator={shopItem.cosmetic.creator}
                             viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
                           />
