@@ -42,6 +42,7 @@ import {
   getMinorHashMatchDetail,
   confirmMinorHashAutoFlag,
   revertMinorHashAutoFlag,
+  acceptExpiredMinorAutoFlags,
   minorSrcCte,
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
@@ -1262,5 +1263,30 @@ describe('rollbackMinorHashAutoFlags', () => {
     const confirmedText = Array.from(confirmedStrings as TemplateStringsArray).join('?');
     expect(confirmedText).toContain('OR (m.meta ? ');
     expect(confirmedText).not.toContain('AND NOT (m.meta ? ');
+  });
+});
+
+describe('acceptExpiredMinorAutoFlags', () => {
+  // A resolved appeal already had a human look at it; sweeping it up as "nobody
+  // objected" would overwrite that decision with a presumption.
+  it('skips any model with an appeal of any status', async () => {
+    mockDbWrite.$executeRaw.mockResolvedValue(0);
+
+    await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 500 });
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"Appeal"');
+    expect(text).toContain('NOT EXISTS');
+    expect(text).not.toContain(`status = 'Pending'`);
+  });
+
+  it('writes nothing on a dry run', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ count: 4 }]);
+
+    const result = await acceptExpiredMinorAutoFlags({ dryRun: true, limit: 500 });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(result.accepted).toBe(4);
   });
 });

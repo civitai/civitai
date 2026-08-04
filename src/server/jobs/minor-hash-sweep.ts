@@ -1,5 +1,8 @@
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { sweepMinorHashMatches } from '~/server/services/minor-hash.service';
+import {
+  acceptExpiredMinorAutoFlags,
+  sweepMinorHashMatches,
+} from '~/server/services/minor-hash.service';
 import { createJob } from './job';
 
 // Catches what the scan-time hook cannot: a copy uploaded before the original
@@ -10,5 +13,8 @@ import { createJob } from './job';
 export const minorHashSweep = createJob('minor-hash-sweep', '45 3 * * *', async () => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))) return;
 
-  return await sweepMinorHashMatches({ dryRun: false, limit: 500 });
+  const swept = await sweepMinorHashMatches({ dryRun: false, limit: 500 });
+  const accepted = await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 500 });
+
+  return { ...swept, ...accepted };
 });

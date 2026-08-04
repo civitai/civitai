@@ -852,3 +852,58 @@ export async function rollbackMinorHashAutoFlags({
 
   return report;
 }
+
+// The 30-day window hides an unreviewed flag from the queue; this makes that
+// durable. Kept as `source: 'auto'` on purpose — moderatorMinorSeedPredicate
+// excludes 'auto', so a flag no human ever looked at never becomes the seed for
+// further automated flags. No status filter on the Appeal check: any appeal at
+// all means a human already looked, so sweeping it up as "nobody objected"
+// would overwrite that decision with a presumption.
+export async function acceptExpiredMinorAutoFlags({
+  dryRun,
+  limit,
+}: {
+  dryRun: boolean;
+  limit: number;
+}): Promise<{ accepted: number }> {
+  if (dryRun) {
+    const [row] = await dbRead.$queryRaw<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM "Model" m
+      WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+        AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+        AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
+        AND m.minor
+        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <=
+            now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
+        AND NOT EXISTS (
+          SELECT 1 FROM "Appeal" a
+          WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+        )
+    `;
+    return { accepted: row?.count ?? 0 };
+  }
+
+  const accepted = await dbWrite.$executeRaw`
+    UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb)
+      || jsonb_build_object(${MINOR_HASH_ACCEPTED_KEY}, jsonb_build_object('at', now()))
+    WHERE id IN (
+      SELECT m.id
+      FROM "Model" m
+      WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+        AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+        AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
+        AND m.minor
+        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <=
+            now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
+        AND NOT EXISTS (
+          SELECT 1 FROM "Appeal" a
+          WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+        )
+      ORDER BY m.id
+      LIMIT ${limit}
+    )
+  `;
+
+  return { accepted };
+}
