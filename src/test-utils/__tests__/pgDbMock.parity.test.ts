@@ -159,9 +159,9 @@ describe('pgDb mock parity', () => {
         `FIX: add the missing key(s) to that file's factory, e.g. \`pgDbReadLong: {}\`. The full required ` +
         `set is: ${required.join(', ')}.\n\n` +
         `NOTE: the factory is deliberately an inline SYNC object literal, not a shared runtime helper. ` +
-        `A vi.mock factory is hoisted above imports, so sharing one requires an async dynamic import — ` +
-        `measured in-pod at +36% on a 44s suite (pushing it past the 60s per-test timeout) and +64% on a ` +
-        `15s one. The single-sourcing lives in THIS test plus the compile-time canary, at zero runtime cost.`
+        `A vi.mock factory is hoisted above imports, so sharing one would require an async dynamic import ` +
+        `in every mocked suite. The single-sourcing lives in THIS test plus the compile-time canary in ` +
+        `src/test-utils/pgDbMock.ts.`
     ).toEqual([]);
   });
 
