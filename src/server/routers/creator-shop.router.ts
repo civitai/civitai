@@ -15,6 +15,7 @@ import {
   reviewCreatorShopItemSchema,
   setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
+  takedownCosmeticShopItemSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
 } from '~/server/schema/creator-shop.schema';
@@ -35,6 +36,7 @@ import {
   getCreatorShopSettings,
   reviewCreatorShopItem,
   submitCreatorShopItem,
+  takedownCosmeticShopItem,
   unarchiveCreatorShopItem,
   updateCreatorShopItem,
   updateCreatorShopSettings,
@@ -189,5 +191,10 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
     .mutation(({ input, ctx }) => reviewCreatorShopItem({ ...input, reviewerId: ctx.user.id })),
+  // Deliberately not flag-gated: takedowns cover official shop items too, and
+  // pulling infringing content can't wait on the Creator Shop rollout.
+  takedownItem: moderatorProcedure
+    .input(takedownCosmeticShopItemSchema)
+    .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
   // #endregion
 });

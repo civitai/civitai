@@ -7,6 +7,7 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 // Matches getEarlyAccessPricesSchema.modelVersionIds.max(200).
 const EARLY_ACCESS_PRICE_BATCH = 200;
@@ -241,6 +242,33 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to review item'),
   });
 
+  const takedownItem = trpc.creatorShop.takedownItem.useMutation({
+    async onSuccess(result) {
+      await queryUtils.creatorShop.getReviewQueue.invalidate();
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
+      await queryUtils.creatorShop.getPublicShopItems.invalidate();
+      const failed = result.failures.length;
+      showSuccessNotification({
+        title: 'Cosmetic taken down',
+        message: `Refunded ${result.refunded} of ${result.purchases} sale${
+          result.purchases === 1 ? '' : 's'
+        }, took back ${numberWithCommas(result.clawedBack)} Buzz (${
+          result.clawedBackPct
+        }% of those sales) from the seller and removed it from ${result.revokedFrom} account${
+          result.revokedFrom === 1 ? '' : 's'
+        }.${
+          failed
+            ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
+            : ''
+        }`,
+      });
+    },
+    onError: onError('Failed to take down item'),
+  });
+
   return {
     submitItem,
     updateItem,
@@ -253,5 +281,6 @@ export const useMutateCreatorShop = () => {
     updateSettings,
     reorderResoldItems,
     reviewItem,
+    takedownItem,
   };
 };

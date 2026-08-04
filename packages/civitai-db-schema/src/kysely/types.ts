@@ -3637,6 +3637,7 @@ export type UserCosmeticShopPurchases = {
   purchasedAt: Generated<Timestamp>;
   buzzTransactionId: string;
   refunded: boolean;
+  meta: unknown | null;
 };
 export type UserEngagement = {
   userId: number;

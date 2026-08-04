@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
+  CosmeticPurchaseMeta,
   CosmeticShopItemMeta,
   CosmeticShopSectionMeta,
   GetAllCosmeticShopSections,
@@ -888,9 +889,9 @@ export const purchaseCosmeticShopItem = async ({
           ].filter((p) => p.amount > 0);
         });
 
-        await Promise.all(
-          payouts.map((p) =>
-            createBuzzTransaction({
+        const paid = await Promise.all(
+          payouts.map(async (p) => {
+            const { transactionId: payoutTransactionId } = await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: p.userId,
               toAccountType: p.color,
@@ -901,9 +902,25 @@ export const purchaseCosmeticShopItem = async ({
               // same external id.
               externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
-            })
-          )
+            });
+            // The transaction id is what makes a takedown a true refund of this
+            // payout rather than a fresh reversing charge.
+            return { ...p, transactionId: payoutTransactionId ?? undefined };
+          })
         );
+
+        // Record what was actually paid, per recipient and color. A takedown
+        // reverses these rather than re-deriving a split whose reseller context
+        // no longer exists.
+        await dbWrite.userCosmeticShopPurchases.update({
+          where: { buzzTransactionId: transactionId },
+          data: {
+            meta: {
+              payouts: paid,
+              platformCut: price - paid.reduce((sum, p) => sum + p.amount, 0),
+            } satisfies CosmeticPurchaseMeta as Prisma.InputJsonValue,
+          },
+        });
       }, 3);
     } catch (e) {
       // We will NOT stop the user interaction for this.

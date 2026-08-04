@@ -362,6 +362,12 @@ export const reviewCreatorShopItemSchema = z
     path: ['rejectionReason'],
   });
 
+export type TakedownCosmeticShopItemInput = z.infer<typeof takedownCosmeticShopItemSchema>;
+export const takedownCosmeticShopItemSchema = z.object({
+  id: z.number(),
+  reason: z.string().min(1).max(1000),
+});
+
 export type GetReviewQueueInput = z.infer<typeof getReviewQueueSchema>;
 export const getReviewQueueSchema = z.object({
   limit: z.number().min(1).max(100).default(20),
