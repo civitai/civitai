@@ -98,7 +98,9 @@ describe('DeleteCard confirm step summary', () => {
 
     await expect.element(page.getByText('Your models will be deleted')).toBeInTheDocument();
     await expect
-      .element(page.getByText('Your images will be deleted in the background, which can take up to a day'))
+      .element(
+        page.getByText('Your images will be deleted in the background, which can take up to a day')
+      )
       .toBeInTheDocument();
   });
 
@@ -113,7 +115,9 @@ describe('DeleteCard confirm step summary', () => {
       .toBeInTheDocument();
     await expect
       .element(
-        page.getByText('Your images will be hidden in the background within a day, then deleted after 7 days')
+        page.getByText(
+          'Your images will be hidden in the background within a day, then deleted after 7 days'
+        )
       )
       .toBeInTheDocument();
   });
