@@ -168,8 +168,8 @@ function MatchDetail({
         <Alert color="yellow" title="No matching flagged model">
           <Text size="sm">
             Nothing a moderator has flagged minor still shares a file with this model. The match is
-            resolved live, so this means the model it matched has since been unflagged or its
-            hashes were permanently deleted — worth checking before you keep the flag.
+            resolved live, so this means the model it matched has since been unflagged or its hashes
+            were permanently deleted — worth checking before you keep the flag.
           </Text>
         </Alert>
       )}
