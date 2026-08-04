@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzService from '~/server/services/buzz.service';
 
 /**
  * `report.router.ts`'s `createAppeal` uses `guardedProcedure` with no ownership
@@ -15,7 +16,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/buzz.service')>()),
+  ...(await importOriginal<typeof BuzzService>()),
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
