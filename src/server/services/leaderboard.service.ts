@@ -27,10 +27,18 @@ export async function isLeaderboardPopulated() {
 }
 
 // A board is visible on a domain when its `domain` array contains that color or
-// `all`. An unresolved domain sees only `all` boards — fail closed, so a board
-// scoped to red never leaks onto an unrecognized host.
+// `all`.
+//
+// An unresolved domain falls back to the SFW colors, NOT to `all` alone. Failing
+// closed here means "never surface mature boards on a host we can't identify" — it
+// does not mean "surface nothing". Environments that don't set the server-side
+// `SERVER_DOMAIN_*` vars (PR previews ship only the NEXT_PUBLIC_ ones) resolve
+// undefined for every request, and an `all`-only filter blanks every domain-scoped
+// board there — which is how this was first noticed.
+const SFW_DOMAINS = [DomainColor.all, DomainColor.green, DomainColor.blue];
+
 export function domainVisibilityFilter(domain?: DomainColor) {
-  return { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] };
+  return { hasSome: domain ? [DomainColor.all, domain] : SFW_DOMAINS };
 }
 
 export async function getLeaderboards(input: GetLeaderboardsInput) {
