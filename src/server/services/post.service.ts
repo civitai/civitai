@@ -36,7 +36,6 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
-  removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -973,9 +972,6 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       let deletedImages: { id: number; url: string }[] = [];
       if (images.length) {
-        // Remove images from collections before deleting
-        await Promise.all(images.map((img) => removeEntityFromAllCollections('image', img.id)));
-
         deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(images.map((i) => i.id))})
