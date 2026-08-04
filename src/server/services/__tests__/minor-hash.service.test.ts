@@ -1243,5 +1243,24 @@ describe('rollbackMinorHashAutoFlags', () => {
       .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
       .join('\n');
     expect(rendered).toContain('m.id = ANY(');
+    // The targeted branch must never inherit the untargeted accepted-flag skip —
+    // that skip only exists to protect the blanket path this branch bypasses.
+    expect(rendered).not.toContain('m.meta ? ');
+  });
+
+  // `skipped` must report the complement of what `scope` writes: auto-flagged AND
+  // (confirmed OR accepted). An `AND NOT accepted` here (mirroring `scope` verbatim
+  // instead of complementing it) would silently drop the accepted-but-unconfirmed
+  // population from both candidates and skipped, making a protected row indistinguishable
+  // from a fully-drained queue.
+  it('counts an accepted-but-unconfirmed flag as skipped rather than dropping it from the report', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 10 });
+
+    const [confirmedStrings] = mockDbRead.$queryRaw.mock.calls[0];
+    const confirmedText = Array.from(confirmedStrings as TemplateStringsArray).join('?');
+    expect(confirmedText).toContain('OR (m.meta ? ');
+    expect(confirmedText).not.toContain('AND NOT (m.meta ? ');
   });
 });

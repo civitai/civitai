@@ -704,10 +704,11 @@ export async function rollbackMinorHashAutoFlags({
 }): Promise<RollbackReport> {
   const targeted = Boolean(modelIds?.length);
 
-  // Counted uncapped and separately from the candidate window: `skipped` describes
-  // the whole confirmed population, so an operator draining in batches can tell
-  // "nothing left to undo" (candidates 0) from "everything left is a human call".
-  // Targeted runs skip nothing, so the count is moot there.
+  // Counted uncapped and separately from the candidate window: `skipped` must be the
+  // complement of `scope` (auto-flagged AND (confirmed OR accepted)), so an operator
+  // draining in batches can tell "nothing left to undo" (candidates 0, skipped 0) from
+  // "everything left is protected" (candidates 0, skipped > 0). Targeted runs skip
+  // nothing, so the count is moot there.
   const [confirmed] = targeted
     ? [{ total: 0, ids: [] as number[] }]
     : await dbRead.$queryRaw<{ total: number; ids: number[] }[]>`
@@ -716,8 +717,7 @@ export async function rollbackMinorHashAutoFlags({
           FROM "Model" m
           WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
             AND ${autoFlaggedPredicate}
-            AND ${humanConfirmedPredicate}
-            AND ${notAcceptedPredicate}
+            AND (${humanConfirmedPredicate} OR (m.meta ? ${MINOR_HASH_ACCEPTED_KEY}))
         )
         SELECT (SELECT count(*)::int FROM confirmed) AS total,
                COALESCE(
