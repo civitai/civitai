@@ -22,6 +22,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
+  IconBan,
   IconBolt,
   IconBox,
   IconCheck,
@@ -205,7 +206,7 @@ function CreatorShopReviewPage() {
       userId: selectedCreator?.id,
       cosmeticTypes: typeFilter,
     });
-  const { reviewItem, deleteItem } = useMutateCreatorShop();
+  const { reviewItem, deleteItem, takedownItem } = useMutateCreatorShop();
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -344,6 +345,39 @@ function CreatorShopReviewPage() {
       confirmProps: { color: 'red' },
       centered: true,
       onConfirm: () => deleteItem.mutate({ id: selected.id }),
+    });
+  };
+
+  // Takedown is the IP/TOS path: unlike Delete it refunds every buyer, reverses
+  // the creator's earnings and strips the cosmetic from everyone who owns it.
+  const confirmTakedown = () => {
+    if (!selected) return;
+    if (!reason.trim())
+      return showErrorNotification({
+        title: 'A note is required',
+        error: new Error('Add the takedown reason — buyers and the creator both see it.'),
+      });
+    const purchases = selected._count?.purchases ?? 0;
+    openConfirmModal({
+      title: 'Take down shop item',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Remove <strong>{selected.title}</strong> from sale, refund all{' '}
+            <strong>{numberWithCommas(purchases)}</strong> buyer{purchases === 1 ? '' : 's'}, take
+            back the Buzz the seller was paid for those sales, and delete the cosmetic from every
+            account that owns or has it equipped.
+          </Text>
+          <Text size="sm" c="dimmed">
+            The creator&apos;s submission fee is not refunded. This can&apos;t be undone — the item
+            can&apos;t be restored to sale afterwards.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: 'Take down', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
     });
   };
 
@@ -819,6 +853,15 @@ function CreatorShopReviewPage() {
                             onClick={() => submitReview('revert')}
                           >
                             Revert to pending
+                          </Button>
+                          <Button
+                            color="red"
+                            variant="light"
+                            leftSection={<IconBan size={16} />}
+                            loading={takedownItem.isPending}
+                            onClick={confirmTakedown}
+                          >
+                            Take down
                           </Button>
                           <Button
                             color="red"

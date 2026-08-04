@@ -4032,6 +4032,10 @@ model UserCosmeticShopPurchases {
   purchasedAt       DateTime         @default(now())
   buzzTransactionId String           @id @default(cuid())
   refunded          Boolean
+  // Who was actually paid for this sale, and in which Buzz color(s) — the split
+  // depends on the storefront it was bought through, so a takedown can't
+  // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
+  meta              Json?
 }
 
 enum BuzzAccountType {

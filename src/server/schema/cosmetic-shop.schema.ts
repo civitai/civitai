@@ -58,6 +58,39 @@ export const cosmeticShopItemMeta = z.object({
   // Creator opt-in: buyers may pay with Blue Buzz (fully or partially). The
   // creator is paid blue for the blue-paid portion of each sale.
   acceptsBlueBuzz: z.boolean().optional(),
+  // Set by a moderator takedown (IP/TOS). An item carrying this was pulled and
+  // refunded — it must never be restored to sale by unarchiving.
+  takedown: z
+    .object({
+      reason: z.string(),
+      moderatorId: z.number(),
+      at: z.string(),
+    })
+    .optional(),
+});
+
+// Recorded on UserCosmeticShopPurchases.meta at purchase time. The 70% pool can
+// be split with a reseller (or kept by the platform) depending on the storefront
+// the sale came through, and that context is gone by the time a takedown runs —
+// so a takedown reverses these exact payouts instead of guessing. NULL on rows
+// written before the column existed.
+export type CosmeticPurchaseMeta = z.infer<typeof cosmeticPurchaseMeta>;
+export const cosmeticPurchaseMeta = z.object({
+  payouts: z
+    .array(
+      z.object({
+        userId: z.number(),
+        amount: z.number(),
+        color: z.string(),
+        // The Buzz transaction that paid it, so a takedown refunds that payout
+        // instead of charging the recipient a separate reversal.
+        transactionId: z.string().optional(),
+      })
+    )
+    .optional(),
+  // Kept by the platform (no recipient), so nothing to claw back — recorded for
+  // the takedown summary and for reconciliation.
+  platformCut: z.number().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;

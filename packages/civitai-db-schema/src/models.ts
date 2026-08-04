@@ -2701,6 +2701,7 @@ export interface UserCosmeticShopPurchases {
   purchasedAt: Date;
   buzzTransactionId: string;
   refunded: boolean;
+  meta: JsonValue | null;
 }
 
 export interface BuzzClaim {

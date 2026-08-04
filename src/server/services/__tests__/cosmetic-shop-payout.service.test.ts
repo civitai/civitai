@@ -10,6 +10,7 @@ const { mocks } = vi.hoisted(() => ({
     userFindUnique: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
     purchasesCreate: vi.fn(),
+    purchasesUpdate: vi.fn(),
     userCosmeticCreate: vi.fn(),
     createBuzzTransaction: vi.fn(),
     createMultiTx: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {
     cosmeticShopItem: { update: mocks.shopItemUpdate },
     userCosmetic: { findFirst: mocks.userCosmeticFindFirst },
+    userCosmeticShopPurchases: { update: mocks.purchasesUpdate },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         userCosmeticShopPurchases: { create: mocks.purchasesCreate },
@@ -248,6 +250,27 @@ describe('purchaseCosmeticShopItem payouts', () => {
       ])
     );
     expect(sells[0].externalTransactionId).not.toBe(sells[1].externalTransactionId);
+  });
+
+  it('records who was paid on the purchase row, so a takedown can reverse it exactly', async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      settings: { creatorShop: { resoldItemIds: [SHOP_ITEM_ID] } },
+    });
+
+    await purchase(RESELLER_ID);
+
+    const update = mocks.purchasesUpdate.mock.calls[0][0];
+    expect(update.where.buzzTransactionId).toEqual(expect.stringContaining('cosmetic-purchase-'));
+    // The payout's own transaction id is recorded so a takedown refunds that
+    // transaction rather than charging the recipient a separate reversal.
+    expect(update.data.meta.payouts).toEqual(
+      expect.arrayContaining([
+        { userId: CREATOR_ID, amount: 5000, color: 'yellow', transactionId: 'tx-1' },
+        { userId: RESELLER_ID, amount: 2000, color: 'yellow', transactionId: 'tx-1' },
+      ])
+    );
+    // The 30% the platform keeps has no recipient to claw back from.
+    expect(update.data.meta.platformCut).toBe(3000);
   });
 
   it('invalid reseller attribution (item not in their resoldItemIds) pays no seller share: creator 5000 only', async () => {
