@@ -21,7 +21,10 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //  3. A FREE-TEXT OUTPUT, WITH A POSTURE THAT COVERS IT. This is the whole
 //     reason the entry could not be written until `'textOutput'` existed. The
 //     generated reply is scanned at the READ boundary by `./moderation`'s output
-//     phase and withheld on a policy hit or on any scanner failure.
+//     phase and withheld on a policy hit or on one of the specific failure modes
+//     enumerated below — see WHAT ACTUALLY WITHHOLDS. It is NOT withheld on
+//     "any scanner failure"; that phrasing was wrong and one real gap sits
+//     inside it.
 //
 //  4. NO AIR RESOURCE. `ChatCompletionInput.model` is a plain provider id
 //     ("gpt-4o"), NOT an AIR URN, so there is nothing for the entitlement belt
@@ -56,6 +59,49 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // never meets `auditPromptServer`, so it produces no `BlockedPromptEntry` and no
 // violation counter. Closing it needs a registry-level decision about
 // multi-surface postures, not a workaround here.
+//
+// 🔴 WHAT ACTUALLY WITHHOLDS — AN ENUMERATION, BECAUSE THE UNIVERSAL WAS FALSE.
+// This header and the `moderationPosture` field both used to say the reply is
+// withheld "on any scanner failure". That is NOT true of the shipped code, and
+// a comment claiming a stronger safety property than the implementation is the
+// thing a maintainer deletes a guard on the strength of. Read off
+// `./text-output-moderation` and `./moderation` rather than restated from
+// intent, the OUTPUT phase withholds on exactly these:
+//
+//   1. `stage: 'error'` — the scan call THREW, or `withHardDeadline` fired.
+//   2. `stage: 'no-verdict'` — no `xGuardModeration` step output came back:
+//      either the submit itself failed (resolves `undefined`) or the workflow
+//      was still running when the `wait` window elapsed.
+//   3. `stage: 'over-cap'` — the joined content exceeds
+//      `MAX_SCANNED_CONTENT_CHARS` (50,000). Checked BEFORE the network call
+//      and before the memo, so an over-cap payload cannot be answered from a
+//      cache hit either. (This is the constant `CHAT_COMPLETION_MAX_OUTPUT_TOKENS`
+//      below is derived from.)
+//   4. `stage: 'label-drift'` — a REQUESTED label came back with no `results[]`
+//      entry at all (`missingRequestedLabels`), even when nothing triggered.
+//   5. The extractor returned a non-array, or an array containing a non-string
+//      — caught in `./moderation`'s `textOutput.output` phase before any scan.
+//
+//   …plus the ordinary `stage: 'withheld'`: a policy-actioned label triggered
+//   (an always-withhold label at any ceiling, or an SFW-only label under a green
+//   ceiling). Note an EMPTY extraction is a RELEASE of zero texts, not a
+//   withhold — nothing unscanned reaches the block, so there is no hazard in
+//   that direction.
+//
+// 🔴 KNOWN GAP INSIDE THE OLD PHRASE — A PER-LABEL `error` RELEASES. The
+// generated `XGuardLabelResult` carries `error?: null | string`, i.e. the
+// scanner can report that it ATTEMPTED a label and FAILED on it. This side's
+// read shape `XGuardLabelResultLike` declares only `label` / `score` /
+// `triggered`, and `decideTextOutputVerdict` reads only those three. So an
+// errored label: contributes nothing to `triggered`; still carries a `label`,
+// so it lands in the `evaluated` set and the drift guard in (4) does NOT fire;
+// and the verdict RELEASES. A label the scanner could not answer is therefore
+// indistinguishable from a clean one — the fail-OPEN shape that
+// `missingRequestedLabels` closes on the RENAME axis and does not close here.
+// Stated as an OPEN gap on the tree this commit produces. A fix is in flight as
+// #3609 and lives in `./text-output-moderation`; if you are reading this after
+// that merged, re-derive this paragraph from the code rather than assuming it
+// is stale — and delete it only once `error` is actually read.
 //
 // 🔴 THE AIR SCAN'S FALSE-POSITIVE SURFACE — FOR THIS ENTRY IT IS PURE PROSE,
 // AND THE GUARD IS KEPT ANYWAY. READ THIS BEFORE PROPOSING TO SCOPE IT.
@@ -366,8 +412,9 @@ export const chatCompletionStep = {
   orchestratorType: 'chatCompletion',
   billingMode: 'prepaidFixed',
   // The free-text OUTPUT posture. Scanned at the read boundary by
-  // `./moderation`'s output phase, withheld on a hit and on any scanner failure.
-  // See the KNOWN GAP note in the header for what this posture does NOT cover.
+  // `./moderation`'s output phase, withheld on a policy hit and on the five
+  // failure modes enumerated in the header's WHAT ACTUALLY WITHHOLDS section —
+  // NOT on "any scanner failure"; a per-label `error` currently RELEASES.
   moderationPosture: 'textOutput',
   // `ChatCompletionInput.model` is a plain provider id, never an AIR URN, so
   // there is no way to reach a gated / early-access / Private model version
