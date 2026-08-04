@@ -32,7 +32,9 @@ describe('encodeBlockInitFragment', () => {
       renderMode: 'iframe',
       blockInstanceId: 'x&theme=dark',
     });
-    expect(encoded).toBe('civitai-block=v1&theme=light&renderMode=iframe&blockInstanceId=x%26theme%3Ddark');
+    expect(encoded).toBe(
+      'civitai-block=v1&theme=light&renderMode=iframe&blockInstanceId=x%26theme%3Ddark'
+    );
   });
 });
 
@@ -80,9 +82,9 @@ describe('buildBlockIframeSrc', () => {
   });
 
   it('returns the src unchanged when there is no blockInstanceId to state', () => {
-    expect(
-      buildBlockIframeSrc('https://demo.civit.ai/', { ...FIELDS, blockInstanceId: '' })
-    ).toBe('https://demo.civit.ai/');
+    expect(buildBlockIframeSrc('https://demo.civit.ai/', { ...FIELDS, blockInstanceId: '' })).toBe(
+      'https://demo.civit.ai/'
+    );
   });
 
   it('🔴 never puts a token, viewer or context in the URL', () => {
