@@ -7,7 +7,10 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
-import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import {
+  isLeaderboardPopulated,
+  leaderboardPopulatedKey,
+} from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -91,6 +94,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             throw e;
           }
 
+          await markLeaderboardPopulated(id, addDays);
+
           log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
           logToAxiom({
             type: 'leaderboard-done',
@@ -110,6 +115,31 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     throw error;
   }
 });
+
+/**
+ * Record that a board finished populating, and for which date.
+ *
+ * Readers cannot infer this from the rows. The ClickHouse path assigns
+ * `position = positionStart + row_number()` per batch, where `positionStart` is the
+ * batch's offset in the PRE-filter array — so every user dropped by the eligibility
+ * join leaves a permanent hole, and a completed board is neither gapless nor of
+ * predictable size (prod: `generators` has 978 rows spanning 992 positions). Batches
+ * also land out of order, so a row count proves nothing about which slice is present.
+ * Only the job knows when it is done.
+ *
+ * Written AFTER the population call returns, so a crash mid-populate leaves the
+ * previous date marked and readers keep serving the last complete board.
+ */
+async function markLeaderboardPopulated(id: string, addDays: number) {
+  const { rows } = await pgDbWrite.query<{ date: string }>(
+    `SELECT (current_date + interval '${addDays} days')::date::text as date`
+  );
+  await dbWrite.keyValue.upsert({
+    where: { key: leaderboardPopulatedKey(id) },
+    create: { key: leaderboardPopulatedKey(id), value: rows[0].date },
+    update: { value: rows[0].date },
+  });
+}
 
 type LegendsBoardResult = {
   userId: number;

@@ -197,6 +197,12 @@ export function getRequestBoardDomainColor(req: {
   // primary is `civitai.red`, and red has no aliases — so the direct test above
   // misses it and the walk would hand it the SFW board set while `civitai.red`
   // itself got the mature one. Two front doors to the same site must agree.
+  //
+  // NB this encodes "blue's primary is the red host", which is true of the current
+  // deployment but not of the config the docs describe: multi-host-domain-aliases.md
+  // presents `civitai.blue` as a possible SFW front door for blue. Add one and it
+  // would resolve red here (fail-OPEN) — the durable fix is to stop overloading
+  // civitai.red as blue's primary, not more special-casing.
   const walked = getRequestDomainColor(req);
   const primary = walked ? serverDomainMap[walked]?.primary : undefined;
   if (primary && isHostForColor(primary, 'red')) return 'red';

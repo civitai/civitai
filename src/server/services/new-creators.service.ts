@@ -2,6 +2,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { CacheTTL } from '~/server/common/constants';
+import { leaderboardPopulatedKey } from '~/server/services/leaderboard.service';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 
 export const newCreatorEntities = ['images', 'models'] as const;
@@ -37,10 +38,14 @@ export function getNewCreatorBoardId(entity: NewCreatorEntity, domain?: DomainCo
  * endpoint that takes an arbitrary userId array is a general-purpose
  * "content from these N users" filter, which is not what we're shipping.
  *
- * Reads the most recent COMPLETE date rather than the newest one. `prepare-leaderboard`
- * inserts in batches, so the newest date can be half-written for the duration of a run;
- * taking it unconditionally would pin a truncated creator list for the whole cache TTL.
- * A date is considered complete once it holds at least the slice the feed consumes.
+ * Reads the date `prepare-leaderboard` last marked complete, not the newest date
+ * present. The job writes in concurrent batches that land out of order, so the newest
+ * date can be half-written for the duration of a run and taking it unconditionally
+ * would pin a truncated creator list for the whole cache TTL. Completeness cannot be
+ * inferred from the rows — see `markLeaderboardPopulated`.
+ *
+ * Falls back to the newest date when no marker exists yet (the window between deploy
+ * and the first nightly run), which is no worse than the pre-marker behavior.
  */
 export async function getNewCreatorUserIds({
   entity,
@@ -54,26 +59,19 @@ export async function getNewCreatorUserIds({
   return await fetchThroughCache(
     `${REDIS_KEYS.CACHES.NEW_CREATORS}:${boardId}`,
     async () => {
+      const marker = await dbRead.keyValue.findUnique({
+        where: { key: leaderboardPopulatedKey(boardId) },
+      });
+      const populatedDate = typeof marker?.value === 'string' ? marker.value : null;
+
       const results = await dbRead.$queryRaw<{ userId: number }[]>`
-        WITH complete_date AS (
-          SELECT date
-          FROM "LeaderboardResult"
-          WHERE "leaderboardId" = ${boardId}
-          GROUP BY date
-          -- Contiguous prefix from position 1, not a row count: prepare-leaderboard
-          -- inserts in concurrent 500-row batches that land OUT OF ORDER, so a count
-          -- alone is satisfied by a mid-board batch and would serve positions
-          -- 501-700 as if they were the top. A gapless 1..N prefix is exactly what
-          -- this read needs and is already final once written — and it accepts a
-          -- legitimately small board, which a fixed threshold would reject forever.
-          HAVING MIN(position) = 1 AND COUNT(*) = MAX(position)
-          ORDER BY date DESC
-          LIMIT 1
-        )
         SELECT lr."userId"
         FROM "LeaderboardResult" lr
         WHERE lr."leaderboardId" = ${boardId}
-          AND lr.date = (SELECT date FROM complete_date)
+          AND lr.date = COALESCE(
+            ${populatedDate}::date,
+            (SELECT MAX(date) FROM "LeaderboardResult" WHERE "leaderboardId" = ${boardId})
+          )
         ORDER BY lr.position
         LIMIT ${FEED_CREATOR_LIMIT}
       `;
