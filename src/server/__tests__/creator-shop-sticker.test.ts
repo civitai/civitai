@@ -14,10 +14,17 @@ import {
   creatorCosmeticTypes,
   isCreatorCosmeticType,
   packItemFloor,
+  STICKER_MIN_BUZZ_PER_USE,
   STICKER_MIN_LONG_EDGE,
+  stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { CREATOR_GRANT_USES_MULTIPLIER, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import {
+  CREATOR_GRANT_USES_MULTIPLIER,
+  STICKER_SIZE,
+  stickerEconomicsFromCosmeticData,
+  stickerPricePerUseFromCosmeticData,
+} from '~/shared/utils/sticker-token';
 
 // `buildCosmeticData` is what writes `Cosmetic.data` on both the submit and the
 // update path. The original P4 hole was a missing branch here — asserting on
@@ -252,7 +259,9 @@ describe('uses is required for stickers', () => {
   });
 
   it('accepts a sticker with uses', () => {
-    expect(submitCreatorShopItemSchema.safeParse({ ...base, uses: 100 }).success).toBe(true);
+    expect(
+      submitCreatorShopItemSchema.safeParse({ ...base, uses: 100, pricePerUse: 5 }).success
+    ).toBe(true);
   });
 
   // The regression that would go unnoticed: uses is sticker-specific, and every
@@ -270,11 +279,79 @@ describe('uses is required for stickers', () => {
 // Replacing artwork REBUILDS `data` rather than patching it, so anything not
 // passed to buildCosmeticData is dropped — which silently turned a finite
 // sticker unlimited for every future buyer.
-describe('replacing sticker artwork keeps uses', () => {
-  it('carries uses into the rebuilt blob', () => {
+describe('replacing sticker artwork keeps every economic field', () => {
+  // The update path reads the economics off the existing blob and hands them
+  // back to the rebuild as one object. Everything below composes those two the
+  // same way the service does, so a field that stops surviving a replace fails
+  // here rather than in production.
+  // Every economic field is truthy here on purpose: `buildCosmeticData` omits
+  // falsy ones, so a fixture leaving one at 0 would drop it from the key check
+  // below and the guard would pass without guarding anything.
+  const existingData = {
+    url: 'old',
+    slug: 'party_cat',
+    animated: false,
+    uses: 100,
+    pricePerUse: 7,
+  };
+
+  // Equality, not containment: a third economic field added to the type without
+  // being carried through a replace must fail this, which is exactly the shape
+  // of bug that shipped in v1.
+  it('names every economic field, so a new one cannot be added silently', () => {
+    expect(Object.keys(stickerEconomicsFromCosmeticData(existingData))).toEqual([
+      'uses',
+      'pricePerUse',
+    ]);
+  });
+
+  // The guard above only catches a field added to the READER. This catches the
+  // other direction: a field written into `data` that the reader doesn't know
+  // about is dropped on every artwork replace, with every other test green.
+  it('writes no economic field the reader cannot carry forward', () => {
+    const built = buildCosmeticData(
+      CosmeticType.Sticker,
+      'img',
+      false,
+      null,
+      'party_cat',
+      stickerEconomicsFromCosmeticData(existingData)
+    );
+    expect(Object.keys(built).sort()).toEqual(
+      ['url', 'slug', 'animated', 'uses', 'pricePerUse'].sort()
+    );
+  });
+
+  it('carries the economics into the rebuilt blob', () => {
     expect(
-      buildCosmeticData(CosmeticType.Sticker, 'new-img', false, null, 'party_cat', 100)
-    ).toEqual({ url: 'new-img', slug: 'party_cat', animated: false, uses: 100 });
+      buildCosmeticData(
+        CosmeticType.Sticker,
+        'new-img',
+        false,
+        null,
+        'party_cat',
+        stickerEconomicsFromCosmeticData(existingData)
+      )
+    ).toEqual({
+      url: 'new-img',
+      slug: 'party_cat',
+      animated: false,
+      uses: 100,
+      pricePerUse: 7,
+    });
+  });
+
+  it('preserves every economic field the existing blob had', () => {
+    const rebuilt = buildCosmeticData(
+      CosmeticType.Sticker,
+      'new-img',
+      false,
+      null,
+      'party_cat',
+      stickerEconomicsFromCosmeticData(existingData)
+    ) as Record<string, unknown>;
+    for (const [field, value] of Object.entries(stickerEconomicsFromCosmeticData(existingData)))
+      expect(rebuilt[field]).toBe(value);
   });
 
   it('is what patchCosmeticData returns wholesale on an artwork change', () => {
@@ -284,13 +361,105 @@ describe('replacing sticker artwork keeps uses', () => {
       false,
       null,
       'party_cat',
-      100
+      stickerEconomicsFromCosmeticData(existingData)
     );
+    expect(patchCosmeticData({ existingData, artworkData })).toEqual(artworkData);
+  });
+
+  // An edit that isn't an artwork replace patches instead, and must keep the
+  // fields it wasn't asked to change.
+  it('keeps the per-use price when only uses change', () => {
     expect(
       patchCosmeticData({
-        existingData: { url: 'old', slug: 'party_cat', uses: 100 },
-        artworkData,
+        existingData,
+        economicsChange: true,
+        nextSlug: 'party_cat',
+        nextEconomics: { ...stickerEconomicsFromCosmeticData(existingData), uses: 250 },
       })
-    ).toEqual(artworkData);
+    ).toEqual({ ...existingData, uses: 250 });
+  });
+
+  it('keeps uses when only the per-use price changes', () => {
+    expect(
+      patchCosmeticData({
+        existingData,
+        economicsChange: true,
+        nextSlug: 'party_cat',
+        nextEconomics: { ...stickerEconomicsFromCosmeticData(existingData), pricePerUse: 12 },
+      })
+    ).toEqual({ ...existingData, pricePerUse: 12 });
+  });
+});
+
+// The per-use price is what the out-of-uses prompt charges, so a malformed one
+// must read as "no top-up", never as a number.
+describe('per-use price', () => {
+  it('reads a usable price off cosmetic data', () => {
+    expect(stickerPricePerUseFromCosmeticData({ pricePerUse: 25 })).toBe(25);
+    expect(stickerPricePerUseFromCosmeticData({ pricePerUse: 25.9 })).toBe(25);
+  });
+
+  it.each([[{}], [{ pricePerUse: 0 }], [{ pricePerUse: -5 }], [{ pricePerUse: 'lots' }], [null]])(
+    'reads %s as no top-up price rather than a number',
+    (data) => {
+      expect(stickerPricePerUseFromCosmeticData(data)).toBeNull();
+    }
+  );
+
+  // A sticker priced before per-use pricing existed has no top-up price. The
+  // list price must never stand in for one: it is a different quantity, and
+  // deriving it would charge a number the creator never chose.
+  it('does not fall back to the listing price', () => {
+    expect(stickerPricePerUseFromCosmeticData({ uses: 100, price: 500 })).toBeNull();
+  });
+
+  it('has its own floor, far below the listing floor', () => {
+    expect(stickerPerUseFloor(CosmeticType.Sticker)).toBe(STICKER_MIN_BUZZ_PER_USE);
+    expect(stickerPerUseFloor(CosmeticType.Sticker)).toBeLessThan(
+      cosmeticPriceFloor(CosmeticType.Sticker)
+    );
+  });
+
+  it('gives every cosmetic type a per-use floor above zero', () => {
+    for (const type of Object.values(CosmeticType))
+      expect(stickerPerUseFloor(type)).toBeGreaterThan(0);
+  });
+});
+
+// Same reasoning as `uses`: without a per-use price there is nothing to offer a
+// buyer who runs dry, and the price is never derived from the listing.
+describe('per-use price is required for stickers', () => {
+  const base = {
+    cosmeticType: CosmeticType.Sticker,
+    name: 'Test',
+    imageUrl: 'img',
+    slug: 'party_cat',
+    price: 500,
+    uses: 100,
+    // Required for every submission since the rights-affirmation change; present
+    // so these cases fail on the per-use price and nothing else.
+    rightsAffirmed: true,
+  };
+
+  it('rejects a sticker submitted without a per-use price', () => {
+    const result = submitCreatorShopItemSchema.safeParse(base);
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues.some((i) => i.path.includes('pricePerUse'))).toBe(true);
+  });
+
+  it('accepts a sticker with both prices', () => {
+    expect(submitCreatorShopItemSchema.safeParse({ ...base, pricePerUse: 5 }).success).toBe(true);
+  });
+
+  it('still accepts a badge without one', () => {
+    expect(
+      submitCreatorShopItemSchema.safeParse({
+        ...base,
+        cosmeticType: CosmeticType.Badge,
+        slug: undefined,
+        uses: undefined,
+      }).success
+    ).toBe(true);
   });
 });

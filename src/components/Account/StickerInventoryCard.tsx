@@ -1,7 +1,9 @@
-import { Badge, Card, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Group, Loader, Popover, Stack, Text, Title } from '@mantine/core';
+import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { stickerSurfaceLabels, STICKER_SIZE } from '~/shared/utils/sticker-token';
 import { trpc } from '~/utils/trpc';
@@ -10,6 +12,7 @@ const { charged, free } = stickerSurfaceLabels();
 
 export function StickerInventoryCard() {
   const features = useFeatureFlags();
+  const [toppingUp, setToppingUp] = useState<number | null>(null);
   const { sticker, isLoading } = useOwnedSticker();
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: features.stickers,
@@ -76,9 +79,40 @@ export function StickerInventoryCard() {
                     </Stack>
                   </Group>
                   {exhausted ? (
-                    <Text component={Link} href="/shop" size="xs" c="blue.4">
-                      Buy more
-                    </Text>
+                    // Topping up in place, same as the picker offers — the shop
+                    // link is only for stickers that never priced a use.
+                    item.pricePerUse ? (
+                      <Popover
+                        opened={toppingUp === item.id}
+                        onChange={(open) => setToppingUp(open ? item.id : null)}
+                        position="left"
+                        withArrow
+                        shadow="md"
+                      >
+                        <Popover.Target>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            onClick={() => setToppingUp(item.id)}
+                          >
+                            Buy more
+                          </Button>
+                        </Popover.Target>
+                        <Popover.Dropdown p="xs">
+                          <div className="w-56">
+                            <StickerTopUp
+                              sticker={item}
+                              onCancel={() => setToppingUp(null)}
+                              onPurchased={() => setToppingUp(null)}
+                            />
+                          </div>
+                        </Popover.Dropdown>
+                      </Popover>
+                    ) : (
+                      <Text component={Link} href="/shop" size="xs" c="blue.4">
+                        Buy more
+                      </Text>
+                    )
                   ) : (
                     <Badge variant="light" color={remaining == null ? 'green' : 'gray'}>
                       {remaining == null ? 'Unlimited' : `${remaining} left`}

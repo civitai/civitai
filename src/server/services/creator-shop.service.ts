@@ -13,6 +13,8 @@ import {
   creatorGrantRemaining,
   patchCosmeticData,
 } from '~/server/services/creator-shop.data';
+import type { StickerEconomics } from '~/shared/utils/sticker-token';
+import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -65,6 +67,7 @@ import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   cosmeticPriceFloor,
+  stickerPerUseFloor,
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
@@ -252,6 +255,7 @@ export const submitCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  pricePerUse,
   rightsAffirmed,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The zod schema already requires it; this keeps the item from ever being
@@ -274,6 +278,13 @@ export const submitCreatorShopItem = async ({
         stickerUses * STICKER_MIN_BUZZ_PER_USE
       } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     );
+
+  // Top-up price is sticker-only and has its own floor — the list floor governs
+  // an offer of N uses, which is a different thing from one use.
+  const stickerPricePerUse = cosmeticType === CosmeticType.Sticker ? pricePerUse : undefined;
+  const perUseFloor = stickerPerUseFloor(cosmeticType);
+  if (stickerPricePerUse && stickerPricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -312,14 +323,10 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(
-            cosmeticType,
-            imageUrl,
-            animated,
-            offsets,
-            normalizedSlug,
-            stickerUses
-          ) as Prisma.InputJsonValue,
+          data: buildCosmeticData(cosmeticType, imageUrl, animated, offsets, normalizedSlug, {
+            uses: stickerUses,
+            pricePerUse: stickerPricePerUse,
+          }) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
@@ -391,6 +398,7 @@ export const updateCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  pricePerUse,
   rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
@@ -422,11 +430,21 @@ export const updateCreatorShopItem = async ({
   const nextSlug = requestedSlug ?? existingSlug;
   const slugChange = requestedSlug !== undefined && requestedSlug !== existingSlug;
   // Same carry-forward reasoning as the slug: rebuilding `data` would drop the
-  // use count, and buyers' balances were sized by it.
-  const existingUses = (existing.cosmetic.data as { uses?: number } | null)?.uses;
+  // economics, and buyers' balances and top-ups were priced by them. Read as one
+  // object so a field added later is carried without a new call site to update.
+  const existingEconomics = stickerEconomicsFromCosmeticData(existing.cosmetic.data);
   const requestedUses = isStickerItem ? uses : undefined;
-  const nextUses = requestedUses ?? existingUses;
-  const usesChange = requestedUses !== undefined && requestedUses !== existingUses;
+  const requestedPricePerUse = isStickerItem ? pricePerUse : undefined;
+  const nextEconomics: StickerEconomics = {
+    ...existingEconomics,
+    ...(requestedUses !== undefined ? { uses: requestedUses } : {}),
+    ...(requestedPricePerUse !== undefined ? { pricePerUse: requestedPricePerUse } : {}),
+  };
+  const nextUses = nextEconomics.uses;
+  const usesChange = requestedUses !== undefined && requestedUses !== existingEconomics.uses;
+  const pricePerUseChange =
+    requestedPricePerUse !== undefined && requestedPricePerUse !== existingEconomics.pricePerUse;
+  const economicsChange = usesChange || pricePerUseChange;
 
   // Cross-listings point at another creator's shared cosmetic — the seller may
   // never touch its art/name/description/payment terms, only price & quantity.
@@ -441,7 +459,7 @@ export const updateCreatorShopItem = async ({
       acceptsBlueBuzz !== undefined ||
       offsetsChange ||
       slugChange ||
-      usesChange)
+      economicsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
@@ -462,6 +480,9 @@ export const updateCreatorShopItem = async ({
         nextUses * STICKER_MIN_BUZZ_PER_USE
       } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     );
+  const perUseFloor = stickerPerUseFloor(existing.cosmetic.type);
+  if (nextEconomics.pricePerUse && nextEconomics.pricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
@@ -517,7 +538,7 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
-      // nextUses matters here: replacing artwork REBUILDS `data` rather than
+      // The economics matter here: replacing artwork REBUILDS `data` rather than
       // patching it (patchCosmeticData returns artworkData wholesale), so
       // omitting uses silently turned a finite sticker into an unlimited one for
       // every future buyer.
@@ -527,7 +548,7 @@ export const updateCreatorShopItem = async ({
         animated,
         nextOffsets,
         nextSlug,
-        nextUses
+        nextEconomics
       ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
@@ -541,7 +562,7 @@ export const updateCreatorShopItem = async ({
     artChanged ||
     offsetsChange ||
     slugChange ||
-    usesChange;
+    economicsChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -561,10 +582,10 @@ export const updateCreatorShopItem = async ({
       artworkData: artwork?.data as Record<string, unknown> | undefined,
       offsetsChange,
       slugChange,
-      usesChange,
+      economicsChange,
       nextOffsets,
       nextSlug,
-      nextUses,
+      nextEconomics,
     }) as Prisma.InputJsonValue | undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },

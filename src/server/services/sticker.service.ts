@@ -1,10 +1,33 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isPreview, isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import {
+  throwBadRequestError,
+  throwNotFoundError,
+  withRetries,
+} from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
-import { netNewStickerPlacements, STICKER_SURFACES } from '~/shared/utils/sticker-token';
+import {
+  netNewStickerPlacements,
+  STICKER_SURFACES,
+  STICKER_TOPUP_CLAIM_KEY,
+  STICKER_TOPUP_MAX_QUANTITY,
+  stickerPricePerUseFromCosmeticData,
+} from '~/shared/utils/sticker-token';
 
 /**
  * Where a sticker was placed. Required, never inferred: DMs are free and
@@ -165,6 +188,240 @@ export type StickerUsageRow = {
   entityType: string;
   entityId: number;
 };
+
+/**
+ * Buys N additional uses of a sticker the way the picker offers them: at the
+ * price the creator set on the cosmetic, credited to the existing balance.
+ *
+ * Keyed on the COSMETIC, not a shop item. Resale by reference means one sticker
+ * can be listed at several prices, and a use has to cost the same whichever
+ * listing the buyer originally came through. The shop item is still loaded —
+ * it decides whether the sticker is still sold at all, and whether the creator
+ * accepts Blue Buzz.
+ */
+export async function purchaseStickerUses({
+  userId,
+  cosmeticId,
+  quantity,
+  expectedPricePerUse,
+  payWith = 'default',
+  buzzType = 'yellow',
+  stickersEnabled,
+}: {
+  userId: number;
+  cosmeticId: number;
+  quantity: number;
+  /** The price the buyer was shown. Refuses rather than charging a different one. */
+  expectedPricePerUse?: number;
+  payWith?: 'default' | 'blue-first';
+  buzzType?: BuzzSpendType;
+  stickersEnabled?: boolean;
+}) {
+  // Refused here, not merely hidden: the picker and every listing filter
+  // stickers when the flag is off, but a filtered list is not a refusal and this
+  // mutation takes a cosmetic id.
+  if (!stickersEnabled) throw throwBadRequestError('Stickers are not available yet');
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > STICKER_TOPUP_MAX_QUANTITY)
+    throw throwBadRequestError(`You can buy between 1 and ${STICKER_TOPUP_MAX_QUANTITY} uses`);
+
+  // Every read below decides either whether to charge or how much, so none of
+  // them may come off the replica: a price edit inside the replication window
+  // would otherwise charge the old price.
+  const cosmetic = await dbWrite.cosmetic.findUnique({
+    where: { id: cosmeticId },
+    select: { id: true, name: true, type: true, createdById: true, data: true },
+  });
+  if (!cosmetic) throw throwNotFoundError('Sticker not found');
+  if (cosmetic.type !== CosmeticType.Sticker)
+    throw throwBadRequestError('Only stickers are sold by the use');
+
+  // Never derived from the list price: a sticker priced before per-use pricing
+  // existed has no top-up price, and inventing one would charge a number its
+  // creator never chose.
+  const pricePerUse = stickerPricePerUseFromCosmeticData(cosmetic.data);
+  if (!pricePerUse)
+    throw throwBadRequestError('This sticker does not sell additional uses right now');
+  // The buyer confirmed a number on a button. If the creator changed it since
+  // that render, refuse rather than charging something they never agreed to.
+  if (expectedPricePerUse !== undefined && expectedPricePerUse !== pricePerUse)
+    throw throwBadRequestError(
+      `The price changed to ${pricePerUse} Buzz per use. Check the new price and try again.`
+    );
+
+  // Delisted stickers can still be topped up — delisting stops NEW sales, and
+  // stranding someone who already paid punishes them for the creator's
+  // decision. Archived (and never-published) cannot: withdrawn is withdrawn.
+  const listing = await dbWrite.cosmeticShopItem.findFirst({
+    where: { cosmeticId, status: CosmeticShopItemStatus.Published },
+    orderBy: { id: 'asc' },
+    select: { id: true, meta: true, addedById: true },
+  });
+  if (!listing) throw throwBadRequestError('This sticker is no longer available');
+
+  // Same block semantics as buying the sticker outright, and the same generic
+  // error so the block isn't revealed.
+  if (cosmetic.createdById) {
+    const blockedPairIds = await getBlockedPairIds(userId);
+    const sellerIds = [cosmetic.createdById, listing.addedById].filter(
+      (id): id is number => id != null
+    );
+    if (sellerIds.some((id) => blockedPairIds.includes(id)))
+      throw throwBadRequestError('This sticker is no longer available');
+  }
+
+  // Read on the writer: the replica can lag, and both checks below decide
+  // whether to charge.
+  const holdings = await dbWrite.userCosmetic.findMany({
+    where: { userId, cosmeticId },
+    select: { remaining: true },
+  });
+  // A top-up refills; it does not acquire. Granting a holding to someone who
+  // owns none would sell the sticker itself outside the shop — past a sold-out
+  // `availableQuantity`, past the listing's own purchase guards.
+  if (!holdings.length)
+    throw throwBadRequestError('Buy this sticker before buying more uses of it');
+  // An unlimited holding is inexhaustible, so there is nothing to top up and
+  // charging for one would be selling a balance that can never be spent.
+  if (holdings.some((h) => h.remaining === null))
+    throw throwBadRequestError('You already have unlimited uses of this sticker');
+
+  const listingMeta = (listing.meta ?? {}) as CosmeticShopItemMeta;
+  // Blue is a per-item creator opt-in on the listing, exactly as it is when
+  // buying the sticker — read from there rather than given a rule of its own.
+  if (payWith !== 'default' && !listingMeta.acceptsBlueBuzz)
+    throw throwBadRequestError('This creator does not accept Blue Buzz');
+  const fromAccountTypes: BuzzSpendType[] =
+    payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
+
+  const amount = pricePerUse * quantity;
+  // Random, not a timestamp: unlike a shop purchase, a top-up is repeatable, so
+  // two calls in the same millisecond (two tabs, a retry, a double-click) would
+  // share an external id — and a duplicate is treated as "the money already
+  // moved", which would grant uses for a charge that never happened.
+  const transactionId = `sticker-topup-${userId}-${cosmeticId}-${randomUUID()}`;
+  const transaction = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountTypes,
+    toAccountId: 0,
+    amount,
+    type: TransactionType.Purchase,
+    description: `Sticker uses - ${cosmetic.name}`,
+    externalTransactionIdPrefix: transactionId,
+  });
+  if (!transaction.transactionCount)
+    throw throwBadRequestError('There was an error creating the transaction');
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  let topUpRowRemaining: number;
+  try {
+    // COALESCE rather than a Prisma `increment`: adding to a NULL balance yields
+    // NULL in Postgres, which reads as unlimited.
+    const [row] = await dbWrite.$queryRaw<{ remaining: number }[]>`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "remaining")
+      VALUES (${userId}, ${cosmeticId}, ${STICKER_TOPUP_CLAIM_KEY}, ${quantity})
+      ON CONFLICT ("userId", "cosmeticId", "claimKey")
+      DO UPDATE SET "remaining" = COALESCE("UserCosmetic"."remaining", 0) + ${quantity}
+      RETURNING "remaining"
+    `;
+    topUpRowRemaining = row?.remaining ?? quantity;
+  } catch (error) {
+    // The only path where the buyer is actually out of pocket, and so the one
+    // that must leave a trace: a failing refund used to discard the grant error,
+    // surface the refund's error instead, and record nothing. Retried like the
+    // payout — a refund is at least as important as one — and logged with the
+    // transaction id, which is what makes it reconcilable by hand.
+    try {
+      await withRetries(
+        () =>
+          refundMultiAccountTransaction({
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to buy sticker uses - ${cosmetic.name}`,
+          }),
+        3
+      );
+    } catch (refundError) {
+      void logToAxiom({
+        level: 'error',
+        message: 'Sticker top-up refund failed — buyer charged with no uses',
+        data: { cosmeticId, userId, transactionId, amount, error, refundError },
+      }).catch(() => undefined);
+    }
+    throw throwBadRequestError('Failed to buy sticker uses');
+  }
+
+  // Everything from here to the payout is bookkeeping on a purchase that has
+  // already committed. A throw in any of it would charge the buyer, grant the
+  // uses, and skip the creator's 70% — so the payout must be unreachable by
+  // throw from anything after the grant.
+  let remaining = topUpRowRemaining;
+  try {
+    // The top-up row's own balance is not the buyer's balance — a purchase and
+    // a creator grant are separate rows and the spend drains across all of
+    // them, so reporting the row alone would understate what they can place.
+    const holdingsAfter = await dbWrite.userCosmetic.findMany({
+      where: { userId, cosmeticId },
+      select: { remaining: true },
+    });
+    remaining = holdingsAfter.reduce((sum, h) => sum + (h.remaining ?? 0), 0);
+    await refreshOwnedStickerCache([userId]);
+  } catch (error) {
+    // `.catch`, not `await`: logToAxiom awaits its ingest with no internal
+    // guard, so a degraded Axiom returns a rejecting promise. Unattached that
+    // is an unhandled rejection; awaited it would throw past the payout — the
+    // exact failure this catch exists to prevent, defeated by its own logger.
+    void logToAxiom({
+      level: 'error',
+      message: 'Sticker top-up bookkeeping failed after the grant committed',
+      data: { cosmeticId, userId, transactionId, error },
+    }).catch(() => undefined);
+  }
+
+  // Payout follows the sale, never the buyer's own money back: a creator
+  // topping up their own sticker would otherwise round-trip 70% through the
+  // bank and burn the other 30% to move Buzz to themselves.
+  const creatorId = cosmetic.createdById;
+  if (creatorId && creatorId !== userId) {
+    try {
+      await withRetries(async () => {
+        // A top-up is the buyer returning to the maker directly, so it pays the
+        // creator's full pool — no seller share, since no reseller drove it.
+        const { creatorPool } = computeCreatorShopSplit(amount, 0);
+        const blueAmount = amount > 0 ? Math.floor((creatorPool * bluePaid) / amount) : 0;
+        const payouts = [
+          { amount: blueAmount, color: 'blue' as BuzzSpendType },
+          { amount: creatorPool - blueAmount, color: buzzType },
+        ].filter((p) => p.amount > 0);
+
+        await Promise.all(
+          payouts.map((p) =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: creatorId,
+              toAccountType: p.color,
+              amount: p.amount,
+              type: TransactionType.Sell,
+              description: `A user has bought more uses of your sticker - ${cosmetic.name}`,
+              externalTransactionId: `${transactionId}:sell:${creatorId}:${p.color}`,
+              details: { purchasedBy: userId, originalAmount: amount, quantity },
+            })
+          )
+        );
+      }, 3);
+    } catch (error) {
+      // The buyer already has their uses; a failed payout is recoverable from
+      // the ledger and must not undo the purchase.
+      void logToAxiom({
+        level: 'error',
+        message: 'Failed to distribute sticker top-up funds',
+        data: { cosmeticId, userId, transactionId, error },
+      }).catch(() => undefined);
+    }
+  }
+
+  return { cosmeticId, quantity, pricePerUse, amount, remaining };
+}
 
 /** Remaining balance per owned sticker; NULL entries are unlimited. */
 export async function getStickerBalances(userId: number) {

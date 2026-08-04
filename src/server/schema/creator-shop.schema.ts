@@ -101,6 +101,22 @@ export const creatorCosmeticTypes = [
 export const STICKER_MIN_BUZZ_PER_USE = 5;
 export const STICKER_DEFAULT_USES = 100;
 
+/**
+ * Minimum Buzz a creator may charge for a single top-up use.
+ *
+ * Deliberately NOT `cosmeticPriceFloor` — that governs what an *offer* may list
+ * for (500), and charging that for one use would contradict the 5-Buzz-per-use
+ * minimum the list price is already held to. Same per-type shape as the other
+ * two floors so sticker economics stay tunable on their own.
+ */
+export const stickerPerUseFloor = (type: CosmeticType): number => {
+  switch (type) {
+    case CosmeticType.Sticker:
+    default:
+      return STICKER_MIN_BUZZ_PER_USE;
+  }
+};
+
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
 export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
   (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
@@ -245,6 +261,11 @@ export const submitCreatorShopItemSchema = z
     slug: z.string().optional(),
     // Sticker only — uses granted per purchase.
     uses: z.number().int().positive().optional(),
+    // Sticker only — what one additional use costs when a buyer runs out.
+    // Intrinsic to the sticker, not to the offer: resale by reference means one
+    // cosmetic can be listed at several prices, and a top-up must cost the same
+    // whichever listing the buyer came through.
+    pricePerUse: z.number().int().positive().optional(),
     price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN),
     availableQuantity: z.number().int().positive().nullish(),
     buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
@@ -271,6 +292,15 @@ export const submitCreatorShopItemSchema = z
         path: ['uses'],
         message: 'Stickers must specify how many uses a purchase grants',
       });
+    // Without a per-use price there is nothing to offer a buyer who runs dry
+    // mid-comment, and the price is never derived from the listing — so it is
+    // required here rather than guessed later.
+    if (input.cosmeticType === CosmeticType.Sticker && !input.pricePerUse)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['pricePerUse'],
+        message: 'Stickers must specify what one additional use costs',
+      });
   });
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
@@ -292,6 +322,7 @@ export const updateCreatorShopItemSchema = z.object({
   // not silently drop it, since owners' `:slug:` text depends on it.
   slug: z.string().optional(),
   uses: z.number().int().positive().optional(),
+  pricePerUse: z.number().int().positive().optional(),
   // Required by the service when `imageUrl` replaces the artwork: the stored
   // affirmation covers the art that was submitted, so new art needs a new one.
   rightsAffirmed: rightsAffirmedSchema.optional(),
