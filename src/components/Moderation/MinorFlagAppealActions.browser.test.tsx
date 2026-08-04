@@ -21,18 +21,14 @@ describe('MinorFlagAppealActions', () => {
   // uploader their request was denied — a false statement about a child-safety
   // restriction. Reverting from the Auto-flagged tab leaves exactly this state.
   test('cannot uphold a flag that has already been reverted', async () => {
-    renderWithProviders(
-      <MinorFlagAppealActions row={row({ minor: false })} onResolve={vi.fn()} />
-    );
+    renderWithProviders(<MinorFlagAppealActions row={row({ minor: false })} onResolve={vi.fn()} />);
 
     await expect.element(page.getByRole('button', { name: 'Keep flagged' })).toBeDisabled();
   });
 
   // Approving is the only way left to close the request, so it must stay live.
   test('can still unflag a reverted row so the request can be closed', async () => {
-    renderWithProviders(
-      <MinorFlagAppealActions row={row({ minor: false })} onResolve={vi.fn()} />
-    );
+    renderWithProviders(<MinorFlagAppealActions row={row({ minor: false })} onResolve={vi.fn()} />);
 
     await expect.element(page.getByRole('button', { name: 'Unflag' })).toBeEnabled();
   });

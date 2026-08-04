@@ -55,7 +55,9 @@ export function ModelMinorFlagAlert({ model }: Props) {
   const trailingCopy: Record<MinorFlagAlertCopyVariant, string> = {
     noAppeal: 'If you believe this is a mistake, you can request a review.',
     pending: 'Your review request is with our moderators.',
-    rejected: `Reviewed ${upheldAt ? dayjs(upheldAt).format('MMM D, YYYY') : ''} — the flag was upheld. If you believe this is still a mistake, you can request another review.`,
+    rejected: `Reviewed ${
+      upheldAt ? dayjs(upheldAt).format('MMM D, YYYY') : ''
+    } — the flag was upheld. If you believe this is still a mistake, you can request another review.`,
   };
 
   return (

@@ -572,8 +572,7 @@ function AppealsTable() {
           <MinorFlagAppealActions
             row={original}
             pending={
-              resolveMutation.isPending &&
-              resolveMutation.variables?.modelId === original.modelId
+              resolveMutation.isPending && resolveMutation.variables?.modelId === original.modelId
                 ? resolveMutation.variables.uphold
                   ? 'uphold'
                   : 'overturn'
