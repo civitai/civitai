@@ -24,13 +24,13 @@ never runs DDL, and never applies a migration.
 
 Other flags:
 
-| Flag | Effect |
-| --- | --- |
-| `--schema <path>` | Read a different Prisma schema |
-| `--catalog <path>` | Compare against a captured catalog JSON instead of connecting |
-| `--dump-catalog` | Capture the catalog as JSON and exit (pairs with `--catalog`) |
-| `--db-schema <name>` | Postgres schema to introspect (default `public`) |
-| `--strict` | Exit 1 when any drift is found. Default is always exit 0 |
+| Flag                 | Effect                                                        |
+| -------------------- | ------------------------------------------------------------- |
+| `--schema <path>`    | Read a different Prisma schema                                |
+| `--catalog <path>`   | Compare against a captured catalog JSON instead of connecting |
+| `--dump-catalog`     | Capture the catalog as JSON and exit (pairs with `--catalog`) |
+| `--db-schema <name>` | Postgres schema to introspect (default `public`)              |
+| `--strict`           | Exit 1 when any drift is found. Default is always exit 0      |
 
 `--strict` is opt-in on purpose. The database carries a real backlog of drift today, so a
 gate that failed on any finding would be red on every run, and a permanently-red gate just
@@ -44,13 +44,13 @@ regardless of `--strict` rather than reporting a reassuring zero.
 
 ## What it checks
 
-| Check | Schema side | Database side |
-| --- | --- | --- |
+| Check                   | Schema side                                                | Database side                                                                   |
+| ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | **Foreign key present** | each owning-side `@relation(fields: […], references: […])` | a `pg_constraint` row with `contype = 'f'` on the same **ordered** column tuple |
-| **Referential action** | `onDelete` / `onUpdate`, explicit or defaulted | `confdeltype` / `confupdtype` |
-| **Column present** | each scalar field | a `pg_attribute` row on the table |
-| **Nullability** | field optionality (`?`) | `pg_attribute.attnotnull` |
-| **Uniqueness** | `@unique`, `@@unique` | a `pg_index` row with `indisunique` and no `indpred` |
+| **Referential action**  | `onDelete` / `onUpdate`, explicit or defaulted             | `confdeltype` / `confupdtype`                                                   |
+| **Column present**      | each scalar field                                          | a `pg_attribute` row on the table                                               |
+| **Nullability**         | field optionality (`?`)                                    | `pg_attribute.attnotnull`                                                       |
+| **Uniqueness**          | `@unique`, `@@unique`                                      | a `pg_index` row with `indisunique` and no `indpred`                            |
 
 `@@map` / `@map` are resolved to the real table and column names throughout.
 
@@ -62,7 +62,7 @@ regardless of `--strict` rather than reporting a reassuring zero.
 - **Prisma's default `onDelete` is not `Cascade`.** An optional relation defaults to
   `SetNull`, a required one to `Restrict`. Reading a bare relation as a cascade
   mis-describes what a parent delete would actually do — on a required relation the truth
-  is the opposite: the delete is *rejected*, not propagated.
+  is the opposite: the delete is _rejected_, not propagated.
 - **`references:` is read, never assumed to be `id`.** Most relations in this schema do
   reference `id`, but several reference `projectId,position`, `serialId`, `userId`, `type`
   or `blockInstanceId`.
@@ -93,7 +93,7 @@ regardless of `--strict` rather than reporting a reassuring zero.
   plausible-looking catalog.
 - **A catalog read that answers uniformly is rejected**, loudly, before any comparison
   happens. `NOTNULL` is a reserved word in Postgres: `SELECT a.attnotnull notnull` parses as
-  the *postfix* `IS NOT NULL` operator and returns a constant `true` for every row. The
+  the _postfix_ `IS NOT NULL` operator and returns a constant `true` for every row. The
   query succeeds and every nullable column reads as `NOT NULL`. That fabricated 626
   one-directional findings before it was caught, so `assertCatalogSanity` now fails the run
   instead.
@@ -111,24 +111,27 @@ they are not audited at all:
 - **primary keys** — `@id` / `@@id`. The uniqueness check covers `@unique` and `@@unique`
   only. There are 105 `@@id` declarations in this schema and none of them is verified
 - **programmability** — views, functions, triggers, rules. A deployed view can emit columns
-  its committed definition does not, and nothing here would see it
+  its committed definition does not, and nothing here would see it. Two live instances:
+  `BountyRank_Live` emits five `commentCount` columns its committed definition does not, and
+  `BountyEntryRank_Live` ten (`tipped*`, `tippedAmount*`). The first matters because the
+  table rebuilds from the view every few minutes
 - columns and tables present in the database but absent from the schema (the reverse
-  direction *is* checked)
+  direction _is_ checked)
 - row-level security, partition bounds
-- whether a foreign key's *referenced table* matches the one the schema names (only the
+- whether a foreign key's _referenced table_ matches the one the schema names (only the
   constrained column tuple is matched)
 
 The text report ends with this list for the same reason.
 
 ## Layout
 
-| File | Role |
-| --- | --- |
-| `parse-prisma-schema.ts` | Schema → models, fields, mappings, relations, unique declarations |
-| `catalog.ts` | `pg_catalog` → `DbCatalog`. The only file that talks to a database |
-| `compare.ts` | `(schema, catalog) → findings`. Pure: no I/O, no clock |
-| `report.ts` | Findings → text |
-| `cli.ts` | Argument handling and wiring |
+| File                     | Role                                                               |
+| ------------------------ | ------------------------------------------------------------------ |
+| `parse-prisma-schema.ts` | Schema → models, fields, mappings, relations, unique declarations  |
+| `catalog.ts`             | `pg_catalog` → `DbCatalog`. The only file that talks to a database |
+| `compare.ts`             | `(schema, catalog) → findings`. Pure: no I/O, no clock             |
+| `report.ts`              | Findings → text                                                    |
+| `cli.ts`                 | Argument handling and wiring                                       |
 
 The differ is pure so it can be driven from fixtures, including deliberately damaged ones.
 
@@ -150,7 +153,7 @@ to nothing until you have watched it do both:
   foreign key is then removed from the catalog and the same comparison is asserted to
   report exactly that key;
 - a **positive control** on the zero — the aligned run also asserts non-zero
-  *checked* counts (4 relations, 3 unique declarations, >15 columns), so an empty finding
+  _checked_ counts (4 relations, 3 unique declarations, >15 columns), so an empty finding
   list cannot come from a comparison that visited nothing;
 - **the same pair at the CLI level** (`cli.test.ts` runs the real entry point as a
   process): an empty catalog must exit 2 with "not trustworthy", and a covering catalog
@@ -196,9 +199,40 @@ finding is `ImageResource(modelVersionId, name, imageId)`.
 
 **The `0` on referential actions is "not measured", not "clean".** This snapshot predates
 that check and carries no `ON DELETE`/`ON UPDATE` data, so all 408 comparable foreign keys
-report as *not comparable* and the tool says so on its own line. A live run does measure
+report as _not comparable_ and the tool says so on its own line. A live run does measure
 them: the first one found **45**, all `ON UPDATE` (declared `Cascade`, database `NoAction`),
 with zero `ON DELETE` mismatches.
+
+### Why not the checked-in `02_all_dll.sql`?
+
+`containers/db/docker-init/02_all_dll.sql` is a real, checked-in `pg_dump`, and reusing it
+instead of shipping a snapshot would be the tidier answer. Measured, it cannot serve: it is
+a **dev bootstrap DDL, not a production mirror**. It defines 195 tables against production's
+342, omits 178 production foreign keys, and — the part that matters — declares 25 foreign
+keys production does **not** have.
+
+Compared against the 37 missing foreign keys documented above, that dump would:
+
+|                | count |                                                  |
+| -------------- | ----- | ------------------------------------------------ |
+| **contradict** | 19    | the dump has the constraint; production does not |
+| **not see**    | 7     | the table is absent from the dump entirely       |
+| agree          | 11    |                                                  |
+
+All three `Club` image relations are in the contradicted 19, so pinning to it would assert
+that the very foreign keys this tool found missing are present. It agrees on the `*Rank`
+nullability shape (`UserRank`: 40 columns, 1 `NOT NULL`, no `thumbs*`) and on
+`ModelFlag.sfwOnly` being absent — a spot check there reads as a match, which is exactly how
+it looks like a usable substitute until you enumerate the foreign keys.
+
+### A note on `/// @view`
+
+The tool does not read the `/// @view` annotation, and does not need to. Whether a model is
+backed by a view is decided from the catalog — `relkind IN ('r','p')` — so a model on a view
+is skipped because the database says it is a view, not because the schema says so. That
+matters, because the annotation is unreliable: the strip regex in
+`scripts/prisma-migrate-with-views-workaround.mjs` requires `/// @view` to be immediately
+followed by `model`, and 26 of the 32 annotated models have a blank line in between.
 
 These totals are a fact about this schema and this snapshot together. The snapshot is frozen
 and the schema is not, so the totals drift as the schema grows — a field added tomorrow has
