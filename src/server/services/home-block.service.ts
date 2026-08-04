@@ -41,6 +41,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   hasSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -214,7 +215,6 @@ const imageFeedDefaults = {
   period: MetricTimeframe.Week,
   periodMode: 'published',
   sort: ImageSort.MostReactions,
-  browsingLevel: sfwBrowsingLevelsFlag,
   include: [] as never[],
   withMeta: false,
   types: undefined,
@@ -224,10 +224,14 @@ const modelFeedDefaults = {
   period: MetricTimeframe.Week,
   periodMode: 'published',
   sort: ModelSort.HighestRated,
-  browsingLevel: sfwBrowsingLevelsFlag,
   favorites: false,
   hidden: false,
 } as const;
+
+// PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
+// nothing on the home page has passed human review before appearing there.
+const feedBrowsingLevel = (level?: 'public' | 'sfw') =>
+  level === 'sfw' ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
 const readThroughTypes: HomeBlockType[] = [
   HomeBlockType.Feed,
@@ -347,6 +351,7 @@ export const getHomeBlockData = async ({
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
           ...imageFeedDefaults,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
           limit,
           domain: input.domain,
           sort: (feed.sort as ImageSort) ?? ImageSort.MostReactions,
@@ -363,6 +368,7 @@ export const getHomeBlockData = async ({
       const { items } = await getModelsWithImagesAndModelVersions({
         input: {
           ...modelFeedDefaults,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
           limit,
           sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
           period: feed.period ?? MetricTimeframe.Week,

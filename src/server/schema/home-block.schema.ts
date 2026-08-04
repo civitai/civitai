@@ -61,6 +61,10 @@ export const homeBlockMetaSchema = z
       sort: z.string().optional(),
       period: z.enum(MetricTimeframe).optional(),
       newCreators: z.boolean().optional(),
+      // Home-page content is not human-reviewed before it lands there, so a Feed
+      // block defaults to PG only rather than the PG+PG13 the feeds themselves use.
+      // Set 'sfw' to opt a block back up to PG-13.
+      browsingLevel: z.enum(['public', 'sfw']).optional(),
       // images only
       types: z.array(z.enum(MediaType)).optional(),
       // models only
