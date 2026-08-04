@@ -1,3 +1,4 @@
+import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { CreatorShopItem } from '~/components/CreatorShop/creator-shop.util';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import type { CosmeticShopItemGetById } from '~/types/router';
@@ -23,17 +24,21 @@ export function ShopItemGrid({
   // When set, purchases are attributed to this shop owner (cross-creator resale).
   viaShopUserId?: number;
 }) {
+  // A storefront renders several of these grids; they share one query key, so
+  // React Query still issues a single request for the viewer's wishlist.
+  const { wishlistedIds } = useQueryWishlistedShopItems();
+
   return (
-    <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
       {items.map((item) => {
         const creator = item.cosmetic.creator;
         return (
           <ShopItem
             key={item.id}
-            layout="storefront"
             item={item as unknown as CosmeticShopItemGetById}
             sectionItemCreatedAt={item.createdAt}
             alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+            wishlisted={wishlistedIds.has(item.id)}
             viaShopUserId={viaShopUserId}
             creator={creator?.id === ownerUserId ? null : creator}
           />

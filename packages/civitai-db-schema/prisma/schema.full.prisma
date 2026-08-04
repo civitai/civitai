@@ -533,6 +533,7 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  wishlistedCosmeticShopItems UserCosmeticShopItemWishlist[]
   createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
@@ -4025,6 +4026,18 @@ model CosmeticShopItem {
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
+  wishlists UserCosmeticShopItemWishlist[]
+}
+
+model UserCosmeticShopItemWishlist {
+  userId     Int
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopItemId Int
+  shopItem   CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  createdAt  DateTime         @default(now())
+
+  @@id([userId, shopItemId])
+  @@index([shopItemId])
 }
 
 model CosmeticShopSectionItem {

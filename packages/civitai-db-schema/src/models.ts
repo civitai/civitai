@@ -592,6 +592,7 @@ export interface User {
   addedCosmeticShopSections?: CosmeticShopSection[];
   addedCosmeticShopItems?: CosmeticShopItem[];
   purchasedCosmetics?: UserCosmeticShopPurchases[];
+  wishlistedCosmeticShopItems?: UserCosmeticShopItemWishlist[];
   createdCosmetics?: Cosmetic[];
   donationGoals?: DonationGoal[];
   donations?: Donation[];
@@ -2679,6 +2680,15 @@ export interface CosmeticShopItem {
   listed: boolean;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
+  wishlists?: UserCosmeticShopItemWishlist[];
+}
+
+export interface UserCosmeticShopItemWishlist {
+  userId: number;
+  user?: User;
+  shopItemId: number;
+  shopItem?: CosmeticShopItem;
+  createdAt: Date;
 }
 
 export interface CosmeticShopSectionItem {

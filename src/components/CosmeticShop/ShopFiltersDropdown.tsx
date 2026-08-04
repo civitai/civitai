@@ -19,9 +19,22 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import classes from './ShopFiltersDropdown.module.scss';
 
-type Filters = GetShopInput & { modifier?: 'owned' | 'notOwned' };
+// `wishlisted` is deliberately not folded into `modifier`: the modifiers are a
+// single-select group, and wishlisted has to be combinable with owned/notOwned.
+export type ShopFilters = GetShopInput & {
+  modifier?: 'owned' | 'notOwned';
+  wishlisted?: boolean;
+};
 
-export function ShopFiltersDropdown({ filters, setFilters, availableTypes, hideModifiers }: Props) {
+type Filters = ShopFilters;
+
+export function ShopFiltersDropdown({
+  filters,
+  setFilters,
+  availableTypes,
+  hideModifiers,
+  showWishlist,
+}: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
@@ -30,7 +43,8 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes, hideM
   const [opened, setOpened] = useState(false);
   const filterLength =
     (filters.cosmeticTypes ? filters.cosmeticTypes.length : 0) +
-    (!hideModifiers && !!filters.modifier ? 1 : 0);
+    (!hideModifiers && !!filters.modifier ? 1 : 0) +
+    (showWishlist && filters.wishlisted ? 1 : 0);
 
   const clearFilters = useCallback(() => setFilters({}), [setFilters]);
 
@@ -102,6 +116,20 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes, hideM
           </Chip.Group>
         </Stack>
       )}
+      {showWishlist && (
+        <Stack gap="md">
+          <Divider label="Wishlist" className="text-sm font-bold" />
+          <Group gap={8}>
+            <Chip
+              checked={!!filters.wishlisted}
+              onChange={(checked) => setFilters((prev) => ({ ...prev, wishlisted: checked }))}
+              {...chipProps}
+            >
+              Wishlisted
+            </Chip>
+          </Group>
+        </Stack>
+      )}
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -164,4 +192,6 @@ type Props = {
   availableTypes?: CosmeticType[];
   // Hide the Owned / Not Owned modifiers (Creator Shop storefront).
   hideModifiers?: boolean;
+  // Show the Wishlisted toggle (only /shop renders wishlist controls today).
+  showWishlist?: boolean;
 };

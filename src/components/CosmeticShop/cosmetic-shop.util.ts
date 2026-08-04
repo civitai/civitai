@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
@@ -10,6 +11,7 @@ import type {
   GetPaginatedCosmeticShopItemInput,
   GetShopInput,
   PurchaseCosmeticShopItemInput,
+  ToggleWishlistShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
@@ -277,6 +279,53 @@ export const useQueryShop = (
   );
 
   return { cosmeticShopSections: data, ...rest };
+};
+
+export const useQueryWishlistedShopItems = (options?: { enabled?: boolean }) => {
+  const currentUser = useCurrentUser();
+
+  const { data, ...rest } = trpc.cosmeticShop.getWishlistedShopItemIds.useQuery(undefined, {
+    enabled: (options?.enabled ?? true) && !!currentUser,
+  });
+
+  const wishlistedIds = useMemo(() => new Set(data ?? []), [data]);
+
+  return { wishlistedIds, ...rest };
+};
+
+export const useToggleWishlistShopItem = () => {
+  const queryUtils = trpc.useUtils();
+
+  const toggleMutation = trpc.cosmeticShop.toggleWishlistShopItem.useMutation({
+    async onMutate({ shopItemId, wishlisted }) {
+      await queryUtils.cosmeticShop.getWishlistedShopItemIds.cancel();
+      const previous = queryUtils.cosmeticShop.getWishlistedShopItemIds.getData();
+
+      queryUtils.cosmeticShop.getWishlistedShopItemIds.setData(undefined, (old) => {
+        const ids = old ?? [];
+        const shouldWishlist = wishlisted ?? !ids.includes(shopItemId);
+        if (!shouldWishlist) return ids.filter((id) => id !== shopItemId);
+        return ids.includes(shopItemId) ? ids : [shopItemId, ...ids];
+      });
+
+      return { previous };
+    },
+    onError(error, _payload, context) {
+      queryUtils.cosmeticShop.getWishlistedShopItemIds.setData(undefined, context?.previous);
+      showErrorNotification({
+        title: 'Failed to update your wishlist',
+        error: new Error(error.message),
+      });
+    },
+    async onSettled() {
+      await queryUtils.cosmeticShop.getWishlistedShopItemIds.invalidate();
+    },
+  });
+
+  return {
+    toggleWishlist: (data: ToggleWishlistShopItemInput) => toggleMutation.mutate(data),
+    togglingWishlist: toggleMutation.isPending,
+  };
 };
 
 export const useShopLastViewed = () => {

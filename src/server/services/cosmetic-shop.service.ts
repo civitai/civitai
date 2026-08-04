@@ -15,6 +15,7 @@ import type {
   GetPreviewImagesInput,
   GetShopInput,
   PurchaseCosmeticShopItemInput,
+  ToggleWishlistShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
@@ -42,7 +43,7 @@ import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
 } from '~/server/services/cosmetic-phash.service';
-import { withRetries } from '~/server/utils/errorHandling';
+import { throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -596,6 +597,50 @@ export const getShopSectionsWithItems = async ({
           : section.image,
       }))
   );
+};
+
+export const getWishlistedShopItemIds = async ({ userId }: { userId: number }) => {
+  const wishlisted = await dbRead.userCosmeticShopItemWishlist.findMany({
+    where: { userId },
+    select: { shopItemId: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return wishlisted.map((w) => w.shopItemId);
+};
+
+export const toggleWishlistShopItem = async ({
+  userId,
+  shopItemId,
+  wishlisted,
+}: ToggleWishlistShopItemInput & { userId: number }) => {
+  const existing = await dbWrite.userCosmeticShopItemWishlist.findUnique({
+    where: { userId_shopItemId: { userId, shopItemId } },
+    select: { shopItemId: true },
+  });
+  const shouldWishlist = wishlisted ?? !existing;
+
+  if (!shouldWishlist) {
+    await dbWrite.userCosmeticShopItemWishlist.deleteMany({ where: { userId, shopItemId } });
+    return { shopItemId, wishlisted: false };
+  }
+
+  if (!existing) {
+    const shopItem = await dbRead.cosmeticShopItem.findUnique({
+      where: { id: shopItemId },
+      select: { id: true },
+    });
+    if (!shopItem) throw throwNotFoundError('Shop item not found');
+
+    // skipDuplicates emits ON CONFLICT DO NOTHING, so two clicks racing past the
+    // read above settle on one row instead of a unique violation.
+    await dbWrite.userCosmeticShopItemWishlist.createMany({
+      data: [{ userId, shopItemId }],
+      skipDuplicates: true,
+    });
+  }
+
+  return { shopItemId, wishlisted: true };
 };
 
 export const purchaseCosmeticShopItem = async ({
