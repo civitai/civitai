@@ -693,7 +693,10 @@ export async function resolveMinorFlagAppeal({
     // Confirming then writes nothing while the appeal still closes Rejected —
     // telling the owner their request was denied on a model that isn't flagged.
     // Overturning carries no such gate: it's the only way left to close the row.
-    const model = await dbRead.model.findUnique({
+    //
+    // Read from the primary: a revert inside replication lag is exactly the race
+    // this guards, and the replica would still answer "minor". One PK lookup.
+    const model = await dbWrite.model.findUnique({
       where: { id: modelId },
       select: { minor: true },
     });

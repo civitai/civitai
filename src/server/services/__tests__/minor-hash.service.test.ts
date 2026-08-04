@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-const { mockDbRead, mockDbWrite, mockModelFindUnique } = vi.hoisted(() => {
-  const mockModelFindUnique = vi.fn();
-  return {
-    mockModelFindUnique,
-    mockDbRead: { $queryRaw: vi.fn(), model: { findUnique: mockModelFindUnique } },
-    mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
-  };
-});
+const { mockDbRead, mockDbWrite, mockReplicaModelFindUnique, mockPrimaryModelFindUnique } =
+  vi.hoisted(() => {
+    const mockReplicaModelFindUnique = vi.fn();
+    const mockPrimaryModelFindUnique = vi.fn();
+    return {
+      mockReplicaModelFindUnique,
+      mockPrimaryModelFindUnique,
+      mockDbRead: { $queryRaw: vi.fn(), model: { findUnique: mockReplicaModelFindUnique } },
+      mockDbWrite: {
+        $queryRaw: vi.fn(),
+        $executeRaw: vi.fn(),
+        model: { findUnique: mockPrimaryModelFindUnique },
+      },
+    };
+  });
 
 const {
   mockSetModelMinor,
@@ -73,7 +80,8 @@ beforeEach(() => {
   // (which only clears call history, not implementations) and leaks into sweepMinorHashMatches.
   mockSetModelMinor.mockReset();
   mockDbRead.$queryRaw.mockResolvedValue([]);
-  mockModelFindUnique.mockResolvedValue({ minor: true });
+  mockReplicaModelFindUnique.mockResolvedValue({ minor: true });
+  mockPrimaryModelFindUnique.mockResolvedValue({ minor: true });
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
@@ -1427,7 +1435,7 @@ describe('resolveMinorFlagAppeal', () => {
   // request was denied on a model that is not flagged. The table row can be stale
   // and the procedure is callable directly, so the UI's disabled button is UX only.
   it('refuses to uphold a flag that is no longer in force', async () => {
-    mockModelFindUnique.mockResolvedValue({ minor: false });
+    mockPrimaryModelFindUnique.mockResolvedValue({ minor: false });
 
     await expect(
       resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
@@ -1438,7 +1446,7 @@ describe('resolveMinorFlagAppeal', () => {
   });
 
   it('refuses to uphold when the model no longer exists', async () => {
-    mockModelFindUnique.mockResolvedValue(null);
+    mockPrimaryModelFindUnique.mockResolvedValue(null);
 
     await expect(
       resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
@@ -1447,10 +1455,25 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
+  // The window the guard exists for is a revert that has committed but not yet
+  // replicated: a replica read still says "minor", the confirm UPDATE no-ops, and
+  // the owner is told their request was denied on a model that is not flagged.
+  it('refuses to uphold a revert the replica has not caught up to', async () => {
+    mockReplicaModelFindUnique.mockResolvedValue({ minor: true });
+    mockPrimaryModelFindUnique.mockResolvedValue({ minor: false });
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
   // Unflagging is the only way left to close a request whose flag another
   // moderator already reverted, so it must not carry the same gate.
   it('still overturns a request whose flag was already reverted', async () => {
-    mockModelFindUnique.mockResolvedValue({ minor: false });
+    mockPrimaryModelFindUnique.mockResolvedValue({ minor: false });
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
