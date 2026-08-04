@@ -7,6 +7,7 @@ describe('getMinorFlagAlertState', () => {
       tone: 'red',
       showRequestButton: true,
       upheldAt: null,
+      copyVariant: 'noAppeal',
     });
   });
 
@@ -15,6 +16,7 @@ describe('getMinorFlagAlertState', () => {
       tone: 'yellow',
       showRequestButton: false,
       upheldAt: null,
+      copyVariant: 'pending',
     });
   });
 
@@ -25,6 +27,7 @@ describe('getMinorFlagAlertState', () => {
       tone: 'red',
       showRequestButton: true,
       upheldAt: resolvedAt,
+      copyVariant: 'rejected',
     });
   });
 });

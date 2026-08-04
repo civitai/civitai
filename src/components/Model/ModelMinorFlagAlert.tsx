@@ -4,6 +4,7 @@ import { IconExclamationMark } from '@tabler/icons-react';
 import { useState } from 'react';
 import {
   getMinorFlagAlertState,
+  type MinorFlagAlertCopyVariant,
   type MinorFlagAppeal,
 } from '~/components/Model/minor-flag-alert-state';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
@@ -14,7 +15,7 @@ import { trpc } from '~/utils/trpc';
 
 export function ModelMinorFlagAlert({ model }: Props) {
   const { id, name, minorAppeal } = model;
-  const { tone, showRequestButton, upheldAt } = getMinorFlagAlertState(minorAppeal);
+  const { tone, showRequestButton, upheldAt, copyVariant } = getMinorFlagAlertState(minorAppeal);
 
   const [opened, { open, close }] = useDisclosure(false);
   const [message, setMessage] = useState('');
@@ -51,6 +52,12 @@ export function ModelMinorFlagAlert({ model }: Props) {
     createAppealMutation.mutate({ entityId: id, entityType: EntityType.Model, message: trimmed });
   };
 
+  const trailingCopy: Record<MinorFlagAlertCopyVariant, string> = {
+    noAppeal: 'If you believe this is a mistake, you can request a review.',
+    pending: 'Your review request is with our moderators.',
+    rejected: `Reviewed ${upheldAt ? dayjs(upheldAt).format('MMM D, YYYY') : ''} — the flag was upheld. If you believe this is still a mistake, you can request another review.`,
+  };
+
   return (
     <>
       <Alert color={tone}>
@@ -60,15 +67,8 @@ export function ModelMinorFlagAlert({ model }: Props) {
           </ThemeIcon>
           <Stack gap="xs">
             <Text size="sm" mt={-3}>
-              Your model {name} has been marked as depicting a minor. If you believe this is a
-              mistake, you can request a review.
+              Your model {name} has been marked as depicting a minor. {trailingCopy[copyVariant]}
             </Text>
-            {upheldAt && (
-              <Text size="xs" c="dimmed">
-                Your last request was reviewed on {dayjs(upheldAt).format('MMM D, YYYY')} and the
-                flag was upheld.
-              </Text>
-            )}
             {showRequestButton && (
               <Button color={tone} variant="light" size="xs" w="fit-content" onClick={open}>
                 Request a Review
