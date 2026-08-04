@@ -226,6 +226,28 @@ and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module 
 errors (and the missing types cascade into unrelated `implicitly has an 'any' type` errors) — noise that looks
 like your change broke something when it didn't.
 
+**The worse consequence is a suite that doesn't fail — it vanishes.** Without the submodule,
+`src/server/routers/__tests__/blocks.router.workflow.test.ts` fails to **collect** and contributes **0 tests**.
+It doesn't report red, it reports nothing, and a run that collected nothing still finishes in a way that reads
+as a pass to anyone checking an exit code or skimming a summary. **Validate any worktree test run by confirming
+that file collected a nonzero count** — it was 308 tests on one base. If it reports 0, the run tells you nothing
+about your change, whatever the summary says.
+
+**A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
+get system Node instead of the flake's pinned version. Measured: system Node **26.5.0** against the flake's
+**22.22.2** produced 7 spurious `window.localStorage is undefined` failures under happy-dom plus 8 Prisma
+`linux-nixos` engine errors — every one a false red that got attributed to the code under test. Create a minimal
+`.envrc` containing `use flake` and `direnv allow` it. **Then confirm your cwd is actually the worktree**: one run
+whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
+(10849 → 10772) while the output otherwise looked entirely normal.
+
+**Browser/component tests on NixOS need help — there is no `chromium` on `PATH`.** Two routes are known to work,
+and which one works has varied between attempts: `steam-run` plus an `LD_LIBRARY_PATH` carrying nss/nspr (in that
+attempt the documented `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` route hung), or `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+pointed at a nix chromium together with `--browser.api.host=127.0.0.1 --browser.api.port=63501` (reached after a
+bare `--project component` hung for ~18 minutes). Before blaming either route: **a stale `node_modules/.vite`
+cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clear it first**, then pick a route.
+
 ## Important Notes
 
 - Read the full file before editing. Plan all changes, then make ONE complete edit. If you've edited a file 3+ times, stop and re-read the user's requirements.
