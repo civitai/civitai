@@ -86,13 +86,57 @@ export const STEP_BILLING_MODES: readonly StepBillingMode[] = [
 // with no implemented handler fails at registry LOAD (a build-time error), not
 // at request time on a Friday.
 //
-// 🔴 THE FREE-TEXT-INPUT HALF OF THAT QUESTION IS NOW ANSWERED (#3527): mature
-// content is permitted for App Blocks, bounded by the token's server-minted
-// maturity ceiling — so a free-text INPUT needs the same prompt audit
-// `textToImage` / `customComfy` already run, not a new policy. `'promptAudit'`
-// is therefore IMPLEMENTED; its handler lives in `./moderation` and runs
-// `auditPromptServer` host-side, before the orchestrator submit. The free-text
-// OUTPUT half (`'textOutput'`) is still unanswered and still fails at load.
+// 🔴 BOTH HALVES OF THAT QUESTION ARE NOW ANSWERED, AND ALL THREE POSTURES ARE
+// IMPLEMENTED — nothing in this union fails at load today. The INPUT half
+// (#3527): mature content is permitted for App Blocks, bounded by the token's
+// server-minted maturity ceiling, so a free-text INPUT needs the same prompt
+// audit `textToImage` / `customComfy` already run, not a new policy —
+// `'promptAudit'`'s handler lives in `./moderation` and runs `auditPromptServer`
+// host-side, before the orchestrator submit. The OUTPUT half is answered too:
+// `'textOutput'` scans the generated text with the orchestrator's
+// `xGuardModeration` step (`mode: 'text'`) at the READ boundary and withholds on
+// a policy-label hit. Evidence, not intent: `isModerationPostureImplemented`
+// returns true for all three values, its output handler is in `./moderation`,
+// and the registered `chat-completion` entry declares `'textOutput'` — a
+// load-time failure would take the module down.
+//
+// 🔴 DO NOT SUMMARISE THE FAILURE BEHAVIOUR AS "withholds on ANY scanner
+// failure". An earlier revision of this paragraph said exactly that and it is
+// NOT true of this tree. What withholds is a specific set — in
+// `./text-output-moderation` unless noted, named by symbol rather than line so
+// this list does not rot the moment that file moves:
+//   - the scan call throwing, or exceeding the hard deadline (`stage: 'error'`)
+//   - no scan output at all — the submit failed, or the workflow was still
+//     running when `SCAN_WAIT_SECONDS` elapsed (`stage: 'no-verdict'`)
+//   - joined text over `MAX_SCANNED_CONTENT_CHARS`, checked before the network
+//     call AND before the memo, so no over-cap payload is answered from a hit
+//     (`stage: 'over-cap'`)
+//   - a requested label absent from `results[]` (`missingRequestedLabels` →
+//     `stage: 'label-drift'`)
+//   - `extractText` returning a non-array, or an array with a non-string entry
+//     (guarded in `./moderation`'s `textOutput.output` handler)
+// That module is authoritative; this list is a summary and must be re-read
+// against it, not trusted over it.
+//
+// 🔴 KNOWN GAP, OPEN IN THIS TREE: A LABEL THE SCANNER ATTEMPTED AND FAILED ON
+// RELEASES. The generated `XGuardLabelResult` carries `error?: null | string`,
+// but `XGuardLabelResultLike` — the shape this policy actually reads — declares
+// only `label` / `score` / `triggered`, and `decideTextOutputVerdict` reads only
+// those three. So an errored label contributes nothing to the trigger set, and
+// it ALSO suppresses the drift guard, because `missingRequestedLabels` counts an
+// entry as "evaluated" on a non-empty `label` alone. A scan in which all 15
+// `TEXT_OUTPUT_SCAN_LABELS` errored is therefore indistinguishable from
+// all-clean and RELEASES. This is stated as OPEN because it is open here; it is
+// a live fail-open, not a hypothetical. Re-read `decideTextOutputVerdict` before
+// relying on this paragraph in EITHER direction — do not assume from its
+// presence that it is still open, nor from its absence that it was ever closed.
+//
+// 🔴 AN EARLIER REVISION OF THIS PARAGRAPH ENDED "The free-text OUTPUT half
+// (`'textOutput'`) is still unanswered and still fails at load." That was FALSE,
+// and it was the FIRST thing a reader hit when opening this union — twenty lines
+// ahead of the `'textOutput'` member's own doc, which said the opposite. When a
+// posture ships, correct THIS block in the same change; a stale summary above a
+// correct member doc is read as the summary.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepModerationPosture =
   /**

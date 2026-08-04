@@ -124,7 +124,31 @@ export type StepOutputModerationRequest = {
   isGreen: boolean;
   /** The OauthClient id off the verified block token — the per-app trigger key. */
   appId: string;
-  /** The block instance id, when the caller has one. */
+  /**
+   * The per-block identifier this scan's telemetry is keyed on. It reaches
+   * exactly one consumer — `logScan`'s Axiom event in
+   * `./text-output-moderation` — and is never written to a column, so nothing
+   * FK-resolves it and a wrong value fails silently.
+   *
+   * 🔴 THE TWO LIVE CALLERS PASS `claims.blockId`, NOT `claims.appBlockId`, AND
+   * THOSE ARE DIFFERENT NAMESPACES. `blocks.router.ts` `pollWorkflow` (:3108)
+   * and `cancelWorkflow` (:3252) are the only 2 of that router's ~15
+   * `appBlockId:` assignments reading `claims.blockId`; the rest read
+   * `claims.appBlockId`. The token carries both:
+   * `block-scope.middleware.ts:42-49` documents `appBlockId` as `AppBlock.id`,
+   * the `apb_<ulid>` PK, while `blockId` is `AppBlock.blockId` — the publish
+   * request's SLUG (`publish-request.service.ts:2392-2398` writes
+   * `id: apb_<ulid>` and `blockId: request.slug` onto the same row). So the
+   * value logged under this name does NOT join to `AppBlock.id` or to
+   * `BlockScopeInvocation.app_block_id`, which is what the per-app trigger-rate
+   * aggregation in `./text-output-moderation` assumes it can key on.
+   *
+   * Recorded rather than papered over: the defect is at the two router call
+   * sites, not in this field's name — renaming it to match what is passed would
+   * make the log self-consistent and still un-joinable. An earlier revision of
+   * this line read "The block instance id", which matches NEITHER claim:
+   * `blockInstanceId` is a third, separate claim on the same token.
+   */
   appBlockId?: string;
 };
 
@@ -387,8 +411,9 @@ assertModerationHandlerTable(moderationPostureHandlers);
 //   1. every REGISTERED entry's declared posture/billing agrees with the derived
 //      policy for the `$type` it submits, and
 //   2. every `$type` the registry's own posture map licenses derives a posture
-//      that map accepts — a wider population than (1), which sees only the one
-//      `$type` a registered entry currently claims.
+//      that map accepts — a wider population than (1), which sees only the
+//      `$type`s a registered entry currently claims (two: `convertImage` and
+//      `chatCompletion`; the map licenses seven).
 // A disagreement is a BUILD failure, not a Friday surprise on a spend path.
 // ─────────────────────────────────────────────────────────────────────────────
 assertPolicyAgreesWithRegistryMap(STEP_TYPE_ACCEPTABLE_POSTURES);
