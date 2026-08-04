@@ -185,6 +185,43 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     expect(result.error).toContain('cannot read "Session"');
   });
 
+  /**
+   * `VALUES` is UNRESERVED in Postgres (`pg_get_keywords.catcode = 'C'`), so
+   * `CREATE TABLE values (...)` is legal and a bare `values` in relation
+   * position is a real relation reference — unlike `SELECT`, which is reserved.
+   * It is a from_item only at the head of a parenthesized sub-query, so every
+   * other position must still be refused.
+   */
+  it.each([
+    ['bare, as the only relation', 'SELECT * FROM values'],
+    ['bare, in a comma list', 'SELECT * FROM "User" u, values v'],
+    ['bare, inside a parenthesized join', 'SELECT * FROM ("User" u JOIN values v ON true)'],
+    ['bare, reached through a join', 'SELECT * FROM "User" u JOIN values v ON true'],
+    ['bare, case-folded', 'SELECT * FROM VaLuEs'],
+    ['bare, in a sub-select', 'SELECT * FROM "User" WHERE id IN (SELECT id FROM values)'],
+  ])('refuses `values` used as a relation name — %s', (_label, sql) => {
+    expect(checkQueryScope(sql).ok).toBe(false);
+  });
+
+  it('refuses the double-quoted relation "values", which is not on the list', () => {
+    const result = checkQueryScope('SELECT * FROM "values"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "values"');
+  });
+
+  it('refuses a bare identifier that merely starts with a sub-query keyword', () => {
+    expect(checkQueryScope('SELECT * FROM selectfoo').ok).toBe(false);
+    expect(checkQueryScope('SELECT * FROM valuesbar').ok).toBe(false);
+  });
+
+  it('refuses a disallowed table following a sub-select in the FROM list', () => {
+    const result = checkQueryScope('SELECT * FROM (SELECT id FROM "User") x, "Session" m');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
   it('refuses a disallowed table in the second branch of a UNION', () => {
     const result = checkQueryScope('SELECT id FROM "User" UNION SELECT id FROM "Session"');
     expect(result.ok).toBe(false);
