@@ -2796,15 +2796,14 @@ const refundModelEarlyAccessPurchases = async ({
         });
       }
       // Revoke the now-refunded grant so a retry after a mid-loop failure skips this buyer
-      // instead of refunding them twice.
-      await dbWrite.entityAccess.delete({
+      // instead of refunding them twice. deleteMany, not delete: the money already moved, so an
+      // already-gone row must not abort the loop.
+      await dbWrite.entityAccess.deleteMany({
         where: {
-          accessToId_accessToType_accessorId_accessorType: {
-            accessToId: purchase.modelVersionId,
-            accessToType: 'ModelVersion',
-            accessorId: purchase.buyerId,
-            accessorType: 'User',
-          },
+          accessToId: purchase.modelVersionId,
+          accessToType: 'ModelVersion',
+          accessorId: purchase.buyerId,
+          accessorType: 'User',
         },
       });
       refundedCount++;
