@@ -491,6 +491,10 @@ export function reopenModelAppeal({
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
+      // The moderator queue sorts and displays on createdAt, so leaving the
+      // original request's stamp puts a months-old row ahead of fresh ones under
+      // a date that describes a request nobody is being asked to review.
+      createdAt: new Date(),
       resolvedAt: null,
       resolvedBy: null,
       resolvedMessage: null,
