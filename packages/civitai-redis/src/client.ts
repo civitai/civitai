@@ -22,7 +22,9 @@ import {
   resetClusterDeadlineHits,
 } from './cluster-deadline-hits';
 import { compressPacked, decompressPacked } from './packed-compression';
+import { applyCacheKeyPrefix } from './cache-key-prefix';
 
+export { CACHE_KEY_NAMESPACE, CACHE_KEY_PREFIX, prefixCacheKey } from './cache-key-prefix';
 export type { RedisConfig } from './env';
 export type RedisLogFn = (message: string, ...args: unknown[]) => void;
 /** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
@@ -2027,8 +2029,14 @@ export const REDIS_SYS_KEYS = {
   },
 } as const;
 
-// Cached data
-export const REDIS_KEYS = {
+// Cached data.
+//
+// The literal table. Every cache key in the app is built from one of these leaves, so applying
+// the environment prefix here (see `REDIS_KEYS` below) is the single place that scopes the whole
+// cache keyspace. Declared separately from the export so the `as const` literal types survive —
+// `RedisKeyStringsCache` / `RedisKeyTemplateCache` are derived from these literals and are
+// unchanged by the prefixing.
+const REDIS_KEYS_UNPREFIXED = {
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
@@ -2267,6 +2275,17 @@ export const REDIS_KEYS = {
     RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
   },
 } as const;
+
+/**
+ * The cache key table, environment-scoped.
+ *
+ * Identical to `REDIS_KEYS_UNPREFIXED` in production (same object, byte-identical keys); on a
+ * deployment that sets `CACHE_KEY_NAMESPACE` every leaf carries the `<namespace>:` prefix, so a
+ * non-production deployment cannot read or overwrite a production cache entry. See
+ * ./cache-key-prefix for the full rationale — in particular why the namespace is explicit rather
+ * than derived from `IS_PREVIEW`.
+ */
+export const REDIS_KEYS = applyCacheKeyPrefix(REDIS_KEYS_UNPREFIXED);
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`
 // we should probably be flipping all redis keys to have any dynamic keys come at the end

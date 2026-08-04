@@ -1,5 +1,9 @@
 import type { NextApiRequest } from 'next';
 import requestIp from 'request-ip';
+// From the package rather than the `~/server/redis/client` shim on purpose: it is a pure helper
+// with no client state, and importing it through the shim would force every suite that mocks the
+// shim to add it to its mock factory.
+import { prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
 
 /**
@@ -123,6 +127,10 @@ export async function checkPublicApiRateLimit({
   const authed = typeof userId === 'number';
   const max = authed ? PUBLIC_API_RATE_LIMIT_AUTH_MAX : PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
   const bucket = authed ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
-  const key = `${KEY_PREFIX}:${family}:${bucket}`;
+  // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
+  // environment namespace from the key table — apply it explicitly. Without this a non-production
+  // deployment burns PRODUCTION users' rate-limit budget and can 429 real traffic. No-op in
+  // production.
+  const key = prefixCacheKey(`${KEY_PREFIX}:${family}:${bucket}`);
   return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS);
 }
