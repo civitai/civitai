@@ -130,6 +130,7 @@ import {
   formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
+  resolveBlockPollWaitSeconds,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
@@ -3046,6 +3047,33 @@ export const blocksRouter = router({
    * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
    * so the orchestrator returns 404/403 for workflows the user doesn't own.
    * That's the gate — we don't need a second client-side ownership check.
+   *
+   * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
+   * open until the workflow reaches a terminal status instead of answering with
+   * whatever it is right now (its `?wait=` parameter; see
+   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold).
+   * Omitted → byte-identical to the pre-existing request.
+   *
+   * 🔴 A 202 IS A NORMAL OUTCOME, NOT AN ERROR. When the hold elapses first the
+   * orchestrator answers 202 with the current, still-running workflow — which
+   * the generated client surfaces as an ordinary `data` result, so it flows
+   * through the exact same mapping below and reaches the block as a
+   * non-terminal snapshot. The caller re-arms. Nothing here needs to branch on
+   * the status code, and adding a branch that treated 202 as a failure would
+   * turn the normal timeout into a broken generation.
+   *
+   * 🔴 WHAT THIS DOES TO SCAN COST — the direction is FAVOURABLE, and it is
+   * worth stating because the moderation wrapper below runs on EVERY poll.
+   * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
+   * deliberately does NOT memoize an operational fault (scanner error, timeout,
+   * label drift, per-label error), so during such a fault the same text is
+   * re-scanned once per poll. A long poll REDUCES the poll rate — ~1 per 15s
+   * instead of ~1 per 2s — so it shrinks that blast radius by the same factor
+   * rather than enlarging it. The trade it makes is the other way round: a held
+   * request occupies an in-flight request slot for its whole duration, so
+   * concurrent in-flight polls rise even as total polls fall. That is why the
+   * hold is opt-in and capped, and why the SDK only requests it from a
+   * sequential, non-overlapping loop.
    */
   pollWorkflow: publicProcedure
     // No `enforceAppBlocksFlag` middleware here: block-token procs are
@@ -3055,6 +3083,14 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         workflowId: z.string().min(1).max(64),
+        /**
+         * Orchestrator-side hold, in SECONDS. Untrusted (it comes from a block
+         * via the host) — bounded here by the wire schema AND clamped again by
+         * `resolveBlockPollWaitSeconds`, which owns the real ceiling. The zod
+         * `.max()` is deliberately the LOOSER of the two: it rejects nonsense,
+         * the resolver decides policy, and the policy lives in one place.
+         */
+        waitSeconds: z.number().int().min(0).max(60).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -3074,7 +3110,14 @@ export const blocksRouter = router({
       await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
-      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
+      const workflow = await getWorkflow({
+        token,
+        path: { workflowId: input.workflowId },
+        // `undefined` when there is no hold, so the request is byte-identical
+        // to the pre-long-poll one rather than carrying a `?wait=0`.
+        ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+      });
       // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
       // generated text: it publishes `imageUrls` off `extractOutput`, which a
       // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
