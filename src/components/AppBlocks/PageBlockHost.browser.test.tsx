@@ -89,6 +89,10 @@ vi.mock('~/utils/trpc', () => ({
 
 // eslint-disable-next-line import/first
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+// eslint-disable-next-line import/first
+import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
+// eslint-disable-next-line import/first
+import { encodeBlockInitFragment } from '~/components/AppBlocks/blockIframeUrl';
 
 /**
  * W10 lazy-consent gap regression (page surface).
@@ -912,5 +916,70 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
 
     // The new mount emitted a 2nd, independent impression → total 2.
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(2));
+  });
+});
+
+/**
+ * The iframe WIRE CONTRACT on the PAGE host. Mirrors the model-slot coverage in
+ * IframeHost.browser.test.tsx — these are the two seams a pure unit test cannot
+ * reach (the rendered `src`, and the real postMessage bridge reaching
+ * `IframeInitController.notifyHello`). Both hosts need their own, because each
+ * is a separate call site: the model host derives its fragment fields from the
+ * install + slot context, the page host from its props.
+ */
+describe('PageBlockHost iframe wire contract (init fragment + readiness announce)', () => {
+  async function mountAndWait() {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    return page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  }
+
+  test('renders the iframe src with the init fragment appended', async () => {
+    const el = await mountAndWait();
+    const url = new URL(el.getAttribute('src') ?? '');
+
+    expect(url.origin).toBe(new URL(SAME_ORIGIN_SRC).origin);
+    expect(url.pathname).toBe(new URL(SAME_ORIGIN_SRC).pathname);
+    expect(url.hash.slice(1)).toBe(
+      encodeBlockInitFragment({
+        theme: baseProps.theme,
+        // The page host is iframe-mode by construction — the same literal it
+        // puts in its BLOCK_INIT payload.
+        renderMode: 'iframe',
+        blockInstanceId: baseProps.blockInstanceId,
+      })
+    );
+  });
+
+  test('🔴 the rendered src carries NO token — only the three declared fields', async () => {
+    const el = await mountAndWait();
+    const src = el.getAttribute('src') ?? '';
+    expect(src).not.toContain(baseProps.token);
+    const keys = [...new URLSearchParams(new URL(src).hash.slice(1)).keys()].sort();
+    expect(keys).toEqual(['blockInstanceId', 'civitai-block', 'renderMode', 'theme']);
+  });
+
+  test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    await mountAndWait();
+    expect(helloSpy).not.toHaveBeenCalled(); // positive control
+
+    postFromBlock('BLOCK_HELLO');
+
+    await vi.waitFor(() => expect(helloSpy).toHaveBeenCalled());
+    helloSpy.mockRestore();
+  });
+
+  test('an unrelated message type does NOT reach notifyHello (negative control)', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    await mountAndWait();
+
+    postFromBlock('BLOCK_HELLO_NOT_REALLY');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(helloSpy).not.toHaveBeenCalled();
+    helloSpy.mockRestore();
   });
 });

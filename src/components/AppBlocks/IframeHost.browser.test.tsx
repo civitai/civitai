@@ -97,6 +97,10 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
 import { IframeHost } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import type { BlockInstall, ModelSlotContext } from '~/components/AppBlocks/types';
+// eslint-disable-next-line import/first
+import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
+// eslint-disable-next-line import/first
+import { encodeBlockInitFragment } from '~/components/AppBlocks/blockIframeUrl';
 
 /**
  * Analytics Phase 2 — block render/impression beacon on the MODEL slot host.
@@ -359,5 +363,91 @@ describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () 
     expect(mocks.balance).not.toHaveBeenCalled();
     expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
     replies.stop();
+  });
+});
+
+/**
+ * The iframe WIRE CONTRACT on the model-slot host — the two seams that no pure
+ * unit test can reach, because they are claims about how the COMPONENT is
+ * wired rather than about what the helpers compute:
+ *
+ *   A. the rendered `src` really carries the init fragment, and
+ *   B. a real `BLOCK_HELLO` arriving over the real postMessage bridge really
+ *      reaches `IframeInitController.notifyHello`.
+ *
+ * The behaviour behind each seam is pinned separately and deterministically:
+ * `__tests__/blockIframeUrl.test.ts` for the URL format, and
+ * `__tests__/iframeInitController.test.ts` for what `notifyHello` does (and,
+ * crucially, does NOT do — it never cancels the retry loop or the readiness
+ * timeout). Asserting the CALL here rather than counting BLOCK_INIT posts is
+ * deliberate: a count would race the host's own 400ms retry tick and could
+ * pass for the wrong reason.
+ */
+describe('IframeHost iframe wire contract (init fragment + readiness announce)', () => {
+  test('renders the iframe src with the init fragment appended to the manifest src', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+
+    const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+    const src = el.getAttribute('src') ?? '';
+    const url = new URL(src);
+
+    // The publisher's origin + path are untouched; only the fragment is added.
+    expect(url.origin).toBe(new URL(SAME_ORIGIN_SRC).origin);
+    expect(url.pathname).toBe(new URL(SAME_ORIGIN_SRC).pathname);
+    expect(url.hash.slice(1)).toBe(
+      encodeBlockInitFragment({
+        // `context.theme` is 'light' and the install renders in iframe mode.
+        theme: 'light',
+        renderMode: 'iframe',
+        blockInstanceId: install.blockInstanceId,
+      })
+    );
+  });
+
+  test('🔴 the rendered src carries NO token — only the three declared fields', async () => {
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+
+    const src = page.getByTestId('block-iframe').element().getAttribute('src') ?? '';
+    // baseProps.token is the block bearer token. It must appear nowhere in the URL.
+    expect(src).not.toContain(baseProps.token);
+    const keys = [...new URLSearchParams(new URL(src).hash.slice(1)).keys()].sort();
+    expect(keys).toEqual(['blockInstanceId', 'civitai-block', 'renderMode', 'theme']);
+  });
+
+  test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    expect(helloSpy).not.toHaveBeenCalled(); // positive control: nothing yet
+
+    postFromBlock('BLOCK_HELLO');
+
+    await vi.waitFor(() => expect(helloSpy).toHaveBeenCalled());
+    helloSpy.mockRestore();
+  });
+
+  test('an unrelated message type does NOT reach notifyHello (negative control)', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+
+    postFromBlock('BLOCK_HELLO_NOT_REALLY');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(helloSpy).not.toHaveBeenCalled();
+    helloSpy.mockRestore();
   });
 });
