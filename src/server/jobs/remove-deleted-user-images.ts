@@ -395,7 +395,7 @@ export const removeDeletedUserImages = createJob(
   'remove-deleted-user-images',
   // Off the hour: remove-blocked-images runs at :00 and pushes 15K images through the same
   // deleteImages path, S3 deletes and CDN purges included.
-  '5,15,25,35,45,55 * * * *',
+  '*/10 * * * *',
   async (ctx) => {
     const budget = await getImagePurgeBudget();
     if (budget <= 0) return { paused: true, deletedImages: 0, blockedImages: 0, deletedUsers: 0 };
