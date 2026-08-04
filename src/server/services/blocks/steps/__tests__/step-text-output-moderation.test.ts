@@ -1325,6 +1325,39 @@ describe('textOutput — an ERRORED label FAILS CLOSED', () => {
     ).toEqual([ERRORED_LABEL]);
   });
 
+  it.each([['extremism'], ['EXTREMISM'], ['  Extremism  ']])(
+    '🔴 matches the errored label CASE-INSENSITIVELY — result spelled %p, requested "Extremism"',
+    (resultLabel) => {
+      // 🔴 THE REAL SHAPE, NOT A HYPOTHETICAL. The orchestrator matches the
+      // requested list case-insensitively but answers with its OWN canonical
+      // spelling, so "we asked for `Extremism`, it answered about `extremism`"
+      // is what actually arrives. A case-SENSITIVE guard finds no match, reports
+      // no errored label, and RELEASES — the identical silent fail-open
+      // `normalizeLabel` exists to remove, reintroduced one function over.
+      //
+      // 🔴 THIS TEST EXISTS BECAUSE A MUTANT SURVIVED WITHOUT IT. Replacing BOTH
+      // `normalizeLabel(...)` calls in `erroredRequestedLabels` with `.trim()`
+      // left the entire 98-test suite green: every other fixture here spells the
+      // result label exactly as it spells the requested one, so the two sides
+      // agreed and nothing could distinguish a normalized comparison from a raw
+      // one. Only a case DIFFERENCE discriminates — an asymmetric mutant (one
+      // side only) dies for the wrong reason, because the sides stop agreeing.
+      // `missingRequestedLabels` has had its own version of this test all along.
+      const output = {
+        triggeredLabels: [],
+        results: [{ label: resultLabel, triggered: false, error: SCANNER_ERROR }],
+      };
+      // The REQUESTED spelling comes back, not the scanner's.
+      expect(TextOutputModeration.erroredRequestedLabels(output, ['Extremism'])).toEqual([
+        'Extremism',
+      ]);
+      // …and it reaches the VERDICT, not just the helper.
+      expect(
+        decideTextOutputVerdict(output, { isGreen: false, requestedLabels: ['Extremism'] })
+      ).toMatchObject({ released: false, erroredLabels: ['Extremism'] });
+    }
+  );
+
   it('🔴 ONE label errored, every other label clean → WITHHOLDS', () => {
     // 🔴 THE DEFECT, IN ONE ASSERTION. Nothing triggered, every requested label
     // came back, and one of them came back with an error instead of a verdict.

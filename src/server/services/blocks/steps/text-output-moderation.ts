@@ -257,10 +257,12 @@ export type TextOutputScanVerdict = {
  * problem. That is the correct DIRECTION to fail in, and it is still an outage
  * — so re-probe whenever anything on the scanner side moves.
  *
- * 🔴 STILL UNPROBED, AND THIS IS THE HALF THAT IS GENUINELY OPEN: the
- * 2026-08-03 probe did NOT read `error` or `finishReason`. The `error`
- * population behaviour that {@link erroredRequestedLabels} depends on is
- * therefore unverified against the deployed scanner. Same one call answers it.
+ * ON `error` AND `finishReason`: the 2026-08-03 probe did not read either, but
+ * they no longer need a probe to be understood — both are assigned in
+ * `XGuardScoring.BuildLabelResult` and the behaviour is read off the
+ * orchestration source in {@link erroredRequestedLabels}. A probe would still
+ * confirm the DEPLOYED build matches that source; it is no longer the only way
+ * to answer the question.
  *
  * TO (RE-)PROBE, ONE CALL: submit a text scan through
  * `createXGuardModerationRequest` with `labels: [...TEXT_OUTPUT_SCAN_LABELS]`
@@ -305,22 +307,41 @@ export function missingRequestedLabels(
  * shape we did not expect. A value we cannot interpret is a non-answer, and the
  * whole point of this guard is that a non-answer never reads as clean.
  *
- * 🔴 THE ONE DELIBERATE LOOSENING: an EMPTY (or whitespace) string is NOT a
- * failure. `modelReason` — the field immediately beside this one in the same
- * type — came back EMPTY on every probe against the deployed scanner, so a
- * scanner that populates `error: ''` on the HEALTHY path is a live possibility,
- * not a hypothetical. Treating `''` as a fault would withhold 100% of generated
- * output from the registered `'chat-completion'` entry: the same capability
- * outage the probe note on `missingRequestedLabels` describes, arrived at from
- * the other direction. A scanner that reports failures at all will populate a
- * message.
+ * 🔴 WHAT THE PRODUCER ACTUALLY DOES — read from the orchestration source
+ * rather than assumed, because an earlier draft of this comment guessed and
+ * guessed wrong. In `XGuardScoring.BuildLabelResult`, `Error` is assigned from a
+ * three-way switch (`XGuardScoring.cs:223-227`): the literal
+ * `"Step output was missing."` when the scored blob is absent,
+ * `"Step completed without output choices."` when it is present but empty, and
+ * `null` otherwise. So the producer emits `null` on the healthy path and a
+ * non-empty sentence on a failure — never `''`.
  *
- * 🔴 UNVERIFIED AGAINST THE DEPLOYED SCANNER, AND SAY SO RATHER THAN ASSUME.
- * The 2026-08-03 live probe that settled the `results[]`-completeness question
- * did NOT read `error`, so whether the deployed scanner populates it on a
- * per-label failure — and whether it emits `error: ''` when healthy — is still
- * open. If it never populates `error`, this guard is INERT rather than wrong: it
- * adds a withhold path, it removes none.
+ * 🔴 THIS GUARD IS THEREFORE NOT INERT: it fires on a genuinely reachable path.
+ * A per-label entry whose blob is missing or unreadable really does arrive with
+ * `Error` set — and, because `ParseScore(null)` returns a score of 0
+ * (`XGuardScoring.cs:354-358`), which is below every threshold, that same entry
+ * arrives with `triggered: false`. That is exactly the "looks clean, answered
+ * nothing" shape this function exists to catch.
+ *
+ * 🔴 AND THE COUNTER-RISK IS REFUTED AT THE SOURCE: `results[]` always carries
+ * one entry per RESOLVED label (`XGuardModerationHandler.cs:170-182` builds one
+ * per label and falls back to a synthesized entry when no blob was read), so
+ * treating a populated `error` as a withhold cannot degenerate into withholding
+ * everything.
+ *
+ * THE EMPTY-STRING LOOSENING IS KEPT ANYWAY, as cheap defence rather than as a
+ * reasoned necessity — `Error` is `string?` (`XGuardModerationModels.cs:64`)
+ * and so is `null`, not `''`, when healthy. (The earlier rationale here reasoned
+ * by analogy from `ModelReason` coming back empty on probes; that analogy is
+ * WRONG — `ModelReason` is a `required string`, `XGuardModerationModels.cs:52`,
+ * which is precisely why it is `""` and `Error` is `null`.) Treating `''` as a
+ * fault would cost nothing today and would withhold everything if the producer
+ * ever switched to an empty-string default, so the loosening stays.
+ *
+ * 🔴 CAVEAT ON ALL OF THE ABOVE: read from a local `civitai-orchestration`
+ * clone that was slightly behind its origin, and the label set itself is
+ * runtime grain state rather than source. Re-read before relying on the exact
+ * strings.
  */
 function labelResultErrored(entry: XGuardLabelResultLike): boolean {
   const err = entry.error;
@@ -565,13 +586,32 @@ export type TextOutputScreenResult =
 /**
  * Scan generated text and decide whether it may be released.
  *
- * 🔴 FAIL CLOSED, ON EVERY BRANCH THAT IS NOT A CLEAN ANSWER. A scanner error, a
- * timeout, a submit that returns no workflow, a workflow that returns no
- * `xGuardModeration` output, content over the size cap, a requested label the
- * scan never evaluated (`'label-drift'`), and a requested label the scanner
- * evaluated and FAILED on (`'label-error'`) — every one of these WITHHOLDS. The
- * unifying rule, and the one to apply to any branch added later: "no answer"
- * must never read as "clean".
+ * 🔴 FAIL CLOSED ON EVERY BRANCH *THIS FUNCTION CAN SEE* THAT IS NOT A CLEAN
+ * ANSWER. A scanner error, a timeout, a submit that returns no workflow, a
+ * workflow that returns no `xGuardModeration` output, content over the size cap,
+ * a requested label the scan never evaluated (`'label-drift'`), and a requested
+ * label the scanner evaluated and FAILED on (`'label-error'`) — every one of
+ * these WITHHOLDS. The unifying rule, and the one to apply to any branch added
+ * later: "no answer" must never read as "clean".
+ *
+ * 🔴 THAT IS NOT AN END-TO-END GUARANTEE, AND MUST NOT BE READ AS ONE. It is a
+ * claim about what THIS side does with what it RECEIVES; there is a masking path
+ * UPSTREAM that this function is structurally blind to. The scanner splits
+ * content into segments (`XGuardScoring.DefaultMaxInputCharsPerSegment`, 16,000
+ * chars) and then picks ONE result per label as the highest-scoring segment
+ * (`XGuardModerationHandler.cs:174-181`, `result.Score > bestResult.Score`). A
+ * segment that FAILED scores 0 (`ParseScore(null)`), so whenever any other
+ * segment for that label scored above 0, the failed segment — and its `Error` —
+ * is DISCARDED before the response is built. The label then arrives here looking
+ * cleanly evaluated while part of the content was never scanned, and no guard on
+ * this side can detect it: the evidence was dropped upstream.
+ *
+ * Reachable for any generated output longer than one segment, i.e. above ~16,000
+ * characters, which `MAX_SCANNED_CONTENT_CHARS` (50,000) permits. NOT introduced
+ * by this file and NOT fixable here — the fix belongs in the producer, which
+ * would need to propagate a segment-level failure instead of letting max-score
+ * selection swallow it. Recorded so nobody reads the paragraph above as covering
+ * it.
  *
  * 🔴 THIS IS THE EXACT OPPOSITE OF `auditPromptServer`, AND THE ASYMMETRY IS
  * DELIBERATE — DO NOT "FIX" IT FOR CONSISTENCY. `auditPromptServer` fails SOFT:
