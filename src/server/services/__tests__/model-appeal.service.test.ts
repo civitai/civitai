@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzService from '~/server/services/buzz.service';
 
 /**
  * Contesting a "depicts a minor" flag goes through the existing Appeal system.
@@ -29,7 +30,7 @@ const { mockCreateMultiAccountBuzzTransaction, mockRefundMultiAccountTransaction
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/buzz.service')>()),
+  ...(await importOriginal<typeof BuzzService>()),
   createMultiAccountBuzzTransaction: mockCreateMultiAccountBuzzTransaction,
   refundMultiAccountTransaction: mockRefundMultiAccountTransaction,
 }));
