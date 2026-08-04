@@ -513,35 +513,38 @@ export async function createEntityAppeal({
   message,
   userId,
   buzzType,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
+  skipFee,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
   let buzzTransactionId: string | null = null;
 
-  // check if user has more than 3 pending or rejected appeal in the last 30 days
-  const appealsCount = await getAppealCount({
-    userId,
-    startDate: dayjs().subtract(30, 'days').toDate(),
-    status: [AppealStatus.Pending, AppealStatus.Rejected],
-  });
+  if (!skipFee) {
+    // check if user has more than 3 pending or rejected appeal in the last 30 days
+    const appealsCount = await getAppealCount({
+      userId,
+      startDate: dayjs().subtract(30, 'days').toDate(),
+      status: [AppealStatus.Pending, AppealStatus.Rejected],
+    });
 
-  if (appealsCount >= 3) {
-    const prefix = getAppealPrefix(userId);
-    const data = await withRetries(() =>
-      createMultiAccountBuzzTransaction({
-        amount: 100,
-        fromAccountId: userId,
-        toAccountId: 0,
-        type: TransactionType.Appeal,
-        fromAccountTypes: [buzzType],
-        description: `Appeal fee for ${entityType} ${entityId}`,
-        externalTransactionIdPrefix: prefix,
-      })
-    );
+    if (appealsCount >= 3) {
+      const prefix = getAppealPrefix(userId);
+      const data = await withRetries(() =>
+        createMultiAccountBuzzTransaction({
+          amount: 100,
+          fromAccountId: userId,
+          toAccountId: 0,
+          type: TransactionType.Appeal,
+          fromAccountTypes: [buzzType],
+          description: `Appeal fee for ${entityType} ${entityId}`,
+          externalTransactionIdPrefix: prefix,
+        })
+      );
 
-    if (data.transactionCount === 0) {
-      throw new Error('There was an error creating the appeal transaction.');
+      if (data.transactionCount === 0) {
+        throw new Error('There was an error creating the appeal transaction.');
+      }
+
+      buzzTransactionId = prefix;
     }
-
-    buzzTransactionId = prefix;
   }
 
   try {
