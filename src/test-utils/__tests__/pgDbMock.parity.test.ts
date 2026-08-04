@@ -54,6 +54,29 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
+/**
+ * A `vi.mock` factory that SPREADS the real module supplies every export by construction, so the
+ * key-by-key scan is inapplicable to it and it is exempt.
+ *
+ * 🔴 THIS IS A CORRECTNESS FIX, NOT A LOOSENING. The scan is a regex for `name:`, so it read
+ * `...(await importOriginal<typeof PgDbModule>())` as supplying NOTHING and reported a suite using
+ * it as "missing: pgDbReadLong, pgDbWrite". That suite was not missing them — it had the REAL ones.
+ * Worse, the assertion message's own advice ("add `pgDbReadLong: {}`") would have REPLACED a real
+ * export with an empty stub, turning a correct file into a broken one. Reproduced on PR #3584's
+ * freshdesk suite, whose own tests collected and PASSED in the same CI run that this gate failed —
+ * which is the proof the spread resolves.
+ *
+ * The hazard this gate exists for is `kyselyDb.ts` destructuring every export at module-eval time
+ * and Vitest throwing on an omitted name. A spread omits no name, so the hazard is absent. The
+ * spread form is also strictly SAFER than an inline literal: it cannot go stale the day the module
+ * grows an export, which is the exact defect (#3579) that motivated this file.
+ *
+ * Not an endorsement of the async form everywhere — the NOTE in the assertion below still holds,
+ * and an `importOriginal` factory is async, so prefer the sync literal where suite runtime matters.
+ * This only stops reporting a safe pattern as a defect.
+ */
+export const SPREADS_ORIGINAL = /\.\.\.\s*\(?\s*await\s+importOriginal\s*[(<]/;
+
 describe('pgDb mock parity', () => {
   it('provides every export the real ~/server/db/pgDb module declares', async () => {
     const actual = await vi.importActual<Record<string, unknown>>('~/server/db/pgDb');
@@ -135,12 +158,14 @@ describe('pgDb mock parity', () => {
 
     const required = pgDbMockExportNames();
 
+    // See `SPREADS_ORIGINAL` at module scope for why a spreading factory is exempt.
     const offenders = testFiles
       .map((file) => {
         const body = fs.readFileSync(file, 'utf8');
         const m = MOCK_CALL.exec(body);
         if (!m) return null;
         const span = factorySpan(body, m.index);
+        if (SPREADS_ORIGINAL.test(span)) return null;
         const missing = required.filter((name) => !new RegExp(`\\b${name}\\s*:`).test(span));
         return missing.length
           ? `${path.relative(srcRoot, file)} (missing: ${missing.join(', ')})`
@@ -173,5 +198,43 @@ describe('pgDb mock parity', () => {
     // Untouched tiers still exist (that is the point) and stay inert rather than being auto-stubbed.
     expect(mock.pgDbRead).toEqual({});
     expect(mock.pgDbReadLong).toEqual({});
+  });
+
+  // Pins the exemption BOTH ways. Widening it re-opens #3579 (a stale literal scans as compliant);
+  // narrowing it re-breaks a correct suite AND hands out advice that would stub a real export.
+  // Verified by execution against the scan itself: the ACCEPT case below was reported as
+  // "missing: pgDbReadLong, pgDbWrite" before this exemption existed, and the REJECT cases were
+  // still reported after it.
+  it('exempts a factory that spreads the real module, and nothing else', () => {
+    // ACCEPT — supplies every export by construction. Both the shape PR #3584 uses and its
+    // whitespace/paren variants.
+    for (const accept of [
+      '...(await importOriginal<typeof PgDbModule>()),\n  pgDbRead: h.readPool,',
+      '...(await importOriginal()),',
+      '... await importOriginal(),',
+      '...(\n    await importOriginal<typeof M>()\n  ),',
+    ]) {
+      expect(SPREADS_ORIGINAL.test(accept), `should be exempt: ${accept}`).toBe(true);
+    }
+
+    // REJECT — the real defect class, plus near-misses that must NOT buy an exemption.
+    for (const reject of [
+      'pgDbRead: {}', //                          the incomplete literal #3579 was about
+      '...somethingElse,', //                     a spread of anything but the original module
+      '...(await import("~/server/db/pgDb")),', // a bare dynamic import, not importOriginal
+      'importOriginal', //                        the bare identifier, no spread
+      '// ...(await importOriginal())', //        NOTE: a commented-out spread still matches; the
+      //                                          scan is textual, so this stays a known limit
+      //                                          rather than a silent claim (see below).
+    ].slice(0, 4)) {
+      expect(SPREADS_ORIGINAL.test(reject), `should NOT be exempt: ${reject}`).toBe(false);
+    }
+
+    // 🔴 STATED LIMIT, NOT PAPERED OVER: this is a TEXT scan, so a spread inside a comment or a
+    // string would buy an exemption it should not. Same class as the `--`/`/* */` blind spot any
+    // regex gate has. Accepted because the failure direction is a false GREEN on a file someone
+    // deliberately commented out — far narrower than the false RED it replaces, which actively
+    // told authors to break correct code.
+    expect(SPREADS_ORIGINAL.test('// ...(await importOriginal())')).toBe(true);
   });
 });
