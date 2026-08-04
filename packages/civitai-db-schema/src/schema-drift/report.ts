@@ -4,6 +4,7 @@ const KIND_TITLES: Record<DriftKind, string> = {
   'missing-foreign-key': 'Missing foreign keys (declared in the schema, absent in the database)',
   'referential-action':
     'Referential-action drift (foreign key present, ON DELETE/UPDATE differs from the schema)',
+  'missing-column': 'Missing columns (declared in the schema, absent from the table)',
   nullability: 'Nullability drift (schema optionality vs column NOT NULL)',
   uniqueness: 'Uniqueness drift (@unique/@@unique with no total unique index)',
 };
@@ -11,6 +12,7 @@ const KIND_TITLES: Record<DriftKind, string> = {
 const KIND_ORDER: DriftKind[] = [
   'missing-foreign-key',
   'referential-action',
+  'missing-column',
   'nullability',
   'uniqueness',
 ];
@@ -39,6 +41,7 @@ export function formatReport(report: DriftReport, options: { verbose?: boolean }
   }
   lines.push('');
   lines.push('Columns');
+  lines.push(`  MISSING column                 : ${counts.missingColumns}`);
   lines.push(`  nullability checked            : ${counts.columnsChecked}`);
   lines.push(`  nullability drift              : ${counts.nullabilityDrifts}`);
   lines.push('');
@@ -73,8 +76,12 @@ export function formatReport(report: DriftReport, options: { verbose?: boolean }
 
   lines.push(
     'Not checked by this tool: check constraints, column defaults, column types, enum ' +
-      'values, non-unique indexes, and columns present in one side only. Their absence from ' +
-      'this report is not evidence that they are clean — they are not audited at all.'
+      'values, non-unique indexes, PRIMARY KEYS (@id / @@id — the uniqueness section above ' +
+      'covers @unique/@@unique only), columns and tables present in the database but not ' +
+      'the schema, whether a foreign key points at the table the schema names, and ' +
+      'PROGRAMMABILITY (views, functions, triggers — a deployed view can emit columns its ' +
+      'committed definition does not). Their absence from this report is not evidence that ' +
+      'they are clean — they are not audited at all.'
   );
 
   return lines.join('\n');

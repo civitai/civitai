@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { readCatalog, DEFAULT_DB_SCHEMA } from './catalog';
-import { assertCatalogSanity, compareSchemaToCatalog } from './compare';
+import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from './compare';
 import { parsePrismaSchema } from './parse-prisma-schema';
 import { formatReport } from './report';
 import type { DbCatalog } from './types';
@@ -36,10 +36,42 @@ const USAGE = `Usage: drift [options]
   --dump-catalog     Print the catalog as JSON and exit (no comparison)
   --json             Emit the drift report as JSON
   --verbose          Include the skipped-model list in the text report
-  --strict           Exit 1 when any drift is found (default: always exit 0)
+  --strict           Exit 1 when any drift is found, or when any referential action
+                     could not be compared (default: always exit 0)
   --help             This message
 
-Connection is read from DATABASE_URL.`;
+Connection is read from DATABASE_URL. A run whose comparison covered nothing exits 2,
+with or without --strict.`;
+
+/**
+ * Strip anything that looks like a connection string or a host from a message before it
+ * reaches stdout/stderr.
+ *
+ * This repo is public and so are its CI logs. A URL passed positionally by mistake would
+ * otherwise be echoed back by the unknown-argument error, credentials and all.
+ */
+function redact(text: string): string {
+  return text
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<redacted-connection-string>')
+    .replace(/\b\S+@\S+\b/g, '<redacted-host>');
+}
+
+/**
+ * `pg` embeds the host, port and user it tried in its connection errors (`connect
+ * ECONNREFUSED <ip>:<port>`, `getaddrinfo ENOTFOUND <host>`). Report the error CODE, which
+ * is the diagnostic part, and drop the address, which is the part that must not be logged.
+ */
+function connectionFailure(error: unknown): Error {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : 'unknown';
+  return new Error(
+    `Could not read the database catalog (${code}). Check DATABASE_URL and that the role ` +
+      'can read pg_catalog. The address is deliberately not printed: this repo and its CI ' +
+      'logs are public.'
+  );
+}
 
 /**
  * Locate the canonical schema without depending on the module system.
@@ -103,7 +135,7 @@ function parseArgs(argv: string[]): Options & { dumpCatalog: boolean; help: bool
         options.help = true;
         break;
       default:
-        throw new Error(`Unknown argument: ${arg}`);
+        throw new Error(`Unknown argument: ${redact(arg)}\n\n${USAGE}`);
     }
   }
   return options;
@@ -118,11 +150,13 @@ async function loadCatalog(options: Options): Promise<DbCatalog> {
     throw new Error('DATABASE_URL is not set. Set it, or pass --catalog <captured.json>.');
   }
   const client = new Client({ connectionString });
-  await client.connect();
   try {
+    await client.connect();
     return await readCatalog(client, options.dbSchema);
+  } catch (error) {
+    throw connectionFailure(error);
   } finally {
-    await client.end();
+    await client.end().catch(() => undefined);
   }
 }
 
@@ -151,10 +185,40 @@ async function main(): Promise<number> {
       : `${formatReport(report, { verbose: options.verbose })}\n`
   );
 
+  // A comparison that visited nothing prints exactly the same reassuring page as a clean
+  // database. That is the one failure mode this tool must never have, so it is fatal
+  // regardless of --strict: a clean report is a claim, and an empty catalog cannot support
+  // it. Exit 2 (error), not 1 (drift found) — nothing was measured either way.
+  const coverage = assessCoverage(report);
+  if (coverage.length > 0) {
+    process.stderr.write(
+      `\nThis report is not trustworthy and its clean sections mean nothing:\n${coverage
+        .map((problem) => `  - ${problem}\n`)
+        .join('')}\nCheck --db-schema, DATABASE_URL, and the role's catalog visibility.\n`
+    );
+    return 2;
+  }
+
+  if (!options.strict) return 0;
+
   // Default is report-only. The database currently carries a real backlog of drift, so a
   // gate that failed on any finding would be red on every run and would be switched off
   // within a week; --strict is opt-in for a caller that has a clean baseline to hold.
-  return options.strict && report.findings.length > 0 ? 1 : 0;
+  if (report.findings.length > 0) return 1;
+
+  // Under --strict, "could not compare" is not "compared and found nothing". A catalog
+  // without ON DELETE/UPDATE data yields no referential-action findings at all, so a gate
+  // would otherwise pass having checked none of them.
+  if (report.counts.referentialActionUnknown > 0) {
+    process.stderr.write(
+      `\n--strict: ${report.counts.referentialActionUnknown} referential actions could not be ` +
+        'compared (the catalog carried no ON DELETE/UPDATE data), so this run cannot ' +
+        'certify them.\n'
+    );
+    return 1;
+  }
+
+  return 0;
 }
 
 main().then(

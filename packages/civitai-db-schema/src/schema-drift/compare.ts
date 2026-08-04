@@ -40,6 +40,43 @@ export function assertCatalogSanity(catalog: DbCatalog, minColumns = 50): void {
   }
 }
 
+/**
+ * Reasons a report cannot be trusted, independent of what it found.
+ *
+ * A comparison that visited nothing produces the same output as a clean database: no
+ * findings, and counters that read zero. Against the real schema and an empty catalog —
+ * which is what a typo'd `--db-schema`, a wrong `DATABASE_URL`, or a role without catalog
+ * visibility produces — the report is fully clean and every model is quietly "skipped".
+ *
+ * These are the CLI's positive control on its own zero, and the reason it refuses to report
+ * success rather than printing a reassuring page. Returns an empty array when the report is
+ * meaningful.
+ */
+export function assessCoverage(report: DriftReport): string[] {
+  const { counts } = report;
+  const problems: string[] = [];
+
+  if (counts.declaredRelations > 0 && counts.relationsChecked === 0) {
+    problems.push(
+      `no relations were checked: all ${counts.declaredRelations} declared relations were ` +
+        'skipped because their tables are absent from the catalog'
+    );
+  }
+  if (counts.columnsChecked === 0) {
+    problems.push('no columns were checked: the catalog contained no column the schema names');
+  }
+  // Partial visibility is the same failure wearing a smaller hat, and it still reads as a
+  // near-clean report. A healthy run skips a few per cent (models on views); half is not
+  // a schema shape, it is a catalog that is mostly missing.
+  if (counts.declaredRelations > 0 && counts.relationsSkipped * 2 > counts.declaredRelations) {
+    problems.push(
+      `${counts.relationsSkipped} of ${counts.declaredRelations} declared relations were ` +
+        'skipped — over half the schema has no table in this catalog'
+    );
+  }
+  return problems;
+}
+
 interface CatalogIndex {
   tables: Set<string>;
   columns: Map<string, boolean>;
@@ -78,6 +115,7 @@ function emptyCounts(): DriftCounts {
     referentialActionDrifts: 0,
     referentialActionUnknown: 0,
     columnsChecked: 0,
+    missingColumns: 0,
     nullabilityDrifts: 0,
     uniqueDeclarationsChecked: 0,
     uniquenessDrifts: 0,
@@ -219,9 +257,24 @@ function checkNullability(
   for (const field of model.fields) {
     if (!field.scalar || field.list) continue;
     const notNull = live.columns.get(key([model.table, field.column]));
-    // Column absent from the catalog: a missing column is its own defect class and is not
-    // what this check is about, so it is left alone rather than reported as nullability.
-    if (notNull === undefined) continue;
+    // Declared but not there at all. This is a harder failure than any nullability
+    // mismatch: a Prisma read touching the field errors with "column does not exist"
+    // rather than returning a wrong shape, so it is reported as its own class instead of
+    // being folded into nullability (where "declared required, database NULLABLE" would
+    // misdescribe it) or silently skipped.
+    if (notNull === undefined) {
+      counts.missingColumns += 1;
+      findings.push({
+        kind: 'missing-column',
+        table: model.table,
+        columns: [field.column],
+        model: model.name,
+        field: field.name,
+        declared: `${field.type}${field.optional ? '?' : ''}`,
+        actual: 'no such column',
+      });
+      continue;
+    }
 
     counts.columnsChecked += 1;
     const declaredRequired = !field.optional;

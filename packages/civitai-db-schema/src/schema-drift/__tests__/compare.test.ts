@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { assertCatalogSanity, compareSchemaToCatalog } from '../compare';
+import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from '../compare';
 import { parsePrismaSchema } from '../parse-prisma-schema';
 import type { DbCatalog, DriftFinding, DriftKind, ParsedSchema } from '../types';
 
@@ -38,6 +38,7 @@ describe('compareSchemaToCatalog', () => {
     it('actually checked something (positive control on the zero above)', () => {
       expect(report.counts.relationsChecked).toBe(4);
       expect(report.counts.columnsChecked).toBeGreaterThan(15);
+      expect(report.counts.missingColumns).toBe(0);
       expect(report.counts.uniqueDeclarationsChecked).toBe(3);
       expect(report.counts.referentialActionUnknown).toBe(0);
     });
@@ -123,8 +124,26 @@ describe('compareSchemaToCatalog', () => {
       expect(report.counts.uniquenessDrifts).toBe(1);
     });
 
+    it('reports a declared column that has no column in the table', () => {
+      // Harder than a nullability mismatch: a read touching the field errors outright.
+      // Reporting it as "declared required, database NULLABLE" would misdescribe it.
+      expect(ids(report.findings, 'missing-column')).toEqual(['posts.subtitle']);
+      expect(report.counts.missingColumns).toBe(1);
+      const finding = report.findings.find((f) => f.kind === 'missing-column');
+      expect(finding).toMatchObject({ declared: 'String?', actual: 'no such column' });
+      // ...and it is NOT double-counted as a nullability comparison.
+      expect(ids(report.findings, 'nullability')).not.toContain('posts.subtitle');
+    });
+
     it('finds every seeded defect and nothing else', () => {
-      expect(report.findings).toHaveLength(6);
+      expect(report.findings).toHaveLength(7);
+    });
+
+    it('checked the model whose @@ignore is commented out', () => {
+      // Comment carries a `// @@ignore`. If that were honoured, its two relations would be
+      // skipped and the missing Comment.postId foreign key would vanish from the report.
+      expect(report.skippedModels.map((s) => s.model)).not.toContain('Comment');
+      expect(ids(report.findings, 'missing-foreign-key')).toContain('Comment.postId');
     });
   });
 
@@ -241,5 +260,53 @@ describe('assertCatalogSanity', () => {
 
   it('stays quiet on a catalog too small to conclude anything from', () => {
     expect(() => assertCatalogSanity({ ...base, columns: columns(3, () => true) })).not.toThrow();
+  });
+});
+
+describe('assessCoverage', () => {
+  const schemaSource = readFileSync(join(here, 'fixtures/fixture.prisma'), 'utf8');
+  const parsed = parsePrismaSchema(schemaSource);
+
+  const emptyCatalog: DbCatalog = {
+    tables: [],
+    columns: [],
+    foreignKeys: [],
+    uniqueIndexes: [],
+  };
+
+  // The failure this exists for: a typo'd --db-schema, a wrong DATABASE_URL, or a role
+  // that cannot see pg_catalog all produce an EMPTY catalog, and an empty catalog produces
+  // a fully clean report. Findings alone cannot distinguish "clean" from "measured
+  // nothing" — this is what does.
+  it('rejects a report produced from an empty catalog', () => {
+    const report = compareSchemaToCatalog(parsed, emptyCatalog);
+    expect(report.findings).toEqual([]); // looks perfect...
+    expect(report.counts.relationsChecked).toBe(0); // ...having checked nothing
+    const problems = assessCoverage(report);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(' ')).toMatch(/no relations were checked/);
+    expect(problems.join(' ')).toMatch(/no columns were checked/);
+  });
+
+  it('accepts a report from a catalog that covers the schema', () => {
+    const report = compareSchemaToCatalog(parsed, loadCatalog('catalog-aligned.json'));
+    expect(assessCoverage(report)).toEqual([]);
+  });
+
+  it('rejects a catalog that covers less than half the schema', () => {
+    // Partial visibility reads as a near-clean report, which is the same lie in a smaller
+    // font. Drop every table but one.
+    const catalog = loadCatalog('catalog-aligned.json');
+    catalog.tables = ['Author'];
+    const report = compareSchemaToCatalog(parsed, catalog);
+    expect(assessCoverage(report).join(' ')).toMatch(/over half the schema/);
+  });
+
+  it('does not complain about the ordinary few-per-cent skip rate', () => {
+    // The aligned fixture already skips 2 of 6 relations (one @@ignore, one view). That is
+    // a schema shape, not a broken catalog, and must not trip the guard.
+    const report = compareSchemaToCatalog(parsed, loadCatalog('catalog-aligned.json'));
+    expect(report.counts.relationsSkipped).toBe(2);
+    expect(assessCoverage(report)).toEqual([]);
   });
 });

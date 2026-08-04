@@ -159,7 +159,12 @@ export interface DbCatalog {
 // Findings
 // ---------------------------------------------------------------------------
 
-export type DriftKind = 'missing-foreign-key' | 'referential-action' | 'nullability' | 'uniqueness';
+export type DriftKind =
+  | 'missing-foreign-key'
+  | 'referential-action'
+  | 'missing-column'
+  | 'nullability'
+  | 'uniqueness';
 
 export interface DriftFinding {
   kind: DriftKind;
@@ -204,7 +209,10 @@ export interface DriftCounts {
   referentialActionDrifts: number;
   /** FKs present whose action could not be compared (snapshot carried no action data). */
   referentialActionUnknown: number;
+  /** Scalar columns compared for nullability (only those the catalog actually has). */
   columnsChecked: number;
+  /** Scalar fields whose column is absent from the table entirely. */
+  missingColumns: number;
   nullabilityDrifts: number;
   uniqueDeclarationsChecked: number;
   uniquenessDrifts: number;

@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { defaultOnDelete, defaultOnUpdate, parsePrismaSchema } from '../parse-prisma-schema';
+import {
+  countOwningRelationLines,
+  defaultOnDelete,
+  defaultOnUpdate,
+  parsePrismaSchema,
+} from '../parse-prisma-schema';
 import type { ParsedModel } from '../types';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -80,11 +85,36 @@ describe('parsePrismaSchema', () => {
     expect(model(models, 'ProjectSlot').relations[0].references).not.toContain('id');
   });
 
-  it('parses the named @relation("Name", fields: ...) form', () => {
+  it('parses the positional @relation("Name", fields: ...) form', () => {
     const relation = model(models, 'ReportView').relations[0];
     expect(relation.field).toBe('author');
     expect(relation.targetModel).toBe('Author');
     expect(relation.fields).toEqual(['authorId']);
+  });
+
+  // Prisma accepts both spellings of the relation name. Rejecting this one did not error
+  // and did not skip: the relation ceased to exist as far as the tool was concerned, so it
+  // appeared in no counter and produced no finding. Six real relations were invisible.
+  it('parses the named-argument @relation(name: "Name", fields: ...) form', () => {
+    const relation = model(models, 'ProjectSlot').relations[0];
+    expect(relation.field).toBe('project');
+    expect(relation.targetModel).toBe('Project');
+    expect(relation.fields).toEqual(['projectId', 'position']);
+    expect(relation.onDelete).toBe('Cascade');
+  });
+
+  it('ignores a commented-out block attribute', () => {
+    // `Comment` carries a `// @@ignore` line. Matching block attributes against the raw
+    // body would skip the model and every constraint on it.
+    expect(model(models, 'Comment').ignored).toBe(false);
+  });
+
+  it('ignores a commented-out @@map', () => {
+    const parsed = parsePrismaSchema(`model A {
+  id Int @id
+  // @@map("wrong_table")
+}`);
+    expect(parsed.models[0].table).toBe('A');
   });
 
   it('reads an explicit onDelete', () => {
@@ -136,13 +166,33 @@ describe('parsePrismaSchema', () => {
   describe('against the real schema', () => {
     const parsed = parsePrismaSchema(readFileSync(REAL_SCHEMA, 'utf8'));
 
-    it('parses a non-trivial number of models and relations', () => {
-      // A floor, not a pin: the schema grows. The point is that the parser did not
-      // silently match nothing — a zero here would make every downstream count a
-      // meaningless zero as well.
-      expect(parsed.models.length).toBeGreaterThan(200);
+    const source = readFileSync(REAL_SCHEMA, 'utf8');
+
+    // The guard this test used to be was `relations.length > 400`, and a floor cannot see
+    // an undercount: the parser was missing six owning-side relations and the assertion
+    // passed. Checking against an INDEPENDENTLY derived count can see it, and keeps
+    // working as the schema grows — no number to update by hand.
+    it('finds every owning-side relation in the schema', () => {
       const relations = parsed.models.flatMap((m) => m.relations);
-      expect(relations.length).toBeGreaterThan(400);
+      expect(relations.length).toBe(countOwningRelationLines(source));
+    });
+
+    it('the independent count is itself non-trivial (control on the assertion above)', () => {
+      // Two equal zeros would satisfy the equality above without either side working.
+      expect(countOwningRelationLines(source)).toBeGreaterThan(400);
+      expect(parsed.models.length).toBeGreaterThan(200);
+    });
+
+    it('parses both relation-name spellings out of the real schema', () => {
+      const named = parsed.models.flatMap((m) =>
+        m.relations.filter((r) => /Club|ChatMessage/.test(r.model))
+      );
+      expect(named.length).toBeGreaterThan(0);
+      // The three Club image relations are the ones with no foreign key in production.
+      const club = parsed.models.find((m) => m.name === 'Club');
+      expect(club?.relations.map((r) => r.field)).toEqual(
+        expect.arrayContaining(['coverImage', 'headerImage', 'avatar'])
+      );
     });
 
     it('applies Restrict — not Cascade — to TagsOnImageNew.imageId', () => {

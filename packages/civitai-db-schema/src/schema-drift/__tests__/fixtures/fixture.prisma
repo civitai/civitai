@@ -10,7 +10,9 @@
 //                onDelete (Prisma default: SetNull, NOT Cascade)
 //   Project      a @@unique over two columns, and the target of a composite relation
 //   ProjectSlot  a relation whose `references` is NOT `id` — two non-id columns, in
-//                order, so the ordered-tuple match is exercised
+//                order, so the ordered-tuple match is exercised. Written with the
+//                NAMED-ARGUMENT `@relation(name: "X", fields: …)` spelling, which the
+//                parser once did not accept: six real relations were invisible that way
 //   LegacyThing  @@ignore: skipped even though its table exists in the catalog
 //   ReportView   mapped to a name the catalog does not list as a table (a view):
 //                skipped rather than reported as missing every constraint. Also carries
@@ -36,6 +38,7 @@ model Post {
   createdAt DateTime  @default(now())
   archived  Boolean?
   body      String?   @map("body_text")
+  subtitle  String?
   comments  Comment[]
 
   @@map("posts")
@@ -48,6 +51,10 @@ model Comment {
   authorId Int?
   author   Author? @relation(fields: [authorId], references: [id])
   text     String
+
+  // @@ignore  <- commented out, and must stay inert. Block attributes are matched against
+  // the whole model body, so a stray line like this one would otherwise skip the model and
+  // every constraint on it without a word.
 }
 
 model Project {
@@ -63,7 +70,7 @@ model ProjectSlot {
   id        Int     @id @default(autoincrement())
   projectId Int
   position  Int
-  project   Project @relation(fields: [projectId, position], references: [projectId, position], onDelete: Cascade)
+  project   Project @relation(name: "SlotProject", fields: [projectId, position], references: [projectId, position], onDelete: Cascade)
 }
 
 model LegacyThing {

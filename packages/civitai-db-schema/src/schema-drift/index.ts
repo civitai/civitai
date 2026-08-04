@@ -1,5 +1,10 @@
-export { parsePrismaSchema, defaultOnDelete, defaultOnUpdate } from './parse-prisma-schema';
-export { compareSchemaToCatalog, assertCatalogSanity } from './compare';
+export {
+  parsePrismaSchema,
+  countOwningRelationLines,
+  defaultOnDelete,
+  defaultOnUpdate,
+} from './parse-prisma-schema';
+export { compareSchemaToCatalog, assertCatalogSanity, assessCoverage } from './compare';
 export { readCatalog, DEFAULT_DB_SCHEMA } from './catalog';
 export type { CatalogQueryRunner } from './catalog';
 export { formatReport } from './report';

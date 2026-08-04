@@ -8,6 +8,7 @@
     "  nullability         : Author.name NOT NULL although declared optional",
     "  nullability         : posts.title NULLABLE although declared required",
     "  uniqueness          : the Project(projectId, position) unique index removed",
+    "  missing-column      : posts.subtitle absent although the schema declares it",
     "Comment_authorId_fkey keeps ON DELETE SetNull, which is what Prisma defaults an",
     "OPTIONAL relation to - so a differ that assumed Cascade would report it and fail."
   ],

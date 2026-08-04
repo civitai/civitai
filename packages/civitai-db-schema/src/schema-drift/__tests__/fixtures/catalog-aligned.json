@@ -19,6 +19,7 @@
     { "table": "posts", "column": "createdAt", "notNull": true },
     { "table": "posts", "column": "archived", "notNull": false },
     { "table": "posts", "column": "body_text", "notNull": false },
+    { "table": "posts", "column": "subtitle", "notNull": false },
 
     { "table": "Comment", "column": "id", "notNull": true },
     { "table": "Comment", "column": "postId", "notNull": true },
