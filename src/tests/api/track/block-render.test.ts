@@ -16,12 +16,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *  - dev short-circuits to 200 with no insert.
  */
 
-const { mockBlockRender, mockGetSession, devStore, sessionStore } = vi.hoisted(() => ({
-  mockBlockRender: vi.fn(),
-  mockGetSession: vi.fn(),
-  devStore: { isDev: false },
-  sessionStore: { session: null as { user?: { id: number } } | null },
-}));
+const { mockBlockRender, mockGetSession, devStore, sessionStore, mockLogToAxiom } = vi.hoisted(
+  () => ({
+    mockLogToAxiom: vi.fn((_payload: unknown, _datastream?: unknown) => Promise.resolve()),
+    mockBlockRender: vi.fn(),
+    mockGetSession: vi.fn(),
+    devStore: { isDev: false },
+    sessionStore: { session: null as { user?: { id: number } } | null },
+  })
+);
 
 // PublicEndpoint wraps the handler with CORS/metrics we don't exercise here —
 // pass it through so the route's own logic (origin guard, parse, session ->
@@ -55,6 +58,11 @@ vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     blockRender = mockBlockRender;
   },
+}));
+
+// Detection log for an unknown appBlockId — asserted in both directions below.
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: (payload: unknown, datastream?: unknown) => mockLogToAxiom(payload, datastream),
 }));
 
 // Known-app clamp: control which appBlockIds count as "approved" so the render
@@ -261,7 +269,9 @@ async function renderCounterValue(
   const metric = client.register.getSingleMetric('civitai_app_block_renders_total');
   if (!metric) return 0;
   const data = await (
-    metric as { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+    metric as {
+      get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }>;
+    }
   ).get();
   const match = data.values.find(
     (v) =>
@@ -376,9 +386,9 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     );
 
     // The observability signal still fires — this is what the alert reads.
-    expect(
-      await renderCounterValue('apb_test', 'app.page', 'error', 'token_lost_midsession')
-    ).toBe(before + 1);
+    expect(await renderCounterValue('apb_test', 'app.page', 'error', 'token_lost_midsession')).toBe(
+      before + 1
+    );
     // …but the impression table is untouched.
     expect(mockBlockRender).not.toHaveBeenCalled();
     // And the request still succeeds (fire-and-forget beacon).
@@ -619,7 +629,10 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
     // POSITIVE CONTROL: identical body minus `secondary` DOES move it by 1, so
     // the zero above is the gate and not a dead metric.
     await handler(
-      makeReq({ origin: 'https://civitai.com', body: { ...validInput, status: 'ok', timings } }) as any,
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, status: 'ok', timings },
+      }) as any,
       makeRes()
     );
     expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(before + 1);
@@ -688,5 +701,53 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
     expect(mockBlockRender).toHaveBeenCalledWith({ ...validInput, isAnon: true });
     expect(await renderCounterValue('apb_test', 'app.page', 'ok', 'none')).toBe(beforeRender + 1);
     expect(await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' })).toBe(beforeLaunch);
+  });
+
+  /*
+   * UNKNOWN-APP DETECTION. This endpoint is unauthenticated and `appBlockId` is
+   * client-supplied and publicly discoverable, so a beacon can name an app that
+   * does not exist. We LOG that and still record the impression.
+   *
+   * Both directions are pinned on purpose. Only asserting the log fires would
+   * let it degrade into a gate (drop the beacon) without failing, and only
+   * asserting the beacon survives would let the log quietly never fire. The
+   * "known id logs nothing" case is the one that catches a log wired to every
+   * request, which would bury the signal it exists to surface.
+   */
+  it('LOGS an unknown appBlockId but still records the impression', async () => {
+    mockLogToAxiom.mockClear();
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const unknown = { ...validInput, appBlockId: 'apb_not_a_real_app' };
+    const res = makeRes();
+
+    await handler(makeReq({ origin: 'https://civitai.com', body: unknown }) as any, res);
+
+    // Detection, never a gate: the beacon is fire-and-forget and the table has
+    // no status column, so a dropped beacon under-reports App loads silently
+    // and permanently.
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mockBlockRender).toHaveBeenCalledWith({ ...unknown, isAnon: true });
+
+    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+    const [payload, datastream] = mockLogToAxiom.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      string
+    ];
+    expect(payload.name).toBe('block-render-unknown-app');
+    expect(datastream).toBe('clickhouse');
+    // The raw id is deliberately NOT logged — it is attacker-controlled and up
+    // to 256 chars, and the point is the RATE, not the value.
+    expect(JSON.stringify(payload)).not.toContain('apb_not_a_real_app');
+  });
+
+  it('logs NOTHING for a known appBlockId', async () => {
+    mockLogToAxiom.mockClear();
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const res = makeRes();
+
+    await handler(makeReq({ origin: 'https://civitai.com', body: validInput }) as any, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });
