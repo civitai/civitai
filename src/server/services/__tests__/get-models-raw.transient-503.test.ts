@@ -6,10 +6,14 @@ import { TRPCError } from '@trpc/server';
 // graph; its cold TS transform + import is the dominant cost of this file and
 // Vitest charges it to whichever test first triggers it. As a per-test dynamic
 // import that put ~99.9% of the file's runtime inside ONE test's `testTimeout`
-// budget (measured: 2726ms of a 2730ms file locally under a 4-CPU quota;
-// ~44.2s of a ~44.3s file on the CI runner) — i.e. a single slow test sitting
-// just under the 60s ceiling, which reddened the suite purely on ambient
-// runner speed. Hoisted to module scope the same work happens during Vitest's
+// budget. MEASURED locally: 2726ms of a 2730ms file under a 4-CPU quota, and
+// the share is invariant to CPU (99.86% unconstrained vs 99.85% under quota).
+// PROJECTED, not measured, on the CI runner: applying that invariant share to
+// the observed ~44.3s file total puts the worst test at ~44.2s of a 60s
+// ceiling. The projection is corroborated by the failure signature — ONE test
+// timing out rather than the file being uniformly slow — and by the same file
+// passing at 45.3s on a faster runner and timing out at 60.2s on a slower one
+// with byte-identical code. Hoisted to module scope the same work happens during Vitest's
 // COLLECTION phase, which no `testTimeout`/`hookTimeout` bounds, so the cliff
 // is removed rather than moved. `vi.mock` calls below are hoisted above these
 // imports by Vitest's transform, so the mocks still apply.
