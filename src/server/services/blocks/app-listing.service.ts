@@ -286,7 +286,30 @@ export function projectListingCard(row: HydratedListing): ListingCard {
   };
 }
 
-function detailKindData(row: HydratedListing): ListingDetailKindData {
+/**
+ * The listing columns `detailKindData` actually reads. Widened from
+ * `HydratedListing` (which still satisfies it structurally — this is a pure
+ * relaxation, no behaviour change) so a caller holding only the four off-site
+ * columns can reuse the REAL projection instead of re-deriving it.
+ *
+ * 🔴 That reuse is the point: `app-listing-actionable.service` runs the go-live
+ * actionability gate through this exact function, so the gate and the store can
+ * never disagree about what a listing's detail renders. The on-site inputs are
+ * optional because the on-site arm is the only consumer of them.
+ */
+export type DetailKindDataSource = {
+  kind: string;
+  slug: string;
+  // `| undefined` so a Prisma *create input* (whose nullable columns are optional)
+  // satisfies this as-is. Both consumers below (`safeExternalUrl`,
+  // `resolveOffsiteSubKind`) already accept `undefined` identically to `null`.
+  externalUrl?: string | null;
+  connectClientId?: string | null;
+  appBlockId?: string | null;
+  appBlock?: { manifest: Prisma.JsonValue } | null;
+};
+
+export function detailKindData(row: DetailKindDataSource): ListingDetailKindData {
   if (row.kind === 'offsite') {
     const subKind = resolveOffsiteSubKind(row.connectClientId);
     return {

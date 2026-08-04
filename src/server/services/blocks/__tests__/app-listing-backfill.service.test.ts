@@ -150,6 +150,42 @@ describe('backfillAppListings — mapping', () => {
     expect(data.contentRating).toBe('r');
   });
 
+  it('🔴 REFUSES to mint a live off-site listing with a non-https destination', async () => {
+    // `mapAppBlockToListing` hardcodes `status: 'approved'`, so this loop writes rows
+    // DIRECTLY LIVE — it is a go-live path. It also derives `kind: 'offsite'` from a
+    // merely NON-EMPTY externalUrl with no https requirement, while the public
+    // projection null-guards anything that is not https. So an `http://` block would
+    // otherwise mint an approved listing whose store CTA has nothing to click.
+    mockDb.appBlock.findMany.mockResolvedValue([
+      { ...offsite, externalUrl: 'http://insecure.example.com/launch' },
+    ]);
+    const { backfillAppListings } = await import('../app-listing-backfill.service');
+    const res = await backfillAppListings();
+
+    // Nothing minted, and the moderator gets a per-row diagnostic rather than a 500.
+    expect(res.created).toBe(0);
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
+    expect(res.failed).toHaveLength(1);
+    expect(res.failed[0].appBlockId).toBe('ab_2');
+    expect(res.failed[0].error).toContain('needs a working link before it can go live');
+  });
+
+  it('PER-ROW ISOLATION: one unpublishable block does not stop the others', async () => {
+    // 🔴 Anti-vacuity for the test above: proves the refusal is scoped to the bad row
+    // rather than aborting the batch (which would look identical if only the bad row
+    // were staged).
+    mockDb.appBlock.findMany.mockResolvedValue([
+      { ...offsite, externalUrl: 'http://insecure.example.com/launch' },
+      onsite,
+    ]);
+    const { backfillAppListings } = await import('../app-listing-backfill.service');
+    const res = await backfillAppListings();
+
+    expect(res.failed).toHaveLength(1);
+    expect(res.created).toBe(1);
+    expect(res.byKind).toEqual({ onsite: 1, offsite: 0 });
+  });
+
   it('leaves assets NULL (no mandatory-asset enforcement in P0)', async () => {
     mockDb.appBlock.findMany.mockResolvedValue([onsite]);
     const { backfillAppListings } = await import('../app-listing-backfill.service');

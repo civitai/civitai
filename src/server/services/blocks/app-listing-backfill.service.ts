@@ -9,6 +9,10 @@ import {
   resolveListingName,
   type SourceAppBlock,
 } from './app-listing-mapper';
+import {
+  buildActionabilityError,
+  checkOffsiteListingActionable,
+} from '~/server/services/blocks/app-listing-actionable.service';
 
 export { mapAppBlockToListing, resolveListingDescription, resolveListingName };
 export type { SourceAppBlock };
@@ -118,6 +122,29 @@ export async function backfillAppListings(
     }
 
     const data = mapAppBlockToListing(ab);
+
+    // 🔴 GO-LIVE ACTIONABILITY gate. `mapAppBlockToListing` hardcodes
+    // `status: 'approved'`, so every row this loop writes is minted DIRECTLY LIVE —
+    // this is a go-live path, not merely a data migration. It also derives
+    // `kind: 'offsite'` from a merely NON-EMPTY `externalUrl`, with no https
+    // requirement, while the public projection null-guards anything that is not
+    // https. An AppBlock carrying e.g. an `http://` URL therefore mints an approved
+    // off-site listing whose store CTA renders "Unavailable" with no link — the
+    // exact defect class this gate exists to stop, arrived at from a different
+    // direction than the connect stub.
+    //
+    // PER-ROW ISOLATION, not a batch abort: one unpublishable block must not wedge
+    // every other block on every re-run, so the failure is collected as a per-row
+    // diagnostic exactly like the poison-row handling below. Runs BEFORE the dryRun
+    // branch so a preview reports the same verdict the real run would produce.
+    const actionable = checkOffsiteListingActionable(data);
+    if (!actionable.ok) {
+      result.failed.push({
+        appBlockId: ab.id,
+        error: buildActionabilityError(data.slug, actionable.action),
+      });
+      continue;
+    }
 
     if (dryRun) {
       result.created += 1;
