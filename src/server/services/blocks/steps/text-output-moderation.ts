@@ -498,8 +498,11 @@ export async function screenGeneratedText(opts: {
   // If cross-app attribution ever has to be exact, the shape of the fix is to
   // store `appId` (plus the labels/scores) in the entry as a PAYLOAD — never in
   // the key — and log on a hit only when the stored `appId` differs. That keeps
-  // the memo intact and the poll loop silent. Not built today: no `'textOutput'`
-  // entry is registered yet, so the rate has no data to be wrong about.
+  // the memo intact and the poll loop silent. Not built today because the
+  // undercount is bounded as described above — NOT because the rate is unused:
+  // `chat-completion` is a registered `'textOutput'` entry (see `./index`'s
+  // `stepRegistry`), so this log is live. An earlier revision of this line said
+  // no such entry existed yet, which stopped being true when that entry landed.
   const cacheKey = verdictCacheKey(content, opts.isGreen);
   const cached = readCachedVerdict(cacheKey);
   if (cached !== undefined) {

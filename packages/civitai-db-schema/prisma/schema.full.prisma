@@ -2107,7 +2107,24 @@ enum TagSource {
 
 model TagsOnImageNew {
   imageId    Int
-  image      Image @relation(fields: [imageId], references: [id])
+  // The FK on this column is INTENTIONALLY ABSENT and must not be re-added.
+  // Enforcement lives in the `after_image_delete_trigger` trigger (function
+  // `after_image_delete`, programmability/image_delete_triggers.sql), verified
+  // enabled in production, which deletes this table's rows on image delete. The
+  // FK was created ON DELETE CASCADE in 20250303170613_tags_on_image_new and
+  // deliberately dropped in 20250314203912_drop_tags_on_image, one day after that
+  // trigger took over — this table is far too large to carry the constraint.
+  // `onDelete: Cascade` documents the semantics the trigger already implements.
+  // It is NOT a to-do to add the constraint.
+  //
+  // 🔴 THE TOOLING WILL TRY TO ADD IT ANYWAY. This model carries no `/// @view`
+  // annotation, so `pnpm db:migrate` sees it and will emit
+  //   ALTER TABLE "TagsOnImageNew" ADD CONSTRAINT "TagsOnImageNew_imageId_fkey"
+  //     ... ON DELETE CASCADE;
+  // If you are reviewing a generated migration, DELETE that statement. Note it now
+  // reads as plausible: before this declaration was corrected the generated DDL said
+  // RESTRICT, which was obviously wrong on sight; CASCADE is not.
+  image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
   attributes Int   @db.SmallInt()
 
@@ -4829,7 +4846,7 @@ model ClubPost {
   title        String?
   description  String?
   coverImageId Int?
-  coverImage   Image?   @relation(fields: [coverImageId], references: [id])
+  coverImage   Image?   @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
   entityId     Int?
   entityType   String?
 
@@ -5990,7 +6007,7 @@ model UserStat {
 /// @view
 
 model UserRank {
-  user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
+  user                         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId                       Int     @id
   downloadCountDayRank         Int?    @default(0)
   downloadCountWeekRank        Int?    @default(0)
@@ -6078,7 +6095,7 @@ model TagStat {
 /// @view
 
 model TagRank {
-  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId                    Int @id
   followerCountDayRank     Int? @default(0)
   followerCountWeekRank    Int? @default(0)
@@ -6212,7 +6229,7 @@ model CollectionStat {
 
 model CollectionRank {
   collectionId                Int        @id
-  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
+  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   followerCountDayRank        Int?       @default(0)
   followerCountWeekRank       Int?       @default(0)
   followerCountMonthRank      Int?       @default(0)
@@ -6424,7 +6441,7 @@ model BountyStat {
 
 model BountyRank {
   bountyId                   Int    @id
-  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
   favoriteCountDayRank       Int?   @default(0)
   favoriteCountWeekRank      Int?   @default(0)
   favoriteCountMonthRank     Int?   @default(0)
@@ -6513,7 +6530,7 @@ model BountyEntryStat {
 
 model BountyEntryRank {
   bountyEntryId                Int         @id
-  BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
   cryCountDayRank              Int?        @default(0)
   cryCountWeekRank             Int?        @default(0)
   cryCountMonthRank            Int?        @default(0)
@@ -6587,7 +6604,7 @@ model ClubStat {
 
 model ClubRank {
   clubId                   Int  @id
-  Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  Club                     Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
   memberCountDayRank       Int? @default(0)
   memberCountWeekRank      Int? @default(0)
   memberCountMonthRank     Int? @default(0)

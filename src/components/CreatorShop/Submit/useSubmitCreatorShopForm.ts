@@ -71,6 +71,7 @@ export function useSubmitCreatorShopForm({
   const [animated, setAnimated] = useState<boolean>(
     !!(item?.cosmetic.data as { animated?: boolean } | null)?.animated
   );
+  const [rightsAffirmed, setRightsAffirmed] = useState(false);
   const [sellableByOthers, setSellableByOthers] = useState(false);
   const [sellerShare, setSellerShare] = useState(0);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
@@ -200,11 +201,17 @@ export function useSubmitCreatorShopForm({
     resetFiles();
   };
 
+  // Mirrors the server rule: a new submission always affirms, and an edit that
+  // swaps the artwork re-affirms, since the stored record covers the art it was
+  // made against.
+  const requiresAffirmation = !isEdit || artReplaced;
+
   const canSubmit =
     artOk &&
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
+    (!requiresAffirmation || rightsAffirmed) &&
     (!isSticker || (slugFormatOk && !slugTaken && !usesError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
@@ -220,7 +227,11 @@ export function useSubmitCreatorShopForm({
     if (!canSubmit || !imageId) {
       showErrorNotification({
         title: 'Not ready',
-        error: new Error('Add valid artwork, a title, and a price of at least 500 Buzz'),
+        error: new Error(
+          requiresAffirmation && !rightsAffirmed
+            ? 'Confirm you have the rights to sell this artwork'
+            : 'Add valid artwork, a title, and a price of at least 500 Buzz'
+        ),
       });
       return;
     }
@@ -239,6 +250,7 @@ export function useSubmitCreatorShopForm({
         if (artReplaced) {
           payload.imageUrl = imageId;
           payload.animated = animated;
+          payload.rightsAffirmed = true;
         }
         if (offsetsChanged) payload.offsets = normalizedOffsets;
         // Send the slug on any artwork swap too: the server rebuilds `data`
@@ -267,6 +279,7 @@ export function useSubmitCreatorShopForm({
           offsets: normalizedOffsets,
           slug: isSticker ? normalizedSlug : undefined,
           uses: isSticker ? uses : undefined,
+          rightsAffirmed: true,
         });
       }
       resetFiles();
@@ -321,6 +334,9 @@ export function useSubmitCreatorShopForm({
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,
+    rightsAffirmed,
+    setRightsAffirmed,
+    requiresAffirmation,
     offsets,
     setOffset,
     offsetsChanged,

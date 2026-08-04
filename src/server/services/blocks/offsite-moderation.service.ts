@@ -21,6 +21,7 @@ import {
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
+import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -507,6 +508,13 @@ export async function relistListing(opts: {
     // (the removed listing was directly asset-editable). No-op for a normally-scanned
     // listing. Runs BEFORE the flip so a scan-dirty listing is never made live.
     await assertListingAssetsScanCleanInTx(tx, input.appListingId);
+    // 🔴 GO-LIVE ACTIONABILITY gate — a relist (removed → approved) puts the listing
+    // back on the store, so it is a go-live like any other and gets the same check:
+    // an off-site listing may not become visible while its primary CTA would render
+    // with nothing to click. Read on the PRIMARY (`tx`) so the verdict is
+    // row-consistent with the flip; a removed listing stays owner-editable, so its
+    // URL/OAuth-client can have changed since the takedown. On-site relists no-op.
+    await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved' },
@@ -1397,6 +1405,12 @@ export async function republishOwnListing(opts: {
     // owner could attach a Pending/later-Blocked image then self-restore. No-op for a
     // normally-scanned listing; runs BEFORE the flip.
     await assertListingAssetsScanCleanInTx(tx, input.appListingId);
+    // 🔴 GO-LIVE ACTIONABILITY gate — republish (removed → approved) is an OWNER-driven
+    // go-live, and a removed listing is directly owner-editable, so this is the path
+    // where an owner can clear the external URL (or link an OAuth client) and then
+    // self-restore a listing the store cannot send anyone to. Read on the PRIMARY
+    // (`tx`), row-consistent with the flip. On-site republishes no-op.
+    await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },

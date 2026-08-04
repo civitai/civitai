@@ -240,9 +240,6 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         .on('pa.entityType', '=', 'ModelVersion')
         .on((eb) => eb.or([eb('pa.endsAt', 'is', null), eb('pa.endsAt', '>', new Date())]))
     )
-    .leftJoin('DonationGoal as dg', (join) =>
-      join.onRef('dg.entityId', '=', 'mv.id').on('dg.entityType', '=', 'ModelVersion')
-    )
     .select([
       'mv.id',
       'mv.modelId',
@@ -254,8 +251,20 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       'mv.usageControl',
       'pa.timeframeDays as paTimeframeDays',
       'pa.terms as paTerms',
-      'dg.goalAmount as donationGoalAmount',
     ])
+    // Subquery, not a join: a join here multiplies the version row per goal, and duplicate
+    // versions blow up the keyed {#each} on the page with each_key_duplicate (blank page).
+    .select((eb) =>
+      eb
+        .selectFrom('DonationGoal as dg')
+        .select('dg.goalAmount')
+        .whereRef('dg.entityId', '=', 'mv.id')
+        .where('dg.entityType', '=', 'ModelVersion')
+        .orderBy('dg.active', 'desc')
+        .orderBy('dg.createdAt', 'desc')
+        .limit(1)
+        .as('donationGoalAmount')
+    )
     .where(
       'mv.modelId',
       'in',

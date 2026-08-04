@@ -346,6 +346,7 @@ describe('approveExternalRequest — supersede scopes by the REQUEST kind (no on
     mockRead.appListing.findUnique.mockResolvedValue({
       id: 'apl_ft',
       status: 'draft',
+      kind,
       externalUrl: kind === 'offsite' ? 'https://example.com/' : null,
       iconId: 1,
       coverId: 2,

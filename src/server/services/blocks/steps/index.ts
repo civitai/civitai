@@ -1,4 +1,5 @@
 import type * as z from 'zod';
+import { chatCompletionStep } from './chat-completion.step';
 import { convertImageStep } from './convert-image.step';
 import type { StepOutputMedia } from './output';
 
@@ -85,13 +86,57 @@ export const STEP_BILLING_MODES: readonly StepBillingMode[] = [
 // with no implemented handler fails at registry LOAD (a build-time error), not
 // at request time on a Friday.
 //
-// 🔴 THE FREE-TEXT-INPUT HALF OF THAT QUESTION IS NOW ANSWERED (#3527): mature
-// content is permitted for App Blocks, bounded by the token's server-minted
-// maturity ceiling — so a free-text INPUT needs the same prompt audit
-// `textToImage` / `customComfy` already run, not a new policy. `'promptAudit'`
-// is therefore IMPLEMENTED; its handler lives in `./moderation` and runs
-// `auditPromptServer` host-side, before the orchestrator submit. The free-text
-// OUTPUT half (`'textOutput'`) is still unanswered and still fails at load.
+// 🔴 BOTH HALVES OF THAT QUESTION ARE NOW ANSWERED, AND ALL THREE POSTURES ARE
+// IMPLEMENTED — nothing in this union fails at load today. The INPUT half
+// (#3527): mature content is permitted for App Blocks, bounded by the token's
+// server-minted maturity ceiling, so a free-text INPUT needs the same prompt
+// audit `textToImage` / `customComfy` already run, not a new policy —
+// `'promptAudit'`'s handler lives in `./moderation` and runs `auditPromptServer`
+// host-side, before the orchestrator submit. The OUTPUT half is answered too:
+// `'textOutput'` scans the generated text with the orchestrator's
+// `xGuardModeration` step (`mode: 'text'`) at the READ boundary and withholds on
+// a policy-label hit. Evidence, not intent: `isModerationPostureImplemented`
+// returns true for all three values, its output handler is in `./moderation`,
+// and the registered `chat-completion` entry declares `'textOutput'` — a
+// load-time failure would take the module down.
+//
+// 🔴 DO NOT SUMMARISE THE FAILURE BEHAVIOUR AS "withholds on ANY scanner
+// failure". An earlier revision of this paragraph said exactly that and it is
+// NOT true of this tree. What withholds is a specific set — in
+// `./text-output-moderation` unless noted, named by symbol rather than line so
+// this list does not rot the moment that file moves:
+//   - the scan call throwing, or exceeding the hard deadline (`stage: 'error'`)
+//   - no scan output at all — the submit failed, or the workflow was still
+//     running when `SCAN_WAIT_SECONDS` elapsed (`stage: 'no-verdict'`)
+//   - joined text over `MAX_SCANNED_CONTENT_CHARS`, checked before the network
+//     call AND before the memo, so no over-cap payload is answered from a hit
+//     (`stage: 'over-cap'`)
+//   - a requested label absent from `results[]` (`missingRequestedLabels` →
+//     `stage: 'label-drift'`)
+//   - `extractText` returning a non-array, or an array with a non-string entry
+//     (guarded in `./moderation`'s `textOutput.output` handler)
+// That module is authoritative; this list is a summary and must be re-read
+// against it, not trusted over it.
+//
+// 🔴 KNOWN GAP, OPEN IN THIS TREE: A LABEL THE SCANNER ATTEMPTED AND FAILED ON
+// RELEASES. The generated `XGuardLabelResult` carries `error?: null | string`,
+// but `XGuardLabelResultLike` — the shape this policy actually reads — declares
+// only `label` / `score` / `triggered`, and `decideTextOutputVerdict` reads only
+// those three. So an errored label contributes nothing to the trigger set, and
+// it ALSO suppresses the drift guard, because `missingRequestedLabels` counts an
+// entry as "evaluated" on a non-empty `label` alone. A scan in which all 15
+// `TEXT_OUTPUT_SCAN_LABELS` errored is therefore indistinguishable from
+// all-clean and RELEASES. This is stated as OPEN because it is open here; it is
+// a live fail-open, not a hypothetical. Re-read `decideTextOutputVerdict` before
+// relying on this paragraph in EITHER direction — do not assume from its
+// presence that it is still open, nor from its absence that it was ever closed.
+//
+// 🔴 AN EARLIER REVISION OF THIS PARAGRAPH ENDED "The free-text OUTPUT half
+// (`'textOutput'`) is still unanswered and still fails at load." That was FALSE,
+// and it was the FIRST thing a reader hit when opening this union — twenty lines
+// ahead of the `'textOutput'` member's own doc, which said the opposite. When a
+// posture ships, correct THIS block in the same change; a stale summary above a
+// correct member doc is read as the summary.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepModerationPosture =
   /**
@@ -202,8 +247,26 @@ export function postureRequiresAuditableText(posture: StepModerationPosture): bo
  * direction and it is the intended answer for now: such an entry needs a real
  * decision about whether its media is scanned too (the text scan here does not
  * look at media at all), and it should be blocked until someone makes it, not
- * admitted with one axis silently uncovered. Nothing in the currently-licensed
- * `$type` set has that shape.
+ * admitted with one axis silently uncovered.
+ *
+ * 🔴 AND THE LICENSED SET ALREADY CONTAINS ONE — DO NOT READ THIS AS A FUTURE
+ * PROBLEM. This paragraph used to end "Nothing in the currently-licensed
+ * `$type` set has that shape", and that was FALSE. `chatCompletion` has exactly
+ * that shape: `ChatCompletionInput.modalities` accepts `['image']`, and with it
+ * the orchestrator returns generated images on
+ * `choices[].message.images[].image_url.url` as base64 data URIs — bytes that
+ * never reach image ingestion, never become moderated `Image` rows, and are not
+ * seen by the text scan either.
+ *
+ * What keeps the XOR true today is NOT the `$type` set. It is that the
+ * `chatCompletion` ENTRY's `.strict()` `paramSchema` omits `modalities`, so the
+ * media arm is unreachable through it — a load-bearing omission, not a tidy
+ * one. Read `./chat-completion.step`'s note before touching that schema: adding
+ * `modalities` (or its companion `image_config`) turns a text-posture entry
+ * into a media-producing one and opens precisely the half-covered channel this
+ * rule exists to refuse. The invariant to defend is per-ENTRY schema
+ * discipline; do not infer from the XOR that the licensed `$type`s are
+ * single-natured.
  */
 export function stepOutputShape(posture: StepModerationPosture): 'media' | 'text' {
   switch (posture) {
@@ -375,8 +438,16 @@ export function isResourcePolicyImplemented(policy: StepResourcePolicy): boolean
   return policy.kind === 'none';
 }
 
-/** The AIR URN scheme prefix. Lowercase; the scan lowercases its input. */
-const AIR_URN_PREFIX = 'urn:air:';
+/**
+ * The AIR URN scheme prefix. Lowercase; the scan lowercases its input.
+ *
+ * EXPORTED so the request-time rejection in `blocks.router.ts` can NAME the
+ * literal it matched on rather than restating it. That message is the only
+ * diagnostic an app author gets for a bounced submit, and a hardcoded second
+ * copy of this string would eventually name a literal the scan no longer uses —
+ * a diagnostic that is confidently wrong is worse than none.
+ */
+export const AIR_URN_PREFIX = 'urn:air:';
 
 /**
  * Recursion budget for {@link containsAirReference}.
@@ -1282,7 +1353,17 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
   // 'promptAudit' runs `auditPromptServer` in the SUBMIT phase — the SAME audit
   // `textToImage` and `customComfy` run, host-side and before submission.
   // 'textOutput' runs an xGuardModeration text scan in the OUTPUT phase, at the
-  // read boundary, and withholds on a hit or on any scanner failure.
+  // read boundary, and withholds on a policy hit. It ALSO withholds on most —
+  // 🔴 not all — scanner failures: scan threw or the hard deadline fired, no
+  // output (submit failed, or the workflow was still running when the scan wait
+  // elapsed), content over the scanned-character cap, and a requested label
+  // absent from `results[]`. NOT on a per-label `error`, which currently
+  // RELEASES; `./text-output-moderation` documents that gap at the verdict
+  // function. Do not restate this as "any scanner failure" — three separate
+  // comments said exactly that, it was false in all three, and a safety claim
+  // stronger than the code is what a maintainer deletes a guard on the strength
+  // of. Re-derive from `decideTextOutputVerdict` before trusting this summary in
+  // EITHER direction.
   // Both handlers live in `./moderation`, which asserts at ITS load that each
   // posture has a handler in exactly the phases `posturePhaseRequirements` names.
   return posture === 'none' || posture === 'promptAudit' || posture === 'textOutput';
@@ -1333,8 +1414,13 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // recurse into an entry's nested values — those include zod schemas, which
 // populate internal caches lazily and must stay mutable. A deep freeze here
 // would trade a consistency nicety for a runtime failure mode.
+// 🔴 ORDER IS OBSERVABLE: `REGISTERED_STEP_IDS` is `Object.keys(...)`, so a new
+// entry goes at the END. Prepending would renumber the wire enum's iteration
+// order for no reason and shift `REGISTERED_STEP_IDS[0]`, which existing tests
+// use as "a valid id".
 const stepRegistry = Object.freeze({
   'convert-image': Object.freeze(convertImageStep),
+  'chat-completion': Object.freeze(chatCompletionStep),
 });
 
 export type RegisteredStepId = keyof typeof stepRegistry & string;

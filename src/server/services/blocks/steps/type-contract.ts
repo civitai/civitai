@@ -4,8 +4,21 @@
  * checking the file, and a violated contract fails the build. "Using" them
  * somewhere would add runtime weight and prove nothing extra.
  */
-import type { ConvertImageOutput, ConvertImageStep, ImageBlob } from '@civitai/client';
+import type {
+  AssistantMessage,
+  ChatCompletionChoice,
+  ChatCompletionOutput,
+  ChatCompletionStep,
+  ConvertImageOutput,
+  ConvertImageStep,
+  ImageBlob,
+} from '@civitai/client';
 import type * as z from 'zod';
+import type {
+  ChatCompletionChoiceOutputLike,
+  ChatCompletionMessageOutputLike,
+  ChatCompletionOutputStepLike,
+} from './chat-completion.step';
 import type { ConvertImageOutputStepLike } from './convert-image.step';
 import type { BlockStep } from './index';
 import type { OrchestratorBlobLike, StepOutputMedia } from './output';
@@ -219,8 +232,11 @@ type _RequiresCanonicalOutput = Expect<
 //
 // 🔴 HONEST LIMIT: this does NOT make clause 8 a general guard. A FUTURE entry
 // still supplies its own read shape and its own sample, and nothing here forces
-// it to add an assertion of its own — the escape stays open for entry #2. What
-// is anchored is the one registered entry. Making the anchoring REQUIRED for
+// it to add an assertion of its own — the escape stays open for entry #3. Entry
+// #2 (`chat-completion`) DID add one, at the bottom of this file, because clause
+// 8a's docstring says the first `'textOutput'` entry owes it; that is a
+// convention held by review, not by the type system. What is anchored is the
+// registered entries that chose to. Making the anchoring REQUIRED for
 // every entry needs a `$type` → generated-step-type mapping the registry can
 // consult at the type level; `@civitai/client` exports no discriminated union of
 // all step types (only the individual `<Name>Step` aliases), so that map would
@@ -272,4 +288,89 @@ type _ConvertImageBlobReadKeysExist = Expect<
  */
 type _MediaFromBlobsAcceptsGeneratedImageBlob = Expect<
   ImageBlob extends OrchestratorBlobLike ? true : false
+>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `chat-completion` — the TEXT-axis anchoring, owed by the first `'textOutput'`
+// entry (clause 8a's own docstring says so).
+//
+// 🔴 WHY IT IS OWED, RESTATED SO IT IS NOT READ AS CEREMONY. Clause 8a probes
+// `extractText(canonicalOutputFor(v))` and rejects an empty result — but the
+// extractor and the sample are written by the same person in the same file, so
+// the probe is a SELF-CONSISTENT PAIR. An extractor reading `output.messages[]`
+// paired with a sample that also encodes `output.messages[]` passes clause 8a
+// and returns NOTHING for every real orchestrator response: a step that charges
+// Buzz, reaches `succeeded`, scans nothing and publishes nothing. Only the
+// generated types — which Civitai does not hand-write — can catch that.
+//
+// The read path is `output.choices[].message.{content,refusal}`; every hop below
+// is derived FROM `ChatCompletionOutputStepLike` itself rather than from the
+// exported per-hop aliases, so the assertions cannot drift away from the shape
+// the extractor actually casts to.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The element type of a (readonly) array type. */
+type ElementOf<T> = T extends readonly (infer E)[] ? E : never;
+
+type ChatChoicesRead = NonNullable<NonNullable<ChatCompletionOutputStepLike['output']>['choices']>;
+type ChatChoiceRead = NonNullable<ElementOf<ChatChoicesRead>>;
+type ChatMessageRead = NonNullable<ChatChoiceRead['message']>;
+
+/**
+ * A REAL `ChatCompletionStep` must satisfy the hand-written shape `extractText`
+ * casts to — the twin of `_RealConvertImageStepSatisfiesReadShape`, on the text
+ * axis. Fails if the generated output type changes in a way the read would not
+ * survive.
+ */
+type _RealChatCompletionStepSatisfiesReadShape = Expect<
+  ChatCompletionStep extends ChatCompletionOutputStepLike ? true : false
+>;
+
+/**
+ * Every key the read shape declares under `output` must EXIST on the generated
+ * `ChatCompletionOutput`.
+ *
+ * 🔴 `keyof` is what makes the key NAME load-bearing. Assignability alone does
+ * not: a read shape whose properties are all optional is satisfied by anything,
+ * so renaming `choices` → `messages` would still compile against the assertion
+ * above while returning nothing for every real response.
+ */
+type _ChatCompletionReadKeysExist = Expect<
+  keyof NonNullable<ChatCompletionOutputStepLike['output']> extends keyof ChatCompletionOutput
+    ? true
+    : false
+>;
+
+/** Same, one level down: the choice key the extractor reads is a real `ChatCompletionChoice` field. */
+type _ChatCompletionChoiceReadKeysExist = Expect<
+  keyof ChatChoiceRead extends keyof ChatCompletionChoice ? true : false
+>;
+
+/**
+ * Same, two levels down: `content` and `refusal` are real `AssistantMessage`
+ * fields. This is the assertion that catches an extractor reading `text` or
+ * `message` where the orchestrator returns `content`.
+ */
+type _ChatCompletionMessageReadKeysExist = Expect<
+  keyof ChatMessageRead extends keyof AssistantMessage ? true : false
+>;
+
+/**
+ * 🔴 THE READ MUST NOT REQUIRE `role`, and this pins it.
+ *
+ * `AssistantMessage` declares `role: 'assistant'` as REQUIRED, but the real
+ * orchestrator response carries only `content` on `choices[].message` — measured
+ * against a live `succeeded` workflow. An extractor that keyed off `role` would
+ * therefore return nothing for every real reply while every other assertion
+ * here stayed green (a required `role` is still assignable FROM the generated
+ * type, so `_RealChatCompletionStepSatisfiesReadShape` would not notice).
+ *
+ * 🔴 BE EXACT ABOUT ITS STRENGTH: an all-optional shape is satisfied by almost
+ * anything, so this assertion is weak in general. It is not vacuous for the one
+ * mutation it exists for — adding a required `role` to the read shape makes
+ * `{ content: string }` stop being assignable and this fails, which is verified
+ * by mutation rather than assumed.
+ */
+type _ChatCompletionReadDoesNotRequireRole = Expect<
+  { content: string } extends ChatMessageRead ? true : false
 >;
