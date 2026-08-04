@@ -504,6 +504,12 @@ export async function getAppealDetails({ id }: GetByIdInput) {
         select: { id: true, url: true, userId: true },
       });
       break;
+    case EntityType.Model:
+      entityDetails = await dbRead.model.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
     default:
       // Do nothing
       break;
@@ -588,8 +594,8 @@ export async function createEntityAppeal({
 }
 
 // Display label + (when the entity is publicly reachable) a link for an
-// appealed item, surfaced in the resolution email. Only Image is linkable today;
-// other entity types fall back to a label-only reference.
+// appealed item, surfaced in the resolution email. Entity types with no public
+// URL fall back to a label-only reference.
 function appealEntityLink(
   entityType: EntityType,
   entityId: number
@@ -597,6 +603,8 @@ function appealEntityLink(
   switch (entityType) {
     case EntityType.Image:
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+    case EntityType.Model:
+      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
