@@ -1397,6 +1397,45 @@ describe('containsAirReference — the entitlement probe', () => {
     expect(containsAirReference(null)).toBe(false);
     expect(containsAirReference(42)).toBe(false);
   });
+
+  // 🔴 KEYS, NOT JUST VALUES. The scan recursed over `Object.values` only and
+  // every assertion in this block returned `false` — a clean "no AIR here" for
+  // the shape the orchestrator's generated types actually prescribe
+  // (`additionalNetworks` is documented "Use the AIR of the network as the key";
+  // `WorkflowCost.fees` is keyed by resource AIR). This helper is the shared
+  // choke point, so the miss was simultaneously a request-time entitlement hole
+  // (`screenSubmittedStepResources`) and a weakened registry clause-7 load probe.
+  it('finds an AIR carried in an object KEY, at every depth', () => {
+    const air = 'urn:air:sd1:lora:civitai:1234@5678';
+    // the literal orchestrator shape
+    expect(containsAirReference({ additionalNetworks: { [air]: { strength: 1 } } })).toBe(true);
+    // top level
+    expect(containsAirReference({ [air]: 1 })).toBe(true);
+    // nested through an array, upper-cased (the scan is case-insensitive)
+    expect(containsAirReference({ a: [{ b: { [air.toUpperCase()]: null } }] })).toBe(true);
+    // WorkflowCost.fees
+    expect(containsAirReference({ cost: { fees: { [air]: 0.02 } } })).toBe(true);
+    // an AIR-keyed map whose VALUES are all primitives — nothing for a
+    // values-only scan to even recurse into
+    expect(containsAirReference({ [air]: 'ok', other: 'ok' })).toBe(true);
+  });
+
+  it('is TOTAL — a pathologically nested value fails closed instead of throwing', () => {
+    // Unbounded recursion threw `RangeError: Maximum call stack size exceeded`
+    // at ~5k nesting, reachable with a ~10 KB `[[[[…]]]]` request body. The
+    // declared contract is `boolean`, never "may throw"; at the depth cap the
+    // scan answers "could not prove there is no AIR here" = true = fail-closed.
+    let deep: unknown = 'leaf';
+    for (let i = 0; i < 20000; i++) deep = [deep];
+    let out: boolean | undefined;
+    expect(() => {
+      out = containsAirReference(deep);
+    }).not.toThrow();
+    expect(out).toBe(true);
+
+    // …and the cap must not swallow the ordinary shallow negative case.
+    expect(containsAirReference({ a: { b: { c: 'plain' } } })).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

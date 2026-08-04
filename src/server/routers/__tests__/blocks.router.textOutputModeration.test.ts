@@ -168,9 +168,12 @@ vi.mock('~/server/logging/client', async (importOriginal) => {
   return { ...actual, logToAxiom: mockLogToAxiom };
 });
 
-// 🔴 A `'textOutput'` STEP IS INJECTED INTO THE REGISTRY LOOKUP, because no such
-// entry is registered yet — that is the follow-up PR. Without it, the read path
-// has nothing to dispatch on and these tests would silently assert nothing.
+// 🔴 A `'textOutput'` STEP IS INJECTED INTO THE REGISTRY LOOKUP so these cases
+// own their fixture instead of riding on whichever real entry happens to declare
+// the posture (`chat-completion` does today — this file predates it and asserted
+// none existed yet). Without an entry the read path has nothing to dispatch on
+// and these tests would silently assert nothing; the `assertStepInvariants`
+// control below is what keeps the fixture a genuinely registrable entry.
 // ONLY `getStepByOrchestratorType` is overridden; every gate, invariant and
 // posture declaration is the real one.
 const registryOverride = new Map<string, unknown>();
@@ -199,6 +202,27 @@ import {
 
 const CHAT_TYPE = 'fixtureChat';
 const GENERATED_TEXT = 'the model wrote this exact sentence';
+
+// 🔴 THE FOUR TOKEN IDS, PAIRWISE DISTINCT AND EACH SHAPED LIKE THE REAL THING.
+// The telemetry assertions below discriminate `appBlockId` from `blockId`, and a
+// fixture whose ids were equal (or empty) could not tell a right fix from a wrong
+// one — it would pass with either claim wired in. `APP_BLOCK_ID` is a real
+// `apb_<ulid>` (`AppBlock.id`, the PK); `BLOCK_SLUG` is what `AppBlock.blockId`
+// actually holds — the publish request's SLUG, a human-readable repo name, not an
+// id; `APP_ID` is the OauthClient id; `BLOCK_INSTANCE_ID` the per-render instance.
+const APP_BLOCK_ID = 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A';
+const BLOCK_SLUG = 'pixel-poet';
+const APP_ID = 'oac_01JQ8XG7YV2K4M6P8R0T2W4Y6B';
+const BLOCK_INSTANCE_ID = 'bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C';
+
+const TEXT_OUTPUT_SCAN_EVENT = 'block-step-text-output-moderation';
+
+/** Every `block-step-text-output-moderation` payload the run emitted. */
+function scanLogPayloads(): Array<Record<string, unknown>> {
+  return mockLogToAxiom.mock.calls
+    .map(([payload]) => payload as Record<string, unknown>)
+    .filter((p) => p?.name === TEXT_OUTPUT_SCAN_EVENT);
+}
 
 const textStep: AnyBlockStep = {
   id: 'fixture-chat',
@@ -288,10 +312,10 @@ function validClaims(over: Record<string, unknown> = {}) {
     iat: 0,
     exp: 0,
     jti: 'jti_test',
-    blockId: 'blk_test',
-    appId: 'app_test',
-    appBlockId: 'apb_test',
-    blockInstanceId: 'bki_test',
+    blockId: BLOCK_SLUG,
+    appId: APP_ID,
+    appBlockId: APP_BLOCK_ID,
+    blockInstanceId: BLOCK_INSTANCE_ID,
     ctx: { slotId: 'none', entityType: 'none' },
     scopes: ['ai:write:budgeted'],
     buzzBudget: 50,
@@ -465,6 +489,39 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
       'workflowId',
     ]);
   });
+
+  it('🔴 keys the withhold TELEMETRY on AppBlock.id, not the publish slug', async () => {
+    // 🔴 WHAT THIS PINS, AND WHY IT IS NOT COSMETIC. `appBlockId` on the scan
+    // event is the per-app trigger-rate key this posture's design names as the
+    // signal that matters (see `text-output-moderation`'s `logScan` comment). The
+    // token carries THREE ids and they are different namespaces: `appBlockId` is
+    // `AppBlock.id` (`apb_<ulid>`, the PK that `BlockScopeInvocation.app_block_id`
+    // joins to), `blockId` is `AppBlock.blockId` — the publish request's SLUG —
+    // and `blockInstanceId` is a per-render id. Logging the slug under the
+    // `appBlockId` name joins to nothing, and because the value is only ever
+    // logged (no column, no FK), the wrong one fails SILENTLY. So the assertion
+    // has to name the exact value, not merely that the key exists.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockGetWorkflow.mockResolvedValue(chatWorkflow());
+    scanReturns(['Grooming']);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+
+    // POSITIVE CONTROL for the harness itself: a zero here would be
+    // indistinguishable from a probe wired to nothing, and every assertion below
+    // would pass vacuously over an empty array.
+    const withheld = scanLogPayloads().filter((p) => p.stage === 'withheld');
+    expect(withheld).toHaveLength(1);
+
+    expect(withheld[0].appBlockId).toBe(APP_BLOCK_ID);
+    // And explicitly NOT either of the two ids it is confusable with — the fixture
+    // keeps all three distinct precisely so this can discriminate.
+    expect(withheld[0].appBlockId).not.toBe(BLOCK_SLUG);
+    expect(withheld[0].appBlockId).not.toBe(BLOCK_INSTANCE_ID);
+    // The sibling key is unchanged — this fix must not shift `appId` too.
+    expect(withheld[0].appId).toBe(APP_ID);
+  });
 });
 
 describe('blocks.cancelWorkflow — the same boundary', () => {
@@ -513,5 +570,24 @@ describe('blocks.cancelWorkflow — the same boundary', () => {
     );
     const mature = await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
     expect(mature.snapshot.textOutputs).toEqual([GENERATED_TEXT]);
+  });
+
+  it('🔴 keys the withhold TELEMETRY on AppBlock.id here too', async () => {
+    // 🔴 TWO CALL SITES NEED TWO TESTS — the same lesson the both-directions
+    // maturity test above records. `cancelWorkflow` passes its own id argument, so
+    // the poll's assertion cannot see a wrong one here.
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockGetWorkflow.mockResolvedValue({ ...chatWorkflow(), status: 'canceled' });
+    scanReturns(['Extremism']);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+
+    const withheld = scanLogPayloads().filter((p) => p.stage === 'withheld');
+    expect(withheld).toHaveLength(1);
+    expect(withheld[0].appBlockId).toBe(APP_BLOCK_ID);
+    expect(withheld[0].appBlockId).not.toBe(BLOCK_SLUG);
+    expect(withheld[0].appBlockId).not.toBe(BLOCK_INSTANCE_ID);
+    expect(withheld[0].appId).toBe(APP_ID);
   });
 });

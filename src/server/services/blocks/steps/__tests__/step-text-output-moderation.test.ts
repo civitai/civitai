@@ -115,6 +115,16 @@ import {
   VERDICT_CACHE_MAX_ENTRIES,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
+// 🔴 A NAMESPACE IMPORT, ON PURPOSE, AND ONLY FOR `erroredRequestedLabels`.
+// A NAMED import of a symbol the module does not export is a LINK-TIME failure
+// under vitest's ESM transform: the whole file fails to COLLECT and reports
+// `Tests no tests`, which reads as "nothing to see" rather than as a failure.
+// That would destroy the red-at-base measurement these cases exist to produce —
+// nobody could re-run this file against the pre-fix commit and see the
+// erroring-label cases go red, because none of the other 81 would run either.
+// Through the namespace the missing export is merely `undefined`, so each case
+// fails on its own assertion and the rest of the suite still executes. Keep it.
+import * as TextOutputModeration from '~/server/services/blocks/steps/text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -1214,5 +1224,372 @@ describe('textOutput — a dropped label FAILS CLOSED', () => {
     expect(mockCreateXGuardModerationRequest.mock.calls[0][0].labels).toEqual([
       ...TEXT_OUTPUT_SCAN_LABELS,
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 AN ERRORED LABEL — the scanner ATTEMPTED a label and FAILED on it.
+//
+// `XGuardLabelResult` carries `error?: null | string` (generated client,
+// `types.gen.d.ts`). A label the scanner tried and failed on comes back as a
+// PRESENT `results[]` entry with `triggered: false` and an `error` string. Before
+// the fix that entry (a) satisfied the drift guard, because the guard's only
+// question is whether a `label` came back at all, and (b) contributed nothing to
+// `triggered` — so it read as a CLEAN ANSWER and the verdict RELEASED. A scan
+// where all fifteen labels errored was byte-indistinguishable, to this policy,
+// from a scan where all fifteen came back clean.
+//
+// That is the same "'no answer' must never read as 'clean'" invariant the drift
+// guard's own comment states, failing on a different axis: drift is a label that
+// was never EVALUATED, an error is a label whose evaluation FAILED. Both are
+// non-answers; every other branch in this file (scanner throw, hard deadline,
+// no-verdict, over-cap, drift) withholds on one.
+//
+// 🔴 THE FIXTURES BELOW ARE DELIBERATELY NOT `scanOutput(...)`-SHAPED. The
+// existing fixture builds `results[]` by mapping ONE shape over
+// `TEXT_OUTPUT_SCAN_LABELS`, so every entry covaries: a case built that way
+// cannot tell "the errored label withheld" from "some label withheld". Here the
+// errored label, the triggered label and the clean label are three DIFFERENT
+// labels with three pairwise-distinct scores, and a test below asserts that
+// distinctness so it cannot rot into a covarying fixture.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — an ERRORED label FAILS CLOSED', () => {
+  /** Errored in the fixtures below. An ALWAYS-withhold label, so losing it matters. */
+  const ERRORED_LABEL = 'Extremism';
+  /** Genuinely triggers. A DIFFERENT always-withhold label. */
+  const TRIGGERED_LABEL = 'Young';
+  /** Neither errored nor triggered. A THIRD label, from the not-acted-on tier. */
+  const CLEAN_LABEL = 'Celebrity';
+  /**
+   * The scanner-supplied error text. Asserted ABSENT from the trigger log: it is
+   * an untrusted string from the other side of a network boundary and may quote
+   * the very content this posture is withholding.
+   */
+  const SCANNER_ERROR = 'label backend timed out: upstream 504 on the-secret-content';
+
+  /**
+   * All fifteen results (which the drift guard genuinely requires — that is the
+   * CODE's demand, not the fixture's assumption), with per-label overrides
+   * applied on top so the fields do NOT covary.
+   */
+  function scanOutputWith(overrides: Record<string, Record<string, unknown>>) {
+    const base = scanOutput([]);
+    const results = base.results.map((r, i) => ({
+      ...r,
+      // Pairwise-distinct scores, so no assertion below can pass by matching the
+      // wrong entry.
+      score: 0.01 * (i + 1),
+      ...(overrides[r.label] ?? {}),
+    }));
+    const triggeredLabels = results.filter((r) => r.triggered === true).map((r) => r.label);
+    return { ...base, results, triggeredLabels };
+  }
+
+  /** The three subject labels, with an error on one and a trigger on another. */
+  function erroredAndTriggered() {
+    return scanOutputWith({
+      [ERRORED_LABEL]: { error: SCANNER_ERROR, triggered: false, score: 0 },
+      [TRIGGERED_LABEL]: { triggered: true, score: 0.97 },
+    });
+  }
+
+  it('🔴 VALIDATES THE FIXTURE — the three subject labels and their scores are pairwise distinct', () => {
+    // Without this, every case below could be green because one label happened
+    // to stand in for another. It also pins that the three are really drawn from
+    // three different policy tiers.
+    expect(new Set([ERRORED_LABEL, TRIGGERED_LABEL, CLEAN_LABEL]).size).toBe(3);
+    expect(ALWAYS_WITHHOLD_LABELS).toContain(ERRORED_LABEL);
+    expect(ALWAYS_WITHHOLD_LABELS).toContain(TRIGGERED_LABEL);
+    expect(NOT_ACTED_ON_LABELS).toContain(CLEAN_LABEL);
+
+    const results = erroredAndTriggered().results;
+    const byLabel = (l: string) => results.find((r) => r.label === l)!;
+    expect(new Set(results.map((r) => r.score)).size).toBe(results.length);
+    expect(byLabel(ERRORED_LABEL).triggered).toBe(false);
+    expect(byLabel(TRIGGERED_LABEL).triggered).toBe(true);
+    expect(byLabel(CLEAN_LABEL).triggered).toBe(false);
+    expect(byLabel(CLEAN_LABEL)).not.toHaveProperty('error');
+  });
+
+  it('erroredRequestedLabels names exactly the requested labels whose entry carries an error', () => {
+    const output = scanOutputWith({
+      [ERRORED_LABEL]: { error: SCANNER_ERROR },
+      [TRIGGERED_LABEL]: { triggered: true },
+    });
+    expect(
+      TextOutputModeration.erroredRequestedLabels(output, [
+        ERRORED_LABEL,
+        TRIGGERED_LABEL,
+        CLEAN_LABEL,
+      ])
+    ).toEqual([ERRORED_LABEL]);
+  });
+
+  it.each([['extremism'], ['EXTREMISM'], ['  Extremism  ']])(
+    '🔴 matches the errored label CASE-INSENSITIVELY — result spelled %p, requested "Extremism"',
+    (resultLabel) => {
+      // 🔴 THE REAL SHAPE, NOT A HYPOTHETICAL. The orchestrator matches the
+      // requested list case-insensitively but answers with its OWN canonical
+      // spelling, so "we asked for `Extremism`, it answered about `extremism`"
+      // is what actually arrives. A case-SENSITIVE guard finds no match, reports
+      // no errored label, and RELEASES — the identical silent fail-open
+      // `normalizeLabel` exists to remove, reintroduced one function over.
+      //
+      // 🔴 THIS TEST EXISTS BECAUSE A MUTANT SURVIVED WITHOUT IT. Replacing BOTH
+      // `normalizeLabel(...)` calls in `erroredRequestedLabels` with `.trim()`
+      // left the entire 98-test suite green: every other fixture here spells the
+      // result label exactly as it spells the requested one, so the two sides
+      // agreed and nothing could distinguish a normalized comparison from a raw
+      // one. Only a case DIFFERENCE discriminates — an asymmetric mutant (one
+      // side only) dies for the wrong reason, because the sides stop agreeing.
+      // `missingRequestedLabels` has had its own version of this test all along.
+      const output = {
+        triggeredLabels: [],
+        results: [{ label: resultLabel, triggered: false, error: SCANNER_ERROR }],
+      };
+      // The REQUESTED spelling comes back, not the scanner's.
+      expect(TextOutputModeration.erroredRequestedLabels(output, ['Extremism'])).toEqual([
+        'Extremism',
+      ]);
+      // …and it reaches the VERDICT, not just the helper.
+      expect(
+        decideTextOutputVerdict(output, { isGreen: false, requestedLabels: ['Extremism'] })
+      ).toMatchObject({ released: false, erroredLabels: ['Extremism'] });
+    }
+  );
+
+  it('🔴 ONE label errored, every other label clean → WITHHOLDS', () => {
+    // 🔴 THE DEFECT, IN ONE ASSERTION. Nothing triggered, every requested label
+    // came back, and one of them came back with an error instead of a verdict.
+    // The pre-fix policy released this.
+    const verdict = decideTextOutputVerdict(
+      scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR } }),
+      { isGreen: false, requestedLabels: ALL }
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.erroredLabels).toEqual([ERRORED_LABEL]);
+    // 🔴 AND IT IS NOT MISATTRIBUTED. An errored label is present in `results[]`,
+    // so it is NOT drift, and it is not a content hit either. Reporting it as
+    // either would send an operator to the wrong remedy and poison that stage's
+    // rates with a fault of a different kind.
+    expect(verdict.missingLabels).toEqual([]);
+    expect(verdict.withholdingLabels).toEqual([]);
+  });
+
+  it('🔴 POSITIVE CONTROL — the IDENTICAL scan with `error: null` RELEASES', () => {
+    // Only the one field differs. Without this, "released: false" above is what a
+    // policy that withholds everything also reports.
+    const verdict = decideTextOutputVerdict(scanOutputWith({ [ERRORED_LABEL]: { error: null } }), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(true);
+    expect(verdict.erroredLabels).toEqual([]);
+  });
+
+  it('🔴 POSITIVE CONTROL — with the `error` field ABSENT entirely it RELEASES', () => {
+    const verdict = decideTextOutputVerdict(scanOutputWith({}), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(true);
+    expect(verdict.erroredLabels).toEqual([]);
+  });
+
+  it('🔴 ALL FIFTEEN labels errored → WITHHOLDS, and names all fifteen', () => {
+    // The shape a whole-scanner fault produces. Pre-fix this was
+    // indistinguishable from fifteen clean answers — the single worst case,
+    // because it is the one where the scan did nothing at all.
+    const overrides = Object.fromEntries(
+      TEXT_OUTPUT_SCAN_LABELS.map((l) => [l, { error: `${SCANNER_ERROR} (${l})` }])
+    );
+    const verdict = decideTextOutputVerdict(scanOutputWith(overrides), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(false);
+    expect(verdict.erroredLabels).toEqual([...TEXT_OUTPUT_SCAN_LABELS]);
+    expect(verdict.missingLabels).toEqual([]);
+  });
+
+  it('🔴 an errored label that WOULD have been a withhold label still withholds', () => {
+    // `Extremism` is an always-withhold label. If the scanner failed on it, we do
+    // not know whether the text trips it — which is exactly the case the policy
+    // must not resolve in the text's favour. Note `withholdingLabels` is empty:
+    // we are not claiming it triggered, we are claiming we never found out.
+    const verdict = decideTextOutputVerdict(
+      scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR, triggered: false } }),
+      { isGreen: false, requestedLabels: ALL }
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.erroredLabels).toEqual([ERRORED_LABEL]);
+    expect(verdict.withholdingLabels).toEqual([]);
+  });
+
+  it('🔴 an error alongside `triggered: true` on the SAME label withholds on BOTH signals', () => {
+    // A partial failure that still reported a trigger. Fail-closed in both
+    // directions: the trigger is honoured (it is a policy label) AND the error is
+    // recorded, so neither signal is dropped in favour of the other.
+    const verdict = decideTextOutputVerdict(
+      scanOutputWith({ [TRIGGERED_LABEL]: { error: SCANNER_ERROR, triggered: true } }),
+      { isGreen: false, requestedLabels: ALL }
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.erroredLabels).toEqual([TRIGGERED_LABEL]);
+    expect(verdict.triggeredLabels).toContain(TRIGGERED_LABEL);
+    expect(verdict.withholdingLabels).toEqual([TRIGGERED_LABEL]);
+  });
+
+  it('an error on ONE label and a genuine trigger on ANOTHER reports both, separately', () => {
+    const verdict = decideTextOutputVerdict(erroredAndTriggered(), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(false);
+    expect(verdict.erroredLabels).toEqual([ERRORED_LABEL]);
+    expect(verdict.withholdingLabels).toEqual([TRIGGERED_LABEL]);
+  });
+
+  it('🔴 a non-string, non-null `error` value withholds too (fail closed on a shape we did not expect)', () => {
+    // `error` is `null | string` in the generated client, but this is untrusted
+    // data off a network boundary and the `Like` types read it as `unknown`. A
+    // value we cannot interpret is a non-answer, not a clean one.
+    for (const value of [42, {}, [], true]) {
+      const verdict = decideTextOutputVerdict(
+        scanOutputWith({ [ERRORED_LABEL]: { error: value } }),
+        { isGreen: false, requestedLabels: ALL }
+      );
+      expect(verdict.released).toBe(false);
+      expect(verdict.erroredLabels).toEqual([ERRORED_LABEL]);
+    }
+  });
+
+  it('an EMPTY-STRING error is NOT an error (documented; the alternative is a total outage)', () => {
+    // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — this passes pre-fix too, and
+    // it is here to pin a decision rather than to catch the defect. `modelReason`
+    // came back EMPTY on every probe against the deployed scanner, so a scanner
+    // that populates `error: ''` on the healthy path is a live possibility.
+    // Treating `''` as a fault would withhold 100% of output on day one — the
+    // same day-one capability outage the drift guard's pre-adoption gate warns
+    // about. The PRESENCE of a non-empty error is the signal.
+    const verdict = decideTextOutputVerdict(scanOutputWith({ [ERRORED_LABEL]: { error: '   ' } }), {
+      isGreen: false,
+      requestedLabels: ALL,
+    });
+    expect(verdict.released).toBe(true);
+    expect(verdict.erroredLabels).toEqual([]);
+  });
+
+  it('`finishReason` alone does NOT withhold', () => {
+    // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green pre-fix and post-fix.
+    // It pins a DELIBERATE non-decision so a later reader does not quietly make
+    // the opposite one. `finishReason?: null | string` sits next to `error` in
+    // the same generated type and plausibly carries a comparable signal (a
+    // truncated judge output is also a degraded answer), but unlike `error` it
+    // cannot be read by PRESENCE: a finishReason is emitted on the healthy path
+    // too, so acting on it requires knowing which VALUES mean "fine". That value
+    // set is orchestrator-side configuration this codebase does not control and
+    // has never observed — the same category `normalizeLabel`'s comment warns
+    // about for label strings. Guessing it wrong in the strict direction
+    // withholds everything; guessing it wrong in the loose direction is the
+    // fail-open we are already fixing. So: no action until a live probe
+    // establishes the distribution. See the source comment for the gate.
+    const verdict = decideTextOutputVerdict(
+      scanOutputWith({
+        [ERRORED_LABEL]: { finishReason: 'length' },
+        [CLEAN_LABEL]: { finishReason: 'stop' },
+      }),
+      { isGreen: false, requestedLabels: ALL }
+    );
+    expect(verdict.released).toBe(true);
+    expect(verdict.erroredLabels).toEqual([]);
+  });
+
+  it('an error on a label we did NOT request is ignored (the guard is scoped to what we asked)', () => {
+    // 🔴 INVARIANT GUARD / SCOPING PIN — green pre-fix and post-fix. Symmetric
+    // with `missingRequestedLabels`: this policy makes claims only about the
+    // labels it sent. Unreachable from `screenGeneratedText`, which always sends
+    // the full list; pinned so the scoping is a decision rather than an accident.
+    const verdict = decideTextOutputVerdict(
+      scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR } }),
+      { isGreen: false, requestedLabels: [TRIGGERED_LABEL, CLEAN_LABEL] }
+    );
+    expect(verdict.released).toBe(true);
+    expect(verdict.erroredLabels).toEqual([]);
+  });
+
+  it('🔴 END TO END — an errored label WITHHOLDS the text and logs stage "label-error"', async () => {
+    scannerReturns(scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR } }));
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+    expect(snapshot.textOutputs).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain(GENERATED_TEXT);
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
+      stage: 'label-error',
+      erroredLabels: [ERRORED_LABEL],
+    });
+  });
+
+  it('🔴 POSITIVE CONTROL — the SAME path publishes when no label errored', async () => {
+    // ONLY the `error` field differs from the case above.
+    scannerReturns(scanOutputWith({}));
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+    expect(snapshot.textOutputs).toEqual([GENERATED_TEXT]);
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the log carries NEITHER the withheld text NOR the scanner-supplied error string', async () => {
+    // The error string comes from the other side of a network boundary and can
+    // quote the content being scanned. The label NAMES are this file's own
+    // constants and are safe; the message is not, and a store that must never
+    // hold the withheld text must not hold a string that may embed it.
+    scannerReturns(scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR } }));
+    await screenGeneratedText({
+      texts: [GENERATED_TEXT],
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    const logged = JSON.stringify(mockLogToAxiom.mock.calls);
+    expect(logged).not.toContain(GENERATED_TEXT);
+    expect(logged).not.toContain(SCANNER_ERROR);
+    expect(logged).not.toContain('the-secret-content');
+    // …and the actionable part IS there.
+    expect(logged).toContain(ERRORED_LABEL);
+  });
+
+  it('🔴 a LABEL-ERROR withhold is NOT memoized — a scanner recovery must not be pinned shut', async () => {
+    // Same reasoning the error / no-verdict / drift branches already carry: a
+    // per-label scanner fault is OPERATIONAL and clears on its own, so caching
+    // the withhold would pin a blip into a five-minute outage of the capability
+    // — and, because a memo HIT logs nothing, would emit the `label-error` line
+    // for the first observation only and then go silent.
+    const opts = {
+      userId: 42,
+      isGreen: false,
+      appId: 'app-1',
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    };
+    scannerReturns(scanOutputWith({ [ERRORED_LABEL]: { error: SCANNER_ERROR } }));
+    const errored = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(errored).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+
+    // The fault clears. The very next call must reach the scanner again, and
+    // release.
+    scannerReturns(scanOutputWith({}));
+    const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
+    expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
   });
 });

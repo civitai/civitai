@@ -1,10 +1,11 @@
 import type { ToolDefinitionJson } from '@openrouter/sdk/models';
-import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { queryWithTimeout } from '~/server/db/db-helpers';
+import { pgDbRead } from '~/server/db/pgDb';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
 import { agentLog, getDebugContext } from './freshdesk-debug';
+import { FRESHDESK_QUERY_TABLES, checkQueryScope } from './freshdesk-query-scope';
 import {
   investigateUserAccount,
   investigateCosmetics,
@@ -14,6 +15,15 @@ import {
   checkSiteStatus,
   investigateCryptoPayments,
 } from './freshdesk-investigation-tools';
+
+/**
+ * Ceiling for a single `query_database` statement. Applied as a Postgres
+ * `statement_timeout` inside the query's own transaction, so the database
+ * cancels the backend and releases the pooled connection. The tool
+ * description states this as a guarantee, so it has to be the real mechanism.
+ */
+const DB_QUERY_TIMEOUT_MS = 30_000;
+const DB_QUERY_TIMEOUT_SECONDS = DB_QUERY_TIMEOUT_MS / 1000;
 
 // --- Tool definitions ---
 
@@ -256,15 +266,24 @@ const queryDatabaseTool: ToolDefinitionJson = {
   type: 'function',
   function: {
     name: 'query_database',
-    description:
-      'Execute a read-only SQL query against the Civitai database. Use this to verify facts, look up user info, check system data, etc. Only SELECT queries are allowed. Queries have a 30 second timeout.',
+    description: [
+      'Execute a SELECT query against the Civitai database. Use this to verify facts, look up user info, or check system data when the purpose-built investigation tools do not cover what you need.',
+      'The following are enforced by the server, not by convention — a query that breaks any of them is rejected or cancelled, so write to them up front:',
+      `- It can only read these tables: ${FRESHDESK_QUERY_TABLES.map((t) => `"${t}"`).join(', ')}.`,
+      '- It runs inside a read-only transaction, so nothing can be written.',
+      `- The database cancels the statement after ${DB_QUERY_TIMEOUT_SECONDS} seconds. Always use LIMIT and filter on indexed columns.`,
+      '- One statement only. No comments, no CTEs (WITH), no schema prefixes, no table functions.',
+      '- Reference tables by their exact double-quoted name, e.g. FROM "User".',
+      "- FROM-inside-a-function-call is not supported: use date_part('epoch', col) rather than EXTRACT(EPOCH FROM col), and substr(...) rather than SUBSTRING(x FROM 1).",
+      'At most 50 rows are returned.',
+    ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         sql: {
           type: 'string',
           description:
-            'A read-only SQL SELECT query. Must start with SELECT. Keep results small — use LIMIT.',
+            'A single SELECT statement over the allowed tables. Must start with SELECT. Keep results small — use LIMIT.',
         },
       },
       required: ['sql'],
@@ -382,7 +401,8 @@ const investigateCryptoPaymentsTool: ToolDefinitionJson = {
 
 // --- Tool execution ---
 
-const DB_QUERY_TIMEOUT_MS = 30_000;
+/** Postgres `query_canceled` — what `statement_timeout` raises. */
+const PG_QUERY_CANCELED = '57014';
 
 async function executeQueryDatabase(sql: string): Promise<string> {
   // Safety: only allow SELECT queries
@@ -391,14 +411,31 @@ async function executeQueryDatabase(sql: string): Promise<string> {
     return 'Error: Only SELECT queries are allowed.';
   }
 
+  // Bound WHICH relations the statement can reach before it touches a connection.
+  const scope = checkQueryScope(sql);
+  if (!scope.ok) return scope.error;
+
   try {
-    const results = await dbRead.$queryRaw(Prisma.raw(sql));
-    const rows = results as Record<string, unknown>[];
+    // `queryWithTimeout` wraps the statement in BEGIN READ ONLY + SET LOCAL
+    // statement_timeout, so both bounds are the database's to enforce. A
+    // `Promise.race` here would only abandon the promise — the backend would
+    // keep running and keep holding its pooled connection.
+    const { rows } = await queryWithTimeout<Record<string, unknown>>(
+      pgDbRead,
+      DB_QUERY_TIMEOUT_MS,
+      sql
+    );
     if (rows.length === 0) return 'No results found.';
     // Limit output size
     const truncated = rows.slice(0, 50);
     return JSON.stringify(truncated, null, 2);
   } catch (err) {
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === PG_QUERY_CANCELED
+    )
+      return `Query error: cancelled after ${DB_QUERY_TIMEOUT_SECONDS}s. Narrow the query — add a LIMIT and filter on indexed columns.`;
     return `Query error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
@@ -543,12 +580,7 @@ export async function executeToolCall(
         break;
       }
       case 'query_database': {
-        result = await Promise.race([
-          executeQueryDatabase(args.sql as string),
-          new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error('Query timed out after 30s')), DB_QUERY_TIMEOUT_MS)
-          ),
-        ]);
+        result = await executeQueryDatabase(args.sql as string);
         break;
       }
       default:

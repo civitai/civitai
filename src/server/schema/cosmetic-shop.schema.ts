@@ -58,6 +58,18 @@ export const cosmeticShopItemMeta = z.object({
   // Creator opt-in: buyers may pay with Blue Buzz (fully or partially). The
   // creator is paid blue for the blue-paid portion of each sale.
   acceptsBlueBuzz: z.boolean().optional(),
+  // Creator Shop: who affirmed they hold the rights to sell this artwork, when,
+  // and the exact wording they accepted. Re-recorded whenever the artwork is
+  // replaced, so it always describes the art currently on the item. Absent on
+  // official items and on creator items submitted before this was required.
+  rightsAffirmation: z
+    .object({
+      userId: z.number(),
+      affirmedAt: z.string(),
+      version: z.number(),
+      statement: z.string(),
+    })
+    .optional(),
   // Set by a moderator takedown (IP/TOS). An item carrying this was pulled and
   // refunded — it must never be restored to sale by unarchiving.
   takedown: z
@@ -90,7 +102,7 @@ export const cosmeticPurchaseMeta = z.object({
     .optional(),
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
-  platformCut: z.number().optional(),
+  platformCut: z.number().optional(),  
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;

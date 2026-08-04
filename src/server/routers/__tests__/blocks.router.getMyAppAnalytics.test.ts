@@ -74,6 +74,9 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
   getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
   getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
+  // Mirrors the real `emptyRevenue()`, INCLUDING the `unavailable` discriminator that
+  // function bakes in. Without this key the flag-OFF test below cannot observe the
+  // contract at all, and the proc stays correct-by-inspection with no CI-visible guard.
   emptyRevenue: () => ({
     summary: {
       pending: { count: 0, grossCents: 0, shareCents: 0 },
@@ -83,6 +86,7 @@ vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
     },
     topApps: [],
     recentAttributions: [],
+    unavailable: 'notEntitled',
   }),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -322,6 +326,24 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     expect(result.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
     expect(mockGetRevenueForOwner).not.toHaveBeenCalled();
     expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
+    // 🔴 THE POINT OF THE CHANGE, and the only assertion in CI that sits at the proc
+    // boundary this contract actually ships through. Without it, the zeroed buckets
+    // above are byte-identical to a publisher who genuinely earned nothing — which is
+    // exactly the bug. The renderer guards live in the `component` project, which CI
+    // does not run at all, so do not delete this on the grounds that a panel test
+    // covers it.
+    expect(result.unavailable).toBe('notEntitled');
+  });
+
+  it('DISCRIMINATOR: a measured revenue result is NOT flagged unavailable', async () => {
+    // Byte-identical zero buckets are possible on this path too (a publisher with no
+    // earnings yet), so the flag-ON case must leave `unavailable` absent. Without this,
+    // a change that flagged everything would satisfy the test above and silently deny
+    // every publisher their real dashboard.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+    expect(result.unavailable).toBeUndefined();
+    expect(mockGetRevenueForOwner).toHaveBeenCalledTimes(1);
   });
 });
 

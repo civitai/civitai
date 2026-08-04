@@ -18,6 +18,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Both statements are now parameterised tagged templates, so values are bound rather
 // than pasted into the statement text. These tests assert exactly that: user data must
 // appear in the bound values and never in the statement text.
+//
+// Where a value lives is only half of it, though. A statement can bind every value
+// correctly and still be rejected by Postgres if the operator, the cast, or the
+// placeholder's position is wrong — and an assertion that only reads `values`, or only
+// asserts a negative on the text, cannot see that. So each statement additionally pins
+// the shape it emits.
 
 const { statements, mockDb } = vi.hoisted(() => {
   const statements: { text: string; values: unknown[] }[] = [];
@@ -143,6 +149,18 @@ describe('setUserSetting — the merge statement', () => {
     expect(merge.text).toContain('||');
     expect(merge.values).toContainEqual(JSON.stringify({ allowAds: true }));
   });
+
+  // The payload has to sit next to the cast as a bare `$N`. Re-wrapping it in quotes
+  // (`'$N'::jsonb`) still binds the value, so every values-based assertion above stays
+  // green — but Postgres then casts the literal two-character text `$N` and rejects it.
+  // That is the original defect in a new costume, so pin the emitted shape too.
+  it('places the payload beside the jsonb cast as a bare placeholder', async () => {
+    await setUserSetting(USER_ID, { allowAds: true });
+
+    const [merge] = statements;
+    expect(merge.text).toMatch(/\|\|\s*\$\d+::jsonb/);
+    expect(merge.text).not.toMatch(/'\$\d+'/);
+  });
 });
 
 describe('setUserSetting — the key-removal statement', () => {
@@ -179,5 +197,27 @@ describe('setUserSetting — the key-removal statement', () => {
     await setUserSetting(USER_ID, { allowAds: true });
 
     expect(statements).toHaveLength(1);
+  });
+
+  // `jsonb - text[]` is the only form that accepts a bound array of key names; any other
+  // cast on that operand is rejected outright. The assertions above read `values` or
+  // assert a negative on the text, so a wrong cast would leave all of them green.
+  it('casts the bound key array to text[]', async () => {
+    await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
+
+    const removal = statements[1];
+    expect(removal.text).toContain('::text[]');
+    expect(removal.text).toMatch(/\$\d+::text\[\]/);
+  });
+
+  // Delete, not merge. Swapping `-` for `||` is both an operator Postgres has no
+  // definition for at these operand types and the opposite meaning from the one this
+  // branch exists to express — and nothing above would notice the swap.
+  it('subtracts the key array from settings rather than concatenating it', async () => {
+    await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
+
+    const removal = statements[1];
+    expect(removal.text).toMatch(/settings\s*-\s*\$\d+::text\[\]/);
+    expect(removal.text).not.toContain('||');
   });
 });

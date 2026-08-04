@@ -125,6 +125,15 @@ export const useQueryCreatorShopReviewQueue = ({
     { enabled, getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
 
+// Everyone who has ever submitted a shop item — the option list for the review
+// queue's creator filter.
+export const useQueryCreatorShopReviewQueueCreators = (enabled = true) => {
+  const { data = [], ...rest } = trpc.creatorShop.getReviewQueueCreators.useQuery(undefined, {
+    enabled,
+  });
+  return { creators: data, ...rest };
+};
+
 export const useMutateCreatorShop = () => {
   const queryUtils = trpc.useUtils();
 

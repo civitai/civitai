@@ -33,7 +33,7 @@ const holder = vi.hoisted(() => ({ db: null as unknown as import('@electric-sql/
 
 // The gauge query does `await import('~/server/db/pgDb')` then `pgDbRead.connect()`, and uses only
 // `.query(sql)` / `.release()`. Bridge those onto PGlite so the production SQL runs unmodified.
-vi.mock('~/server/db/pgDb', () => ({
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbWrite: {}, 
   pgDbRead: {
     connect: async () => ({
       query: (sql: string) => holder.db.query(sql),

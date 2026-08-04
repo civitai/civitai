@@ -1,22 +1,45 @@
-import plugin from 'tailwindcss/plugin';
+// @ts-check
+//
+// `@ts-check` above is load-bearing, not decorative. tsconfig sets `allowJs: true`
+// but leaves `checkJs` unset, so a `.js` file under src/ is COMPILED BY tsc and
+// TYPE-CHECKED BY NOTHING — the JSDoc annotations below would be pure decoration
+// without it. Verified by mutation: injecting `(42).toUpperCase()` here is
+// invisible to `tsc --noEmit` when this directive is absent, and raises TS2339
+// when it is present. Do not remove it when editing this file.
+//
+// CommonJS on purpose. This plugin is loaded exclusively by `tailwind.config.js`, a
+// CJS module, via `require()`. Node's CJS resolver cannot resolve `.ts`, so authoring
+// this as TypeScript made a plain `require()` of the tailwind config throw — the whole
+// project theme then silently depended on the config being loaded by a TypeScript-aware
+// loader (tailwind's bundled jiti). Types are kept as JSDoc.
+// NOTE: no eslint-disable here on purpose. `.eslintignore` line 1 is `*.js`, so this
+// file is not linted at all and a suppression comment would be inert — documenting a
+// rule that never runs. If `*.js` is ever removed from `.eslintignore`, this `require`
+// will need `@typescript-eslint/no-var-requires` disabled.
+const plugin = require('tailwindcss/plugin');
 
-type VariantSortProps = {
-  value: string;
-  modifier: string | null;
-};
+/**
+ * @typedef {{ value: string; modifier: string | null }} VariantSortProps
+ */
 
-export default plugin(
+module.exports = plugin(
   function containerQueries({ matchUtilities, matchVariant, theme }) {
-    const values: Record<string, string> = theme('containers') ?? {};
+    /** @type {Record<string, string>} */
+    const values = theme('containers') ?? {};
 
-    function parseValue(value: string) {
+    /** @param {string} value */
+    function parseValue(value) {
       const numericValue = value.match(/^(\d+\.\d+|\d+|\.\d+)\D+/)?.[1] ?? null;
       if (numericValue === null) return null;
 
       return parseFloat(value);
     }
 
-    function sort(aVariant: VariantSortProps, zVariant: VariantSortProps) {
+    /**
+     * @param {VariantSortProps} aVariant
+     * @param {VariantSortProps} zVariant
+     */
+    function sort(aVariant, zVariant) {
       const a = parseFloat(aVariant.value);
       const z = parseFloat(zVariant.value);
 

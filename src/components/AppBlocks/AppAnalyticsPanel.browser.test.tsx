@@ -102,14 +102,96 @@ describe('AppAnalyticsPanel — top-N cards are humanised, not raw tokens', () =
     };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Generations')).toBeInTheDocument();
+    // Await the panel's always-rendered heading first, so a regression that stops
+    // rendering the table fails on an assertion below with a legible message rather
+    // than on a locator timeout here.
+    await expect.element(page.getByText('Top endpoints')).toBeInTheDocument();
+
+    // 🔴 `{ exact: true }` IS LOAD-BEARING, and its absence is what turned
+    // `preview / component-tests` red at this PR's audit-fix round.
+    //
+    // `getByText` is substring + case-insensitive, and the "Runs (range)" stat's own
+    // tooltip copy begins *"Generations run through your app within the selected
+    // range…"* (AppAnalyticsPanel.tsx). Mantine mounts that tooltip only while the
+    // pointer rests on the stat (hover-only), and vitest browser mode shares ONE
+    // browser page across every `.browser.test.tsx` file — so the pointer position
+    // left behind by an earlier file can already sit over the stat at mount. The
+    // locator then resolves to 2 elements and this dies with a strict-mode violation
+    // after the matcher timeout.
+    //
+    // 🔴 The failure mode is OSCILLATION, not a permanent red, which is worse:
+    // vitest's BaseSequencer sorts failed-first from a cache persisted on the preview
+    // workspace's reused volume, so a run where this file times out promotes it to
+    // run FIRST next time — pointer still at (0,0), nothing hovered, and it passes.
+    // Green on some PRs and red on others off the same base is the signature.
+    //
+    // 🔴 This collision was INTRODUCED by renaming the label. The previous value,
+    // 'Generation submits', does not substring-match that tooltip sentence; 'Generations'
+    // does. Verified by computation, not by eye. Same defect class as #3593.
+    const generationsRows = page.getByText('Generations', { exact: true }).elements();
+    expect(generationsRows).toHaveLength(1);
     await expect.element(page.getByText('App-local storage writes')).toBeInTheDocument();
-    // The raw tokens must not survive anywhere in the rendered output.
+    // The raw tokens must not survive anywhere in the rendered output. These stay
+    // SUBSTRING on purpose — that makes a negative assertion stronger, since
+    // `getByText('workflow:submit')` also catches a leaked `workflow:submit:wf_x`.
     expect(page.getByText('workflow:submit').elements()).toHaveLength(0);
     expect(page.getByText('storage:set').elements()).toHaveLength(0);
     // And must not have degraded to either Activity-panel labeller's output.
     expect(page.getByText('(no workflow id)').elements()).toHaveLength(0);
     expect(page.getByText('Generated an image').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 REGRESSION GUARD for the `{ exact: true }` above — reproduces the exact state that
+   * broke `preview / component-tests`, so reverting the anchor fails a test rather than
+   * merely contradicting a comment.
+   *
+   * The condition is: the "Runs (range)" stat's hover-only tooltip is MOUNTED (its copy
+   * begins "Generations run through your app…"), which a shared browser page can carry in
+   * from an earlier `.browser.test.tsx` file. Here it is produced deliberately by hovering
+   * the tooltip's real target.
+   *
+   * Note the target is the 14px `IconInfoCircle`, NOT the label — hovering the "Runs (range)"
+   * text does not mount it, which is why this never reproduced by hovering the obvious thing.
+   *
+   * Measured: with the tooltip mounted, `getByText('Generations')` (no anchor) resolves to 2
+   * elements and dies with `strict mode violation`; the anchored form resolves to 1.
+   */
+  test('the Generations label stays unambiguous even with the Runs tooltip mounted', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      engagement: {
+        ...ZEROED.engagement,
+        apiCalls: 245,
+        topEndpoints: [{ endpoint: 'workflow:submit', count: 245 }],
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('Top endpoints')).toBeInTheDocument();
+
+    // Park the pointer on the tooltip's target: the info icon inside the Runs stat.
+    const runsLabel = Array.from(document.querySelectorAll('*')).find(
+      (e) => e.textContent?.trim() === 'Runs (range)' && e.children.length === 0
+    );
+    let icon: Element | null = null;
+    let node: Element | null = runsLabel ?? null;
+    for (let i = 0; node && i < 5 && !icon; i++, node = node.parentElement) {
+      icon = node.querySelector('svg');
+    }
+    expect(icon, 'the Runs stat should have an info icon to hover').not.toBeNull();
+    await page.elementLocator(icon as Element).hover();
+
+    // 🔴 POSITIVE CONTROL, and it is what stops this test passing vacuously. If the hover
+    // silently stops working — a markup change, a Mantine upgrade, a renamed tooltip — the
+    // ambiguity below can no longer arise and the anchor assertion would pass while testing
+    // nothing. Fail loudly on that instead.
+    await expect
+      .element(page.getByText('Generations run through your app', { exact: false }))
+      .toBeInTheDocument();
+
+    // The whole point: with that tooltip mounted, the anchored locator still finds exactly
+    // one element. Drop `{ exact: true }` and this is a strict-mode violation.
+    expect(page.getByText('Generations', { exact: true }).elements()).toHaveLength(1);
   });
 
   test('a legacy tailed bucket keeps its tail so two such rows stay distinguishable', async () => {
