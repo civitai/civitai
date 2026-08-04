@@ -38,6 +38,9 @@ const ZEROED = {
   runs: { count: 0, buzzSpent: 0, series: [] },
   buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
   engagement: { apiCalls: 0, activeUsers: 0, errorRate: 0, topScopes: [], topEndpoints: [] },
+  // A genuinely-MEASURED zero: no `unavailable` key. The impression card
+  // branches on that key, so its absence here is meaningful, not filler.
+  views: { count: 0, uniqueViewers: 0, anonCount: 0, series: [] },
 };
 
 describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
@@ -72,6 +75,83 @@ describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
     await expect.element(page.getByText('Active installs')).toBeInTheDocument();
     await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
     expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * Impressions are the one card backed by ClickHouse rather than Postgres, so it
+ * has a failure mode none of the others do: the store can be unreachable while
+ * every neighbouring number is genuinely measured. Rendering "0" there is the
+ * fabricated zero #3557/#3581 fixed elsewhere — an author reads "nobody looked
+ * at my app" when the truth is "we did not ask".
+ *
+ * Locators are anchored with `{ exact: true }`: `getByText` is substring +
+ * case-insensitive in browser mode, and the card's own tooltip copy contains
+ * the word "views". Leaving them unanchored is exactly the strict-mode
+ * ambiguity civitai#3593 and civitai#3606 each had to unpick.
+ */
+describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
+  test('a measured impression count renders the number and the unique-viewer breakdown', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      views: { count: 124, uniqueViewers: 12, anonCount: 4, series: [] },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('124', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('12 unique viewers · 4 signed-out', { exact: true }))
+      .toBeInTheDocument();
+    expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('a measured ZERO renders 0 — it is a real answer, not an outage', async () => {
+    // ZEROED carries views without `unavailable`.
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
+    // Singular, and no signed-out clause when there are none.
+    await expect.element(page.getByText('0 unique viewers', { exact: true })).toBeInTheDocument();
+  });
+
+  test('an UNAVAILABLE impression read renders an em dash, never a zero', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      views: { count: 0, uniqueViewers: 0, anonCount: 0, series: [], unavailable: true },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    // 🔴 Assert the em dash ITSELF, not just the sub-line. Asserting only the
+    // sub-line lets the headline silently revert to `views.count` — i.e. a
+    // literal "0" above the words "Not measured right now" — and the test
+    // still passes. Measured: a mutation doing exactly that SURVIVED until
+    // this line existed.
+    await expect.element(page.getByText('—', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not measured right now', { exact: true }))
+      .toBeInTheDocument();
+    // The whole point: no fabricated count anywhere on the card.
+    expect(page.getByText('0 unique viewers', { exact: true }).elements()).toHaveLength(0);
+
+    // ...and the OTHER cards must still render. A ClickHouse outage degrades
+    // one card; flagging the whole payload would throw away good data.
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
+    await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
+    expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+
+  test('the coverage note no longer claims anonymous viewers are uncounted', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('What engagement counts')).toBeInTheDocument();
+    // That sentence was true before this card existed and is false now. A
+    // stale caveat is a claim the implementation contradicts.
+    expect(page.getByText(/anonymous viewers are not counted/i).elements()).toHaveLength(0);
   });
 });
 

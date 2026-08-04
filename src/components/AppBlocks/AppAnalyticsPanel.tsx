@@ -51,6 +51,19 @@ type AnalyticsData = {
     topScopes: Array<{ scope: string; count: number }>;
     topEndpoints: Array<{ endpoint: string; count: number }>;
   };
+  /**
+   * Impressions (`blockRenders`). `unavailable` is a PER-SECTION flag, unlike
+   * the payload-level one above: this is the only section read from ClickHouse,
+   * which can be down while every Postgres-derived number here is measured.
+   * When it is set the counters are placeholders — render an em dash, not a 0.
+   */
+  views: {
+    count: number;
+    uniqueViewers: number;
+    anonCount: number;
+    series: TimePoint[];
+    unavailable?: boolean;
+  };
 };
 
 type MyApp = {
@@ -249,7 +262,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
 
       {analytics && !unavailable && (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
             <MetricCard
               label="Active installs"
               value={analytics.installs.active.toLocaleString()}
@@ -276,6 +289,33 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               sub={`${analytics.engagement.apiCalls.toLocaleString()} API calls`}
               tooltip="Distinct signed-in users who made a scoped API call within the range. See the coverage note below."
             />
+            {/*
+              Impressions come from ClickHouse, which can be unconfigured or
+              down while every other card here is fine. Rendering a plain "0"
+              in that case is the fabricated-zero defect (#3557/#3581): the
+              author cannot tell "nobody looked" from "we never asked". So an
+              unavailable read renders an em dash, never a number.
+            */}
+            <MetricCard
+              label="Views (range)"
+              value={analytics.views.unavailable ? '—' : analytics.views.count.toLocaleString()}
+              sub={
+                analytics.views.unavailable
+                  ? 'Not measured right now'
+                  : `${analytics.views.uniqueViewers.toLocaleString()} unique viewer${
+                      analytics.views.uniqueViewers === 1 ? '' : 's'
+                    }${
+                      analytics.views.anonCount > 0
+                        ? ` · ${analytics.views.anonCount.toLocaleString()} signed-out`
+                        : ''
+                    }`
+              }
+              tooltip={
+                analytics.views.unavailable
+                  ? 'The impression store could not be read, so this is NOT a report of zero views. The other metrics on this page are unaffected.'
+                  : 'Times your app was loaded within the range, including by signed-out visitors. Unique viewers counts signed-in people once each; signed-out visitors are approximated by network address.'
+              }
+            />
           </SimpleGrid>
 
           <Alert
@@ -288,8 +328,9 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               Active users, API calls, and error rate reflect only{' '}
               <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
               (or one with no scoped API surface) will show installs and revenue but flat
-              engagement, and <strong>anonymous viewers are not counted</strong>. Installs, runs,
-              and Buzz figures are unaffected.
+              engagement. <strong>Views</strong> is the exception — it is measured on every load, so
+              it counts signed-out visitors and static blocks that the engagement figures cannot
+              see. Installs, runs, and Buzz figures are unaffected.
             </Text>
           </Alert>
 
