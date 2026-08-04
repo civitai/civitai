@@ -438,8 +438,16 @@ export function isResourcePolicyImplemented(policy: StepResourcePolicy): boolean
   return policy.kind === 'none';
 }
 
-/** The AIR URN scheme prefix. Lowercase; the scan lowercases its input. */
-const AIR_URN_PREFIX = 'urn:air:';
+/**
+ * The AIR URN scheme prefix. Lowercase; the scan lowercases its input.
+ *
+ * EXPORTED so the request-time rejection in `blocks.router.ts` can NAME the
+ * literal it matched on rather than restating it. That message is the only
+ * diagnostic an app author gets for a bounced submit, and a hardcoded second
+ * copy of this string would eventually name a literal the scan no longer uses —
+ * a diagnostic that is confidently wrong is worse than none.
+ */
+export const AIR_URN_PREFIX = 'urn:air:';
 
 /**
  * Recursion budget for {@link containsAirReference}.
