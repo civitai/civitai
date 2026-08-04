@@ -22,8 +22,16 @@ type InlineAnalytics = {
  * /apps/revenue dashboard panel runs) with a 30-day `from`; no new analytics
  * surface is built.
  *
- * Caveat (informational): runs/active-users undercount anonymous / no-scope
- * runs until the render-event instrumentation (#2695) deploys.
+ * Caveat (informational): both figures shown HERE undercount anonymous /
+ * no-scope activity, but for DIFFERENT reasons — do not collapse them into one
+ * claim (an earlier version of this comment named the wrong table for `runs`).
+ * `runs` comes from `block_spend_attribution`, one row per AUTHENTICATED
+ * generation submitted through the app — note a zero-cost run (cache hit,
+ * free gen) still writes a row, so this is "submits", not "spent Buzz".
+ * `activeUsers` comes from `block_scope_invocations`, written only on
+ * authenticated, scope-gated calls. The render-event instrumentation (#2695) has since
+ * SHIPPED; this inline stat deliberately does not read it. The "App loads"
+ * figure that does is inside the panel this button opens.
  */
 export function AppAnalyticsInline({
   appBlockId,
@@ -69,7 +77,7 @@ export function AppAnalyticsInline({
         </Tooltip>
       ) : data ? (
         <Tooltip
-          label="Runs and unique users in the last 30 days. Anonymous / no-scope runs are undercounted until render-event tracking ships."
+          label="Generations run through your app, and unique users making scoped API calls, in the last 30 days. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
           multiline
           maw={260}
           withinPortal
@@ -104,12 +112,7 @@ export function AppAnalyticsInline({
           Analytics
         </Group>
       </Anchor>
-      <Modal
-        opened={opened}
-        onClose={close}
-        title={`Analytics — ${appLabel}`}
-        size="xl"
-      >
+      <Modal opened={opened} onClose={close} title={`Analytics — ${appLabel}`} size="xl">
         {opened && <AppAnalyticsPanel scopedAppBlockId={appBlockId} />}
       </Modal>
     </Group>

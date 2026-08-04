@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
 
 /**
  * App Blocks — author-facing analytics (Phase 0).
@@ -90,6 +91,17 @@ export type AppAnalytics = {
     /** Top endpoints by call volume. */
     topEndpoints: Array<{ endpoint: string; count: number }>;
   };
+  /**
+   * Impressions from the `blockRenders` ClickHouse table — the ONLY signal
+   * that covers the viewers `engagement` structurally cannot see (anonymous
+   * viewers, and static / no-scope blocks that never make a scoped API call).
+   *
+   * This is the one section NOT derived from Postgres, so it carries its own
+   * `unavailable` flag: ClickHouse can be unconfigured or down while every
+   * other counter in this payload is genuinely measured. See
+   * `./app-views.service`.
+   */
+  views: AppViews;
 };
 
 export function emptyAnalytics(
@@ -111,6 +123,12 @@ export function emptyAnalytics(
       topScopes: [],
       topEndpoints: [],
     },
+    // Mirror the payload's own honesty: when `unavailable` is set nothing was
+    // queried (notEntitled / notOwned), so the impression zeros are a
+    // placeholder too. When it is NOT set the caller simply owns no apps —
+    // that is a truthful measured zero, and flagging it would train clients to
+    // ignore the flag.
+    views: unavailable ? unavailableViews() : emptyViews(),
   };
 }
 
@@ -206,6 +224,7 @@ export async function getMyAppAnalytics({
     errorCount,
     topScopes,
     topEndpoints,
+    views,
   ] = await Promise.all([
     // INSTALLS — block_user_subscriptions. Total & active are all-time
     // (an author cares about their current install base), the series is
@@ -283,6 +302,13 @@ export async function getMyAppAnalytics({
       orderBy: { _count: { endpoint: 'desc' } },
       take: 5,
     }),
+
+    // IMPRESSIONS — blockRenders (ClickHouse). The only non-Postgres read
+    // here; it never throws and is time-bounded, degrading to `unavailable`
+    // instead, so neither a ClickHouse outage NOR a slow ClickHouse can take
+    // down the whole panel. (It is bounded rather than merely try/caught
+    // because this Promise.all is on a per-app-row fan-out path.)
+    getAppViews({ appBlockIds: ownedIds, from: range.from, to: range.to }),
   ]);
 
   const apiCalls = invocationsAgg;
@@ -326,5 +352,6 @@ export async function getMyAppAnalytics({
         count: r._count,
       })),
     },
+    views,
   };
 }

@@ -38,6 +38,9 @@ const ZEROED = {
   runs: { count: 0, buzzSpent: 0, series: [] },
   buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
   engagement: { apiCalls: 0, activeUsers: 0, errorRate: 0, topScopes: [], topEndpoints: [] },
+  // A genuinely-MEASURED zero: no `unavailable` key. The impression card
+  // branches on that key, so its absence here is meaningful, not filler.
+  views: { count: 0, uniqueViewers: 0, anonCount: 0 },
 };
 
 describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
@@ -72,6 +75,162 @@ describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
     await expect.element(page.getByText('Active installs')).toBeInTheDocument();
     await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
     expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * Impressions are the one card backed by ClickHouse rather than Postgres, so it
+ * has a failure mode none of the others do: the store can be unreachable while
+ * every neighbouring number is genuinely measured. Rendering "0" there is the
+ * fabricated zero #3557/#3581 fixed elsewhere — an author reads "nobody looked
+ * at my app" when the truth is "we did not ask".
+ *
+ * Locators are anchored with `{ exact: true }`: `getByText` is substring +
+ * case-insensitive in browser mode, and the card's own tooltip copy contains
+ * the word "views". Leaving them unanchored is exactly the strict-mode
+ * ambiguity civitai#3593 and civitai#3606 each had to unpick.
+ */
+describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
+  test('a measured impression count renders the number and the unique-viewer breakdown', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('124', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('12 unique viewers · 40 signed-out loads', { exact: true }))
+      .toBeInTheDocument();
+    expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('a measured ZERO renders 0 — it is a real answer, not an outage', async () => {
+    // ZEROED carries views without `unavailable`.
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
+    // Singular, and no signed-out clause when there are none.
+    await expect.element(page.getByText('0 unique viewers', { exact: true })).toBeInTheDocument();
+  });
+
+  test('an UNAVAILABLE impression read renders an em dash, never a zero', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      views: { count: 0, uniqueViewers: 0, anonCount: 0, unavailable: true },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    // 🔴 Assert the em dash ITSELF, not just the sub-line. Asserting only the
+    // sub-line lets the headline silently revert to `views.count` — i.e. a
+    // literal "0" above the words "Not measured right now" — and the test
+    // still passes. Measured: a mutation doing exactly that SURVIVED until
+    // this line existed.
+    await expect.element(page.getByText('—', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not measured right now', { exact: true }))
+      .toBeInTheDocument();
+    // The whole point: no fabricated count anywhere on the card.
+    expect(page.getByText('0 unique viewers', { exact: true }).elements()).toHaveLength(0);
+
+    // ...and the OTHER cards must still render. A ClickHouse outage degrades
+    // one card; flagging the whole payload would throw away good data.
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
+    await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
+    expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+
+  test('an ABSENT views section (old pod, rolling deploy) renders unknown, not zero', async () => {
+    // tRPC output is not zod-validated on the client, so during a rollout a new
+    // bundle can receive a payload from an old pod with no `views` key at all.
+    // Two failure modes to exclude: an unguarded read throwing in render (the
+    // panel would show nothing at all), and the absent section decoding as a
+    // measured zero — the fabricated zero, one level down from `notOwned`.
+    const { views: _omitted, ...withoutViews } = ZEROED;
+    mocks.analytics.current = withoutViews;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    // Rendering at all proves there was no TypeError.
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('—', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not measured right now', { exact: true }))
+      .toBeInTheDocument();
+    expect(page.getByText('0 unique viewers', { exact: true }).elements()).toHaveLength(0);
+    // Everything the old pod DID send is real and must still render.
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
+  });
+
+  test('every container breakpoint is a real CSS length, not a theme key name', async () => {
+    /*
+     * Regression guard for a defect that shipped and was inert-by-default.
+     *
+     * Mantine's SimpleGrid `type="container"` branch interpolates the `cols`
+     * KEY verbatim into the query — `simple-grid (min-width: ${key})` — while
+     * the `media` branch resolves `theme.breakpoints[key]`. So `{ sm: 2 }` in
+     * container mode emits `(min-width: sm)`, which is not a valid <length>;
+     * the query never matches and EVERY width silently falls back to `base`,
+     * i.e. one column everywhere. Measured: named keys rendered 1 column at
+     * 1400px where lengths render 5.
+     *
+     * It reads as a pure styling nit, so it is worth saying why it is pinned:
+     * the failure is invisible in this tier (no Mantine stylesheet is loaded,
+     * so `grid-template-columns` computes to `none` and any layout assertion
+     * would pass either way) AND invisible in review (the diff looks like a
+     * normal responsive prop). Asserting on the emitted QUERY TEXT is the one
+     * check that can see it, and it needs no stylesheet.
+     */
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+
+    const styles = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n');
+    const queries = Array.from(new Set(styles.match(/@container[^{]*/g) ?? []));
+
+    // Pin the EXACT set, not a lower bound. `toBeGreaterThan(1)` had far too
+    // much slack: reverting only the METRIC grid to named keys — reintroducing
+    // precisely the modal squeeze this exists to prevent — still left the two
+    // chart grids emitting `62em`, so the count stayed at 2 and the test
+    // passed. Only an all-three revert tripped it. An exact set catches a
+    // partial revert, and doubles as the positive control: if the panel stops
+    // emitting container queries at all (someone reverts to `type="media"`, or
+    // Mantine changes how it serialises them) this fails loudly rather than
+    // passing over an empty set.
+    expect(new Set(queries)).toEqual(
+      new Set([
+        '@container simple-grid (min-width: base)',
+        '@container simple-grid (min-width: 48em)',
+        '@container simple-grid (min-width: 62em)',
+        '@container simple-grid (min-width: 75em)',
+      ])
+    );
+
+    for (const q of queries) {
+      const value = q.match(/min-width:\s*([^)]+)\)/)?.[1]?.trim();
+      expect(value, `no min-width parsed from ${q}`).toBeDefined();
+      // `base` is Mantine's own sentinel — its value is applied unconditionally
+      // via baseStyles, so that one never-matching query is a harmless no-op.
+      if (value === 'base') continue;
+      expect(value, `"${value}" is not a CSS length — container queries need units`).toMatch(
+        /^\d+(\.\d+)?(em|rem|px)$/
+      );
+    }
+  });
+
+  test('the coverage note no longer claims anonymous viewers are uncounted', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('What engagement counts')).toBeInTheDocument();
+    // That sentence was true before this card existed and is false now. A
+    // stale caveat is a claim the implementation contradicts.
+    expect(page.getByText(/anonymous viewers are not counted/i).elements()).toHaveLength(0);
   });
 });
 
