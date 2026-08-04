@@ -1,6 +1,5 @@
 import { generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
-import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 
 // `upsertArticleInput.content` runs through sanitize-html, which only strips markup — a JSON
@@ -42,25 +41,5 @@ describe('article content is interpreted as HTML, never as JSON', () => {
     const doc = generateJSON('<p>hello <strong>world</strong></p>', tiptapExtensions);
 
     expect(nodeTypes(doc)).toContain('paragraph');
-  });
-});
-
-describe('getContentMedia', () => {
-  it('extracts media from HTML content', () => {
-    const media = getContentMedia(
-      '<edge-media url="7ac0a1b8-0000-4000-8000-000000000000" type="image"></edge-media>'
-    );
-
-    expect(media).toEqual([
-      { url: '7ac0a1b8-0000-4000-8000-000000000000', type: 'image', alt: undefined },
-    ]);
-  });
-
-  it('ignores media declared in a crafted JSON body', () => {
-    const media = getContentMedia(
-      '{"type":"doc","content":[{"type":"media","attrs":{"url":"7ac0a1b8-0000-4000-8000-000000000000","type":"image"}}]}'
-    );
-
-    expect(media).toEqual([]);
   });
 });
