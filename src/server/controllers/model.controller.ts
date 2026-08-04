@@ -115,6 +115,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getLatestModelAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -141,7 +142,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
-import { filterModelMetaForClient, isMinorAutoFlagged } from '~/server/utils/minor-flag-meta';
+import { filterModelMetaForClient, resolveMinorFlagged } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -514,12 +515,14 @@ export const getModelHandler = async ({
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
-      // Computed from the raw meta: filterModelMetaForClient strips the snapshot.
-      // Owner-only: this is a publicProcedure, and whether a flag came from automation
-      // or a human is not a visitor's business. `model.minor` keeps it in step with an
-      // ordinary unflag, which leaves the snapshot behind.
-      minorAutoFlagged:
-        !!isOwner && !!model.minor && isMinorAutoFlagged(model.meta as ModelMeta | null),
+      // Owner-only: this is a publicProcedure, and whether a model is flagged
+      // (and by whom) is not a visitor's business.
+      minorFlagged: resolveMinorFlagged({
+        isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      minorAppeal: isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null,
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,

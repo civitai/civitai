@@ -7,6 +7,20 @@ export function isMinorAutoFlagged(meta: ModelMeta | null | undefined): boolean 
   return (snapshot.confirmedFrom ?? snapshot.source) === 'auto';
 }
 
+// The ~13.7k pre-feature flags carry no minorFlagSnapshot; they stay on the
+// support-contact path instead of the appeal flow until backfilled.
+export function resolveMinorFlagged({
+  isOwner,
+  minor,
+  meta,
+}: {
+  isOwner: boolean | null | undefined;
+  minor: boolean | null | undefined;
+  meta: ModelMeta | null | undefined;
+}): boolean {
+  return !!isOwner && !!minor && !!meta?.minorFlagSnapshot;
+}
+
 // Written by the minor-hash service and never safe to expose: the snapshot carries
 // prevMinorImageIds, and the dismissal/clear stamps describe moderator decisions.
 // The single definition of which meta keys are secret — everything that hands a

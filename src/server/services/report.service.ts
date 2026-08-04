@@ -465,6 +465,14 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
+export function getLatestModelAppeal(modelId: number, userId: number) {
+  return dbRead.appeal.findFirst({
+    where: { entityType: EntityType.Model, entityId: modelId, userId },
+    orderBy: { createdAt: 'desc' },
+    select: { status: true, resolvedAt: true },
+  });
+}
+
 export function getAppealCount({
   userId,
   status,

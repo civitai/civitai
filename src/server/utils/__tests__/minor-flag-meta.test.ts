@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterModelMetaForClient,
   isMinorAutoFlagged,
+  resolveMinorFlagged,
   stripMinorHashMeta,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
@@ -121,6 +122,27 @@ describe('filterModelMetaForClient', () => {
     const input: ModelMeta = { minorFlagSnapshot: snapshot() };
     filterModelMetaForClient(input, false);
     expect(input.minorFlagSnapshot).toBeDefined();
+  });
+});
+
+describe('resolveMinorFlagged', () => {
+  const flagged = {
+    minor: true,
+    meta: { minorFlagSnapshot: { source: 'manual', at: '2026-08-01' } },
+  };
+
+  it('is false for a visitor even when the model is flagged', () => {
+    expect(resolveMinorFlagged({ isOwner: false, ...flagged })).toBe(false);
+  });
+
+  // Seb's feedback: a moderator's manual Set-as-Minor was invisible to the owner.
+  it('is true for the owner of a manually flagged model', () => {
+    expect(resolveMinorFlagged({ isOwner: true, ...flagged })).toBe(true);
+  });
+
+  // The ~13.7k pre-feature flags carry no snapshot and stay on the support path.
+  it('is false for a legacy flag with no snapshot', () => {
+    expect(resolveMinorFlagged({ isOwner: true, minor: true, meta: {} })).toBe(false);
   });
 });
 
