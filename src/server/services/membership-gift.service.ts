@@ -2,6 +2,8 @@ import type { Stripe } from 'stripe';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { membershipGiftReceivedEmail } from '~/server/email/templates/membershipGiftReceived.email';
+import { membershipGiftSentEmail } from '~/server/email/templates/membershipGiftSent.email';
 import { logToAxiom } from '~/server/logging/client';
 import type {
   CreateMembershipGiftCheckoutInput,
@@ -223,7 +225,7 @@ export async function fulfillMembershipGift({
   const gift = await dbWrite.membershipGift.findUnique({
     where: { id: giftId },
     include: {
-      gifter: { select: { id: true, username: true } },
+      gifter: { select: { id: true, username: true, email: true } },
       recipient: { select: { id: true, username: true, email: true } },
     },
   });
@@ -372,6 +374,46 @@ export async function fulfillMembershipGift({
       to: gift.recipient.username,
     },
   });
+
+  // Mail is best-effort: the gift is already applied, and throwing here would make the
+  // Stripe webhook retry a fulfillment that's done.
+  const sendGiftEmail = (label: string, send: () => Promise<void>) =>
+    send().catch((error) =>
+      log({
+        type: 'error',
+        stage: 'fulfillment-email',
+        giftId: gift.id,
+        message: `Failed to send ${label} email: ${String(error)}`,
+      })
+    );
+
+  const recipientEmail = gift.recipient.email;
+  if (recipientEmail) {
+    await sendGiftEmail('membership-gift-received', () =>
+      membershipGiftReceivedEmail.send({
+        to: recipientEmail,
+        username: gift.recipient.username ?? 'there',
+        tier: gift.tier,
+        months: gift.months,
+        from: gift.anonymous ? null : gift.gifter.username,
+        message: gift.message,
+      })
+    );
+  }
+
+  const gifterEmail = gift.gifter.email;
+  if (gifterEmail) {
+    await sendGiftEmail('membership-gift-sent', () =>
+      membershipGiftSentEmail.send({
+        to: gifterEmail,
+        username: gift.gifter.username ?? 'there',
+        tier: gift.tier,
+        months: gift.months,
+        recipient: gift.recipient.username,
+        anonymous: gift.anonymous,
+      })
+    );
+  }
 
   await log({
     type: 'info',

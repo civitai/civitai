@@ -1,60 +1,69 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dayjs from 'dayjs';
 
-const { mockDbWrite, mockStripe, mockCreateCustomer, mockGetPlans, mockCreateNotification } =
-  vi.hoisted(() => {
-    const mockMembershipGift = {
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      findMany: vi.fn(),
-    };
-    const mockCustomerSubscription = {
-      findUnique: vi.fn(),
-    };
-    const mockUser = {
-      findUnique: vi.fn(),
-    };
+const {
+  mockDbWrite,
+  mockStripe,
+  mockCreateCustomer,
+  mockGetPlans,
+  mockCreateNotification,
+  mockSendReceivedEmail,
+  mockSendSentEmail,
+} = vi.hoisted(() => {
+  const mockMembershipGift = {
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    findMany: vi.fn(),
+  };
+  const mockCustomerSubscription = {
+    findUnique: vi.fn(),
+  };
+  const mockUser = {
+    findUnique: vi.fn(),
+  };
 
-    return {
-      mockDbWrite: {
-        membershipGift: mockMembershipGift,
-        customerSubscription: mockCustomerSubscription,
-        user: mockUser,
+  return {
+    mockDbWrite: {
+      membershipGift: mockMembershipGift,
+      customerSubscription: mockCustomerSubscription,
+      user: mockUser,
+    },
+    mockStripe: {
+      subscriptions: {
+        retrieve: vi.fn(),
+        update: vi.fn(),
+        create: vi.fn(),
+        del: vi.fn(),
+        deleteDiscount: vi.fn(),
       },
-      mockStripe: {
-        subscriptions: {
-          retrieve: vi.fn(),
-          update: vi.fn(),
+      coupons: {
+        create: vi.fn(),
+        retrieve: vi.fn(),
+        del: vi.fn(),
+      },
+      checkout: {
+        sessions: {
           create: vi.fn(),
-          del: vi.fn(),
-          deleteDiscount: vi.fn(),
-        },
-        coupons: {
-          create: vi.fn(),
-          retrieve: vi.fn(),
-          del: vi.fn(),
-        },
-        checkout: {
-          sessions: {
-            create: vi.fn(),
-          },
-        },
-        billingPortal: {
-          sessions: {
-            create: vi.fn(),
-          },
-        },
-        paymentMethods: {
-          list: vi.fn(),
         },
       },
-      mockCreateCustomer: vi.fn().mockResolvedValue('cus_recipient'),
-      mockGetPlans: vi.fn(),
-      mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-    };
-  });
+      billingPortal: {
+        sessions: {
+          create: vi.fn(),
+        },
+      },
+      paymentMethods: {
+        list: vi.fn(),
+      },
+    },
+    mockCreateCustomer: vi.fn().mockResolvedValue('cus_recipient'),
+    mockGetPlans: vi.fn(),
+    mockCreateNotification: vi.fn().mockResolvedValue(undefined),
+    mockSendReceivedEmail: vi.fn().mockResolvedValue(undefined),
+    mockSendSentEmail: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
@@ -75,6 +84,14 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
+}));
+
+vi.mock('~/server/email/templates/membershipGiftReceived.email', () => ({
+  membershipGiftReceivedEmail: { send: mockSendReceivedEmail },
+}));
+
+vi.mock('~/server/email/templates/membershipGiftSent.email', () => ({
+  membershipGiftSentEmail: { send: mockSendSentEmail },
 }));
 
 vi.mock('~/server/utils/subscription.utils', () => ({
@@ -130,7 +147,7 @@ const baseGift = {
   stripePaymentIntentId: 'pi_1',
   stripeCouponId: null,
   stripeSubscriptionId: null,
-  gifter: { id: 1, username: 'gifter' },
+  gifter: { id: 1, username: 'gifter', email: 'g@x.com' },
   recipient: { id: 2, username: 'recipient', email: 'r@x.com' },
 };
 
@@ -315,6 +332,74 @@ describe('fulfillMembershipGift', () => {
     const result = await fulfillMembershipGift({ giftId: 'gift_1' });
     expect(result).toEqual({ alreadyProcessed: true });
     expect(mockStripe.coupons.create).not.toHaveBeenCalled();
+    expect(mockSendReceivedEmail).not.toHaveBeenCalled();
+    expect(mockSendSentEmail).not.toHaveBeenCalled();
+  });
+
+  it('emails both parties on fulfillment', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      message: 'Enjoy!',
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(activeMonthlySub);
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeActiveSub());
+
+    await fulfillMembershipGift({ giftId: 'gift_1' });
+
+    expect(mockSendReceivedEmail).toHaveBeenCalledWith({
+      to: 'r@x.com',
+      username: 'recipient',
+      tier: 'gold',
+      months: 3,
+      from: 'gifter',
+      message: 'Enjoy!',
+    });
+    expect(mockSendSentEmail).toHaveBeenCalledWith({
+      to: 'g@x.com',
+      username: 'gifter',
+      tier: 'gold',
+      months: 3,
+      recipient: 'recipient',
+      anonymous: false,
+    });
+  });
+
+  it('omits the gifter name from the recipient email for anonymous gifts', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...baseGift, anonymous: true });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(activeMonthlySub);
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeActiveSub());
+
+    await fulfillMembershipGift({ giftId: 'gift_1' });
+
+    expect(mockSendReceivedEmail).toHaveBeenCalledWith(expect.objectContaining({ from: null }));
+    expect(mockSendSentEmail).toHaveBeenCalledWith(expect.objectContaining({ anonymous: true }));
+  });
+
+  it('still fulfills when an email fails to send', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...baseGift });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(activeMonthlySub);
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeActiveSub());
+    mockSendReceivedEmail.mockRejectedValueOnce(new Error('smtp down'));
+
+    const result = await fulfillMembershipGift({ giftId: 'gift_1' });
+
+    expect(result).toMatchObject({ fulfilled: true });
+    expect(mockSendSentEmail).toHaveBeenCalled();
+  });
+
+  it('skips emails for users without an address', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      gifter: { ...baseGift.gifter, email: null },
+      recipient: { ...baseGift.recipient, email: null },
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(activeMonthlySub);
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeActiveSub());
+
+    await fulfillMembershipGift({ giftId: 'gift_1' });
+
+    expect(mockSendReceivedEmail).not.toHaveBeenCalled();
+    expect(mockSendSentEmail).not.toHaveBeenCalled();
   });
 
   it('extends an active monthly subscription with a 100%-off repeating coupon', async () => {
