@@ -288,9 +288,9 @@ export type QueryScopeResult = { ok: true } | { ok: false; error: string };
  *     any bare/unquoted relation name — including `information_schema` and the
  *     `pg_*` catalog. Relation position accepts a double-quoted identifier, an
  *     opening paren, a `SELECT` (reserved, so never a relation name), or a
- *     `VALUES` at the head of a paren that stood in relation position —
- *     nothing else. `VALUES` is unreserved and so is accepted ONLY in that
- *     position; a bare `FROM values` is a relation reference and is refused.
+ *     `VALUES` that is immediately followed by `(` — nothing else. `VALUES` is
+ *     unreserved, so a bare `FROM values` is a relation reference and is
+ *     refused; only the `VALUES (` clause form is a sub-query.
  *   - `FROM` used as function-call syntax: `EXTRACT(EPOCH FROM col)`,
  *     `SUBSTRING(x FROM 1)`, `TRIM(BOTH ' ' FROM x)`. These read as a relation
  *     position and are rejected. Rewrite with `date_part(...)` / `substr(...)`
@@ -311,44 +311,33 @@ export function checkQueryScope(sql: string): QueryScopeResult {
   const { tokens } = tokenized;
   /** `fromListAtDepth[d]` — is a `FROM` list currently open at paren depth d? */
   const fromListAtDepth: boolean[] = [];
-  /**
-   * `parenHeadAtDepth[d]` — the paren opening depth d stood in relation
-   * position, and its first relation-position token has not been read yet.
-   * Only `VALUES` needs this; see the `values` branch below.
-   */
-  const parenHeadAtDepth: boolean[] = [];
   let depth = 0;
   let expectRelation = false;
 
-  for (const token of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
     if (token.kind === 'punct' && token.value === '(') {
       depth++;
       // A paren in relation position is EITHER a sub-query (`FROM (SELECT …)`,
       // `FROM (VALUES …)`) or a parenthesized joined_table
       // (`FROM ("A" JOIN "B" ON …)`), whose FIRST item is itself a relation.
-      // Carry the expectation inward so that leading relation is still checked;
-      // the `SELECT`/`VALUES` below is what marks the sub-query and clears it.
+      // Carry the expectation inward so that leading relation is still checked.
       // Clearing unconditionally here would let a joined_table's first relation
       // through unchecked.
-      parenHeadAtDepth[depth] = expectRelation;
       continue;
     }
 
     if (token.kind === 'punct' && token.value === ')') {
       fromListAtDepth[depth] = false;
-      parenHeadAtDepth[depth] = false;
       depth = Math.max(0, depth - 1);
       expectRelation = false;
       continue;
     }
 
     if (expectRelation) {
-      // `LATERAL` sits between the keyword and the relation itself, so it is
-      // not the relation-position token and must not consume the paren head.
+      // `LATERAL` sits between the keyword and the relation itself.
       if (token.kind === 'ident' && token.value === 'lateral') continue;
-
-      const atParenHead = parenHeadAtDepth[depth];
-      parenHeadAtDepth[depth] = false;
 
       // `SELECT` in relation position means a sub-query rather than a
       // joined_table, so it resolves the expectation instead of failing it. It
@@ -359,13 +348,27 @@ export function checkQueryScope(sql: string): QueryScopeResult {
         expectRelation = false;
         continue;
       }
-      // `VALUES` is UNRESERVED (`catcode = 'C'`) — `CREATE TABLE values (…)` is
-      // legal, so a bare `values` CAN be a real relation name and must not be
-      // waved through on the strength of the word alone. It is a from_item only
-      // as the head of a parenthesized sub-query (`FROM (VALUES …)`); bare
-      // `FROM VALUES (1)` is a syntax error. Gate it on exactly that position,
-      // so `FROM values` and `FROM ("User" JOIN values ON …)` stay refused.
-      if (atParenHead && token.kind === 'ident' && token.value === 'values') {
+      // `VALUES` is UNRESERVED (`catcode = 'C'`), so `CREATE TABLE values (…)`
+      // is legal and a bare `values` here CAN be a real relation reference. The
+      // word alone therefore decides nothing; the NEXT token does, and it is an
+      // exact one-token discriminator in both directions:
+      //   - a VALUES *clause* is always immediately followed by `(`
+      //     (`VALUES (1), (2)`), and
+      //   - a relation named `values` never can be — `FROM values (id)` and
+      //     `FROM values(1)` are both syntax errors, because a `C`-category
+      //     keyword cannot be a function name. Only `FROM values v (id)` parses,
+      //     and there an alias sits in between.
+      // So `FROM values`, `FROM "User" u, values v` and
+      // `FROM (values v JOIN "User" u ON …)` all stay refused as the relation
+      // references they are, at any nesting depth.
+      const next = tokens[i + 1];
+      if (
+        token.kind === 'ident' &&
+        token.value === 'values' &&
+        next !== undefined &&
+        next.kind === 'punct' &&
+        next.value === '('
+      ) {
         expectRelation = false;
         continue;
       }

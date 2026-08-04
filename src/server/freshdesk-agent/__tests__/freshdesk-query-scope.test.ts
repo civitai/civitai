@@ -69,6 +69,11 @@ describe('checkQueryScope — statements it confirms', () => {
     ],
     ['an inline VALUES list in the FROM list', 'SELECT x FROM (VALUES (1), (2)) AS t(x)'],
     [
+      'a LATERAL sub-select, whose keyword sits between JOIN and the relation',
+      'SELECT * FROM "User" u, LATERAL (SELECT 1) s',
+    ],
+    ['a LATERAL inline VALUES list', 'SELECT * FROM "User" u, LATERAL (VALUES (1)) AS t(x)'],
+    [
       'an inline VALUES list joined to an allowed table',
       'SELECT * FROM (VALUES (1)) AS t(x) JOIN "User" u ON u.id = t.x',
     ],
@@ -199,6 +204,27 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     ['bare, reached through a join', 'SELECT * FROM "User" u JOIN values v ON true'],
     ['bare, case-folded', 'SELECT * FROM VaLuEs'],
     ['bare, in a sub-select', 'SELECT * FROM "User" WHERE id IN (SELECT id FROM values)'],
+    // The head item of the outer paren is itself a parenthesized group, so a
+    // position-tracking gate can leave a stale "this is the head" state behind
+    // and wave the later join through. The discriminator is the next token, not
+    // the position, so these must refuse at any nesting depth.
+    ['bare, after a nested sub-query head', 'SELECT * FROM ((SELECT 1) s JOIN values v ON true)'],
+    [
+      'bare, after a nested join head',
+      'SELECT * FROM (("User" u JOIN "Image" i ON true) JOIN values v ON true)',
+    ],
+    [
+      'bare, after a LATERAL nested head',
+      'SELECT * FROM (LATERAL (SELECT 1) s JOIN values v ON true)',
+    ],
+    // `values` LEADING a parenthesized joined_table is a relation reference too:
+    // it is followed by an alias, never by `(`.
+    // The next token here is a QUOTED identifier whose text happens to be `(`
+    // (a legal, if perverse, alias). Only the token's kind separates it from a
+    // real `VALUES (` clause.
+    ['bare, aliased with a quoted paren', 'SELECT * FROM values "("'],
+    ['bare, leading a parenthesized CROSS JOIN', 'SELECT * FROM (values v CROSS JOIN "User" u)'],
+    ['bare, leading a parenthesized join', 'SELECT * FROM (values v JOIN "User" u ON true) x'],
   ])('refuses `values` used as a relation name — %s', (_label, sql) => {
     expect(checkQueryScope(sql).ok).toBe(false);
   });
