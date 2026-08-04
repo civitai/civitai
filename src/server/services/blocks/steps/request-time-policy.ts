@@ -917,9 +917,10 @@ export function postureForTextSurface(surface: StepTextSurface): StepModerationP
  * 🔴 "GUARD" NAMES THE ROLE AFTER THE PIVOT, NOT WHAT RUNS TODAY — READ THIS
  * BEFORE CONCLUDING ANYTHING IS REDUNDANT WITH IT. Nothing on the request path
  * calls this function, or either of the other two guards. Enumerated over
- * `src/**`, not sampled: the only non-test importers of this module are
- * `./index` (a doc reference) and `./moderation`, and `./moderation` imports
- * exactly two names — `assertRegistryEntryAgreesWithPolicy` and
+ * `src/**`, not sampled: outside `__tests__/`, the ONLY file that imports this
+ * module is `./moderation` (`./index` names it in prose only — an actual import
+ * would be the cycle `./moderation` was created to avoid), and `./moderation`
+ * imports exactly two names — `assertRegistryEntryAgreesWithPolicy` and
  * `assertPolicyAgreesWithRegistryMap`, both defined below, both invoked at
  * `./moderation`'s MODULE LOAD. Those two are this guard's only live callers.
  *
@@ -998,9 +999,12 @@ export function requiredPostureForSubmittedType(
  * guards 1 and 3. Neither load-time assert calls it; outside `__tests__/` its
  * only caller is `evaluateSubmittedStep`, which itself has no production caller.
  * It is exercised by tests only until the pivot wires it in. See GUARD 1's note
- * for the enumeration. The entitlement scan that DOES run on live submits is the
- * registry's own clause-7 load probe plus the router's re-assert, both of which
- * call the same `containsAirReference` helper.
+ * for the enumeration. What DOES gate entitlement on a LIVE submit is the
+ * router's re-assert in `blocks.router.ts`'s step submit branch (it throws a
+ * `TRPCError`, so it is request-time); the registry's clause-7 probe runs at
+ * module LOAD, over canonical params only. Both call the same
+ * `containsAirReference` helper this function calls — do not read this
+ * function's dormancy as an unguarded entitlement path.
  */
 export function screenSubmittedStepResources(submitted: {
   orchestratorType: string;
@@ -1094,7 +1098,9 @@ export type SubmittedStepDecision = {
  * it at module load.
  *
  * 🔴 NO PRODUCTION CALLER TODAY — INCLUDING NOT AT LOAD. Enumerated over
- * `src/**`: every reference outside this file is in `__tests__/`. The registry
+ * `src/**`: every CALL outside this file is in `__tests__/`; the only other
+ * mention anywhere is a prose reference in `./index`, which does not import this
+ * module at all. The registry
  * path reaches this module through the two `assert*` functions below, which call
  * guards 1 and 3 directly and never call this composite — which is why GUARD 2
  * (`screenSubmittedStepResources`) has no live caller at all. That is the
