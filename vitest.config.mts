@@ -77,6 +77,19 @@ export default defineConfig({
           // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
           // 60s absorbs that contention while still bounding a genuine hang (these are
           // mocked-I/O tests; nothing should legitimately approach a minute).
+          //
+          // 🔴 But do NOT treat this ceiling as the place to solve that cost. A cold
+          // `await import(...)` reached from a TEST BODY is charged to that ONE test's
+          // budget, so the file's whole transform lands inside a single 60s clock:
+          // get-models-raw.transient-503 spent 99.9% of its runtime in one test that
+          // way (2726ms of a 2730ms file under a 4-CPU quota) and went red purely on
+          // ambient runner speed. Hoist the import to MODULE SCOPE instead — `vi.mock`
+          // is hoisted above imports, so the mocks still apply, and the transform then
+          // lands in Vitest's COLLECTION phase, which no timeout bounds (Vitest has
+          // only testTimeout / hookTimeout / teardownTimeout). Where a module genuinely
+          // must load per-suite, a `beforeAll` with an explicit long timeout is the
+          // fallback (see prisma-inconsistent-orphan-relations). Raising this number
+          // only moves the cliff.
           testTimeout: 60000,
           // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
           // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
