@@ -48,7 +48,7 @@ vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
   loadDbEnv: vi.fn(() => ({})),
 }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),

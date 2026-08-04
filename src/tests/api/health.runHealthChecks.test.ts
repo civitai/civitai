@@ -55,7 +55,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mocks.dbWrite,
 }));
 
-vi.mock('~/server/db/pgDb', () => ({
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
   pgDbRead: mocks.pgDbRead,
   pgDbWrite: mocks.pgDbWrite,
 }));
