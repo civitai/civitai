@@ -1167,6 +1167,23 @@ export const getCreatorShopReviewQueue = async ({
   return { items, nextCursor };
 };
 
+// Backs the review queue's creator filter: every user who has ever submitted a
+// shop item, mirroring the queue's own creator predicate (a creator-owned
+// cosmetic with at least one shop item). Deliberately not scoped to the active
+// status/type filters so the selection survives flipping between them. The set
+// is small enough to send whole — no cursor.
+export const getCreatorShopReviewQueueCreators = async () => {
+  const creators = await dbRead.user.findMany({
+    where: {
+      username: { not: null },
+      createdCosmetics: { some: { cosmeticShopItems: { some: {} } } },
+    },
+    select: { id: true, username: true },
+    orderBy: { username: 'asc' },
+  });
+  return creators.map(({ id, username }) => ({ id, username: username as string }));
+};
+
 export const reviewCreatorShopItem = async ({
   reviewerId,
   id,
