@@ -5,7 +5,7 @@ import * as systemCache from '../system-cache';
 vi.mock('~/server/db/client', () => ({
   dbWrite: { $executeRawUnsafe: vi.fn() },
 }));
-vi.mock('~/server/db/pgDb', () => ({
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, 
   pgDbWrite: { query: vi.fn() },
 }));
 vi.mock('~/server/redis/caches', () => ({

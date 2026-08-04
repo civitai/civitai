@@ -17,6 +17,14 @@ These override the original HackMD plan where they differ:
 - **Owned / Sold-out** states reuse the existing `CosmeticShop` styling (the `Owned` overlay + out-of-stock disabling the CTA), not bespoke overlays.
 - The shop lives in the **real profile shell** (left sidebar + top tab-nav), as a new **Shop** tab — not a standalone page.
 
+## Rights affirmation
+
+Submitting a cosmetic requires the creator to confirm they own — or otherwise hold — the rights to sell the artwork. It is not just a client-side checkbox: the service records `meta.rightsAffirmation` on the `CosmeticShopItem` (`userId`, `affirmedAt`, `version`, and the `statement` verbatim), so a later takedown challenge can show who agreed to what, and when.
+
+- The wording and version live in `creator-shop.schema.ts` (`RIGHTS_AFFIRMATION_STATEMENT` / `RIGHTS_AFFIRMATION_VERSION`) — bump the version whenever the wording changes; existing records keep the text that was actually agreed to.
+- Replacing artwork on an unpublished item re-affirms (and overwrites the record), because the stored affirmation describes the art it was made against. A moderator swapping artwork does not affirm and does not overwrite the creator's record.
+- The moderator review queue shows the affirmation alongside the automated checks.
+
 ## Screens (mockups in `designs/creator-shop.pen`)
 
 | Screen | Purpose |
@@ -70,5 +78,7 @@ The official shop's sections are a **curated CMS** (banner image, `placement`, `
 - This proposal: **2 additive columns/enum on existing tables (`Cosmetic.createdById`, `CosmeticShopItem.status`+review fields) + shop settings as JSON on `User` (no new tables).** Fewer moving parts, shared purchase/payout path.
 
 ## Changelog
+
+- **2026-08-03** — Cosmetic submissions now require (and record) a creator affirmation of the rights to sell the artwork.
 
 - **2026-07-01** — Design phase complete; mockups committed (`da5ff8f1d9`). Data-model assessment done: **extend existing cosmetic-shop tables** (additive `Cosmetic.createdById` + `CosmeticShopItem` status/review fields + shop settings as JSON on `User`) rather than the plan's 3 new tables.

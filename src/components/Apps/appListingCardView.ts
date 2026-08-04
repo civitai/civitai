@@ -21,13 +21,22 @@
  *     there when the viewer can actually open it) — the direct primary action.
  *   - on-site otherwise (no page, or page but no `appBlocksPages`) → **View
  *     details** → `/apps/store-preview/<slug>` (the unified P2c detail).
- *   - off-site external-link (https) → **Visit ↗** → external anchor (direct
- *     primary action).
- *   - off-site external-link (missing / non-https url) → **View details** →
- *     the unified detail (the DTO already null-guards non-https — we re-guard;
- *     the detail page shows the informational state).
- *   - off-site connect → **View details** → the unified detail (the Connect
- *     affordance lives on the detail page).
+ *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
+ *     external anchor (direct primary action). 🔴 The sub-kind does NOT decide
+ *     this; the presence of a destination does — see below.
+ *   - off-site with no usable target (missing / non-https url, either sub-kind)
+ *     → **View details** → the unified detail (the DTO already null-guards
+ *     non-https — we re-guard; the detail page shows the informational state).
+ *
+ * 🔴 Connect used to route to "View details" UNCONDITIONALLY, on the premise
+ * that "the Connect affordance lives on the detail page". That affordance was a
+ * dead stub, so the card handed the viewer a detail page with nothing on it —
+ * the card half of the same defect. The detail now renders a real `Visit ↗` for
+ * any off-site listing carrying an https `externalUrl` (see
+ * `appListingDetailView`), so the card matches it: a connect listing with a
+ * destination gets the direct Visit, and only a listing with NO destination
+ * falls back to the detail. Card and detail must not disagree about whether an
+ * app is reachable.
  * Every CTA now has a working `href` (never actionless). The card ALSO links its
  * title to the detail (via `getListingDetailHref`) so the detail is reachable
  * even when the primary CTA is a direct Open / Visit.
@@ -128,17 +137,17 @@ export function getListingCta(
     return { label: 'View details', action: 'detail', href: detailHref, external: false };
   }
 
-  // Off-site.
-  if (card.kindData.subKind === 'external-link') {
-    const href = safeExternalHref(card.kindData.externalUrl);
-    if (href) {
-      return { label: 'Visit', action: 'visit', href, external: true };
-    }
-    // No usable external target (missing / non-https) → the unified detail.
-    return { label: 'View details', action: 'detail', href: detailHref, external: false };
+  // Off-site — BOTH sub-kinds. The destination decides, not the sub-kind: a
+  // connect app is reached at its own address exactly like a plain external
+  // link (it starts its own OAuth flow from there). Mirrors
+  // `getDetailPrimaryAction`; do NOT reintroduce a sub-kind test above this
+  // line, or the card and the detail disagree again.
+  const href = safeExternalHref(card.kindData.externalUrl);
+  if (href) {
+    return { label: 'Visit', action: 'visit', href, external: true };
   }
-
-  // Off-site connect (OAuth) — the Connect affordance lives on the detail page.
+  // No usable external target (missing / non-https, either sub-kind) → the
+  // unified detail, which shows the informational / connect-stub state.
   return { label: 'View details', action: 'detail', href: detailHref, external: false };
 }
 

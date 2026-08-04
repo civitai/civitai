@@ -12,7 +12,7 @@ import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMax' };
+type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMaxH3' };
 
 /**
  * Creates videoGen input for the MiniMax ecosystem.
