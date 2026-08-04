@@ -21,8 +21,10 @@ import {
 import {
   getAutoFlaggedMinorDetailSchema,
   getAutoFlaggedMinorModelsSchema,
+  getMinorFlagAppealsSchema,
   getMinorHashMatchDetailSchema,
   getMinorHashMatchesSchema,
+  resolveMinorFlagAppealSchema,
 } from '~/server/schema/minor-hash.schema';
 import { getModeratorArticles } from '~/server/services/article.service';
 import {
@@ -45,8 +47,10 @@ import {
   dismissMinorHashMatch,
   getAutoFlaggedMinorDetail,
   getAutoFlaggedMinorModels,
+  getMinorFlagAppealsForReview,
   getMinorHashMatchDetail,
   getMinorHashMatchesForReview,
+  resolveMinorFlagAppeal,
   revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
@@ -107,6 +111,12 @@ export const modRouter = router({
       .mutation(({ input, ctx }) =>
         revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
       ),
+    queryMinorFlagAppeals: moderatorProcedure
+      .input(getMinorFlagAppealsSchema)
+      .query(({ input }) => getMinorFlagAppealsForReview(input)),
+    resolveMinorFlagAppeal: moderatorProcedure
+      .input(resolveMinorFlagAppealSchema)
+      .mutation(({ input, ctx }) => resolveMinorFlagAppeal({ ...input, userId: ctx.user.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure

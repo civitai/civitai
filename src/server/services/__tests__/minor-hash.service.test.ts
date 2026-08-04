@@ -6,13 +6,19 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
 }));
 
-const { mockSetModelMinor, mockTrackModActivity, mockLogToAxiom, mockQueueImageSearchIndexUpdate } =
-  vi.hoisted(() => ({
-    mockSetModelMinor: vi.fn(),
-    mockTrackModActivity: vi.fn(),
-    mockLogToAxiom: vi.fn(),
-    mockQueueImageSearchIndexUpdate: vi.fn(),
-  }));
+const {
+  mockSetModelMinor,
+  mockTrackModActivity,
+  mockLogToAxiom,
+  mockQueueImageSearchIndexUpdate,
+  mockResolveEntityAppeal,
+} = vi.hoisted(() => ({
+  mockSetModelMinor: vi.fn(),
+  mockTrackModActivity: vi.fn(),
+  mockLogToAxiom: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
+  mockResolveEntityAppeal: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
@@ -27,7 +33,11 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+vi.mock('~/server/services/report.service', () => ({
+  resolveEntityAppeal: mockResolveEntityAppeal,
+}));
 
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import {
   findMinorHashMatches,
   applyMinorHashMatch,
@@ -43,6 +53,8 @@ import {
   confirmMinorHashAutoFlag,
   revertMinorHashAutoFlag,
   acceptExpiredMinorAutoFlags,
+  getMinorFlagAppealsForReview,
+  resolveMinorFlagAppeal,
   minorSrcCte,
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
@@ -1288,5 +1300,93 @@ describe('acceptExpiredMinorAutoFlags', () => {
 
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(result.accepted).toBe(4);
+  });
+});
+
+describe('getMinorFlagAppealsForReview', () => {
+  it('surfaces appeals against manual flags, not just automated ones', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorFlagAppealsForReview({ limit: 1000 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"Appeal"');
+    expect(values).toContain('Pending');
+    // The auto-flagged tab filters source='auto'; repeating that here would hide
+    // every appeal against a moderator's own Set-as-Minor.
+    expect(text).not.toContain(`->>'source' = 'auto'`);
+    // An appeal pulls an aged-out model back into view.
+    expect(text).not.toContain(MINOR_HASH_ACCEPTED_KEY);
+    expect(text).toContain('ORDER BY a."createdAt"');
+  });
+
+  // A revert taken from the Auto-flagged tab does not resolve the appeal, so
+  // gating on the model still being minor would strand it with nowhere to close it.
+  it('keeps an appeal listed after the flag it contests is gone', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorFlagAppealsForReview({ limit: 1000 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).not.toContain('AND m.minor');
+  });
+
+  it('reports truncation with the extra row the cap hid', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ modelId: 1 }, { modelId: 2 }]);
+
+    const result = await getMinorFlagAppealsForReview({ limit: 1 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.truncated).toBe(true);
+  });
+});
+
+describe('resolveMinorFlagAppeal', () => {
+  it('upholds by confirming the flag and rejecting the appeal', async () => {
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ entityId: 42, activity: 'setMinor' })
+    );
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ids: [42],
+        entityType: EntityType.Model,
+        status: AppealStatus.Rejected,
+        userId: 7,
+      })
+    );
+  });
+
+  it('overturns by reverting the flag and approving the appeal', async () => {
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ entityId: 42, activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ids: [42],
+        entityType: EntityType.Model,
+        status: AppealStatus.Approved,
+        userId: 7,
+      })
+    );
+  });
+
+  // Resolving last leaves a half-applied decision visible: the appeal stays open
+  // rather than closing against a model nothing happened to.
+  it('leaves the appeal open when the flag write fails', async () => {
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })).rejects.toThrow(
+      'boom'
+    );
+
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 });

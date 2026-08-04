@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type {
+  MinorFlagAppealRow,
   MinorHashMatchDetail,
   MinorHashReviewRow,
 } from '~/server/services/minor-hash.service';
@@ -217,9 +218,14 @@ type AutoFlaggedRow = {
   prevGalleryLevel: number | null;
 };
 
+type FlaggedPanelRow = Pick<
+  AutoFlaggedRow,
+  'modelId' | 'modelName' | 'userId' | 'username' | 'status'
+>;
+
 // The flag is already in force on these rows, so the evidence matters more here
 // than on the review queue, where nothing has happened to the model yet.
-function AutoFlaggedDetailPanel({ row }: { row: AutoFlaggedRow }) {
+function AutoFlaggedDetailPanel({ row }: { row: FlaggedPanelRow }) {
   const { data, isLoading } = trpc.moderator.models.queryAutoFlaggedMinorDetail.useQuery({
     modelId: row.modelId,
   });
@@ -433,11 +439,246 @@ function AutoFlaggedTable() {
   );
 }
 
+// Every minor-flagged model whose owner has asked for a review, whether the flag
+// came from the scan hook or a moderator's own Set-as-Minor — the Auto-flagged
+// tab covers neither manual flags nor ones that have aged out of its window.
+function AppealsTable() {
+  const queryUtils = trpc.useUtils();
+  const { data, isLoading, isFetching } = trpc.moderator.models.queryMinorFlagAppeals.useQuery({
+    limit,
+  });
+  const items = useMemo(() => data?.items ?? [], [data]);
+
+  const resolveMutation = trpc.moderator.models.resolveMinorFlagAppeal.useMutation({
+    onSuccess: async () => {
+      await queryUtils.moderator.models.queryMinorFlagAppeals.invalidate();
+      await queryUtils.moderator.models.queryAutoFlaggedMinorModels.invalidate();
+      await queryUtils.moderator.models.queryMinorHashMatches.invalidate();
+    },
+    onError: (error) => showErrorNotification({ title: 'Action failed', error }),
+  });
+
+  const columns = useMemo<MRT_ColumnDef<MinorFlagAppealRow>[]>(
+    () => [
+      {
+        id: 'modelName',
+        header: 'Model',
+        accessorKey: 'modelName',
+        size: 230,
+        Cell: ({ row: { original } }) => (
+          <Anchor
+            component={NextLink}
+            href={modelHref(original.modelId)}
+            target="_blank"
+            lineClamp={2}
+          >
+            {original.modelName}
+          </Anchor>
+        ),
+      },
+      {
+        id: 'username',
+        header: 'Uploader',
+        accessorKey: 'username',
+        size: 130,
+        Cell: ({ row: { original } }) =>
+          original.username ? (
+            <Anchor
+              component={NextLink}
+              href={`/user/${original.username}`}
+              target="_blank"
+              lineClamp={1}
+            >
+              {original.username}
+            </Anchor>
+          ) : (
+            <Text>{original.userId}</Text>
+          ),
+      },
+      {
+        // The tab exists because manual flags are appealable too, so which kind
+        // this is decides how much weight the existing decision carries.
+        id: 'flagSource',
+        header: 'Flag',
+        accessorFn: (row) => (!row.minor ? 'Reverted' : row.flagSource === 'auto' ? 'Auto' : 'Mod'),
+        size: 110,
+        filterVariant: 'multi-select',
+        Cell: ({ row: { original } }) =>
+          !original.minor ? (
+            <Badge size="sm" tt="none" color="gray" variant="light">
+              Reverted
+            </Badge>
+          ) : (
+            <Badge
+              size="sm"
+              tt="none"
+              color={original.flagSource === 'auto' ? 'orange' : 'grape'}
+              variant="light"
+            >
+              {original.flagSource === 'auto' ? 'Auto' : 'Mod'}
+            </Badge>
+          ),
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        accessorKey: 'status',
+        size: 170,
+        filterVariant: 'multi-select',
+        Cell: ({ row: { original } }) => (
+          <Badge
+            size="sm"
+            tt="none"
+            color={statusColors[original.status] ?? 'gray'}
+            variant="light"
+          >
+            {original.status}
+          </Badge>
+        ),
+      },
+      {
+        id: 'appealCreatedAt',
+        header: 'Requested',
+        accessorFn: (row) => new Date(row.appealCreatedAt),
+        sortingFn: 'datetime',
+        size: 125,
+        enableColumnFilter: false,
+        Cell: ({ row: { original } }) => (
+          <Text size="xs">
+            {original.appealCreatedAt ? formatDate(original.appealCreatedAt) : '—'}
+          </Text>
+        ),
+      },
+      {
+        id: 'appealMessage',
+        header: 'Their reason',
+        accessorKey: 'appealMessage',
+        size: 320,
+        Cell: ({ row: { original } }) => (
+          <Text size="xs" lineClamp={3}>
+            {original.appealMessage}
+          </Text>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 200,
+        enableSorting: false,
+        enableColumnFilter: false,
+        enableColumnActions: false,
+        Cell: ({ row: { original } }) => (
+          <Group gap="xs" justify="flex-end" wrap="nowrap">
+            <Button
+              size="compact-sm"
+              loading={
+                resolveMutation.isPending &&
+                resolveMutation.variables?.modelId === original.modelId &&
+                resolveMutation.variables?.uphold === true
+              }
+              onClick={() =>
+                openConfirmModal({
+                  title: 'Deny review request',
+                  centered: true,
+                  labels: { confirm: 'Keep flagged', cancel: 'Cancel' },
+                  children: (
+                    <Text size="sm">
+                      Keep <strong>{original.modelName}</strong> flagged as minor and tell the
+                      uploader their request was denied. This also records your sign-off, so a bulk
+                      rollback can no longer undo the flag.
+                    </Text>
+                  ),
+                  onConfirm: () =>
+                    resolveMutation.mutate({ modelId: original.modelId, uphold: true }),
+                })
+              }
+            >
+              Keep flagged
+            </Button>
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="red"
+              loading={
+                resolveMutation.isPending &&
+                resolveMutation.variables?.modelId === original.modelId &&
+                resolveMutation.variables?.uphold === false
+              }
+              onClick={() =>
+                openConfirmModal({
+                  title: 'Grant review request',
+                  centered: true,
+                  labels: { confirm: 'Unflag', cancel: 'Cancel' },
+                  confirmProps: { color: 'red' },
+                  children: (
+                    <Text size="sm">
+                      Unflag <strong>{original.modelName}</strong>, restore the settings it had
+                      before it was flagged
+                      {original.prevNsfw ? ', including its NSFW flag' : ''}
+                      {original.prevGalleryLevel != null
+                        ? ` and gallery level ${original.prevGalleryLevel}`
+                        : ''}
+                      , and tell the uploader their request was granted.
+                    </Text>
+                  ),
+                  onConfirm: () =>
+                    resolveMutation.mutate({ modelId: original.modelId, uphold: false }),
+                })
+              }
+            >
+              Unflag
+            </Button>
+          </Group>
+        ),
+      },
+    ],
+    [resolveMutation]
+  );
+
+  return (
+    <>
+      {data?.truncated && (
+        <Alert color="yellow" title="List truncated">
+          Showing the first {limit} review requests.
+        </Alert>
+      )}
+      <MantineReactTable
+        columns={columns}
+        data={items}
+        enableStickyHeader
+        enableColumnPinning
+        enableSorting
+        enableColumnFilters
+        enableGlobalFilter
+        enableFacetedValues
+        layoutMode="grid"
+        renderDetailPanel={({ row }) => <AutoFlaggedDetailPanel row={row.original} />}
+        renderEmptyRowsFallback={() => (
+          <Text p="xl" ta="center" c="dimmed">
+            No review requests awaiting a decision.
+          </Text>
+        )}
+        mantineTableContainerProps={{ style: { maxHeight: 600 } }}
+        initialState={{
+          density: 'xs',
+          columnPinning: { right: ['actions'] },
+          pagination: { pageIndex: 0, pageSize: 25 },
+          showGlobalFilter: true,
+          showColumnFilters: true,
+        }}
+        state={{ isLoading, showProgressBars: isFetching }}
+      />
+    </>
+  );
+}
+
 export default function MinorHashMatches() {
   const queryUtils = trpc.useUtils();
   const [tab, setTab] = useState<string>('pending');
   const { data: autoData } = trpc.moderator.models.queryAutoFlaggedMinorModels.useQuery({ limit });
   const autoCount = autoData?.items.length ?? 0;
+  const { data: appealData } = trpc.moderator.models.queryMinorFlagAppeals.useQuery({ limit });
+  const appealCount = appealData?.items.length ?? 0;
 
   const { data, isFetching, isLoading } = trpc.moderator.models.queryMinorHashMatches.useQuery({
     limit,
@@ -606,7 +847,8 @@ export default function MinorHashMatches() {
           <Text c="dimmed" size="sm">
             Models sharing a byte-identical weight file with a model a moderator already flagged
             minor. Different-uploader matches wait for review here; same-uploader matches are
-            flagged automatically at scan time and are listed under Auto-flagged.
+            flagged automatically at scan time and are listed under Auto-flagged. Uploaders
+            contesting a flag appear under Review requested.
           </Text>
         </div>
 
@@ -614,10 +856,15 @@ export default function MinorHashMatches() {
           <Tabs.List>
             <Tabs.Tab value="pending">Pending review</Tabs.Tab>
             <Tabs.Tab value="auto">Auto-flagged{autoCount ? ` (${autoCount})` : ''}</Tabs.Tab>
+            <Tabs.Tab value="appeals">
+              Review requested{appealCount ? ` (${appealCount})` : ''}
+            </Tabs.Tab>
           </Tabs.List>
         </Tabs>
 
         {tab === 'auto' && <AutoFlaggedTable />}
+
+        {tab === 'appeals' && <AppealsTable />}
 
         {tab === 'pending' && (
           <>

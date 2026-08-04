@@ -27,3 +27,16 @@ export type GetAutoFlaggedMinorDetailInput = z.infer<typeof getAutoFlaggedMinorD
 export const getAutoFlaggedMinorDetailSchema = z.object({
   modelId: z.number(),
 });
+
+export type GetMinorFlagAppealsInput = z.infer<typeof getMinorFlagAppealsSchema>;
+export const getMinorFlagAppealsSchema = z.object({
+  limit: z.number().min(1).max(2000).default(1000),
+});
+
+// The model id, not the appeal id — appeals resolve by entity, and a model can
+// carry more than one.
+export type ResolveMinorFlagAppealInput = z.infer<typeof resolveMinorFlagAppealSchema>;
+export const resolveMinorFlagAppealSchema = z.object({
+  modelId: z.number(),
+  uphold: z.boolean(),
+});

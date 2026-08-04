@@ -6,7 +6,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { resolveEntityAppeal } from '~/server/services/report.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -611,6 +613,77 @@ export async function revertMinorHashAutoFlag({
   });
 
   return report;
+}
+
+export type MinorFlagAppealRow = {
+  appealId: number;
+  appealMessage: string;
+  appealCreatedAt: Date;
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  minor: boolean;
+  flaggedAt: Date | null;
+  flagSource: string | null;
+  prevNsfw: boolean | null;
+  prevGalleryLevel: number | null;
+};
+
+// Deliberately not the Auto-flagged tab's population narrowed by an appeal: that
+// tab filters source='auto' inside a 30-day window and drops accepted flags, so
+// an appeal against a moderator's own Set-as-Minor — or against a flag that has
+// since aged out — would surface nowhere. An appeal is a human asking for review,
+// which outranks every one of those bounds.
+//
+// No gate on the model still being minor either. Reverting from the Auto-flagged
+// tab leaves the appeal Pending, and hiding it here would strand it with nowhere
+// left to close it; `minor` is returned instead so the row shows that state.
+export async function getMinorFlagAppealsForReview({ limit }: { limit: number }) {
+  const rows = await dbRead.$queryRaw<MinorFlagAppealRow[]>`
+    SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
+           m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+           m.status::text AS status, m.minor,
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
+           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
+    FROM "Appeal" a
+    JOIN "Model" m ON m.id = a."entityId"
+    LEFT JOIN "User" u ON u.id = m."userId"
+    WHERE a."entityType" = 'Model'
+      -- Cast rather than parameterize the enum: Prisma sends the value as text and
+      -- Postgres has no AppealStatus = text operator.
+      AND a.status::text = ${AppealStatus.Pending}
+    ORDER BY a."createdAt", a.id
+    LIMIT ${limit + 1}
+  `;
+
+  return { items: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+// The flag decision is written first and the appeal resolved last, so a failure
+// between them leaves the appeal open and visibly unactioned rather than closed
+// against a model nothing happened to.
+export async function resolveMinorFlagAppeal({
+  modelId,
+  uphold,
+  userId,
+}: {
+  modelId: number;
+  uphold: boolean;
+  userId: number;
+}) {
+  if (uphold) await confirmMinorHashAutoFlag({ modelId, userId });
+  else await revertMinorHashAutoFlag({ modelId, userId });
+
+  await resolveEntityAppeal({
+    ids: [modelId],
+    entityType: EntityType.Model,
+    status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    userId,
+  });
 }
 
 export async function dismissMinorHashMatch({
