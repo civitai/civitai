@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterModelMetaForClient,
   isMinorAutoFlagged,
+  resolveMinorAppeal,
   resolveMinorFlagged,
   stripMinorHashMeta,
 } from '~/server/utils/minor-flag-meta';
@@ -143,6 +144,24 @@ describe('resolveMinorFlagged', () => {
   // The ~13.7k pre-feature flags carry no snapshot and stay on the support path.
   it('is false for a legacy flag with no snapshot', () => {
     expect(resolveMinorFlagged({ isOwner: true, minor: true, meta: {} })).toBe(false);
+  });
+});
+
+describe('resolveMinorAppeal', () => {
+  const appeal = { status: 'Pending', resolvedAt: null };
+
+  // The load-bearing case: a visitor must never learn a model has an appeal in
+  // flight, even if the caller forgets to gate the fetch itself.
+  it('is null for a non-owner, even when an appeal exists', () => {
+    expect(resolveMinorAppeal({ isOwner: false, appeal })).toBeNull();
+  });
+
+  it('passes the appeal through for the owner', () => {
+    expect(resolveMinorAppeal({ isOwner: true, appeal })).toEqual(appeal);
+  });
+
+  it('is null for the owner when there is no appeal', () => {
+    expect(resolveMinorAppeal({ isOwner: true, appeal: null })).toBeNull();
   });
 });
 

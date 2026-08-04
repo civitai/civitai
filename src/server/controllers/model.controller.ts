@@ -142,7 +142,11 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
-import { filterModelMetaForClient, resolveMinorFlagged } from '~/server/utils/minor-flag-meta';
+import {
+  filterModelMetaForClient,
+  resolveMinorAppeal,
+  resolveMinorFlagged,
+} from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -499,6 +503,10 @@ export const getModelHandler = async ({
       };
     });
 
+    // Gated here to skip the query for the vast majority of page views (visitors);
+    // resolveMinorAppeal below is the actual enforced boundary, independent of this.
+    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+
     return {
       ...model,
       metrics: undefined,
@@ -522,7 +530,7 @@ export const getModelHandler = async ({
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
-      minorAppeal: isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null,
+      minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,

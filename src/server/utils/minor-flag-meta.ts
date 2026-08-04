@@ -21,6 +21,19 @@ export function resolveMinorFlagged({
   return !!isOwner && !!minor && !!meta?.minorFlagSnapshot;
 }
 
+// The enforced privacy boundary for the appeal: whatever the caller passes in
+// as `appeal`, a non-owner gets null. Keeps that guarantee testable on its own,
+// independent of whether the caller also bothers to skip the fetch for visitors.
+export function resolveMinorAppeal<T>({
+  isOwner,
+  appeal,
+}: {
+  isOwner: boolean | null | undefined;
+  appeal: T | null;
+}): T | null {
+  return isOwner ? appeal : null;
+}
+
 // Written by the minor-hash service and never safe to expose: the snapshot carries
 // prevMinorImageIds, and the dismissal/clear stamps describe moderator decisions.
 // The single definition of which meta keys are secret — everything that hands a
