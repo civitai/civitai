@@ -18,7 +18,6 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
@@ -48,6 +47,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopReviewQueue,
+  useQueryCreatorShopReviewQueueCreators,
 } from '~/components/CreatorShop/creator-shop.util';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
@@ -171,32 +171,17 @@ function CreatorShopReviewPage() {
     CosmeticShopItemStatus.PendingReview
   );
   const [typeFilter, setTypeFilter] = useState<CosmeticType[]>([]);
-  // Creator filter: a searchable dropdown of real users — the queue filters by
-  // the selected user's id. Typing an all-digits term looks the user up by id.
-  const [creatorSearch, setCreatorSearch] = useState('');
-  const [debouncedCreatorSearch] = useDebouncedValue(creatorSearch, 300);
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
 
-  const creatorSearchTerm = debouncedCreatorSearch.trim();
-  const creatorSearchId = /^\d+$/.test(creatorSearchTerm) ? Number(creatorSearchTerm) : undefined;
-  const { data: userOptions, isFetching: searchingUsers } = trpc.user.getAll.useQuery(
-    creatorSearchId
-      ? { ids: [creatorSearchId], limit: 10 }
-      : { query: creatorSearchTerm, limit: 10 },
-    { enabled: !!currentUser?.isModerator && !!creatorSearchTerm }
+  const { creators, isLoading: loadingCreators } = useQueryCreatorShopReviewQueueCreators(
+    !!currentUser?.isModerator
   );
-  const creatorOptions = useMemo(() => {
-    const opts = (userOptions ?? [])
-      .filter((u) => !!u.username)
-      .map((u) => ({ value: String(u.id), label: u.username as string }));
-    // Keep the current selection in the option list so its label stays visible
-    // after the search results change.
-    if (selectedCreator && !opts.some((o) => o.value === String(selectedCreator.id)))
-      opts.unshift({ value: String(selectedCreator.id), label: selectedCreator.username });
-    return opts;
-  }, [userOptions, selectedCreator]);
+  const creatorOptions = useMemo(
+    () => creators.map((c) => ({ value: String(c.id), label: c.username })),
+    [creators]
+  );
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useQueryCreatorShopReviewQueue({
@@ -410,19 +395,8 @@ function CreatorShopReviewPage() {
               const opt = creatorOptions.find((o) => o.value === v);
               setSelectedCreator(opt ? { id: Number(v), username: opt.label } : null);
             }}
-            searchValue={creatorSearch}
-            onSearchChange={setCreatorSearch}
             data={creatorOptions}
-            // Options already come filtered from the search endpoint — and an
-            // id search would never match its username label.
-            filter={({ options }) => options}
-            nothingFoundMessage={
-              searchingUsers
-                ? 'Searching…'
-                : creatorSearchTerm
-                ? 'No users found'
-                : 'Type a username or user id'
-            }
+            nothingFoundMessage={loadingCreators ? 'Loading…' : 'No creators found'}
             leftSection={<IconSearch size={16} />}
             comboboxProps={{ withinPortal: true }}
           />

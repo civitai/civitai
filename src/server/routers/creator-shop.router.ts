@@ -31,6 +31,7 @@ import {
   getResoldItemsForManage,
   removeResoldItem,
   getCreatorShopReviewQueue,
+  getCreatorShopReviewQueueCreators,
   getCreatorShopSettings,
   reviewCreatorShopItem,
   submitCreatorShopItem,
@@ -181,6 +182,9 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('creatorShop'))
     .input(getReviewQueueSchema)
     .query(({ input }) => getCreatorShopReviewQueue(input)),
+  getReviewQueueCreators: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .query(() => getCreatorShopReviewQueueCreators()),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
