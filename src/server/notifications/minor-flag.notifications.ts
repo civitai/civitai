@@ -11,7 +11,7 @@ export const minorFlagNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) =>
       details && !isEmpty(details)
         ? {
-            message: `Your model ${details.modelName} has been marked as depicting a minor. If you believe this is a mistake, contact support.`,
+            message: `Your model ${details.modelName} has been marked as depicting a minor. If you believe this is a mistake, you can request a review on the model page.`,
             url: `/models/${details.modelId}/${slugit(details.modelName)}`,
           }
         : undefined,

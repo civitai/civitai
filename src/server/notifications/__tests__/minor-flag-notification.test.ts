@@ -28,9 +28,20 @@ describe('model-flagged-minor — prepareMessage', () => {
     } as Parameters<Def['prepareMessage']>[0]);
 
     expect(m!.message).toBe(
-      'Your model Cool Model has been marked as depicting a minor. If you believe this is a mistake, contact support.'
+      'Your model Cool Model has been marked as depicting a minor. If you believe this is a mistake, you can request a review on the model page.'
     );
     expect(m!.url).toBe('/models/42/cool-model');
+  });
+
+  // Support can't lift this flag; the request-review control on the model page is
+  // the only route to a human, and pointing anywhere else strands the owner.
+  it('does not send the owner to support', () => {
+    const m = def.prepareMessage({
+      type: 'model-flagged-minor',
+      details: { modelId: 42, modelName: 'Cool Model' },
+    } as Parameters<Def['prepareMessage']>[0]);
+
+    expect(m!.message.toLowerCase()).not.toContain('support');
   });
 
   it('names no hash, no matched model, and no restriction detail', () => {
