@@ -727,11 +727,14 @@ export const getArticleById = async ({
       userId === article.userId ||
       (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
 
+    // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
+    // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
+    // branch let any author store a doc with node types the renderer has no schema entry for
+    // (blank page for every reader) or malformed JSON (500 → NotFound for everyone, owner
+    // included). `generateJSON` is total over arbitrary text.
     let contentJson: MixedObject | undefined;
     if (article.content) {
-      contentJson = article.content.startsWith('{')
-        ? JSON.parse(article.content)
-        : generateJSON(article.content, tiptapExtensions);
+      contentJson = generateJSON(article.content, tiptapExtensions);
     }
 
     return {
