@@ -130,24 +130,30 @@ export type StepOutputModerationRequest = {
    * `./text-output-moderation` — and is never written to a column, so nothing
    * FK-resolves it and a wrong value fails silently.
    *
-   * 🔴 THE TWO LIVE CALLERS PASS `claims.blockId`, NOT `claims.appBlockId`, AND
-   * THOSE ARE DIFFERENT NAMESPACES. `blocks.router.ts` `pollWorkflow` (:3108)
-   * and `cancelWorkflow` (:3252) are the only 2 of that router's ~15
-   * `appBlockId:` assignments reading `claims.blockId`; the rest read
-   * `claims.appBlockId`. The token carries both:
-   * `block-scope.middleware.ts:42-49` documents `appBlockId` as `AppBlock.id`,
-   * the `apb_<ulid>` PK, while `blockId` is `AppBlock.blockId` — the publish
-   * request's SLUG (`publish-request.service.ts:2392-2398` writes
-   * `id: apb_<ulid>` and `blockId: request.slug` onto the same row). So the
-   * value logged under this name does NOT join to `AppBlock.id` or to
+   * 🔴 IT MUST BE `claims.appBlockId`, AND THE THREE ID CLAIMS ON A BLOCK TOKEN
+   * ARE DIFFERENT NAMESPACES — do not "simplify" this to `claims.blockId`.
+   * `block-scope.middleware.ts` documents `appBlockId` as `AppBlock.id`, the
+   * `apb_<ulid>` PK; `blockId` is `AppBlock.blockId` — the publish request's SLUG
+   * (`publish-request.service.ts` writes `id: apb_<ulid>` and
+   * `blockId: request.slug` onto the SAME row); `blockInstanceId` is a third,
+   * per-render claim. Only the PK joins to `AppBlock.id` /
    * `BlockScopeInvocation.app_block_id`, which is what the per-app trigger-rate
-   * aggregation in `./text-output-moderation` assumes it can key on.
+   * aggregation in `./text-output-moderation` keys on.
    *
-   * Recorded rather than papered over: the defect is at the two router call
-   * sites, not in this field's name — renaming it to match what is passed would
-   * make the log self-consistent and still un-joinable. An earlier revision of
-   * this line read "The block instance id", which matches NEITHER claim:
-   * `blockInstanceId` is a third, separate claim on the same token.
+   * HISTORY, because the failure mode is invisible: both live callers passed
+   * `claims.blockId` until 2026-08-04 — the only 2 of that router's 15
+   * claim-sourced `appBlockId:` assignments doing so — and nothing caught it,
+   * because a wrong value here is neither written nor FK-checked. It is pinned
+   * now by value (not merely by presence) at both call sites in
+   * `routers/__tests__/blocks.router.textOutputModeration.test.ts`, over a
+   * fixture whose three ids are deliberately pairwise distinct.
+   *
+   * On a VERIFIED token this is always a non-empty string (`verifyBlockToken`
+   * rejects a non-string `appBlockId`), so the `?` is for callers that have no
+   * token at all, not for a token that might lack the claim. For a dev-tunnel or
+   * mod-review token the value is a SYNTHETIC non-FK id (`ephemeral-<slug>` /
+   * `pubreq_<ulid>`) — that is still the right key: it is the same id the audit
+   * path records for those tokens.
    */
   appBlockId?: string;
 };
