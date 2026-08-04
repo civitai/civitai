@@ -814,15 +814,31 @@ describe('getAutoFlaggedMinorDetail', () => {
     expect(result.detail?.minorModelStatus).toBe('Deleted');
   });
 
-  // Nothing to describe and no minorModelId to query with — issuing the detail
-  // query anyway would join against model 0.
-  it('skips the detail query when no seed resolves', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([]);
+  // No seed is the NORMAL case for a moderator's manual Set-as-Minor, which the
+  // appeals tab exists to review. Short-circuiting left that panel with no cover,
+  // no upload date and "0 models" for the uploader.
+  it("still loads the model's own detail when no seed resolves", async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ uploaderModelCount: 12 }]);
 
     const result = await getAutoFlaggedMinorDetail({ modelId: 2186217 });
 
-    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ match: null, detail: null });
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(result.match).toBeNull();
+    expect(result.detail?.uploaderModelCount).toBe(12);
+  });
+
+  // The detail query still has to run, but with nothing to join the seed half
+  // against — a literal 0 would join against model 0.
+  it('passes no seed id to the detail query when none resolves', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{}]);
+
+    await getAutoFlaggedMinorDetail({ modelId: 2186217 });
+
+    const [, ...detailValues] = mockDbRead.$queryRaw.mock.calls[1];
+    expect(detailValues).toContain(null);
+    expect(detailValues).not.toContain(0);
   });
 });
 
@@ -1316,8 +1332,9 @@ describe('getMinorFlagAppealsForReview', () => {
     // The auto-flagged tab filters source='auto'; repeating that here would hide
     // every appeal against a moderator's own Set-as-Minor.
     expect(text).not.toContain(`->>'source' = 'auto'`);
-    // An appeal pulls an aged-out model back into view.
-    expect(text).not.toContain(MINOR_HASH_ACCEPTED_KEY);
+    // An appeal pulls an aged-out model back into view. Asserted on values, not
+    // text: the key is always a bind parameter, so a text check can never fail.
+    expect(values).not.toContain(MINOR_HASH_ACCEPTED_KEY);
     expect(text).toContain('ORDER BY a."createdAt"');
   });
 
@@ -1330,7 +1347,7 @@ describe('getMinorFlagAppealsForReview', () => {
 
     const [strings] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).not.toContain('AND m.minor');
+    expect(text).not.toMatch(/AND\s+m\."?minor"?/);
   });
 
   it('reports truncation with the extra row the cap hid', async () => {
@@ -1380,10 +1397,20 @@ describe('resolveMinorFlagAppeal', () => {
 
   // Resolving last leaves a half-applied decision visible: the appeal stays open
   // rather than closing against a model nothing happened to.
-  it('leaves the appeal open when the flag write fails', async () => {
+  it('leaves the appeal open when the confirm write fails', async () => {
     mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('boom'));
 
     await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })).rejects.toThrow(
+      'boom'
+    );
+
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('leaves the appeal open when the revert fails', async () => {
+    mockDbRead.$queryRaw.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).rejects.toThrow(
       'boom'
     );
 

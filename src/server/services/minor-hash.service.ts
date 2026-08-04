@@ -421,14 +421,18 @@ export async function getMinorHashMatchDetail({
   minorModelId,
 }: {
   modelId: number;
-  minorModelId: number;
+  /** Null when nothing seeded the flag — a manual Set-as-Minor. Every seed-side
+   * column then comes back null while the model's own half still loads. */
+  minorModelId: number | null;
 }) {
-  const coverSql = (id: number, field: 'url' | 'type') => Prisma.sql`
+  // Every seed-side id is cast rather than left to inference: a null bind reaches
+  // Postgres untyped, and `col = $1` with no type to resolve against fails.
+  const coverSql = (id: number | null, field: 'url' | 'type') => Prisma.sql`
     (SELECT i.${Prisma.raw(`"${field}"`)}::text
      FROM "ModelVersion" mv
      JOIN "Post" p ON p."modelVersionId" = mv.id
      JOIN "Image" i ON i."postId" = p.id
-     WHERE mv."modelId" = ${id}
+     WHERE mv."modelId" = ${id}::int
      ORDER BY i.index NULLS LAST, i.id
      LIMIT 1)
   `;
@@ -450,10 +454,11 @@ export async function getMinorHashMatchDetail({
       fu.username AS "minorFlaggedByUsername"
     FROM "Model" m
     LEFT JOIN "User" u ON u.id = m."userId"
-    LEFT JOIN "Model" mm ON mm.id = ${minorModelId}
+    LEFT JOIN "Model" mm ON mm.id = ${minorModelId}::int
     LEFT JOIN "User" mu ON mu.id = mm."userId"
     LEFT JOIN "ModActivity" ma
-      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId} AND ma.activity = 'setMinor'
+      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId}::int
+        AND ma.activity = 'setMinor'
     LEFT JOIN "User" fu ON fu.id = ma."userId"
     WHERE m.id = ${modelId}
   `;
@@ -473,7 +478,7 @@ export type AutoFlaggedMinorMatch = {
 // The auto-flag path stores no pointer to what it matched — captureMinorFlagSnapshot
 // records pre-state only — so the seed is re-derived from the hash on demand. That
 // also means this reports the seed's CURRENT state: if the seed has since been
-// unflagged the panel goes empty, which is the signal a moderator weighing Revert
+// unflagged nothing comes back, which is the signal a moderator weighing Revert
 // wants, not a defect.
 //
 // Deliberately not `minorSrcCte`: that materializes every seed (~17k models, ~0.5s)
@@ -504,11 +509,18 @@ export async function getAutoFlaggedMinorMatch({ modelId }: { modelId: number })
 // The Auto-flagged tab's detail panel. Two queries rather than one join so the
 // second is the exact same `getMinorHashMatchDetail` the review queue expands
 // with — the panels stay identical by construction, not by being kept in step.
+//
+// The detail query runs even with no seed. A manual Set-as-Minor has no hash
+// match by definition, and that is most of what the appeals tab reviews — short
+// -circuiting here left those panels with no cover, no upload date and "0 models"
+// for the uploader.
 export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }) {
   const match = await getAutoFlaggedMinorMatch({ modelId });
-  if (!match) return { match: null, detail: null };
+  const detail = await getMinorHashMatchDetail({
+    modelId,
+    minorModelId: match?.minorModelId ?? null,
+  });
 
-  const detail = await getMinorHashMatchDetail({ modelId, minorModelId: match.minorModelId });
   return { match, detail };
 }
 
