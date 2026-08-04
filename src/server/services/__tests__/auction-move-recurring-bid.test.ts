@@ -3,35 +3,29 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 // `moveRecurringBidToLatest` re-targets an unfunded standing instruction (BidRecurring)
 // at the newest eligible published version. These pin the eligibility walk — a copy of
 // createBid's inline gates, deliberately not shared — and that the swap never touches
-// today's charged Bid (delete+create only, no refunds).
+// today's charged Bid (an in-place entityId rewrite, no refunds).
 const {
   bidRecurringFindFirst,
   bidRecurringFindMany,
-  bidRecurringDelete,
-  bidRecurringCreate,
+  bidRecurringUpdate,
   modelVersionFindFirst,
   modelVersionFindMany,
-  transaction,
   imagesFetch,
 } = vi.hoisted(() => ({
   bidRecurringFindFirst: vi.fn(),
   bidRecurringFindMany: vi.fn(),
-  bidRecurringDelete: vi.fn(async () => ({})),
-  bidRecurringCreate: vi.fn(async () => ({ id: 999 })),
+  bidRecurringUpdate: vi.fn(async () => ({ id: 100 })),
   modelVersionFindFirst: vi.fn(),
   modelVersionFindMany: vi.fn(async () => [] as unknown[]),
-  transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   imagesFetch: vi.fn(async () => ({} as Record<number, unknown>)),
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
-    $transaction: transaction,
     bidRecurring: {
       findFirst: bidRecurringFindFirst,
       findMany: bidRecurringFindMany,
-      delete: bidRecurringDelete,
-      create: bidRecurringCreate,
+      update: bidRecurringUpdate,
     },
     modelVersion: { findFirst: modelVersionFindFirst, findMany: modelVersionFindMany },
   },
@@ -99,26 +93,16 @@ beforeEach(() => {
 });
 
 describe('moveRecurringBidToLatest', () => {
-  it('moves the bid to the newest eligible version, preserving its terms', async () => {
-    const bid = recurringBid();
-    bidRecurringFindFirst.mockResolvedValueOnce(bid).mockResolvedValueOnce(null);
+  it('moves the bid to the newest eligible version in place, preserving the row', async () => {
+    bidRecurringFindFirst.mockResolvedValueOnce(recurringBid()).mockResolvedValueOnce(null);
     modelVersionFindMany.mockResolvedValue([version({ id: 9, name: 'v2' }), version()]);
 
     const res = await moveRecurringBidToLatest({ userId: 1, bidId: 100 });
 
-    expect(res).toEqual({ id: 999, entityId: 9, name: 'v2' });
-    expect(bidRecurringDelete).toHaveBeenCalledWith({ where: { id: 100 } });
-    expect(bidRecurringCreate).toHaveBeenCalledWith({
-      data: {
-        userId: 1,
-        entityId: 9,
-        amount: 200,
-        startAt: bid.startAt,
-        endAt: bid.endAt,
-        isPaused: true,
-        auctionBaseId: 10,
-        accountType: 'yellow',
-      },
+    expect(res).toEqual({ id: 100, entityId: 9, name: 'v2' });
+    expect(bidRecurringUpdate).toHaveBeenCalledWith({
+      where: { id: 100 },
+      data: { entityId: 9 },
       select: { id: true },
     });
   });
@@ -144,8 +128,7 @@ describe('moveRecurringBidToLatest', () => {
     await expect(moveRecurringBidToLatest({ userId: 1, bidId: 100 })).rejects.toThrow(
       'already on the latest'
     );
-    expect(bidRecurringDelete).not.toHaveBeenCalled();
-    expect(bidRecurringCreate).not.toHaveBeenCalled();
+    expect(bidRecurringUpdate).not.toHaveBeenCalled();
   });
 
   it('blocks when the user already holds a recurring bid on the target version', async () => {
@@ -155,8 +138,7 @@ describe('moveRecurringBidToLatest', () => {
     await expect(moveRecurringBidToLatest({ userId: 1, bidId: 100 })).rejects.toThrow(
       'already have a recurring bid'
     );
-    expect(bidRecurringDelete).not.toHaveBeenCalled();
-    expect(bidRecurringCreate).not.toHaveBeenCalled();
+    expect(bidRecurringUpdate).not.toHaveBeenCalled();
   });
 
   it("rejects another user's bid", async () => {
@@ -219,6 +201,20 @@ describe('getMyRecurringBids moveToLatest hint', () => {
 
     const [bid] = await getMyRecurringBids({ userId: 1 });
     expect(bid.moveToLatest).toEqual({ status: 'available', targetId: 9, targetName: 'v2' });
+  });
+
+  it('restricts candidates to published versions of published models', async () => {
+    arrange({});
+
+    await getMyRecurringBids({ userId: 1 });
+
+    const [candidateQuery] = modelVersionFindMany.mock.calls[1] as unknown as [
+      { where: Record<string, unknown> }
+    ];
+    expect(candidateQuery.where).toMatchObject({
+      status: 'Published',
+      model: { status: 'Published' },
+    });
   });
 
   it('reports the target as taken when another recurring bid already covers it', async () => {

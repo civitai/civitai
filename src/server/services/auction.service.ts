@@ -467,6 +467,7 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
               modelId: { in: modelIds },
               status: ModelStatus.Published,
               availability: { not: Availability.Private },
+              model: { status: ModelStatus.Published },
             },
             orderBy: { index: 'asc' },
             select: { id: true, name: true, modelId: true, baseModel: true },
@@ -1262,24 +1263,13 @@ export const moveRecurringBidToLatest = async ({
   // Today's already-charged Bid is deliberately untouched — the nightly job picks up
   // the new target tomorrow, which keeps this off the refund path.
   try {
-    const [, created] = await dbWrite.$transaction([
-      dbWrite.bidRecurring.delete({ where: { id: bid.id } }),
-      dbWrite.bidRecurring.create({
-        data: {
-          userId,
-          entityId: target.id,
-          amount: bid.amount,
-          startAt: bid.startAt,
-          endAt: bid.endAt,
-          isPaused: bid.isPaused,
-          auctionBaseId: bid.auctionBase.id,
-          accountType: bid.accountType,
-        },
-        select: { id: true },
-      }),
-    ]);
+    const updated = await dbWrite.bidRecurring.update({
+      where: { id: bid.id },
+      data: { entityId: target.id },
+      select: { id: true },
+    });
 
-    return { id: created.id, entityId: target.id, name: target.name };
+    return { id: updated.id, entityId: target.id, name: target.name };
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
       throw throwBadRequestError(

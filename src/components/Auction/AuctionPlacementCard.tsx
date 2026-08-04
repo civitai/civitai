@@ -647,6 +647,11 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
     });
   };
 
+  const moveToLatestLabel =
+    data.moveToLatest?.status === 'available'
+      ? `Move to latest version: ${data.moveToLatest.targetName}`
+      : 'You already have a recurring bid on the latest version';
+
   const handleMoveToLatest = () => {
     if (data.moveToLatest?.status !== 'available') return;
     const { targetName } = data.moveToLatest;
@@ -695,11 +700,7 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
                 {!!data.moveToLatest && (
                   <Tooltip
                     className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
-                    label={
-                      data.moveToLatest.status === 'available'
-                        ? `Move to latest version: ${data.moveToLatest.targetName}`
-                        : 'You already have a recurring bid on the latest version'
-                    }
+                    label={moveToLatestLabel}
                   >
                     {/* Wrapper so the tooltip still fires when the icon is disabled */}
                     <div>
@@ -707,6 +708,7 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
                         size="sm"
                         color="blue"
                         variant="filled"
+                        aria-label={moveToLatestLabel}
                         disabled={data.moveToLatest.status !== 'available'}
                         loading={movingRecurringBid}
                         onClick={handleMoveToLatest}
