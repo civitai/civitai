@@ -114,8 +114,7 @@ beforeEach(() => {
   mockGetAppViews.mockResolvedValue({
     count: 124,
     uniqueViewers: 12,
-    anonCount: 4,
-    series: [{ bucket: '2026-06-01T00:00:00.000Z', value: 11 }],
+    anonCount: 40,
   });
   routeQueryRaw();
 });
@@ -282,7 +281,7 @@ describe('emptyAnalytics (measurement vs placeholder discriminator)', () => {
     const views = emptyAnalytics(range, false).views;
     expect(views.unavailable).toBeUndefined();
     expect('unavailable' in views).toBe(false);
-    expect(views).toEqual({ count: 0, uniqueViewers: 0, anonCount: 0, series: [] });
+    expect(views).toEqual({ count: 0, uniqueViewers: 0, anonCount: 0 });
   });
 });
 
@@ -301,7 +300,9 @@ describe('getMyAppAnalytics (impressions wiring)', () => {
     expect(arg.appBlockIds).toEqual([OWNED_ID, OWNED_ID_2]);
     expect(arg.from.getTime()).toBe(from.getTime());
     expect(arg.to.getTime()).toBe(to.getTime());
-    expect(arg.granularity).toBe('day');
+    // No `granularity`: the impressions read is a single rollup with no time
+    // series, so a bucket size would be dead weight passed across the seam.
+    expect(arg.granularity).toBeUndefined();
   });
 
   it('narrows the impressions read to a single requested owned id', async () => {
@@ -322,8 +323,7 @@ describe('getMyAppAnalytics (impressions wiring)', () => {
     expect(result.views).toEqual({
       count: 124,
       uniqueViewers: 12,
-      anonCount: 4,
-      series: [{ bucket: '2026-06-01T00:00:00.000Z', value: 11 }],
+      anonCount: 40,
     });
   });
 
@@ -332,7 +332,6 @@ describe('getMyAppAnalytics (impressions wiring)', () => {
       count: 0,
       uniqueViewers: 0,
       anonCount: 0,
-      series: [],
       unavailable: true,
     });
 
@@ -346,13 +345,18 @@ describe('getMyAppAnalytics (impressions wiring)', () => {
     expect(result.runs.count).toBe(7);
   });
 
-  it('uses week granularity for a long range', async () => {
+  it('still passes the CLAMPED range on a long request', async () => {
+    // The reader has no bucket size to pick any more, but it must still see the
+    // range the rest of the payload was computed over, or the impression count
+    // would cover a different window than the counters beside it.
     const to = new Date('2026-06-21T00:00:00Z');
     const from = new Date(to.getTime() - 120 * 24 * 3600 * 1000);
 
     await getMyAppAnalytics({ userId: OWNER_ID, from, to });
 
-    expect(mockGetAppViews.mock.calls[0][0].granularity).toBe('week');
+    const arg = mockGetAppViews.mock.calls[0][0];
+    expect(arg.from.getTime()).toBe(from.getTime());
+    expect(arg.to.getTime()).toBe(to.getTime());
   });
 });
 

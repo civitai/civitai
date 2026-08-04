@@ -40,7 +40,7 @@ const ZEROED = {
   engagement: { apiCalls: 0, activeUsers: 0, errorRate: 0, topScopes: [], topEndpoints: [] },
   // A genuinely-MEASURED zero: no `unavailable` key. The impression card
   // branches on that key, so its absence here is meaningful, not filler.
-  views: { count: 0, uniqueViewers: 0, anonCount: 0, series: [] },
+  views: { count: 0, uniqueViewers: 0, anonCount: 0 },
 };
 
 describe('AppAnalyticsPanel — unavailable vs genuine zero', () => {
@@ -94,14 +94,14 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
   test('a measured impression count renders the number and the unique-viewer breakdown', async () => {
     mocks.analytics.current = {
       ...ZEROED,
-      views: { count: 124, uniqueViewers: 12, anonCount: 4, series: [] },
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
     };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('124', { exact: true })).toBeInTheDocument();
     await expect
-      .element(page.getByText('12 unique viewers · 4 signed-out', { exact: true }))
+      .element(page.getByText('12 unique viewers · 40 signed-out loads', { exact: true }))
       .toBeInTheDocument();
     expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
   });
@@ -111,7 +111,7 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
     mocks.analytics.current = { ...ZEROED };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
     expect(page.getByText('Not measured right now', { exact: true }).elements()).toHaveLength(0);
     // Singular, and no signed-out clause when there are none.
     await expect.element(page.getByText('0 unique viewers', { exact: true })).toBeInTheDocument();
@@ -120,11 +120,11 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
   test('an UNAVAILABLE impression read renders an em dash, never a zero', async () => {
     mocks.analytics.current = {
       ...ZEROED,
-      views: { count: 0, uniqueViewers: 0, anonCount: 0, series: [], unavailable: true },
+      views: { count: 0, uniqueViewers: 0, anonCount: 0, unavailable: true },
     };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    await expect.element(page.getByText('Views (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
     // 🔴 Assert the em dash ITSELF, not just the sub-line. Asserting only the
     // sub-line lets the headline silently revert to `views.count` — i.e. a
     // literal "0" above the words "Not measured right now" — and the test
@@ -142,6 +142,27 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
     await expect.element(page.getByText('Active installs')).toBeInTheDocument();
     await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
     expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+
+  test('an ABSENT views section (old pod, rolling deploy) renders unknown, not zero', async () => {
+    // tRPC output is not zod-validated on the client, so during a rollout a new
+    // bundle can receive a payload from an old pod with no `views` key at all.
+    // Two failure modes to exclude: an unguarded read throwing in render (the
+    // panel would show nothing at all), and the absent section decoding as a
+    // measured zero — the fabricated zero, one level down from `notOwned`.
+    const { views: _omitted, ...withoutViews } = ZEROED;
+    mocks.analytics.current = withoutViews;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    // Rendering at all proves there was no TypeError.
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('—', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not measured right now', { exact: true }))
+      .toBeInTheDocument();
+    expect(page.getByText('0 unique viewers', { exact: true }).elements()).toHaveLength(0);
+    // Everything the old pod DID send is real and must still render.
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
   });
 
   test('the coverage note no longer claims anonymous viewers are uncounted', async () => {

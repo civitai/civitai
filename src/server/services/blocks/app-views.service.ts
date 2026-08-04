@@ -1,6 +1,5 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import type { AnalyticsTimePoint } from './app-analytics.service';
 
 /**
  * App Blocks — author-facing IMPRESSIONS, read from the `blockRenders`
@@ -30,6 +29,21 @@ import type { AnalyticsTimePoint } from './app-analytics.service';
  * value — no quoting, no escaping), so `${id}` is a SQL-injection vector. Every
  * value here rides in `query_params` instead, which the driver binds; that also
  * matches the repo's other parameterised reads (scanner-review.service.ts).
+ *
+ * NO TIME SERIES, on purpose. An earlier revision also ran a bucketed
+ * `GROUP BY` query, which doubled the ClickHouse load per request for a value
+ * NOTHING rendered — the panel charts only `installs.series` and `runs.series`.
+ * That cost is paid on a fan-out path (see VIEWS_QUERY_TIMEOUT_SECONDS), so a
+ * dead second round-trip is not free. If a views chart is ever added, restore
+ * the query AND note that ClickHouse's `toStartOfWeek` defaults to SUNDAY while
+ * Postgres `date_trunc('week', …)` is MONDAY — mode 1 is required, or the views
+ * line sits a day out of phase with the runs line on the same axis.
+ *
+ * COVERAGE CAVEAT worth knowing before trusting the number: `blockRenders`
+ * counts MOUNT ATTEMPTS, not successful loads. `/api/track/block-render` writes
+ * a row even when the launch FAILS (it is a failed mount's only beacon) and the
+ * table carries no status column, so this reader cannot exclude them. An app
+ * that fails to load for everyone still reports views.
  */
 
 /** Impressions for a set of owned app blocks over a bounded range. */
@@ -43,10 +57,14 @@ export type AppViews = {
    * roaming over-counts) — it is a reach indicator, not an identity count.
    */
   uniqueViewers: number;
-  /** Of `count`, how many impressions came from signed-out viewers. */
+  /**
+   * Of `count`, how many IMPRESSIONS came from signed-out viewers — an
+   * impression count, NOT a viewer count, and not a subset of `uniqueViewers`.
+   * One anonymous visitor reloading ten times contributes 10 here and 1 to
+   * `uniqueViewers`, so `anonCount` can exceed `uniqueViewers`. Label it as
+   * loads wherever it is rendered next to a viewer figure.
+   */
   anonCount: number;
-  /** Impressions per bucket within the range. */
-  series: AnalyticsTimePoint[];
   /**
    * TRUE when the impression store could not be read — ClickHouse is not
    * configured for this deployment, or the query failed. The zeros above are
@@ -63,31 +81,39 @@ export type AppViews = {
   unavailable?: boolean;
 };
 
-/** A genuinely-measured zero (we asked, the answer was none). */
-export const EMPTY_VIEWS: AppViews = Object.freeze({
-  count: 0,
-  uniqueViewers: 0,
-  anonCount: 0,
-  series: [],
-});
-
 /** A placeholder zero (we could not ask). Always carries the discriminator. */
 export function unavailableViews(): AppViews {
-  return { count: 0, uniqueViewers: 0, anonCount: 0, series: [], unavailable: true };
+  return { count: 0, uniqueViewers: 0, anonCount: 0, unavailable: true };
 }
 
-/** A measured zero, as a fresh mutable object. */
+/** A measured zero (we asked, the answer was none). */
 export function emptyViews(): AppViews {
-  return { count: 0, uniqueViewers: 0, anonCount: 0, series: [] };
+  return { count: 0, uniqueViewers: 0, anonCount: 0 };
 }
 
 /**
- * ClickHouse DateTime parameter format (UTC, second resolution). The column is
- * a `DateTime`, so sub-second precision is not representable anyway.
+ * ClickHouse DateTime parameter format (UTC, second resolution). The `time`
+ * column is a `DateTime`, so sub-second precision is not representable anyway.
  */
 function chDateTime(d: Date): string {
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }
+
+/**
+ * Server-side execution cap, in seconds. The driver's own `request_timeout`
+ * defaults to FIVE MINUTES (@clickhouse/client-common 0.2.10) and
+ * `max_open_connections` to Infinity, neither of which this app overrides — so
+ * without a bound a merely SLOW ClickHouse (not a down one) holds the whole
+ * `Promise.all` in getMyAppAnalytics open for minutes.
+ *
+ * That matters more than it looks: `AppAnalyticsInline` issues one
+ * `getMyAppAnalytics` PER APPROVED APP ROW in the submissions list, so a single
+ * page load fans out to N of these. The degrade-don't-throw contract covered
+ * errors only; latency needs its own bound, and the cap must be enforced
+ * SERVER-side (`max_execution_time`) as well as client-side (`abort_signal`),
+ * because aborting the socket alone leaves the query running on the cluster.
+ */
+const VIEWS_QUERY_TIMEOUT_SECONDS = 10;
 
 type RollupRow = {
   impressions: number | string;
@@ -96,7 +122,20 @@ type RollupRow = {
   anonImpressions: number | string;
 };
 
-type SeriesRow = { bucketTs: number | string; value: number | string };
+/**
+ * VIEWS_WHERE is kept as ONE frozen string, and the tests pin it WHOLE.
+ *
+ * 🔴 This clause is the only thing that applies tenant isolation to the
+ * impression read — ownership is resolved upstream, but this is where the
+ * resolved ids actually constrain the scan. Asserting fragments of it with
+ * substring matches is not enough: an adversarial sweep flipped `AND` to `OR`
+ * (making the id filter a no-op, returning every author's impressions) and `IN`
+ * to `NOT IN` (returning every OTHER author's impressions) and BOTH mutants
+ * survived a fully green suite, because every fragment the tests looked for was
+ * still present. So the test pins this exact normalised text. A cosmetic
+ * reformat will fail that test; that is the intended trade.
+ */
+const VIEWS_WHERE = `WHERE appBlockId IN {appBlockIds:Array(String)} AND createdDate >= toDate({from:DateTime}) AND createdDate <= toDate({to:DateTime}) AND time >= {from:DateTime} AND time <= {to:DateTime}`;
 
 /**
  * Impressions for `appBlockIds` between `from` and `to`.
@@ -105,56 +144,43 @@ type SeriesRow = { bucketTs: number | string; value: number | string };
  * owns — this function applies no ownership check of its own, exactly like the
  * Postgres aggregates it sits beside.
  *
- * Never throws: a ClickHouse failure degrades to `unavailable: true` so one
- * flaky store cannot take down an analytics panel whose other counters are
- * fine.
+ * Never throws: a ClickHouse failure — including a TIMEOUT — degrades to
+ * `unavailable: true` so one slow or flaky store cannot take down an analytics
+ * panel whose other counters are fine.
  */
 export async function getAppViews({
   appBlockIds,
   from,
   to,
-  granularity,
   ch = clickhouse,
 }: {
   appBlockIds: string[];
   from: Date;
   to: Date;
-  granularity: 'day' | 'week';
   ch?: typeof clickhouse;
 }): Promise<AppViews> {
-  // No owned ids → nothing to ask about. This is a measured zero, not an
-  // outage, so it must NOT carry the unavailable flag.
+  // Defensive: the only production caller (getMyAppAnalytics) already returns
+  // early when the owner has no apps, so this is not reachable from there. It
+  // stays because the function is exported and a future caller must not be able
+  // to turn an empty id list into an unfiltered scan.
   if (appBlockIds.length === 0) return emptyViews();
 
   // `clickhouse` is undefined whenever CLICKHOUSE_HOST/USERNAME are unset
   // (src/server/clickhouse/client.ts) — i.e. most dev and CI environments.
   if (!ch) return unavailableViews();
 
-  // Week buckets must start MONDAY to line up with the Postgres series, which
-  // uses date_trunc('week', …) — ClickHouse's toStartOfWeek defaults to mode 0
-  // (Sunday), so mode 1 is load-bearing, not decoration. A mismatch would draw
-  // the views line one day out of phase with the runs line on the same chart.
-  const bucketExpr = granularity === 'week' ? 'toStartOfWeek(time, 1)' : 'toStartOfDay(time)';
-
-  // Bound BOTH `time` (the real predicate) and `createdDate` (the partition
-  // key) so the scan prunes partitions instead of reading the whole table.
-  const where = `
-    WHERE appBlockId IN {appBlockIds:Array(String)}
-      AND createdDate >= toDate({from:DateTime})
-      AND createdDate <= toDate({to:DateTime})
-      AND time >= {from:DateTime}
-      AND time <= {to:DateTime}
-  `;
-
-  const query_params = {
-    appBlockIds,
-    from: chDateTime(from),
-    to: chDateTime(to),
-  };
-
   try {
-    const [rollupResp, seriesResp] = await Promise.all([
-      ch.query({
+    // Bounds BOTH `time` (the real predicate) and `createdDate` (the partition
+    // key) so the scan prunes partitions instead of reading the whole table.
+    // `createdDate` is a `Date` (verified against prod: `system.columns` reports
+    // `createdDate Date`, `time DateTime`), so comparing it to `toDate(...)` is
+    // the correct granularity — if it were ever migrated to `DateTime` the
+    // upper bound would silently truncate to midnight and drop the current
+    // day's impressions with no error and no `unavailable` flag.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VIEWS_QUERY_TIMEOUT_SECONDS * 1000);
+    try {
+      const rollupResp = await ch.query({
         query: `
           SELECT
             count() AS impressions,
@@ -162,46 +188,45 @@ export async function getAppViews({
             uniqExactIf(ip, isAnon = 1) AS anonViewers,
             countIf(isAnon = 1) AS anonImpressions
           FROM blockRenders
-          ${where}
+          ${VIEWS_WHERE}
         `,
-        query_params,
+        query_params: {
+          appBlockIds,
+          from: chDateTime(from),
+          to: chDateTime(to),
+        },
         format: 'JSONEachRow',
-      }),
-      ch.query({
-        query: `
-          SELECT toUnixTimestamp(${bucketExpr}) AS bucketTs, count() AS value
-          FROM blockRenders
-          ${where}
-          GROUP BY bucketTs
-          ORDER BY bucketTs ASC
-        `,
-        query_params,
-        format: 'JSONEachRow',
-      }),
-    ]);
+        abort_signal: controller.signal,
+        clickhouse_settings: { max_execution_time: VIEWS_QUERY_TIMEOUT_SECONDS },
+      });
 
-    const [rollup] = (await rollupResp.json()) as RollupRow[];
-    const seriesRows = (await seriesResp.json()) as SeriesRow[];
+      const [rollup] = (await rollupResp.json()) as RollupRow[];
 
-    return {
-      count: Number(rollup?.impressions ?? 0),
-      // Authenticated viewers are distinct userIds; signed-out viewers all
-      // share userId 0, so they are counted by distinct ip and added on.
-      uniqueViewers: Number(rollup?.authedViewers ?? 0) + Number(rollup?.anonViewers ?? 0),
-      anonCount: Number(rollup?.anonImpressions ?? 0),
-      series: seriesRows.map((r) => ({
-        bucket: new Date(Number(r.bucketTs) * 1000).toISOString(),
-        value: Number(r.value),
-      })),
-    };
+      return {
+        count: Number(rollup?.impressions ?? 0),
+        // Authenticated viewers are distinct userIds; signed-out viewers all
+        // share userId 0, so they are counted by distinct ip and added on.
+        uniqueViewers: Number(rollup?.authedViewers ?? 0) + Number(rollup?.anonViewers ?? 0),
+        anonCount: Number(rollup?.anonImpressions ?? 0),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
-    // Degrade, don't throw: the rest of the payload is still good data.
-    logToAxiom({
-      name: 'app-views-service',
-      type: 'error',
-      message: 'blockRenders read failed',
-      error: (error as Error)?.message,
-    }).catch(() => undefined);
+    // Degrade, don't throw: the rest of the payload is still good data. This
+    // also catches the abort, so a timeout reads as `unavailable` rather than
+    // as zero impressions.
+    logToAxiom(
+      {
+        name: 'app-views-service',
+        type: 'error',
+        message: 'blockRenders read failed',
+        error: (error as Error)?.message,
+      },
+      // Same datastream as every other ClickHouse failure site (tracker.ts), so
+      // this lands next to its siblings rather than in a stream of its own.
+      'clickhouse'
+    ).catch(() => undefined);
     return unavailableViews();
   }
 }

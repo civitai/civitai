@@ -304,9 +304,11 @@ export async function getMyAppAnalytics({
     }),
 
     // IMPRESSIONS — blockRenders (ClickHouse). The only non-Postgres read
-    // here; it never throws, degrading to `unavailable` instead, so a
-    // ClickHouse outage cannot take down the whole panel.
-    getAppViews({ appBlockIds: ownedIds, from: range.from, to: range.to, granularity: truncUnit }),
+    // here; it never throws and is time-bounded, degrading to `unavailable`
+    // instead, so neither a ClickHouse outage NOR a slow ClickHouse can take
+    // down the whole panel. (It is bounded rather than merely try/caught
+    // because this Promise.all is on a per-app-row fan-out path.)
+    getAppViews({ appBlockIds: ownedIds, from: range.from, to: range.to }),
   ]);
 
   const apiCalls = invocationsAgg;

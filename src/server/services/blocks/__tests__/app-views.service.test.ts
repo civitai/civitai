@@ -46,27 +46,34 @@ type FakeCh = { calls: ChCall[]; query: ReturnType<typeof vi.fn> };
 
 function fakeCh(opts?: {
   rollup?: Record<string, unknown>;
-  series?: unknown[];
   throws?: boolean;
+  /** Resolve only after `signal` aborts, to exercise the timeout path. */
+  hangUntilAborted?: boolean;
 }): FakeCh {
   const calls: ChCall[] = [];
+  // Pairwise-DISTINCT, and deliberately chosen so anonImpressions (40) EXCEEDS
+  // uniqueViewers (9 + 3 = 12). That is the realistic shape — anonymous
+  // visitors reload — and an earlier fixture used 4, which stayed below 12 and
+  // hid the fact that the two numbers are different units.
   const rollup = opts?.rollup ?? {
     impressions: 124,
     authedViewers: 9,
     anonViewers: 3,
-    anonImpressions: 4,
+    anonImpressions: 40,
   };
-  const series = opts?.series ?? [
-    { bucketTs: 1782864000, value: 11 }, // 2026-07-01T00:00:00Z
-    { bucketTs: 1782950400, value: 7 }, // 2026-07-02T00:00:00Z
-  ];
   return {
     calls,
-    query: vi.fn(async (arg: ChCall) => {
+    query: vi.fn(async (arg: ChCall & { abort_signal?: AbortSignal }) => {
       calls.push({ query: arg.query, query_params: arg.query_params });
       if (opts?.throws) throw new Error('clickhouse exploded');
-      const isSeries = arg.query.includes('bucketTs');
-      return { json: async () => (isSeries ? series : [rollup]) };
+      if (opts?.hangUntilAborted) {
+        return new Promise((_resolve, reject) => {
+          arg.abort_signal?.addEventListener('abort', () =>
+            reject(new Error('The user aborted a request.'))
+          );
+        });
+      }
+      return { json: async () => [rollup] };
     }),
   };
 }
@@ -75,7 +82,7 @@ function fakeCh(opts?: {
 type ChArg = Parameters<typeof getAppViews>[0]['ch'];
 const asCh = (ch: FakeCh): ChArg => ch as unknown as ChArg;
 
-const baseArgs = { appBlockIds: IDS, from: FROM, to: TO, granularity: 'day' as const };
+const baseArgs = { appBlockIds: IDS, from: FROM, to: TO };
 
 describe('getAppViews — measured vs unmeasured zeros', () => {
   it('returns a MEASURED zero (no flag) when the caller owns no apps', async () => {
@@ -107,7 +114,6 @@ describe('getAppViews — measured vs unmeasured zeros', () => {
   it('a real all-zero result is NOT flagged unavailable', async () => {
     const ch = fakeCh({
       rollup: { impressions: 0, authedViewers: 0, anonViewers: 0, anonImpressions: 0 },
-      series: [],
     });
 
     const views = await getAppViews({ ...baseArgs, ch: asCh(ch) });
@@ -128,40 +134,72 @@ describe('getAppViews — aggregation', () => {
     // 9 distinct authed userIds + 3 distinct anon ips. NOT 9 (userId only,
     // which drops anon) and NOT 12 by coincidence of equal fixtures.
     expect(views.uniqueViewers).toBe(12);
-    expect(views.anonCount).toBe(4);
-  });
-
-  it('maps the series buckets to ISO timestamps', async () => {
-    const ch = fakeCh();
-    const views = await getAppViews({ ...baseArgs, ch: asCh(ch) });
-
-    expect(views.series).toEqual([
-      { bucket: '2026-07-01T00:00:00.000Z', value: 11 },
-      { bucket: '2026-07-02T00:00:00.000Z', value: 7 },
-    ]);
+    // anonCount is IMPRESSIONS, a different unit — and here deliberately
+    // LARGER than uniqueViewers, which is the realistic shape and the one a
+    // renderer can misread as "40 of those 12 viewers".
+    expect(views.anonCount).toBe(40);
+    expect(views.anonCount).toBeGreaterThan(views.uniqueViewers);
   });
 
   it('coerces ClickHouse string-encoded numbers', async () => {
     // JSONEachRow can hand back 64-bit ints as strings; a missing Number()
     // would turn `count` into a string and `uniqueViewers` into '93'.
     const ch = fakeCh({
-      rollup: { impressions: '124', authedViewers: '9', anonViewers: '3', anonImpressions: '4' },
-      series: [{ bucketTs: '1782864000', value: '11' }],
+      rollup: { impressions: '124', authedViewers: '9', anonViewers: '3', anonImpressions: '40' },
     });
 
     const views = await getAppViews({ ...baseArgs, ch: asCh(ch) });
 
     expect(views.count).toBe(124);
     expect(views.uniqueViewers).toBe(12);
-    expect(views.series[0]).toEqual({ bucket: '2026-07-01T00:00:00.000Z', value: 11 });
+    expect(views.anonCount).toBe(40);
   });
 
   it('survives an empty rollup result set', async () => {
-    const ch = fakeCh({ rollup: undefined, series: [] });
+    const ch = fakeCh();
     ch.query.mockImplementation(async () => ({ json: async () => [] }));
 
     await expect(getAppViews({ ...baseArgs, ch: asCh(ch) })).resolves.toEqual(emptyViews());
   });
+
+  it('issues exactly ONE ClickHouse query per call', async () => {
+    // This read sits inside an 11-way Promise.all that AppAnalyticsInline fans
+    // out per approved-app row, so a second round-trip is N extra queries per
+    // page load. An earlier revision ran a bucketed series query that nothing
+    // rendered; this pins that it does not come back unnoticed.
+    const ch = fakeCh();
+    await getAppViews({ ...baseArgs, ch: asCh(ch) });
+
+    expect(ch.calls).toHaveLength(1);
+  });
+});
+
+describe('getAppViews — latency is bounded, not just errors', () => {
+  it('caps execution SERVER-side and passes an abort signal', async () => {
+    const ch = fakeCh();
+    await getAppViews({ ...baseArgs, ch: asCh(ch) });
+
+    const arg = ch.query.mock.calls[0][0] as {
+      abort_signal?: AbortSignal;
+      clickhouse_settings?: { max_execution_time?: number };
+    };
+    // Client-side abort alone leaves the query running on the cluster, so the
+    // server-side cap is the one that actually protects ClickHouse.
+    expect(arg.clickhouse_settings?.max_execution_time).toBeGreaterThan(0);
+    expect(arg.abort_signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('degrades to UNAVAILABLE when the query hangs past the timeout', async () => {
+    // The degrade-don't-throw contract originally covered errors only. A SLOW
+    // ClickHouse is the more likely failure: the driver's own request_timeout
+    // defaults to five minutes, which would hold the whole Promise.all open.
+    const ch = fakeCh({ hangUntilAborted: true });
+
+    const views = await getAppViews({ ...baseArgs, ch: asCh(ch) });
+
+    expect(views).toEqual(unavailableViews());
+    expect(views.unavailable).toBe(true);
+  }, 30000);
 });
 
 describe('getAppViews — query construction', () => {
@@ -182,36 +220,40 @@ describe('getAppViews — query construction', () => {
     }
   });
 
-  it('buckets by day at day granularity', async () => {
-    const ch = fakeCh();
-    await getAppViews({ ...baseArgs, granularity: 'day', ch: asCh(ch) });
-
-    const series = ch.calls.find((c) => c.query.includes('bucketTs'));
-    expect(series?.query).toContain('toStartOfDay(time)');
-  });
-
-  it('buckets weeks from MONDAY so the series aligns with the Postgres one', async () => {
-    const ch = fakeCh();
-    await getAppViews({ ...baseArgs, granularity: 'week', ch: asCh(ch) });
-
-    const series = ch.calls.find((c) => c.query.includes('bucketTs'));
-    // Mode 1 is load-bearing: ClickHouse defaults to Sunday, Postgres
-    // date_trunc('week') is Monday. Bare toStartOfWeek(time) draws the views
-    // line a day out of phase with runs/installs on the same chart.
-    expect(series?.query).toContain('toStartOfWeek(time, 1)');
-    expect(series?.query).not.toMatch(/toStartOfWeek\(time\)/);
-  });
-
-  it('bounds the partition key as well as the timestamp', async () => {
+  /**
+   * 🔴 Pin the WHOLE normalised WHERE clause, not fragments of it.
+   *
+   * This clause is the only thing that applies tenant isolation to the read.
+   * With per-fragment `toContain` assertions, an adversarial sweep flipped
+   * `AND` → `OR` (id filter becomes a no-op — every author's impressions) and
+   * `IN` → `NOT IN` (every OTHER author's impressions) and BOTH mutants
+   * SURVIVED a fully green suite, because each fragment it looked for was
+   * still present. Substring matching cannot see boolean structure or
+   * polarity; only the whole statement can.
+   *
+   * The trade is explicit: a cosmetic reformat of the clause fails this test.
+   * That is correct — reformatting the one predicate enforcing isolation
+   * should require someone to look at it.
+   */
+  it('pins the ENTIRE isolation predicate, structure and polarity included', async () => {
     const ch = fakeCh();
     await getAppViews({ ...baseArgs, ch: asCh(ch) });
 
+    const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const where = normalise(
+      `WHERE appBlockId IN {appBlockIds:Array(String)}
+       AND createdDate >= toDate({from:DateTime})
+       AND createdDate <= toDate({to:DateTime})
+       AND time >= {from:DateTime}
+       AND time <= {to:DateTime}`
+    );
+
+    expect(ch.calls.length).toBeGreaterThan(0);
     for (const call of ch.calls) {
-      // Without the createdDate bounds the scan reads every partition.
-      expect(call.query).toContain('createdDate >= toDate({from:DateTime})');
-      expect(call.query).toContain('createdDate <= toDate({to:DateTime})');
-      expect(call.query).toContain('time >= {from:DateTime}');
-      expect(call.query).toContain('time <= {to:DateTime}');
+      expect(normalise(call.query)).toContain(where);
+      // Belt and braces on the two mutations that survived fragment matching:
+      // a commented-out clause keeps the TEXT present while killing the code.
+      expect(call.query).not.toMatch(/--|\/\*/);
     }
   });
 

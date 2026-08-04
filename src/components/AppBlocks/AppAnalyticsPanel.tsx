@@ -54,14 +54,19 @@ type AnalyticsData = {
   /**
    * Impressions (`blockRenders`). `unavailable` is a PER-SECTION flag, unlike
    * the payload-level one above: this is the only section read from ClickHouse,
-   * which can be down while every Postgres-derived number here is measured.
-   * When it is set the counters are placeholders — render an em dash, not a 0.
+   * which can be slow or down while every Postgres-derived number here is
+   * measured. When it is set the counters are placeholders — render an em dash,
+   * not a 0.
+   *
+   * OPTIONAL on purpose. tRPC output is not zod-validated on the client, so a
+   * rolling deploy can hand a new bundle a payload from an old pod that has no
+   * `views` key. That is a third state — absent — and it must render like
+   * `unavailable`, never like a measured zero.
    */
-  views: {
+  views?: {
     count: number;
     uniqueViewers: number;
     anonCount: number;
-    series: TimePoint[];
     unavailable?: boolean;
   };
 };
@@ -262,7 +267,18 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
 
       {analytics && !unavailable && (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="md">
+          {/*
+            `type="container"` is load-bearing, not tidiness. This panel is
+            rendered BOTH full-width and inside AppAnalyticsInline's
+            `Modal size="xl"` (48.75rem ≈ 780px). Mantine's default `media`
+            breakpoints resolve against the VIEWPORT, so on any ≥1200px screen
+            the modal would take the 5-column branch inside 780px — roughly
+            135px per card, ~103px of usable width after Card padding, for a
+            heading number plus a two-clause sub-line. Container queries
+            resolve against the panel's own width, so the embedded copy steps
+            down instead of squeezing.
+          */}
+          <SimpleGrid type="container" cols={{ base: 1, sm: 2, md: 3, lg: 5 }} spacing="md">
             <MetricCard
               label="Active installs"
               value={analytics.installs.active.toLocaleString()}
@@ -290,30 +306,43 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               tooltip="Distinct signed-in users who made a scoped API call within the range. See the coverage note below."
             />
             {/*
-              Impressions come from ClickHouse, which can be unconfigured or
-              down while every other card here is fine. Rendering a plain "0"
+              Impressions come from ClickHouse, which can be unconfigured, slow
+              or down while every other card here is fine. Rendering a plain "0"
               in that case is the fabricated-zero defect (#3557/#3581): the
               author cannot tell "nobody looked" from "we never asked". So an
               unavailable read renders an em dash, never a number.
+
+              🔴 `analytics.views` is read through `?.` because tRPC output is
+              NOT zod-validated on the client: during a rolling deploy a new
+              bundle can hit an old pod whose payload has no `views` key at all,
+              and an unguarded read throws in render. An absent section is an
+              UNKNOWN, so it takes the same branch as an outage — never the
+              zero branch.
             */}
             <MetricCard
-              label="Views (range)"
-              value={analytics.views.unavailable ? '—' : analytics.views.count.toLocaleString()}
+              label="App loads (range)"
+              value={
+                !analytics.views || analytics.views.unavailable
+                  ? '—'
+                  : analytics.views.count.toLocaleString()
+              }
               sub={
-                analytics.views.unavailable
+                !analytics.views || analytics.views.unavailable
                   ? 'Not measured right now'
                   : `${analytics.views.uniqueViewers.toLocaleString()} unique viewer${
                       analytics.views.uniqueViewers === 1 ? '' : 's'
                     }${
                       analytics.views.anonCount > 0
-                        ? ` · ${analytics.views.anonCount.toLocaleString()} signed-out`
+                        ? ` · ${analytics.views.anonCount.toLocaleString()} signed-out load${
+                            analytics.views.anonCount === 1 ? '' : 's'
+                          }`
                         : ''
                     }`
               }
               tooltip={
-                analytics.views.unavailable
-                  ? 'The impression store could not be read, so this is NOT a report of zero views. The other metrics on this page are unaffected.'
-                  : 'Times your app was loaded within the range, including by signed-out visitors. Unique viewers counts signed-in people once each; signed-out visitors are approximated by network address.'
+                !analytics.views || analytics.views.unavailable
+                  ? 'The impression store could not be read, so this is NOT a report of zero loads. The other metrics on this page are unaffected.'
+                  : 'Times your app was loaded within the range, including by signed-out visitors. A load that FAILED still counts — this measures attempts to open your app, not successful sessions. Unique viewers counts signed-in people once each and approximates signed-out ones by network address, so it is a reach indicator rather than an identity count.'
               }
             />
           </SimpleGrid>

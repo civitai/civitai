@@ -22,8 +22,12 @@ type InlineAnalytics = {
  * /apps/revenue dashboard panel runs) with a 30-day `from`; no new analytics
  * surface is built.
  *
- * Caveat (informational): runs/active-users undercount anonymous / no-scope
- * runs until the render-event instrumentation (#2695) deploys.
+ * Caveat (informational): the two figures shown HERE — runs and active users —
+ * undercount anonymous / no-scope activity, because both come from
+ * `block_scope_invocations` (authenticated, scope-gated calls only). The
+ * render-event instrumentation (#2695) has since SHIPPED; this inline stat
+ * deliberately does not read it. The "App loads" figure that does is inside the
+ * panel this button opens.
  */
 export function AppAnalyticsInline({
   appBlockId,
@@ -69,7 +73,7 @@ export function AppAnalyticsInline({
         </Tooltip>
       ) : data ? (
         <Tooltip
-          label="Runs and unique users in the last 30 days. Anonymous / no-scope runs are undercounted until render-event tracking ships."
+          label="Runs and unique users in the last 30 days, counting authenticated scoped calls only — anonymous / no-scope activity is undercounted here. Open Analytics for App loads, which counts every load."
           multiline
           maw={260}
           withinPortal
@@ -104,12 +108,7 @@ export function AppAnalyticsInline({
           Analytics
         </Group>
       </Anchor>
-      <Modal
-        opened={opened}
-        onClose={close}
-        title={`Analytics — ${appLabel}`}
-        size="xl"
-      >
+      <Modal opened={opened} onClose={close} title={`Analytics — ${appLabel}`} size="xl">
         {opened && <AppAnalyticsPanel scopedAppBlockId={appBlockId} />}
       </Modal>
     </Group>
