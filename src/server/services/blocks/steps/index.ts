@@ -203,8 +203,26 @@ export function postureRequiresAuditableText(posture: StepModerationPosture): bo
  * direction and it is the intended answer for now: such an entry needs a real
  * decision about whether its media is scanned too (the text scan here does not
  * look at media at all), and it should be blocked until someone makes it, not
- * admitted with one axis silently uncovered. Nothing in the currently-licensed
- * `$type` set has that shape.
+ * admitted with one axis silently uncovered.
+ *
+ * 🔴 AND THE LICENSED SET ALREADY CONTAINS ONE — DO NOT READ THIS AS A FUTURE
+ * PROBLEM. This paragraph used to end "Nothing in the currently-licensed
+ * `$type` set has that shape", and that was FALSE. `chatCompletion` has exactly
+ * that shape: `ChatCompletionInput.modalities` accepts `['image']`, and with it
+ * the orchestrator returns generated images on
+ * `choices[].message.images[].image_url.url` as base64 data URIs — bytes that
+ * never reach image ingestion, never become moderated `Image` rows, and are not
+ * seen by the text scan either.
+ *
+ * What keeps the XOR true today is NOT the `$type` set. It is that the
+ * `chatCompletion` ENTRY's `.strict()` `paramSchema` omits `modalities`, so the
+ * media arm is unreachable through it — a load-bearing omission, not a tidy
+ * one. Read `./chat-completion.step`'s note before touching that schema: adding
+ * `modalities` (or its companion `image_config`) turns a text-posture entry
+ * into a media-producing one and opens precisely the half-covered channel this
+ * rule exists to refuse. The invariant to defend is per-ENTRY schema
+ * discipline; do not infer from the XOR that the licensed `$type`s are
+ * single-natured.
  */
 export function stepOutputShape(posture: StepModerationPosture): 'media' | 'text' {
   switch (posture) {
