@@ -24,7 +24,7 @@ import {
 import { compressPacked, decompressPacked } from './packed-compression';
 import { applyCacheKeyPrefix } from './cache-key-prefix';
 
-export { CACHE_KEY_PREFIX, prefixCacheKey } from './cache-key-prefix';
+export { CACHE_KEY_NAMESPACE, CACHE_KEY_PREFIX, prefixCacheKey } from './cache-key-prefix';
 export type { RedisConfig } from './env';
 export type RedisLogFn = (message: string, ...args: unknown[]) => void;
 /** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
@@ -2280,8 +2280,10 @@ const REDIS_KEYS_UNPREFIXED = {
  * The cache key table, environment-scoped.
  *
  * Identical to `REDIS_KEYS_UNPREFIXED` in production (same object, byte-identical keys); on a
- * preview deployment every leaf carries the `preview:` prefix so a preview cannot read or
- * overwrite a production cache entry. See ./cache-key-prefix for the full rationale.
+ * deployment that sets `CACHE_KEY_NAMESPACE` every leaf carries the `<namespace>:` prefix, so a
+ * non-production deployment cannot read or overwrite a production cache entry. See
+ * ./cache-key-prefix for the full rationale — in particular why the namespace is explicit rather
+ * than derived from `IS_PREVIEW`.
  */
 export const REDIS_KEYS = applyCacheKeyPrefix(REDIS_KEYS_UNPREFIXED);
 
