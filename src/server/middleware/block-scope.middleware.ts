@@ -613,10 +613,7 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *
  * Throws ForbiddenError on mismatch.
  */
-export function enforceContextBinding(
-  claims: BlockTokenClaims,
-  req: NextApiRequest
-): void {
+export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequest): void {
   for (const scope of claims.scopes) {
     // Deny-by-default: tokens carrying scopes we don't know about are
     // rejected here. The manifest validator is the registration-time gate;
@@ -627,24 +624,17 @@ export function enforceContextBinding(
     }
     switch (scope) {
       case 'models:read:self': {
-        const modelIdStr =
-          readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
+        const modelIdStr = readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
         // M10: decimal-only parse. Number('0x3039') === 12345 — an attacker
         // could otherwise pass the binding with ?id=0x3039 against
         // ctx.modelId=12345. Also reject any non-digit form.
         const modelId =
-          modelIdStr != null && /^[0-9]+$/.test(modelIdStr)
-            ? Number.parseInt(modelIdStr, 10)
-            : NaN;
+          modelIdStr != null && /^[0-9]+$/.test(modelIdStr) ? Number.parseInt(modelIdStr, 10) : NaN;
         const ctxModelId = Number(claims.ctx?.modelId ?? NaN);
         // isInteger over isFinite: '1.5' would parse to 1.5 (finite) and then
         // fail the equality against an integer ctxModelId, so it would 403
         // either way — but rejecting non-integer up front is clearer.
-        if (
-          !Number.isInteger(modelId) ||
-          !Number.isInteger(ctxModelId) ||
-          modelId !== ctxModelId
-        ) {
+        if (!Number.isInteger(modelId) || !Number.isInteger(ctxModelId) || modelId !== ctxModelId) {
           throw forbidden('models:read:self bound to different modelId');
         }
         break;
@@ -729,10 +719,7 @@ export function enforceContextBinding(
   }
 }
 
-export function withBlockScope(
-  handler: NextApiHandler,
-  opts: WithBlockScopeOpts
-): NextApiHandler {
+export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts): NextApiHandler {
   return async (req, res) => {
     const cors = await setBlockCors(req, res, opts);
     if (cors === 'handled') return;
@@ -914,10 +901,7 @@ export function withBlockScope(
     // the v1 payloads happen to be public, the moment a wrapped route
     // differentiates by claims.sub (e.g., shows drafts to the owner), edge
     // caches would otherwise serve one user's view to another.
-    originalSetHeader(
-      'Cache-Control',
-      'private, no-store, no-cache, must-revalidate, max-age=0'
-    );
+    originalSetHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
 
     // W5 v0.5: log a BlockScopeInvocation row when the response finishes.
     // Fires after every successful scope+binding check (the wrapped handler
@@ -944,9 +928,9 @@ export function withBlockScope(
               appBlockId: claims.appBlockId,
               blockInstanceId: claims.blockInstanceId,
               // In "any valid block token" mode there is no required scope; the
-            // audit column is NOT NULL, so record a stable sentinel that
-            // distinguishes these rows from real per-scope invocations.
-            scope: opts.requiredScope ?? '(any-token)',
+              // audit column is NOT NULL, so record a stable sentinel that
+              // distinguishes these rows from real per-scope invocations.
+              scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
               ...(actionDetail ? { detail: actionDetail } : {}),
@@ -972,23 +956,102 @@ export function withBlockScope(
 }
 
 /**
- * Reduce req.url to a route-shaped string for the audit log: strip query
- * string + collapse path segments that look like ids/ulids to a placeholder
- * so the cardinality of the `endpoint` column stays bounded.
+ * Every STATIC path segment reachable through a `withBlockScope`-wrapped route,
+ * and nothing else. This is the allowlist `normalizeEndpoint` templates against.
+ *
+ * It is a CLOSED set by construction: Next.js only dispatches a request to a
+ * wrapped handler when the URL matches one of the 12 route files verbatim except
+ * for their `[id]` positions, so any segment not listed here arrived in a dynamic
+ * position and is caller-supplied. Kept in lockstep with those route files by
+ * `block-scope.normalize-endpoint.drift.test.ts`, which derives the set by
+ * walking `src/pages/api` for `export default withBlockScope(` rather than
+ * trusting this comment.
+ *
+ * Not listed on purpose: `submissions`, `submit-version`, `withdraw`,
+ * `dev-token`, `block-tokens`. Those routes live under `/api/v1/blocks` too but
+ * authenticate with an API key, not a block JWT — they never call this
+ * middleware, so listing them would be an unfalsifiable claim about a path this
+ * function cannot see.
  */
-function normalizeEndpoint(rawUrl: string): string {
+export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
+  'api',
+  'v1',
+  'blocks',
+  'collections',
+  'follow',
+  'generation-resources',
+  'images',
+  'increment',
+  'me',
+  'models',
+  'shared-storage',
+  'tip',
+  'tip-allowance',
+  'top',
+]);
+
+/**
+ * Reduce req.url to a route-shaped string for the audit log: strip the query
+ * string + collapse every per-request path segment to a placeholder so the
+ * cardinality of the `endpoint` column stays bounded.
+ *
+ * WHY THIS MATTERS: `endpoint` is the GROUP BY key of the `topEndpoints` rollup
+ * (`app-analytics.service.ts` — `groupBy(['endpoint']) … take: 5`). An unbounded
+ * value is not merely ugly, it fragments one logical route into N count-1 rows
+ * and pushes the app's real traffic out of the top 5 entirely. #3561 fixed
+ * exactly that for the five ROUTER call sites that interpolated an id into a
+ * bounded literal; this function is the remaining writer to the same column.
+ *
+ * THE RULE IS ALLOWLIST-FIRST, NOT SHAPE-FIRST, and deliberately so. The static
+ * vocabulary of these routes is itself slug-shaped — `generation-resources`,
+ * `tip-allowance`, `shared-storage` — so NO shape heuristic can template
+ * `my-collection-slug` without also templating those, and over-templating
+ * destroys the aggregate just as thoroughly as under-templating (every route
+ * collapses to one row). A segment in `KNOWN_STATIC_ENDPOINT_SEGMENTS` survives
+ * verbatim and that arm wins over every shape test; everything else is a value
+ * and is templated — `:id` / `:ulid` / `:uuid` where the shape is recognisable,
+ * `:seg` otherwise.
+ *
+ * FIDELITY LIMITS — this is a heuristic. It deliberately does NOT cover:
+ *   - Distinguishing a VALUE from a segment that collides with the static
+ *     vocabulary. `/api/v1/blocks/collections/models` records as
+ *     `/api/v1/blocks/collections/models`, not `…/:seg`. Bounded either way (the
+ *     vocabulary is finite), and Next routes it to the `[id]` handler, which
+ *     rejects it — so the row is a bounded 4xx, not a cardinality leak.
+ *   - A NEW wrapped route whose static segments are not added to the set: it
+ *     degrades to `:seg`. That is the safe direction (still bounded, just less
+ *     readable) and the drift test fails until the set is updated.
+ *   - The query string, which is DROPPED rather than templated — `?cursor=…`
+ *     values never reach the column at all, so a cursor cannot fragment it.
+ *   - Historical rows. No backfill is run, so the rollup mixes bounded and
+ *     legacy unbounded values until the old rows age out of the query range.
+ */
+export function normalizeEndpoint(rawUrl: string): string {
   const qIdx = rawUrl.indexOf('?');
   const path = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
   return path
     .split('/')
     .map((seg) => {
       if (!seg) return seg;
-      // Numeric ids (modelId, userId, etc.).
+      // A known static segment is never a caller-supplied value. This arm runs
+      // FIRST so that a future static segment which happens to look like an id
+      // (a `/v2` prefix, a `/2024` archive route) cannot be templated away.
+      if (KNOWN_STATIC_ENDPOINT_SEGMENTS.has(seg)) return seg;
+      // Numeric ids (modelId, collectionId, userId, etc.).
       if (/^\d+$/.test(seg)) return ':id';
       // ULIDs + their prefixed forms (apb_<26 ulid>, mbi_<26 ulid>, etc.).
       if (/^[A-Za-z]+_[0-9A-HJKMNP-TV-Z]{26}$/.test(seg)) return ':ulid';
       if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(seg)) return ':ulid';
-      return seg;
+      // UUIDs (any version, either case), incl. the same prefixed form.
+      if (
+        /^(?:[A-Za-z]+_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+          seg
+        )
+      )
+        return ':uuid';
+      // Anything else in a dynamic position: a slug, a hash, a filename, a
+      // percent-encoded blob, fuzzer junk. Unbounded by definition.
+      return ':seg';
     })
     .join('/');
 }
