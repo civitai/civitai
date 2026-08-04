@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Contesting a "depicts a minor" flag goes through the existing Appeal system
- * (Task 5). `createEntityAppeal` must accept a `skipFee` flag and skip both the
- * 30-day appeal count and the Buzz charge when set — the fee still applies to
- * every other appeal type.
+ * Contesting a "depicts a minor" flag goes through the existing Appeal system.
+ * `createEntityAppeal` must accept a `skipFee` flag and skip both the 30-day
+ * appeal count and the Buzz charge when set — the fee still applies to every
+ * other appeal type.
  */
 
 const { mockGetAppealCount } = vi.hoisted(() => ({ mockGetAppealCount: vi.fn() }));
@@ -40,6 +40,7 @@ import { EntityType } from '~/shared/utils/prisma/enums';
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.appeal.create.mockResolvedValue({ id: 1 });
+  mockCreateMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 1 });
 });
 
 describe('createEntityAppeal — skipFee', () => {
@@ -77,7 +78,6 @@ describe('createEntityAppeal — skipFee', () => {
 
   it('still charges the fee for a non-model appeal past the free allowance', async () => {
     mockGetAppealCount.mockResolvedValue(3);
-    mockCreateMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 1 });
 
     await createEntityAppeal({
       entityId: 99,

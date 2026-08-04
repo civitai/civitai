@@ -364,9 +364,7 @@ export async function createEntityAppealHandler({
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
-        // Without this, adding Model here would open appeals for every model in
-        // every state, not just flagged ones. Legacy flags carry no snapshot and
-        // are deliberately excluded.
+        // Legacy flags carry no snapshot and are deliberately excluded.
         const meta = model.meta as ModelMeta | null;
         if (!model.minor || !meta?.minorFlagSnapshot)
           throw throwBadRequestError('This model is not flagged as depicting a minor');
