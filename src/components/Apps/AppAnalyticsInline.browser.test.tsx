@@ -58,7 +58,35 @@ describe('AppAnalyticsInline — unavailable vs genuine zero', () => {
     };
     renderWithProviders(<AppAnalyticsInline appBlockId="apb_1" appLabel="My App" />);
 
-    await expect.element(page.getByText('Analytics unavailable')).toBeInTheDocument();
+    // Await the "Analytics" trigger rather than "Analytics unavailable" — the same
+    // reason the sibling below does it. It is the ONE element this component renders
+    // in EVERY branch, so the exact regression this test exists to catch (the
+    // unavailable branch falling through to the stat) fails on the assertions below
+    // with a legible message. Awaiting "Analytics unavailable" instead makes that
+    // regression surface as a ~15s "Matcher did not succeed in time" locator timeout
+    // — measured, by rendering the fabricated stat in this branch — which reads like
+    // CI flake rather than the value regression it actually is.
+    await expect.element(page.getByRole('button', { name: /^analytics$/i })).toBeInTheDocument();
+
+    expect(page.getByText('Analytics unavailable').elements()).toHaveLength(1);
+
+    // 🔴 These two stay NON-exact ON PURPOSE. Do NOT "fix" them to `{ exact: true }`
+    // for consistency with the sibling — the sibling needs `exact` because it resolves
+    // a SINGLE element and a substring match there collides with the stat's own hover
+    // tooltip ("Runs and unique users in the last 30 days…"). This branch renders
+    // neither the stat nor that tooltip, so there is nothing to collide with: verified
+    // by parking the pointer on the "Analytics unavailable" text and re-querying —
+    // 0 matches for both words, hovered and unhovered.
+    //
+    // Here `exact` would COST sensitivity. These are ABSENCE assertions, so a looser
+    // matcher is a STRICTER test. Measured: against a consolidated single text node
+    // `<span>0 runs · 0 users</span>` — a plausible markup simplification of the stat —
+    // `getByText('runs')` matches 1 but `getByText('runs', { exact: true })` matches 0.
+    // The exact form would silently stop catching the fabricated stat.
+    //
+    // The failure direction is safe either way: `.elements()` is `querySelectorAll`
+    // with no strict mode (that applies to `.element()`/`.query()`), so a spurious
+    // extra match fails loudly with "expected length 0 to be 1", never by hanging.
     expect(page.getByText('runs').elements()).toHaveLength(0);
     expect(page.getByText('users').elements()).toHaveLength(0);
   });
