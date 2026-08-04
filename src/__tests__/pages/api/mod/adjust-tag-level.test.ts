@@ -12,10 +12,11 @@ const { mockQuery, mockTagCache, mockTagCacheByName } = vi.hoisted(() => {
 // The handler only uses pgDbWrite, but kyselyDb (pulled in transitively) builds
 // a client per tier at module load — a missing pool fails the import instead of
 // the code under test.
-vi.mock('~/server/db/pgDb', async () => {
-  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
-  return createPgDbMock({ pgDbWrite: { query: mockQuery } });
-});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbWrite: { query: mockQuery },
+  pgDbRead: {},
+  pgDbReadLong: {},
+}));
 
 vi.mock('~/server/redis/caches', () => ({
   tagCache: mockTagCache,

@@ -59,10 +59,7 @@ vi.mock('@civitai/db', () => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', async () => {
-  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
-  return createPgDbMock();
-});
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),

@@ -12,16 +12,26 @@ import { createPgDbMock, pgDbMockExportNames } from '~/test-utils/pgDbMock';
  * assertion failures against intact production code, and a suite whose collection dies contributes zero
  * tests rather than reporting a failure. Adding one export to pgDb reddened unrelated suites twice already.
  *
- * Three layers guard this, and these tests are the third:
+ * TWO layers guard this:
  *
- *  1. `local-rules/no-wholesale-module-mock` (.eslintrc.js) rejects a hand-written pgDb factory at
- *     authoring time. It is `'error'`, and the "ESLint (added files)" CI step is BLOCKING — so a NEW test
- *     file cannot reintroduce the pattern.
- *  2. `src/test-utils/pgDbMock.ts` types its stub object as `Record<keyof typeof import(pgDb), unknown>`,
- *     so an export ADDED to pgDb fails `tsc` — naming the export, in one file. `Typecheck` is blocking too.
- *  3. These tests re-assert both invariants at runtime. They matter because the ESLint step that covers
- *     MODIFIED files is `continue-on-error` — only ADDED files are blocking — so a file edited to
- *     hand-roll a factory would slip past layer 1. This catches that.
+ *  1. `src/test-utils/pgDbMock.ts` types its stub object as `Record<keyof typeof import(pgDb), unknown>`.
+ *     That is a TOTAL record, so an export ADDED to pgDb fails `tsc` — naming the export, in one file.
+ *     `Typecheck` is a BLOCKING CI job (unlike `Unit tests`, which is `continue-on-error: true`), so this
+ *     is caught before merge with one legible message instead of N obscure suite failures.
+ *  2. These tests re-assert the same invariant at runtime, AND scan every suite that mocks pgDb to confirm
+ *     its factory lists the full export set.
+ *
+ * 🔴 Each suite deliberately keeps its OWN inline, SYNCHRONOUS object literal rather than calling a shared
+ * runtime factory. That is not an oversight — it was tried and measured, and reverted:
+ *
+ *   A `vi.mock` factory is hoisted above imports, so it cannot reference a statically-imported helper; the
+ *   only way to share one is `async () => { const { f } = await import(...); return f(); }`. Making the
+ *   factory async slowed EVERY converted suite in the CI pod, proportionally to the work it does:
+ *   `get-models-raw.transient-503` 44.3s -> 60.3s (past the 60s per-test timeout, 9 tests red) and
+ *   `challenge.metrics.completing-stuck` 14.8s -> 24.3s (+64%). It is invisible locally (~3.5s either way).
+ *
+ * So the single-sourcing lives HERE and in the canary, at zero runtime cost, instead of in an import that
+ * every mocked suite has to pay for.
  */
 
 // `pgDb` builds real `pg` pools via `getClient()` at module scope unless `env.IS_BUILD` is set. Stub the env
@@ -77,7 +87,7 @@ describe('pgDb mock parity', () => {
     ).toEqual([]);
   });
 
-  it('is the only pgDb mock factory — no suite hand-rolls its own', () => {
+  it('every suite mocking pgDb lists the complete export set in its inline factory', () => {
     const srcRoot = path.resolve(__dirname, '../..');
     const helperPath = path.join(srcRoot, 'test-utils', 'pgDbMock.ts');
 
@@ -103,25 +113,51 @@ describe('pgDb mock parity', () => {
     ).toBeGreaterThan(0);
     expect(fs.existsSync(helperPath), `Expected the shared helper at ${helperPath}`).toBe(true);
 
+    // Match ANY quote style and both the `~/` alias and a relative specifier. The earlier version matched
+    // only the single-quoted alias, so a byte-identical double-quoted factory scanned as zero offenders —
+    // a false green. Verified with that exact pair.
+    const MOCK_CALL = /vi\.mock\(\s*(['"`])(?:~\/server\/db\/pgDb|(?:\.\.?\/)+server\/db\/pgDb)\1/;
+
+    /** Span of the factory's argument list, via balanced parens from the `vi.mock(` that opens it. */
+    const factorySpan = (body: string, from: number): string => {
+      const open = body.indexOf('(', from);
+      let depth = 0;
+      for (let i = open; i < body.length; i++) {
+        if (body[i] === '(') depth++;
+        else if (body[i] === ')' && --depth === 0) return body.slice(open, i);
+      }
+      return body.slice(open);
+    };
+
+    const required = pgDbMockExportNames();
+
     const offenders = testFiles
-      .filter((file) => {
+      .map((file) => {
         const body = fs.readFileSync(file, 'utf8');
-        return body.includes("vi.mock('~/server/db/pgDb'") && !body.includes('createPgDbMock');
+        const m = MOCK_CALL.exec(body);
+        if (!m) return null;
+        const span = factorySpan(body, m.index);
+        const missing = required.filter((name) => !new RegExp(`\\b${name}\\s*:`).test(span));
+        return missing.length
+          ? `${path.relative(srcRoot, file)} (missing: ${missing.join(', ')})`
+          : null;
       })
-      .map((file) => path.relative(srcRoot, file))
+      .filter((x): x is string => x !== null)
       .sort();
 
     expect(
       offenders,
-      `${offenders.length} test file(s) hand-write their own \`vi.mock('~/server/db/pgDb', ...)\` factory ` +
-        `instead of using the shared one:\n  ${offenders.join('\n  ')}\n\n` +
-        `A hand-written factory lists only the exports that file happens to need today, which is exactly ` +
-        `how adding an export to pgDb silently reds unrelated suites.\n\n` +
-        `FIX: replace the factory body with\n` +
-        `    vi.mock('~/server/db/pgDb', async () => {\n` +
-        `      const { createPgDbMock } = await import('~/test-utils/pgDbMock');\n` +
-        `      return createPgDbMock({ /* only the pools this suite drives */ });\n` +
-        `    });`
+      `${offenders.length} test file(s) mock ~/server/db/pgDb with an INCOMPLETE factory:\n  ` +
+        `${offenders.join('\n  ')}\n\n` +
+        `kyselyDb.ts destructures every pgDb export at module-eval time, and Vitest throws on any name the ` +
+        `factory omits. That throw happens during module LOAD, so the suite dies at collection and reports ` +
+        `ZERO tests rather than a failure — it just silently stops existing.\n\n` +
+        `FIX: add the missing key(s) to that file's factory, e.g. \`pgDbReadLong: {}\`. The full required ` +
+        `set is: ${required.join(', ')}.\n\n` +
+        `NOTE: the factory is deliberately an inline SYNC object literal, not a shared runtime helper. ` +
+        `A vi.mock factory is hoisted above imports, so sharing one requires an async dynamic import — ` +
+        `measured in-pod at +36% on a 44s suite (pushing it past the 60s per-test timeout) and +64% on a ` +
+        `15s one. The single-sourcing lives in THIS test plus the compile-time canary, at zero runtime cost.`
     ).toEqual([]);
   });
 

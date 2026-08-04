@@ -55,13 +55,10 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mocks.dbWrite,
 }));
 
-vi.mock('~/server/db/pgDb', async () => {
-  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
-  return createPgDbMock({
-    pgDbRead: mocks.pgDbRead,
-    pgDbWrite: mocks.pgDbWrite,
-  });
-});
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
+  pgDbRead: mocks.pgDbRead,
+  pgDbWrite: mocks.pgDbWrite,
+}));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 

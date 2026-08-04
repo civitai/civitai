@@ -68,11 +68,17 @@ export type PgDbExportName = keyof PgDbModule;
 type PgDbStubs = Record<PgDbExportName, unknown>;
 
 /**
- * Build a complete mock module namespace for `~/server/db/pgDb`.
+ * The canonical complete mock namespace for `~/server/db/pgDb`.
  *
- * Every pool defaults to a bare `{}` — the same inert value the hand-written factories used, so migrating
- * a suite to this helper does not change its behaviour. Override the pools the suite actually exercises;
- * `overrides` is keyed to the real export names, so a typo (`pgDbWirte`) is a compile error too.
+ * 🔴 Test suites do NOT call this at runtime — they keep their own inline SYNC object literal, and
+ * `pgDbMock.parity.test.ts` scans them to confirm the key set matches. Sharing this factory would force
+ * every mocked suite into `vi.mock('...', async () => await import(...))` (a mock factory is hoisted above
+ * imports, so a static import is unreachable), which was measured to cost +36% on a 44s suite — enough to
+ * push it past the 60s per-test timeout — and +64% on a 15s one, in the CI pod only.
+ *
+ * Its job is to be the ONE typed declaration of the full export set: `PgDbStubs` is a total `Record` over
+ * the real module's names, so adding an export to pgDb fails `tsc` right here, naming it. `overrides` is
+ * keyed to the real export names, so a typo (`pgDbWirte`) is a compile error too.
  */
 export function createPgDbMock(overrides: Partial<PgDbStubs> = {}): PgDbModule {
   const stubs: PgDbStubs = {
