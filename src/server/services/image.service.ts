@@ -144,7 +144,6 @@ import {
   getCollectionRandomSeed,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
-  removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -409,9 +408,6 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
-    // Remove image from all collections before deleting
-    await removeEntityFromAllCollections('image', id);
-
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -455,10 +451,6 @@ export const deleteImageById = async ({
 
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
-    // Remove images from all collections before deleting
-    // Note: Since we're using raw SQL delete, Prisma cascades won't trigger automatically
-    await Promise.all(ids.map((id) => removeEntityFromAllCollections('image', id)));
-
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
