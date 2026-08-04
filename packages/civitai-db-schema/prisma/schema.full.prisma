@@ -4189,7 +4189,7 @@ model ArticleMetric {
 }
 
 model Leaderboard {
-  id                 String  @id
+  id                 String        @id
   index              Int
   title              String
   description        String
@@ -4197,6 +4197,7 @@ model Leaderboard {
   query              String
   active             Boolean
   public             Boolean
+  domain             DomainColor[] @default([all])
 
   results LeaderboardResult[]
 }

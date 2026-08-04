@@ -3,6 +3,8 @@ import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { getHomeBlockData } from '~/server/services/home-block.service';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import type { DomainColor } from '~/shared/utils/prisma/enums';
+import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
 
 const CACHE_EXPIRY = {
@@ -45,19 +47,29 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
   }
 }
 
-export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
+// Leaderboard blocks resolve different boards per color, so the cache key carries
+// the domain. Without it the first color to warm a block serves every other one —
+// a red-scoped board rendered onto civitai.com.
+const domainSegment = (domain?: DomainColor) => domain ?? 'unscoped';
+
+export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: DomainColor) {
   const identifier = getHomeBlockIdentifier(homeBlock);
 
   if (!identifier) return null;
 
-  const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}` as const;
+  const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}:${domainSegment(
+    domain
+  )}` as const;
   const cachedHomeBlock = await redis.packed.get<HomeBlockWithData>(cacheKey);
 
   if (cachedHomeBlock) return cachedHomeBlock;
 
   log(`getHomeBlockCached :: getting home block with identifier ${identifier}`);
 
-  const homeBlockWithData = await getHomeBlockData({ homeBlock, input: { limit: 14 * 4 } });
+  const homeBlockWithData = await getHomeBlockData({
+    homeBlock,
+    input: { limit: 14 * 4, domain },
+  });
   // Important that we combine these. Data might be the same for 2 blocks (i.e, 2 user collection blocks),
   // but other relevant info might differ (i.e, index of the block)
   const parsedHomeBlock = {
@@ -80,7 +92,13 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
 }
 
 export async function homeBlockCacheBust(type: HomeBlockType, entityId: number | string) {
-  const redisString = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${entityId}` as const;
-  log(`Cache busted: ${redisString}`);
-  await redis.del(redisString);
+  // One entry per color, so a bust has to clear them all. Also clears the
+  // un-suffixed legacy key so entries written before domain keying still drop.
+  const base = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${entityId}` as const;
+  const keys = [
+    base,
+    ...[...colorDomainNames, undefined].map((d) => `${base}:${domainSegment(d)}`),
+  ];
+  log(`Cache busted: ${base} (${keys.length} keys)`);
+  await Promise.all(keys.map((key) => redis.del(key as typeof base)));
 }

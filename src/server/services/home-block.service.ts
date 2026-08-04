@@ -131,6 +131,7 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
 
 export const getHomeBlockById = async ({
   id,
+  domain,
 }: GetHomeBlockByIdInputSchema & {
   // SessionUser required because it's passed down to getHomeBlockData
   user?: SessionUser;
@@ -156,10 +157,13 @@ export const getHomeBlockById = async ({
     return null;
   }
 
-  return getHomeBlockCached({
-    ...homeBlock,
-    metadata: homeBlock.metadata as HomeBlockMetaSchema,
-  });
+  return getHomeBlockCached(
+    {
+      ...homeBlock,
+      metadata: homeBlock.metadata as HomeBlockMetaSchema,
+    },
+    domain
+  );
 };
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
@@ -276,17 +280,23 @@ export const getHomeBlockData = async ({
       const leaderboardsWithResults = await getLeaderboardsWithResults({
         ids: leaderboardIds,
         isModerator: user?.isModerator || false,
+        domain: input.domain,
       });
 
       return {
         ...homeBlock,
         metadata,
-        leaderboards: leaderboardsWithResults.sort((a, b) => {
-          const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
-          const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+        leaderboards: leaderboardsWithResults
+          .map((board) => ({
+            ...board,
+            moreHref: leaderboards.find((item) => item.id === board.id)?.moreHref,
+          }))
+          .sort((a, b) => {
+            const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+            const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
 
-          return aIndex - bIndex;
-        }),
+            return aIndex - bIndex;
+          }),
       };
     }
     case HomeBlockType.CosmeticShop: {

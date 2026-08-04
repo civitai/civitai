@@ -109,6 +109,9 @@ export const getAllModelsSchema = z.object({
   supportsGeneration: z.coerce.boolean().optional(),
   fromPlatform: z.coerce.boolean().optional(),
   followed: z.coerce.boolean().optional(),
+  // Restrict to creators currently on the "new & upcoming" board. Server resolves
+  // the board from this flag plus the request domain; the client sends no user list.
+  newCreators: z.coerce.boolean().optional(),
   archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),

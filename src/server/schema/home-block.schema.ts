@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import { DomainColor, HomeBlockType } from '~/shared/utils/prisma/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
@@ -37,6 +37,10 @@ export const homeBlockMetaSchema = z
       z.object({
         id: z.string(),
         index: z.number().default(0),
+        // Where the card's "More" button goes. Defaults to the board's own page;
+        // the new-creator boards point at their pre-filtered feed instead, since
+        // browsing those creators' work is the point rather than the ranking.
+        moreHref: z.string().optional(),
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),
@@ -79,6 +83,9 @@ export const getHomeBlocksInputSchema = z
     ownedOnly: z.boolean().optional(),
     excludedSystemHomeBlockIds: z.array(z.number()).optional(),
     systemHomeBlockIds: z.array(z.number()).optional(),
+    // Stamped by `applyRequestDomainColor`; gates which leaderboards a Leaderboard
+    // home block may surface.
+    domain: z.enum(DomainColor).optional(),
   })
   .partial()
   .default({ limit: 8 });
@@ -94,7 +101,9 @@ export const getSystemHomeBlocksInputSchema = z
 
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 
-export const getHomeBlockByIdInputSchema = getByIdSchema.partial();
+export const getHomeBlockByIdInputSchema = getByIdSchema
+  .partial()
+  .extend({ domain: z.enum(DomainColor).optional() });
 
 export type CreateCollectionHomeBlockInputSchema = z.infer<
   typeof createCollectionHomeBlockInputSchema

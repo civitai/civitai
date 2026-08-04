@@ -2114,6 +2114,7 @@ export const REDIS_KEYS = {
     ARTICLE_STATS: 'packed:caches:article-stats',
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
+    NEW_CREATORS: 'packed:caches:new-creators',
     MODEL_TAGS: 'packed:caches:model-tags',
     MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',

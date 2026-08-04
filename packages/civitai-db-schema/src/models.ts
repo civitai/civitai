@@ -2804,6 +2804,7 @@ export interface Leaderboard {
   query: string;
   active: boolean;
   public: boolean;
+  domain: DomainColor[];
   results?: LeaderboardResult[];
 }
 

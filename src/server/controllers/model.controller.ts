@@ -563,6 +563,7 @@ export const getModelsInfiniteHandler = async ({
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        domain: ctx.domain,
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,

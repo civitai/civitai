@@ -298,12 +298,15 @@ export const getInfiniteImagesHandler = async ({
   //   Only forces the DB when scoped to a model (its sole legit use â€” the model
   //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
   //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+  // - newCreators: filters on a resolved set of user ids, and the images index
+  //   has no filterable `user.id` (only `user.username`)
   const requiresDbPath =
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
+    !!input.newCreators ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
 
@@ -349,6 +352,7 @@ export const getInfiniteImagesHandler = async ({
       return await getAllImages({
         ...input,
         user,
+        domain: ctx.domain,
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
