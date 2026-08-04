@@ -3106,7 +3106,12 @@ export const blocksRouter = router({
           // submit-phase prompt audit uses. Never a request-body field.
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // 🔴 `claims.appBlockId` (`AppBlock.id`, `apb_<ulid>`), NOT
+          // `claims.blockId` — which is `AppBlock.blockId`, the publish request's
+          // SLUG, and joins to nothing. The value is telemetry-only (no column, no
+          // FK), so the wrong claim fails silently. See the field's doc on
+          // `StepOutputModerationRequest`.
+          appBlockId: claims.appBlockId,
         }
       );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
@@ -3250,7 +3255,8 @@ export const blocksRouter = router({
           userId,
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // Same as `pollWorkflow`: the `apb_<ulid>` PK, never the slug.
+          appBlockId: claims.appBlockId,
         }
       );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
