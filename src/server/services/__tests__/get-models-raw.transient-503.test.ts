@@ -1,5 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+// 🔴 STATIC imports, deliberately — do NOT move these back to an
+// `await import(...)` inside a test body / helper. `model.service` is a
+// ~4800-line module that transitively pulls the heavy image/search service
+// graph; its cold TS transform + import is the dominant cost of this file and
+// Vitest charges it to whichever test first triggers it. As a per-test dynamic
+// import that put ~99.9% of the file's runtime inside ONE test's `testTimeout`
+// budget. MEASURED locally: 2726ms of a 2730ms file under a 4-CPU quota, and
+// the share is invariant to CPU (99.86% unconstrained vs 99.85% under quota).
+// PROJECTED, not measured, on the CI runner: applying that invariant share to
+// the observed ~44.3s file total puts the worst test at ~44.2s of a 60s
+// ceiling. The projection is corroborated by the failure signature — ONE test
+// timing out rather than the file being uniformly slow — and by the same file
+// passing at 45.3s on a faster runner and timing out at 60.2s on a slower one
+// with byte-identical code. Hoisted to module scope the same work happens during Vitest's
+// COLLECTION phase, which no `testTimeout`/`hookTimeout` bounds, so the cliff
+// is removed rather than moved. `vi.mock` calls below are hoisted above these
+// imports by Vitest's transform, so the mocks still apply.
+import { getModelsRaw } from '~/server/services/model.service';
+import { MeiliCallTimeoutError } from '~/server/meilisearch/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as RedisClient from '~/server/redis/client';
 
@@ -101,8 +120,7 @@ const makeCommunicationError = (statusCode: number) => {
 // (!ids || ids.length === 0))`. Only query/take/browsingLevel/ids are read
 // before the throw; the rest are optional. Cast — the full GetAllModelsOutput
 // shape is irrelevant to the catch path.
-async function callGetModelsRaw() {
-  const { getModelsRaw } = await import('~/server/services/model.service');
+function callGetModelsRaw() {
   return getModelsRaw({
     input: { query: 'foo', browsingLevel: 1, take: 10 } as never,
   });
@@ -125,7 +143,6 @@ describe('getModelsRaw — transient Meili error → TRPCError SERVICE_UNAVAILAB
   );
 
   it('preserves civitai MeiliCallTimeoutError → TRPCError SERVICE_UNAVAILABLE', async () => {
-    const { MeiliCallTimeoutError } = await import('~/server/meilisearch/client');
     mockSearch.mockRejectedValue(new MeiliCallTimeoutError('timeout'));
     await expect(callGetModelsRaw()).rejects.toMatchObject({
       name: 'TRPCError',
