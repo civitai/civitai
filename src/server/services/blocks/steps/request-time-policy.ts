@@ -244,14 +244,24 @@ const STEP_TYPE_POLICY_TABLE = {
     // stand in front of.
     //
     // 🔴 THE REGISTRY CANNOT EXPRESS THIS STEP. Its output surface is MEDIA
-    // **XOR** TEXT (`stepOutputShape`), and `index.ts` states the limit
-    // explicitly: "A future orchestrator step that emits BOTH media and free
-    // text cannot register at all under this rule — it fails at load rather than
-    // half-registering... Nothing in the currently-licensed `$type` set has that
-    // shape." That last sentence is FALSE as of `@civitai/client`
-    // 0.2.0-beta.83 — `chatCompletion` is in the licensed set and has exactly
-    // that shape. Recorded here rather than silently worked around; closing it
-    // is a design decision, not an edit.
+    // **XOR** TEXT (`stepOutputShape`), so a `$type` that emits BOTH fails at
+    // load rather than half-registering — and as of `@civitai/client`
+    // 0.2.0-beta.83 `chatCompletion` IS one: it is in the licensed set and it
+    // has that shape.
+    //
+    // 🔴 DO NOT RE-ADD A REBUTTAL OF "nothing licensed has that shape" HERE.
+    // This comment used to quote that sentence out of `index.ts` in order to
+    // call it false; #3605 deleted the sentence and replaced it with the
+    // correction itself, so the quote now points at text that no longer exists
+    // and a reader following the pointer lands on the OPPOSITE of what the quote
+    // sets up. `stepOutputShape`'s doc is the single place that finding lives —
+    // its closing paragraph opens "AND THE LICENSED SET ALREADY CONTAINS ONE"
+    // and records the superseded claim itself. Read it, don't restate it.
+    //
+    // What holds the XOR true today is NOT the `$type` set: it is that the
+    // `chatCompletion` ENTRY's `.strict()` `paramSchema` omits `modalities`, so
+    // the media arm is unreachable through it. Closing this properly is a design
+    // decision, not an edit.
     emitsMedia: true,
     // `ChatCompletionInput.model` is a plain provider id ("gpt-4o"), NOT an AIR —
     // matching what `index.ts` already records. It still needs binding, but by a
@@ -903,6 +913,23 @@ export function postureForTextSurface(surface: StepTextSurface): StepModerationP
  * entry's DECLARATION to a request-time lookup on what was actually sent.
  *
  * FAILS CLOSED on an unlisted `$type` and on an undecided classification.
+ *
+ * 🔴 "GUARD" NAMES THE ROLE AFTER THE PIVOT, NOT WHAT RUNS TODAY — READ THIS
+ * BEFORE CONCLUDING ANYTHING IS REDUNDANT WITH IT. Nothing on the request path
+ * calls this function, or either of the other two guards. Enumerated over
+ * `src/**`, not sampled: the only non-test importers of this module are
+ * `./index` (a doc reference) and `./moderation`, and `./moderation` imports
+ * exactly two names — `assertRegistryEntryAgreesWithPolicy` and
+ * `assertPolicyAgreesWithRegistryMap`, both defined below, both invoked at
+ * `./moderation`'s MODULE LOAD. Those two are this guard's only live callers.
+ *
+ * So all three "guards" are today a BUILD-TIME CONSISTENCY CHECK between the
+ * registry's per-entry declarations and this table — they reject nothing at
+ * request time, and a registry clause that looks duplicated by one of them is
+ * still the only thing enforcing that rule on a live submit. Deleting a registry
+ * clause because "the request-time guard covers it" would remove the enforcement
+ * and leave the assert. The module header states the same thing about the module
+ * as a whole; it is repeated here because the section names do not carry it.
  */
 export function requiredPostureForSubmittedType(
   orchestratorType: string
@@ -966,6 +993,14 @@ export function requiredPostureForSubmittedType(
  * 🔴 IT IS ALSO TOTAL — it cannot throw. The scan carries a depth cap and
  * returns "contains an AIR" (i.e. this rejection) when it is hit, so a deeply
  * nested body is a decided rejection rather than an unhandled `RangeError`.
+ *
+ * 🔴 NOT ON THE REQUEST PATH — AND THIS ONE HAS NO LIVE CALLER AT ALL, unlike
+ * guards 1 and 3. Neither load-time assert calls it; outside `__tests__/` its
+ * only caller is `evaluateSubmittedStep`, which itself has no production caller.
+ * It is exercised by tests only until the pivot wires it in. See GUARD 1's note
+ * for the enumeration. The entitlement scan that DOES run on live submits is the
+ * registry's own clause-7 load probe plus the router's re-assert, both of which
+ * call the same `containsAirReference` helper.
  */
 export function screenSubmittedStepResources(submitted: {
   orchestratorType: string;
@@ -1003,6 +1038,12 @@ export function screenSubmittedStepResources(submitted: {
  * Re-homes the registry's per-entry `billingMode` declaration. FAILS CLOSED on
  * an unlisted type AND on a listed type whose mode is not established — the
  * common case today, deliberately (see `StepTypePolicy.billingMode`).
+ *
+ * 🔴 NOT ON THE REQUEST PATH. Like GUARD 1, its only live caller is
+ * `assertRegistryEntryAgreesWithPolicy`, at `./moderation`'s module load. No
+ * money path dispatches on this function's result today; the registry's own
+ * per-entry `billingMode` is still what estimate/reservation/settle read. See
+ * GUARD 1's note for the enumeration.
  */
 export function billingModeForSubmittedType(
   orchestratorType: string
@@ -1051,6 +1092,14 @@ export type SubmittedStepDecision = {
  * function of the submitted `$type` and `input` only. That is what makes it
  * unit-testable without a request context, and what lets the registry path call
  * it at module load.
+ *
+ * 🔴 NO PRODUCTION CALLER TODAY — INCLUDING NOT AT LOAD. Enumerated over
+ * `src/**`: every reference outside this file is in `__tests__/`. The registry
+ * path reaches this module through the two `assert*` functions below, which call
+ * guards 1 and 3 directly and never call this composite — which is why GUARD 2
+ * (`screenSubmittedStepResources`) has no live caller at all. That is the
+ * "landed AHEAD of the widening" state the module header describes; it is NOT
+ * evidence that a submit path is gated by these three.
  */
 export function evaluateSubmittedStep(submitted: {
   orchestratorType: string;
@@ -1145,11 +1194,16 @@ export function assertRegistryEntryAgreesWithPolicy(entry: {
  * `$type` → acceptable-postures map, for every `$type` BOTH cover.
  *
  * 🔴 WHY A SEPARATE ASSERT. `assertRegistryEntryAgreesWithPolicy` only sees
- * `$type`s that a registered ENTRY claims — exactly one today (`convertImage`).
- * The registry's map licenses seven `$type`s no entry has yet claimed, and those
- * seven are the ones this module's classification is most likely to get wrong.
- * This walks that whole map instead, so the agreement is checked over the
- * population that matters rather than over the single shipped entry.
+ * `$type`s that a registered ENTRY claims — two today (`convertImage` from
+ * `convert-image`, `chatCompletion` from `chat-completion`). The registry's map
+ * licenses seven `$type`s for `'textOutput'`, six of which no entry has claimed,
+ * and those six are the ones this module's classification is most likely to get
+ * wrong. This walks that whole map instead, so the agreement is checked over the
+ * population that matters rather than over the shipped entries.
+ *
+ * (Counts track `stepRegistry` — an earlier revision said "exactly one today
+ * (`convertImage`)" and "seven no entry has yet claimed", which went stale the
+ * moment `chat-completion` registered. Update them with the registry.)
  *
  * Takes the map as an argument so a test can drive it with a DISAGREEING
  * fixture — a guard only exercised by the shipped constant is a guard nobody has

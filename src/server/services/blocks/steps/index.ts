@@ -86,13 +86,26 @@ export const STEP_BILLING_MODES: readonly StepBillingMode[] = [
 // with no implemented handler fails at registry LOAD (a build-time error), not
 // at request time on a Friday.
 //
-// 🔴 THE FREE-TEXT-INPUT HALF OF THAT QUESTION IS NOW ANSWERED (#3527): mature
-// content is permitted for App Blocks, bounded by the token's server-minted
-// maturity ceiling — so a free-text INPUT needs the same prompt audit
-// `textToImage` / `customComfy` already run, not a new policy. `'promptAudit'`
-// is therefore IMPLEMENTED; its handler lives in `./moderation` and runs
-// `auditPromptServer` host-side, before the orchestrator submit. The free-text
-// OUTPUT half (`'textOutput'`) is still unanswered and still fails at load.
+// 🔴 BOTH HALVES OF THAT QUESTION ARE NOW ANSWERED, AND ALL THREE POSTURES ARE
+// IMPLEMENTED — nothing in this union fails at load today. The INPUT half
+// (#3527): mature content is permitted for App Blocks, bounded by the token's
+// server-minted maturity ceiling, so a free-text INPUT needs the same prompt
+// audit `textToImage` / `customComfy` already run, not a new policy —
+// `'promptAudit'`'s handler lives in `./moderation` and runs `auditPromptServer`
+// host-side, before the orchestrator submit. The OUTPUT half is answered too:
+// `'textOutput'` scans the generated text with the orchestrator's
+// `xGuardModeration` step (`mode: 'text'`) at the READ boundary and withholds on
+// a policy hit AND on any scanner failure. Evidence, not intent:
+// `isModerationPostureImplemented` returns true for all three values, its output
+// handler is in `./moderation`, and the registered `chat-completion` entry
+// declares `'textOutput'` — a load-time failure would take the module down.
+//
+// 🔴 AN EARLIER REVISION OF THIS PARAGRAPH ENDED "The free-text OUTPUT half
+// (`'textOutput'`) is still unanswered and still fails at load." That was FALSE,
+// and it was the FIRST thing a reader hit when opening this union — twenty lines
+// ahead of the `'textOutput'` member's own doc, which said the opposite. When a
+// posture ships, correct THIS block in the same change; a stale summary above a
+// correct member doc is read as the summary.
 // ─────────────────────────────────────────────────────────────────────────────
 export type StepModerationPosture =
   /**
