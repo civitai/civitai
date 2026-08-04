@@ -22,16 +22,20 @@ import { createPgDbMock, pgDbMockExportNames } from '~/test-utils/pgDbMock';
  *     its factory lists the full export set.
  *
  * 🔴 Each suite deliberately keeps its OWN inline, SYNCHRONOUS object literal rather than calling a shared
- * runtime factory. That is not an oversight — it was tried and measured, and reverted:
+ * runtime factory. A `vi.mock` factory is hoisted above imports, so it cannot reference a statically
+ * imported helper; the only way to share one is
+ * `async () => { const { f } = await import(...); return f(); }`. Keeping the literal avoids that async
+ * indirection in 17 files and lets the single-sourcing live HERE instead, in one scan.
  *
- *   A `vi.mock` factory is hoisted above imports, so it cannot reference a statically-imported helper; the
- *   only way to share one is `async () => { const { f } = await import(...); return f(); }`. Making the
- *   factory async slowed EVERY converted suite in the CI pod, proportionally to the work it does:
- *   `get-models-raw.transient-503` 44.3s -> 60.3s (past the 60s per-test timeout, 9 tests red) and
- *   `challenge.metrics.completing-stuck` 14.8s -> 24.3s (+64%). It is invisible locally (~3.5s either way).
+ * ⚠️ RETRACTION, recorded because the wrong version was briefly committed: an earlier revision justified
+ * this on PERFORMANCE, claiming the async form cost +36% on a 44s suite and +64% on a 15s one in CI. That
+ * is false. It compared two runs on DIFFERENT pods without normalising for ambient speed. Normalised
+ * against ~193 files, the async run and the sync run are indistinguishable — global median 1.43x vs the
+ * baseline run, target file 1.36x, IDENTICAL in both. The async factory cost nothing measurable.
  *
- * So the single-sourcing lives HERE and in the canary, at zero runtime cost, instead of in an import that
- * every mocked suite has to pay for.
+ * What that measurement actually shows is unrelated to this file's design and worth knowing:
+ * `get-models-raw.transient-503.test.ts` takes ~44s of a 60s per-test timeout on a fast pod, so a pod
+ * running ~1.4x slower times it out. It is a pre-existing marginal-file flake, not a mocking problem.
  */
 
 // `pgDb` builds real `pg` pools via `getClient()` at module scope unless `env.IS_BUILD` is set. Stub the env

@@ -72,9 +72,12 @@ type PgDbStubs = Record<PgDbExportName, unknown>;
  *
  * 🔴 Test suites do NOT call this at runtime — they keep their own inline SYNC object literal, and
  * `pgDbMock.parity.test.ts` scans them to confirm the key set matches. Sharing this factory would force
- * every mocked suite into `vi.mock('...', async () => await import(...))` (a mock factory is hoisted above
- * imports, so a static import is unreachable), which was measured to cost +36% on a 44s suite — enough to
- * push it past the 60s per-test timeout — and +64% on a 15s one, in the CI pod only.
+ * every mocked suite into `vi.mock('...', async () => await import(...))`, because a mock factory is
+ * hoisted above imports and cannot reach a statically imported helper. The inline literal is kept to avoid
+ * that async indirection in 17 files, not for performance: an earlier revision of this comment claimed the
+ * async form cost +36%/+64% in CI, and that claim is RETRACTED — it compared two runs on different pods
+ * without normalising for ambient speed. Normalised, the async and sync runs are indistinguishable (global
+ * median 1.43x vs base, target file 1.36x, identical in both).
  *
  * Its job is to be the ONE typed declaration of the full export set: `PgDbStubs` is a total `Record` over
  * the real module's names, so adding an export to pgDb fails `tsc` right here, naming it. `overrides` is
