@@ -93,22 +93,7 @@ module.exports = {
     // comment, a false negative costs a silently-empty test suite. The known
     // false-positive shapes are listed in eslint-local-rules.js so a blocked
     // author can recognise their own and reach for a disable comment.
-    'local-rules/no-wholesale-module-mock': [
-      'error',
-      {
-        modules: ['~/utils/trpc', '~/server/db/pgDb'],
-        // `~/server/db/pgDb` is the one target where the rule's normal remedy is
-        // itself unsafe: `importOriginal()` evaluates the real module, which calls
-        // getClient() and hands the test a LIVE, query-capable pg pool (verified —
-        // a `.query()` on it opens a real socket). A unit test must not be one
-        // mocking slip away from a real database. So pgDb factories go through a
-        // shared helper whose completeness is enforced by the TYPE system instead
-        // of by an AST-visible spread. See src/test-utils/pgDbMock.ts.
-        completeFactories: {
-          '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
-        },
-      },
-    ],
+    'local-rules/no-wholesale-module-mock': ['error', { modules: ['~/utils/trpc'] }],
 
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],

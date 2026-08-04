@@ -71,7 +71,9 @@ describe('pgDb mock parity', () => {
     expect(
       extra,
       `src/test-utils/pgDbMock.ts provides ${extra.length} name(s) the real module no longer exports: ` +
-        `[${extra.join(', ')}]. Remove them from the \`stubs\` object so the mock keeps matching reality.`
+        `[${extra.join(
+          ', '
+        )}]. Remove them from the \`stubs\` object so the mock keeps matching reality.`
     ).toEqual([]);
   });
 
@@ -95,7 +97,10 @@ describe('pgDb mock parity', () => {
 
     // Positive control: the walk must actually find test files, and must find THIS file. A silently empty
     // walk (wrong root, changed layout) would make the assertion below vacuously true.
-    expect(testFiles.length, 'Walked src/ and found no test files — the scan is broken.').toBeGreaterThan(0);
+    expect(
+      testFiles.length,
+      'Walked src/ and found no test files — the scan is broken.'
+    ).toBeGreaterThan(0);
     expect(fs.existsSync(helperPath), `Expected the shared helper at ${helperPath}`).toBe(true);
 
     const offenders = testFiles
