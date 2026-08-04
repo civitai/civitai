@@ -8,6 +8,7 @@ import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.
 import { trackModActivity } from '~/server/services/moderator.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export type MinorHashMatch = { modelId: number; userId: number };
@@ -687,8 +688,22 @@ export async function resolveMinorFlagAppeal({
   uphold: boolean;
   userId: number;
 }) {
-  if (uphold) await confirmMinorHashAutoFlag({ modelId, userId });
-  else await revertMinorHashAutoFlag({ modelId, userId });
+  if (uphold) {
+    // Another moderator may have reverted the flag since this row was fetched.
+    // Confirming then writes nothing while the appeal still closes Rejected —
+    // telling the owner their request was denied on a model that isn't flagged.
+    // Overturning carries no such gate: it's the only way left to close the row.
+    const model = await dbRead.model.findUnique({
+      where: { id: modelId },
+      select: { minor: true },
+    });
+    if (!model?.minor)
+      throw throwBadRequestError('This model is no longer flagged as depicting a minor');
+
+    await confirmMinorHashAutoFlag({ modelId, userId });
+  } else {
+    await revertMinorHashAutoFlag({ modelId, userId });
+  }
 
   await resolveEntityAppeal({
     ids: [modelId],

@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
-}));
+const { mockDbRead, mockDbWrite, mockModelFindUnique } = vi.hoisted(() => {
+  const mockModelFindUnique = vi.fn();
+  return {
+    mockModelFindUnique,
+    mockDbRead: { $queryRaw: vi.fn(), model: { findUnique: mockModelFindUnique } },
+    mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
+  };
+});
 
 const {
   mockSetModelMinor,
@@ -69,6 +73,7 @@ beforeEach(() => {
   // (which only clears call history, not implementations) and leaks into sweepMinorHashMatches.
   mockSetModelMinor.mockReset();
   mockDbRead.$queryRaw.mockResolvedValue([]);
+  mockModelFindUnique.mockResolvedValue({ minor: true });
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
@@ -1415,5 +1420,42 @@ describe('resolveMinorFlagAppeal', () => {
     );
 
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Upholding a reverted flag writes nothing — confirmMinorHashAutoFlag's UPDATE
+  // no-ops — but still closes the appeal Rejected and tells the owner their
+  // request was denied on a model that is not flagged. The table row can be stale
+  // and the procedure is callable directly, so the UI's disabled button is UX only.
+  it('refuses to uphold a flag that is no longer in force', async () => {
+    mockModelFindUnique.mockResolvedValue({ minor: false });
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('refuses to uphold when the model no longer exists', async () => {
+    mockModelFindUnique.mockResolvedValue(null);
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Unflagging is the only way left to close a request whose flag another
+  // moderator already reverted, so it must not carry the same gate.
+  it('still overturns a request whose flag was already reverted', async () => {
+    mockModelFindUnique.mockResolvedValue({ minor: false });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
   });
 });
