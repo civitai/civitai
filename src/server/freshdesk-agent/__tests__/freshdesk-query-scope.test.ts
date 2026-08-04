@@ -64,6 +64,10 @@ describe('checkQueryScope — statements it confirms', () => {
     ],
     ['a sub-select in the FROM list', 'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x'],
     [
+      'a parenthesized join of allowed tables',
+      'SELECT * FROM ("User" JOIN "Model" ON true) LIMIT 5',
+    ],
+    [
       'a sub-select in the FROM list followed by another relation',
       'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x, "Model" m',
     ],
@@ -129,6 +133,41 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     const result = checkQueryScope(
       'SELECT * FROM "User" WHERE id IN (SELECT "userId" FROM (SELECT "userId" FROM "Session") s)'
     );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  /**
+   * A parenthesized join expression is a relation position, not a sub-select:
+   * `FROM ("A" JOIN "B" ON ...)` is valid Postgres and its FIRST item is a
+   * relation. Every other `FROM (` case in this file is a sub-select, so these
+   * pin the other reading of the same two characters — the leading relation
+   * must still be checked, at any depth and for every join flavour.
+   */
+  it('refuses a disallowed table leading a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("Session" JOIN "User" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table leading a parenthesized CROSS JOIN', () => {
+    const result = checkQueryScope('SELECT * FROM ("ApiKey" CROSS JOIN "User") LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "ApiKey"');
+  });
+
+  it('refuses a disallowed table leading a doubly-parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM (("Account" JOIN "User" ON true)) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Account"');
+  });
+
+  it('still refuses a disallowed table in the trailing position of a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("User" JOIN "Session" ON true) LIMIT 1');
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.error).toContain('cannot read "Session"');

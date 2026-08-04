@@ -274,6 +274,9 @@ export type QueryScopeResult = { ok: true } | { ok: false; error: string };
  *     follows a join's `ON` clause (tracked per paren depth, so an inner
  *     sub-select's `FROM` list cannot be confused with the outer one)
  *   - relations inside sub-selects in the target list, `WHERE`, `IN (...)`
+ *   - the leading relation of a parenthesized join expression
+ *     (`FROM ("A" JOIN "B" ON ...)`), which is a relation position and not a
+ *     sub-select, at any nesting depth
  *   - each branch of a `UNION` / `INTERSECT` / `EXCEPT`
  *   - text hidden in comments or a second statement — refused outright
  *
@@ -305,15 +308,21 @@ export function checkQueryScope(sql: string): QueryScopeResult {
   const { tokens } = tokenized;
   /** `fromListAtDepth[d]` — is a `FROM` list currently open at paren depth d? */
   const fromListAtDepth: boolean[] = [];
+  /** `parenInRelationPosAtDepth[d]` — was the paren opening depth d itself in relation position? */
+  const parenInRelationPosAtDepth: boolean[] = [];
   let depth = 0;
   let expectRelation = false;
 
   for (const token of tokens) {
     if (token.kind === 'punct' && token.value === '(') {
       depth++;
-      // A paren in relation position is a sub-select; its own `FROM` is walked
-      // by this same loop.
-      expectRelation = false;
+      // A paren in relation position is EITHER a sub-select (`FROM (SELECT …)`)
+      // or a parenthesized joined_table (`FROM ("A" JOIN "B" ON …)`), whose
+      // FIRST item is itself a relation. Carry the expectation inward so that
+      // leading relation is still checked; a `SELECT` directly inside is what
+      // marks the sub-select and clears it. Clearing unconditionally here would
+      // let the joined_table's first relation through unchecked.
+      parenInRelationPosAtDepth[depth] = expectRelation;
       continue;
     }
 
@@ -325,6 +334,13 @@ export function checkQueryScope(sql: string): QueryScopeResult {
     }
 
     if (expectRelation) {
+      // Only a `SELECT` immediately inside a paren that stood in relation
+      // position resolves it to a sub-select rather than a joined_table.
+      if (parenInRelationPosAtDepth[depth] && token.kind === 'ident' && token.value === 'select') {
+        parenInRelationPosAtDepth[depth] = false;
+        expectRelation = false;
+        continue;
+      }
       if (token.kind === 'quoted') {
         if (!ALLOWED_TABLES.has(token.value)) {
           return reject(
