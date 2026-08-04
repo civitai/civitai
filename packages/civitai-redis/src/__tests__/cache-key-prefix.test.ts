@@ -29,7 +29,10 @@ describe('cache key prefix', () => {
   const load = async (vars: Record<string, string> = {}) => {
     const { CACHE_KEY_NAMESPACE: _ns, IS_PREVIEW: _preview, ...clean } = process.env;
     process.env = { ...clean, ...vars };
-    const [client, prefix] = await Promise.all([import('../client'), import('../cache-key-prefix')]);
+    const [client, prefix] = await Promise.all([
+      import('../client'),
+      import('../cache-key-prefix'),
+    ]);
     return { ...client, ...prefix };
   };
 
