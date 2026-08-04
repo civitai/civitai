@@ -220,9 +220,19 @@ export type TextOutputScanVerdict = {
  * and what comes back is not mistaken for a drop.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * 🔴 PRE-ADOPTION GATE — RUN ONE LIVE PROBE BEFORE THE FIRST `'textOutput'`
- * ENTRY REGISTERS. Do not skip this because the tests are green, and do not
- * weaken the guard to hedge it.
+ * 🔴 AN OVERDUE LIVE PROBE — THIS WAS WRITTEN AS A PRE-ADOPTION GATE AND THE
+ * ADOPTION HAS ALREADY HAPPENED. Do not skip it because the tests are green,
+ * and do not weaken the guard to hedge it.
+ *
+ * 🔴 CORRECTED: this note used to read "RUN ONE LIVE PROBE BEFORE THE FIRST
+ * `'textOutput'` ENTRY REGISTERS" and to close with "the posture is dormant
+ * until then, which is why this is a gate note rather than a defect." Both are
+ * FALSE. `stepRegistry` carries `'chat-completion':
+ * Object.freeze(chatCompletionStep)` (`./index`), and that entry declares
+ * `moderationPosture: 'textOutput'` (`./chat-completion.step`). The posture is
+ * REGISTERED and this guard is live on a real read path — so the probe below is
+ * not a precondition someone still has time to satisfy, it is a verification
+ * that is outstanding on shipped code.
  *
  * THE ASSUMPTION: that the deployed scanner returns a `results[]` entry for
  * EVERY requested label — including the ones that did NOT trigger. The whole
@@ -237,19 +247,27 @@ export type TextOutputScanVerdict = {
  *
  * WHAT HAPPENS IF THE ASSUMPTION IS WRONG: if the scanner returns only
  * TRIGGERED labels, then every clean scan comes back with an empty (or partial)
- * `results[]`, every clean scan reads as total drift, and the first adopting
- * entry withholds 100% of its output. That is loud, safe and fail-closed — but
- * it is a day-one capability outage, and it will present as "the feature does
- * not work" rather than as a scanner problem.
+ * `results[]`, every clean scan reads as total drift, and the registered entry
+ * withholds 100% of its output. That is loud, safe and fail-closed — but it is a
+ * capability outage, and it will present as "the feature does not work" rather
+ * than as a scanner problem.
  *
- * THE PROBE (one call, before registering an entry): submit a text scan through
+ * THE PROBE (one call): submit a text scan through
  * `createXGuardModerationRequest` with `labels: [...TEXT_OUTPUT_SCAN_LABELS]`
  * over benign content that triggers NOTHING, and read the returned step's
  * `output.results`. Expect 15 entries with `triggered: false`. If instead it
  * comes back empty or short, the drift guard needs a different signal for
  * "evaluated" — the fix is to find one the scanner actually emits, NOT to
- * loosen the withhold. The posture is dormant until then, which is why this is a
- * gate note rather than a defect.
+ * loosen the withhold.
+ *
+ * 🔴 AND WHILE YOU ARE THERE, READ `error` AND `finishReason` ON THE SAME
+ * RESPONSE. The same one call answers all three questions, and the other two are
+ * open for the same reason this one is; see {@link erroredRequestedLabels}.
+ *
+ * 🔴 DO NOT TREAT "the feature seems to work" AS THE PROBE. That inference is
+ * only as good as the traffic behind it, and nobody has measured either the
+ * traffic or the withhold rate on this path. An unrun probe is unrun in both
+ * directions.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function missingRequestedLabels(
@@ -283,10 +301,10 @@ export function missingRequestedLabels(
  * type — came back EMPTY on every probe against the deployed scanner, so a
  * scanner that populates `error: ''` on the HEALTHY path is a live possibility,
  * not a hypothetical. Treating `''` as a fault would withhold 100% of generated
- * output from the first adopting entry: the same day-one capability outage the
- * pre-adoption gate on `missingRequestedLabels` warns about, arrived at from the
- * other direction. A scanner that reports failures at all will populate a
- * message.
+ * output from the registered `'chat-completion'` entry: the same capability
+ * outage the overdue-probe note on `missingRequestedLabels` warns about,
+ * arrived at from the other direction. A scanner that reports failures at all
+ * will populate a message.
  */
 function labelResultErrored(entry: XGuardLabelResultLike): boolean {
   const err = entry.error;
@@ -639,6 +657,9 @@ export async function screenGeneratedText(opts: {
   // `chat-completion` is a registered `'textOutput'` entry (see `./index`'s
   // `stepRegistry`), so this log is live. An earlier revision of this line said
   // no such entry existed yet, which stopped being true when that entry landed.
+  // So whoever reads those rates is reading an undercount; if exact per-app
+  // attribution is ever needed, build the payload fix above rather than
+  // rediscover this.
   const cacheKey = verdictCacheKey(content, opts.isGreen);
   const cached = readCachedVerdict(cacheKey);
   if (cached !== undefined) {
