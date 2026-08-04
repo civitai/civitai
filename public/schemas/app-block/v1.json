@@ -197,7 +197,7 @@
         },
         "buzzBudgetPerGen": {
           "type": "integer",
-          "description": "Optional per-generation Buzz budget for ai:write:budgeted tokens. Positive integer; server-clamped to the per-gen cap.",
+          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with a 10 Buzz default, which is below almost any real generation. Server-clamped to the platform per-gen cap (1000 today), so a generous value is safe. This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
           "exclusiveMinimum": 0
         }
       }
