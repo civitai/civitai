@@ -97,7 +97,9 @@ describe('DeleteCard confirm step summary', () => {
     await userEvent.click(page.getByRole('button', { name: 'Continue' }));
 
     await expect.element(page.getByText('Your models will be deleted')).toBeInTheDocument();
-    await expect.element(page.getByText('Your images will be deleted now')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Your images will be deleted in the background, which can take up to a day'))
+      .toBeInTheDocument();
   });
 
   test('restates keep-it choices without deletion phrasing', async () => {
@@ -110,7 +112,9 @@ describe('DeleteCard confirm step summary', () => {
       .element(page.getByText('Your models will stay public under an anonymous owner'))
       .toBeInTheDocument();
     await expect
-      .element(page.getByText('Your images will be hidden now and deleted after 7 days'))
+      .element(
+        page.getByText('Your images will be hidden in the background within a day, then deleted after 7 days')
+      )
       .toBeInTheDocument();
   });
 });
