@@ -7004,7 +7004,8 @@ describe("step-type registry bridge (kind: 'step')", () => {
         // so a code-only assertion would be satisfied by the wrong guard and
         // would survive deleting this one.
         message: expect.stringContaining(
-          "declares resourcePolicy 'none' but the submitted step carries an AIR reference"
+          "declares resourcePolicy 'none' but the submitted step contains the literal text " +
+            "'urn:air:'"
         ),
       });
       // Rejected BEFORE the free quote, so not even the whatIf round-trip fired.
@@ -7026,6 +7027,111 @@ describe("step-type registry bridge (kind: 'step')", () => {
           params: {
             image: 'https://image.civitai.com/sdxl:checkpoint:civitai:4384@128713.png',
             output: { format: 'webp' },
+          },
+        }),
+      });
+      expect(result.snapshot.status).toBe('processing');
+      expect(realSubmitCalls()).toHaveLength(1);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 THE SAME GUARD, REACHED THROUGH PROSE — `chat-completion`.
+    //
+    // WHY THIS PAIR EXISTS. `convert-image` (above) scans urls the APP builds;
+    // `chat-completion` submits `messages[].content`, free text an END USER
+    // typed, and that is the ONLY string in its built input a caller controls
+    // (`model` is `z.enum`-bounded, `maxTokens`/`temperature` are numbers, every
+    // key is a fixed literal). So for that entry the guard is exactly "reject a
+    // chat message containing the literal `urn:air:`" — a user asking what an
+    // AIR is gets a hard FORBIDDEN. That is a genuine false positive, and these
+    // tests PIN IT AS DELIBERATE rather than fixing it: see the FALSE-POSITIVE
+    // SURFACE section in `chat-completion.step.ts` for the orchestrator-side
+    // evidence that such prose is inert today and for why that evidence is not
+    // sufficient to scope the scan.
+    //
+    // 🔴 LABELLING, HONESTLY. The REJECTION is an invariant guard — it was
+    // FORBIDDEN before this change too, and it stays green if the guard's
+    // scoping is left alone. What is regression coverage is the MESSAGE: the
+    // old one asserted the step "carries an AIR reference", which is false for
+    // prose, and this assertion is RED against that wording. Do not read the
+    // first test as proof the scan changed; read it as the intent being written
+    // down where the next person to touch this guard will see it.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('PROSE containing the literal is rejected — the chat-completion false positive, pinned as deliberate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            step: 'chat-completion',
+            params: {
+              model: 'openai/gpt-4o-mini',
+              // Not an AIR. A question ABOUT the scheme — the shape of message
+              // a chat block's user actually types.
+              messages: [{ role: 'user', content: 'what does urn:air: mean?' }],
+              maxTokens: 128,
+            },
+          }),
+        })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        // 🔴 The MESSAGE, not just the code — several other seams on this path
+        // also reject with FORBIDDEN, so a code-only assertion would be
+        // satisfied by the wrong guard. It must also say the check is a
+        // SUBSTRING scan, which is the part that makes the rejection
+        // self-diagnosable by the app rather than reading as a platform bug.
+        message: expect.stringContaining(
+          "step 'chat-completion' declares resourcePolicy 'none' but the submitted step " +
+            "contains the literal text 'urn:air:'"
+        ),
+      });
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: stepBody({
+            step: 'chat-completion',
+            params: {
+              model: 'openai/gpt-4o-mini',
+              messages: [{ role: 'user', content: 'what does urn:air: mean?' }],
+              maxTokens: 128,
+            },
+          }),
+        })
+      ).rejects.toMatchObject({ message: expect.stringContaining('SUBSTRING scan') });
+      // Rejected BEFORE the free quote, so not even the whatIf round-trip fired.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('the SAME chat message without the literal is accepted (it is the literal, not the entry)', async () => {
+      // 🔴 The NEGATIVE CONTROL. Without it, a harness in which EVERY
+      // `chat-completion` submit failed — a bad fixture, a mis-set token, an
+      // unregistered id — would pass the test above just as well, and the pair
+      // would prove nothing about the literal being what was detected.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 1 } }
+          : {
+              id: 'wf_chat_1',
+              status: 'processing',
+              steps: [{ $type: 'chatCompletion', output: {} }],
+              cost: { total: 1 },
+            }
+      );
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: stepBody({
+          step: 'chat-completion',
+          params: {
+            model: 'openai/gpt-4o-mini',
+            // Byte-identical to the rejected message minus the literal.
+            messages: [{ role: 'user', content: 'what does air mean?' }],
+            maxTokens: 128,
           },
         }),
       });

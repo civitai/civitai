@@ -56,6 +56,63 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // never meets `auditPromptServer`, so it produces no `BlockedPromptEntry` and no
 // violation counter. Closing it needs a registry-level decision about
 // multi-surface postures, not a workaround here.
+//
+// 🔴 THE AIR SCAN'S FALSE-POSITIVE SURFACE — FOR THIS ENTRY IT IS PURE PROSE,
+// AND THE GUARD IS KEPT ANYWAY. READ THIS BEFORE PROPOSING TO SCOPE IT.
+//
+// `resourcePolicy: { kind: 'none' }` is enforced twice: at registry load
+// (clause 7, over `buildStep(canonicalParamsFor(v))`) and again at request time
+// in `blocks.router.ts` over the input this entry actually builds.
+// `containsAirReference` is a case-insensitive SUBSTRING test for `urn:air:`
+// across every string, array element, object value and object KEY.
+//
+// `buildStep` emits exactly `{ model, messages, maxTokens, temperature? }`
+// (pinned by the exact-key-set test in `__tests__/chat-completion.step.test.ts`).
+// `model` is `z.enum`-bounded to `CHAT_COMPLETION_MODELS`, `maxTokens` and
+// `temperature` are numbers, every key is a fixed literal, and `role` is a
+// three-value enum. So **`messages[].content` is the only string in the built
+// input that an untrusted iframe can put arbitrary text into** — and it is
+// human prose, forwarded from whatever an end user typed into a chat block.
+// This entry is the FIRST whose scanned strings are prose; every earlier one
+// (`convert-image`) scanned urls the APP constructs. For this entry the guard
+// therefore reduces exactly to: reject any chat message containing the literal
+// `urn:air:`. A user asking "what does urn:air: mean?" gets a hard FORBIDDEN.
+//
+// WHAT THE ORCHESTRATOR ACTUALLY DOES WITH THAT PROSE — read from
+// `civitai/civitai-orchestration` at `origin/main` e9ce862cb, not assumed:
+//   * `ChatCompletionContentPartJsonConverter.Read` turns a JSON string content
+//     into a single `ChatCompletionContentPart { Text = s, ImageUrl = null }`,
+//     so string content can never enter the image path at all.
+//   * `ChatCompletionInput.OnInitializedAsync` is the only lifecycle hook that
+//     walks `Messages`, and it acts solely on `part.ImageUrl` (handing it to
+//     `ISourceImageProcessor`). It never reads `part.Text`.
+//   * `ChatCompletionHandler.CalculateCostAsync` holds the ONLY `urn:air:` test
+//     in the whole chat step — `input.Model.StartsWith("urn:air:")`, which
+//     selects the AIR-model cost branch. It is a test of `Model`, never of
+//     `Messages`, and this entry's `z.enum` makes that branch unreachable.
+//   * `GenerateJobsAsync` copies `input.Messages` verbatim onto
+//     `ChatCompletionJob` for the worker.
+// i.e. an AIR inside `messages[].content` is inert text on that revision — it
+// resolves no resource and reaches no entitlement-bearing field.
+//
+// 🔴 WHY THAT IS STILL NOT ENOUGH TO SCOPE THE SCAN. That paragraph is a claim
+// about the CURRENT source of a SEPARATELY DEPLOYED service. Nothing in this
+// repo can hold it true: the generated `@civitai/client` types encode the SHAPE
+// of `ChatCompletionInput`, never which of its fields get resolved, so an
+// orchestrator change that started resolving AIRs mentioned in prompt text
+// would turn a per-entry "don't scan `messages`" exemption into a silent
+// entitlement bypass with nothing going red on this side. The worker that
+// finally receives `ChatCompletionJob.Messages` lives outside that repo and was
+// not read at all. The asymmetry decides it: a false positive costs ONE bounced
+// message and is fixable BY THE APP — `messages[].content` is assembled by the
+// block, which can strip or escape the literal before submitting — while an
+// entitlement bypass is not recoverable by anyone. So the scan stays total, and
+// the router's rejection message now says plainly that it matched a literal
+// substring rather than claiming the step "carries an AIR reference".
+//
+// If you do scope it later, the narrow shape is a per-entry declaration that
+// DEFAULTS to scan-everything, and it owes evidence that survives the paragraph
+// above — not a re-reading of the same orchestrator source.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

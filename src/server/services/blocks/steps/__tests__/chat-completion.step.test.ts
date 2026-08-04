@@ -331,6 +331,87 @@ describe('chat-completion — buildStep', () => {
       expect(containsAirReference(built.input)).toBe(false);
     }
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 `messages[].content` IS THE ONLY AIR-SCANNABLE SURFACE THIS ENTRY HAS,
+  // AND IT IS PROSE.
+  //
+  // The request-time re-assert in `blocks.router.ts` runs `containsAirReference`
+  // over the WHOLE built input. This pins WHICH part of that input a caller can
+  // actually steer, because that is the fact the guard's cost/benefit rests on:
+  // for this entry the guard reduces to "reject a chat message containing the
+  // literal `urn:air:`". The FALSE-POSITIVE SURFACE section in
+  // `../chat-completion.step.ts` carries the evidence and the decision.
+  //
+  // 🔴 LABELLED AS AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is green
+  // before and after the change that introduced it. It exists so that a future
+  // edit widening the schema (a free-string `user`, a `stop` array, content
+  // PARTS carrying `imageUrl`) fails here and forces the analysis to be redone,
+  // rather than silently invalidating it.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('🔴 prose in messages[].content is the ONLY caller-steerable string the AIR scan sees', () => {
+    const air = 'urn:air:sdxl:checkpoint:civitai:4384@128713';
+
+    // (a) The literal in PROSE trips the scan — a question ABOUT the scheme is
+    //     enough; it does not have to be a well-formed AIR.
+    expect(
+      containsAirReference(
+        chatCompletionStep.buildStep({
+          ...VALID_PARAMS,
+          messages: [{ role: 'user', content: 'what does urn:air: mean?' }],
+        }).input
+      )
+    ).toBe(true);
+    expect(
+      containsAirReference(
+        chatCompletionStep.buildStep({
+          ...VALID_PARAMS,
+          messages: [
+            { role: 'system', content: 'be helpful' },
+            { role: 'user', content: `is ${air} any good?` },
+          ],
+        }).input
+      )
+    ).toBe(true);
+
+    // (b) NEGATIVE CONTROL for (a): the same prose minus the literal does NOT
+    //     trip it, so (a) is about the literal and not about `messages` being
+    //     scanned at all.
+    expect(
+      containsAirReference(
+        chatCompletionStep.buildStep({
+          ...VALID_PARAMS,
+          messages: [{ role: 'user', content: 'what does air mean?' }],
+        }).input
+      )
+    ).toBe(false);
+
+    // (c) NOTHING ELSE in the built input can carry it. The keys are fixed
+    //     literals, `role` is a three-value enum, and the two numeric params
+    //     cannot hold a string — so every remaining field is enumerated here
+    //     with a caller-chosen extreme value and none of them trips the scan.
+    for (const model of CHAT_COMPLETION_MODELS) {
+      expect(
+        containsAirReference(
+          chatCompletionStep.buildStep({
+            model,
+            messages: [{ role: 'assistant', content: 'ok' }],
+            maxTokens: CHAT_COMPLETION_MAX_OUTPUT_TOKENS,
+            temperature: 2,
+          }).input
+        )
+      ).toBe(false);
+    }
+
+    // (d) …and `model` is the one field the ORCHESTRATOR does resolve as an AIR
+    //     (`ChatCompletionHandler.CalculateCostAsync` branches on
+    //     `input.Model.StartsWith("urn:air:")`). The `z.enum` is what keeps that
+    //     branch unreachable, so assert no allowlisted model is an AIR — if one
+    //     ever is, this entry needs a real `resourcePolicy`, not a `'none'`.
+    for (const model of CHAT_COMPLETION_MODELS) {
+      expect(model.toLowerCase().includes('urn:air:')).toBe(false);
+    }
+  });
 });
 
 describe('chat-completion — price and estimate', () => {
