@@ -256,6 +256,9 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   collectionId: z.number(),
   statuses: z.array(z.enum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
+  // Items AI review handed to a human: still REVIEW, but already stamped by the system user, so
+  // the job will not pick them up again.
+  awaitingHumanReview: z.boolean().optional(),
   reviewSort: z.enum(CollectionReviewSort).optional(),
   collectionTagId: z.number().optional(),
 });

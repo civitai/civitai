@@ -190,14 +190,20 @@ export const updateUserProfile = async ({
 
   // We can safeuly update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {
-    await dbWrite.$executeRawUnsafe(`
+    // Parameterised: the payload is bound, not spliced into a string literal.
+    // `JSON.stringify` escapes `"` and `\` but not `'`, so a preference value holding an
+    // apostrophe used to close the literal early and corrupt the statement — the write
+    // then failed instead of being stored. `creatorCardStatsPreferences` is
+    // `z.array(z.string()).max(3)` on `userProfileUpdateSchema`, so the strings arrive
+    // here exactly as the caller sent them.
+    await dbWrite.$executeRaw`
         UPDATE "User"
         SET "publicSettings" = jsonb_set(
           "publicSettings",
           '{creatorCardStatsPreferences}',
-          '${JSON.stringify(creatorCardStatsPreferences)}'::jsonb
+          ${JSON.stringify(creatorCardStatsPreferences)}::jsonb
         )
-        WHERE "id" = ${userId}`);
+        WHERE "id" = ${userId}`;
 
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }

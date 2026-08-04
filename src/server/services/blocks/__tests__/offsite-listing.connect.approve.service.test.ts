@@ -57,6 +57,9 @@ vi.mock('~/server/services/blocks/app-listing-notify', () => ({
 const MOD = 7;
 const CALLER = 42;
 const CLIENT_ID = 'oauth-client-1';
+/** The app's own address — where the store sends a viewer so the app can start its
+ *  own OAuth flow. A connect listing without one has nowhere to send anybody. */
+const CONNECT_URL = 'https://connect.example.com/app';
 // A sensitive scope (ModelsWrite) + a normal read (ModelsRead).
 const REQUESTED = TokenScope.ModelsWrite | TokenScope.ModelsRead;
 const JUSTIFIED = { ModelsWrite: 'We edit models on the user behalf.' };
@@ -102,6 +105,8 @@ function stageConnectApprove(overrides: {
   primaryRequestedScopes?: number;
   primaryJustifications?: Record<string, string>;
   primaryAllowedScopes?: number;
+  /** The listing's destination. `null` → the actionability gate refuses go-live. */
+  externalUrl?: string | null;
 } = {}) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_c',
@@ -114,8 +119,16 @@ function stageConnectApprove(overrides: {
   const justifications = overrides.justifications ?? JUSTIFIED;
   const listing = {
     id: 'apl_c',
+    // 🔴 `kind` is load-bearing: the go-live actionability gate is off-site-only, so
+    // a fixture without it makes that gate a silent no-op and these tests would pass
+    // with the guard deleted.
+    kind: 'offsite',
     status: 'draft',
-    externalUrl: null, // CONNECT: no external URL by construction
+    // CONNECT listings may carry no external URL in the DB model — but a listing with
+    // no reachable address renders a store button with nothing to click, which is
+    // what the actionability gate now refuses. `externalUrl` is therefore part of the
+    // publishable-connect-listing fixture; see the reversed test below.
+    externalUrl: overrides.externalUrl === undefined ? CONNECT_URL : overrides.externalUrl,
     iconId: 1,
     coverId: 2,
     revisionOfId: null,
@@ -131,7 +144,9 @@ function stageConnectApprove(overrides: {
   // ceiling so the AUTHORITATIVE connect gates run row-consistent with the flip. By
   // default it mirrors the replica; a TOCTOU test overrides the `primary*` fields.
   mockWrite.appListing.findUnique.mockResolvedValue({
-    externalUrl: null,
+    kind: 'offsite',
+    slug: 'connect-app',
+    externalUrl: listing.externalUrl,
     iconId: 1,
     coverId: 2,
     connectClientId: CLIENT_ID,
@@ -142,12 +157,29 @@ function stageConnectApprove(overrides: {
 }
 
 describe('approveExternalRequest — CONNECT approve→live (validateExternalUrl skip)', () => {
-  it('approves a connect listing with a NULL externalUrl (URL gate skipped) → draft→approved', async () => {
+  /**
+   * 🔴 REVERSED INTENT — called out rather than left in the diff.
+   *
+   * This test used to stage `externalUrl: null` and assert the approve SUCCEEDED,
+   * encoding "a connect listing needs no destination". That rule is what let three
+   * connect listings go live with a disabled button and no way to open the app.
+   *
+   * A connect listing's OAuth flow starts at the APP's own site (confidential
+   * clients own their redirect_uri / state / PKCE) — the store's only job is to get
+   * the viewer there, and `externalUrl` is the only address it has. So a connect
+   * listing with no destination is not a valid shape that happens to render poorly;
+   * it is a listing no user can act on, under every version of the view-model.
+   *
+   * What this test still pins, unchanged, is the ORIGINAL subject: `validateExternalUrl`
+   * is skipped for connect. The listing now carries an https URL so the approve
+   * reaches the flip, and the null-destination case is asserted below as a refusal.
+   */
+  it('approves a connect listing (URL gate skipped) → draft→approved', async () => {
     stageConnectApprove();
     const res = await approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD });
     expect(res).toEqual({ publishRequestId: 'alpr_c', listingId: 'apl_c', slug: 'connect-app' });
     // The listing flip fired (draft/pending → approved) — proves approve reached the
-    // flip rather than throwing on the null URL.
+    // flip rather than throwing on either URL gate.
     expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
       where: { id: 'apl_c', status: { in: ['draft', 'pending'] } },
       data: { status: 'approved', contentRating: 'g' },
@@ -156,6 +188,23 @@ describe('approveExternalRequest — CONNECT approve→live (validateExternalUrl
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'app-listing-approved', userId: CALLER })
     );
+  });
+
+  it('🔴 REFUSES a connect listing with NO destination — the shape that shipped a dead CTA', async () => {
+    // The reversal, pinned positively. `validateExternalUrl` is still skipped (a null
+    // URL is not an *invalid* URL) — it is the ACTIONABILITY gate that refuses, and
+    // the message must be the one a moderator can act on.
+    stageConnectApprove({ externalUrl: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    // Fails CLOSED — nothing flipped, and the owner is NOT told their app went live.
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockNotify).not.toHaveBeenCalled();
   });
 
   it('the LIVE connect listing carries the reviewed scopes (flip does not clobber the connect fields)', async () => {
@@ -191,7 +240,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
         return {
           id: 'apl_shadow',
           status: 'draft',
-          externalUrl: null,
+          externalUrl: CONNECT_URL,
           iconId: 1,
           coverId: 2,
           revisionOfId: 'apl_parent',
@@ -204,7 +253,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
         };
       }
       if (args.where.id === 'apl_parent') {
-        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved' };
+        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved', kind: 'offsite' };
       }
       return null;
     });
@@ -220,7 +269,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
           description: null,
           category: 'utility',
           contentRating: 'g',
-          externalUrl: null,
+          externalUrl: CONNECT_URL,
           connectClientId: CLIENT_ID,
           connectRequestedScopes: UPDATED,
           connectScopeJustifications: UPDATED_JUST,
@@ -249,6 +298,72 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
     });
   });
 
+  it('🔴 a REVISION that would strip the live listing\'s destination is REFUSED — nothing copied', async () => {
+    // The "break an already-live listing" case. A revision writes NO status, so the
+    // status-transition gates never see it — but it copies `externalUrl` /
+    // `connectClientId` straight onto an approved parent. A shadow with no
+    // destination would therefore turn a working live listing into a dead CTA.
+    //
+    // 🔴 This also pins WHERE the gate is asserted. It must run on the POST-COPY
+    // projection (parent kind/slug + SHADOW url/client). A gate that re-read the
+    // PARENT instead would see the parent's still-valid URL, pass, and then
+    // overwrite it — passing this scenario while permitting exactly the regression.
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_r',
+      status: 'pending',
+      kind: 'offsite',
+      slug: 'parent-slug',
+      appListingId: 'apl_shadow',
+    });
+    mockRead.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      if (args.where.id === 'apl_shadow') {
+        return {
+          id: 'apl_shadow',
+          status: 'draft',
+          externalUrl: null, // the revision REMOVES the destination
+          iconId: 1,
+          coverId: 2,
+          revisionOfId: 'apl_parent',
+          connectClientId: CLIENT_ID,
+          connectRequestedScopes: REQUESTED,
+          connectScopeJustifications: JUSTIFIED,
+          userId: CALLER,
+          name: 'Connect App',
+          slug: 'parent-slug',
+        };
+      }
+      // The LIVE parent still has a perfectly good destination.
+      return {
+        id: 'apl_parent',
+        slug: 'parent-slug',
+        status: 'approved',
+        kind: 'offsite',
+        externalUrl: CONNECT_URL,
+      };
+    });
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      externalUrl: null,
+      connectClientId: CLIENT_ID,
+      connectRequestedScopes: REQUESTED,
+      connectScopeJustifications: JUSTIFIED,
+      connectClient: { allowedScopes: CEILING },
+      iconId: 1,
+      coverId: 2,
+    });
+
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    // Nothing was copied onto the live parent — it keeps serving its old, working content.
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('in-tx subset-of-ceiling on the REVISION: a shadow requesting a scope beyond the (shrunk) client ceiling → REJECT inside the tx, NO copy', async () => {
     // N2: mirror the first-time approve's in-tx subset re-assert on the revision path.
     // The revision's scopes are all justified, so this is caught ONLY by the
@@ -267,7 +382,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
         return {
           id: 'apl_shadow',
           status: 'draft',
-          externalUrl: null,
+          externalUrl: CONNECT_URL,
           iconId: 1,
           coverId: 2,
           revisionOfId: 'apl_parent',
@@ -280,7 +395,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
         };
       }
       if (args.where.id === 'apl_parent') {
-        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved' };
+        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved', kind: 'offsite' };
       }
       return null;
     });
@@ -297,7 +412,7 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
           description: null,
           category: 'utility',
           contentRating: 'g',
-          externalUrl: null,
+          externalUrl: CONNECT_URL,
           connectClientId: CLIENT_ID,
           connectRequestedScopes: REQ,
           connectScopeJustifications: JUST,
@@ -432,7 +547,7 @@ describe('approveExternalRequest — external-link revision still validates its 
         };
       }
       if (args.where.id === 'apl_parent') {
-        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved' };
+        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved', kind: 'offsite' };
       }
       return null;
     });

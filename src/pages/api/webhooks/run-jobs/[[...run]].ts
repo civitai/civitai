@@ -102,6 +102,8 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
+import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
+import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { logToAxiom } from '~/server/logging/client';
@@ -129,6 +131,8 @@ export const jobs: Job[] = [
   ...applyDiscordRoles,
   applyNsfwBaseline,
   userDeletedCleanup,
+  removeDeletedUserImages,
+  restoreUserImages,
   ...leaderboardJobs,
   ingestImages,
   removeBlockedImages,
@@ -234,8 +238,7 @@ export default WebhookEndpoint(async (req, res) => {
   const { name, run, options } = job;
 
   const lock = await acquireLock(name, options.lockExpiration, noCheck);
-  if (!lock)
-    return res.status(200).json({ ok: true, error: 'Job already running' });
+  if (!lock) return res.status(200).json({ ok: true, error: 'Job already running' });
 
   const jobStart = Date.now();
   const axiom = req.log.with({ scope: 'job', name, pod });

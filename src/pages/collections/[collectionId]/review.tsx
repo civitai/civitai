@@ -7,6 +7,7 @@ import {
   Loader,
   Paper,
   Stack,
+  Tabs,
   Text,
   Title,
   UnstyledButton,
@@ -53,6 +54,7 @@ import type { GetAllCollectionItemsSchema } from '~/server/schema/collection.sch
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import { ContestCommunityScore } from '~/components/Collections/components/ContestCollections/ContestCommunityScore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
@@ -111,21 +113,25 @@ const ReviewCollection = () => {
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
 
+  const user = useCurrentUser();
   const deselectAll = useStore((state) => state.deselectAll);
   const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
   const [sort, setSort] = useState<CollectionReviewSort>(CollectionReviewSort.Newest);
   const [collectionTagId, setCollectionTagId] = useState<number | undefined>(undefined);
+  const [awaitingHumanReview, setAwaitingHumanReview] = useState(false);
+  const [tab, setTab] = useState<'review' | 'community'>('review');
 
   const filters = useMemo(
     () => ({
       collectionId,
       statuses,
       forReview: true,
+      awaitingHumanReview: awaitingHumanReview || undefined,
       reviewSort: sort,
       collectionTagId,
       browsingLevel: allBrowsingLevelsFlag,
     }),
-    [collectionId, statuses, sort, collectionTagId]
+    [collectionId, statuses, sort, collectionTagId, awaitingHumanReview]
   );
 
   const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
@@ -159,97 +165,134 @@ const ReviewCollection = () => {
   if ((!loadingCollection && !collection) || (permissions && !permissions.manage))
     return <NotFound />;
 
+  // Moderators only — the scoring procedures are moderator-gated server-side, and a
+  // collection owner holds `manage` on their own collection.
+  const showCommunityTab = collection?.mode === CollectionMode.Contest && !!user?.isModerator;
   const isContestCollection = collection?.mode === CollectionMode.Contest;
+
+  const reviewPanel = (
+    <>
+      <Paper
+        withBorder
+        shadow="lg"
+        p="xs"
+        style={{
+          display: 'inline-flex',
+          float: 'right',
+          alignSelf: 'flex-end',
+          marginRight: 6,
+          position: 'sticky',
+          top: 'var(--header-height,0)',
+          marginBottom: -60,
+          zIndex: 1000,
+        }}
+      >
+        <ModerationControls collectionItems={collectionItems} filters={filters} />
+      </Paper>
+
+      <Stack gap="sm" mb="lg">
+        <Text c="dimmed">
+          You are reviewing items on the collection that are either pending review or have been
+          rejected. You can change the status of these to be accepted or rejected.
+        </Text>
+        {isContestCollection && collection.tags.length > 0 && (
+          <CollectionCategorySelect
+            collectionId={collection.id}
+            value={collectionTagId?.toString() ?? 'all'}
+            onChange={(x) => setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)}
+          />
+        )}
+        <Group justify="space-between">
+          <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+            <Group gap="xs">
+              <Chip value={CollectionItemStatus.REVIEW}>
+                <span>Review</span>
+              </Chip>
+              <Chip value={CollectionItemStatus.REJECTED}>
+                <span>Rejected</span>
+              </Chip>
+              <Chip value={CollectionItemStatus.ACCEPTED}>
+                <span>Accepted</span>
+              </Chip>
+            </Group>
+          </Chip.Group>
+          <Chip
+            checked={awaitingHumanReview}
+            onChange={() => {
+              setAwaitingHumanReview((v) => !v);
+              deselectAll();
+            }}
+          >
+            <span>Needs human review</span>
+          </Chip>
+
+          <SelectMenuV2
+            label="Sort by"
+            options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
+            value={sort}
+            onClick={(x) => setSort(x as CollectionReviewSort)}
+          />
+        </Group>
+      </Stack>
+      {isLoading ? (
+        <Center py="xl">
+          <Loader size="xl" />
+        </Center>
+      ) : (
+        <div className="relative">
+          <MasonryGrid
+            data={collectionItems}
+            empty={<NoContent mt="lg" message="There are no images that need review" />}
+            render={CollectionItemGridItem}
+            withAds={false}
+          />
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isFetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" style={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
+          )}
+          {!hasNextPage && collectionItems.length > 0 && <EndOfFeed />}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <ReviewCollectionContext.Provider value={filters}>
       <MasonryProvider maxColumnCount={4}>
         <MasonryContainer>
           <Stack>
-            <Paper
-              withBorder
-              shadow="lg"
-              p="xs"
-              style={{
-                display: 'inline-flex',
-                float: 'right',
-                alignSelf: 'flex-end',
-                marginRight: 6,
-                position: 'sticky',
-                top: 'var(--header-height,0)',
-                marginBottom: -60,
-                zIndex: 1000,
-              }}
-            >
-              <ModerationControls collectionItems={collectionItems} filters={filters} />
-            </Paper>
-
-            <Stack gap="sm" mb="lg">
-              <Group gap="xs">
-                <BackButton url={`/collections/${collectionId}`} />
-                <Title order={1}>Collection items that need review</Title>
-              </Group>
-              <Text c="dimmed">
-                You are reviewing items on the collection that are either pending review or have
-                been rejected. You can change the status of these to be accepted or rejected.
-              </Text>
-              {isContestCollection && collection.tags.length > 0 && (
-                <CollectionCategorySelect
-                  collectionId={collection.id}
-                  value={collectionTagId?.toString() ?? 'all'}
-                  onChange={(x) =>
-                    setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)
-                  }
-                />
-              )}
-              <Group justify="space-between">
-                <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-                  <Group gap="xs">
-                    <Chip value={CollectionItemStatus.REVIEW}>
-                      <span>Review</span>
-                    </Chip>
-                    <Chip value={CollectionItemStatus.REJECTED}>
-                      <span>Rejected</span>
-                    </Chip>
-                    <Chip value={CollectionItemStatus.ACCEPTED}>
-                      <span>Accepted</span>
-                    </Chip>
-                  </Group>
-                </Chip.Group>
-
-                <SelectMenuV2
-                  label="Sort by"
-                  options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
-                  value={sort}
-                  onClick={(x) => setSort(x as CollectionReviewSort)}
-                />
-              </Group>
-            </Stack>
-            {isLoading ? (
-              <Center py="xl">
-                <Loader size="xl" />
-              </Center>
+            <Group gap="xs">
+              <BackButton url={`/collections/${collectionId}`} />
+              <Title order={1}>Collection items that need review</Title>
+            </Group>
+            {!showCommunityTab ? (
+              reviewPanel
             ) : (
-              <div className="relative">
-                <MasonryGrid
-                  data={collectionItems}
-                  empty={<NoContent mt="lg" message="There are no images that need review" />}
-                  render={CollectionItemGridItem}
-                  withAds={false}
-                />
-                {hasNextPage && (
-                  <InViewLoader
-                    loadFn={fetchNextPage}
-                    loadCondition={!isFetching}
-                    style={{ gridColumn: '1/-1' }}
-                  >
-                    <Center p="xl" style={{ height: 36 }} mt="md">
-                      <Loader />
-                    </Center>
-                  </InViewLoader>
-                )}
-                {!hasNextPage && collectionItems.length > 0 && <EndOfFeed />}
-              </div>
+              // keepMounted={false} so the community score is only requested once the
+              // tab is opened — it is an expensive cross-store aggregation.
+              <Tabs
+                value={tab}
+                onChange={(value) => setTab(value === 'community' ? 'community' : 'review')}
+                keepMounted={false}
+              >
+                <Tabs.List mb="md">
+                  <Tabs.Tab value="review">Review</Tabs.Tab>
+                  <Tabs.Tab value="community">Community</Tabs.Tab>
+                </Tabs.List>
+                <Tabs.Panel value="review">
+                  <Stack>{reviewPanel}</Stack>
+                </Tabs.Panel>
+                <Tabs.Panel value="community">
+                  <ContestCommunityScore collectionId={collectionId} />
+                </Tabs.Panel>
+              </Tabs>
             )}
           </Stack>
         </MasonryContainer>

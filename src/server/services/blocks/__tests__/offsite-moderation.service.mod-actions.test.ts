@@ -122,10 +122,31 @@ const GOOD_REASON = 'impersonates a real vendor';
 
 const OWNER = 500;
 const BLOCK_ID = 'blk_backing';
+/** A valid https destination — what makes an off-site listing publishable. */
+const EXTERNAL_URL = 'https://cool.app';
 
-/** Replica classify shape — carries userId + name + appBlockId (dual-action classify). */
+/**
+ * Replica classify shape — carries userId + name + appBlockId (dual-action classify).
+ *
+ * 🔴 `externalUrl` is part of the fixture because relist/republish are GO-LIVE
+ * transitions and now run the off-site actionability gate: an off-site listing with
+ * no https destination would render a store button with nothing to click and is
+ * refused. A fixture without a URL does not represent a publishable off-site
+ * listing at all, so the default carries one; the tests that exercise the gate
+ * override it explicitly.
+ */
 function offsiteListing(status: string, kind = 'offsite') {
-  return { id: APP_ID, kind, status, slug: SLUG, name: 'Cool App', userId: OWNER, appBlockId: null };
+  return {
+    id: APP_ID,
+    kind,
+    status,
+    slug: SLUG,
+    name: 'Cool App',
+    userId: OWNER,
+    appBlockId: null,
+    externalUrl: EXTERNAL_URL,
+    connectClientId: null,
+  };
 }
 /** An on-site listing carries a backing AppBlock id (dual-table flip target). */
 function onsiteListing(status: string) {
@@ -137,6 +158,9 @@ function onsiteListing(status: string) {
     name: 'Cool App',
     userId: OWNER,
     appBlockId: BLOCK_ID,
+    // On-site listings never carry an off-site destination; the gate skips them.
+    externalUrl: null,
+    connectClientId: null,
   };
 }
 
@@ -399,6 +423,81 @@ const withAssets = <T extends object>(listing: T): T & { iconId: number; coverId
 const injectIngestion = (byId: Record<number, string>) =>
   (async (args: { where?: { id?: { in?: number[] } } }) =>
     (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: byId[id] ?? 'Scanned' }))) as never;
+
+describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', () => {
+  /** An off-site listing whose store CTA would have nothing to click. */
+  const deadCta = (over: Record<string, unknown> = {}) => ({
+    ...offsiteListing('removed'),
+    externalUrl: null,
+    ...over,
+  });
+
+  it('🔴 MOD relist REFUSES an off-site listing with no https destination — no flip, no event', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(deadCta());
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 MOD relist REFUSES a CONNECT listing whose CTA is the dead stub (the shipped bug)', async () => {
+    // The exact shape of the three listings that went live with a disabled
+    // "Connecting this app will be available soon." button. Pre-#3585 the connect
+    // arm is non-actionable regardless of the URL, so the gate refuses; post-#3585
+    // a connect listing WITH an https URL becomes navigable and this case moves to
+    // the allowed set — which is why the URL is null here, a shape that is
+    // non-actionable under BOTH versions of the view-model.
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(
+      deadCta({ connectClientId: 'client-123' })
+    );
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('MOD relist ALLOWS an off-site listing with a valid https destination', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
+  });
+
+  it('MOD relist does NOT gate an ON-SITE listing (a model-slot app is legitimately non-navigable)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    // No destination at all — an on-site listing never has one, and must still relist.
+    mockWrite.appListing.findUnique.mockResolvedValue(onsiteListing('removed'));
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
+  });
+
+  it('🔴 OWNER republish REFUSES an off-site listing with no https destination — no flip', async () => {
+    // The owner-driven half of the same hazard: a removed listing stays directly
+    // editable, so an owner can clear the URL and then self-restore.
+    mockWrite.appListing.findUnique.mockResolvedValue(deadCta());
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({
+      action: 'owner-unpublish',
+    });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+});
 
 describe('relistListing — go-live scan-clean gate', () => {
   it('REFUSES a listing whose icon is still scanning (no flip, no event)', async () => {
@@ -928,7 +1027,18 @@ describe('resetListingToPending', () => {
 
 describe('unpublishOwnListing', () => {
   function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
-    return { userId, status, kind, slug: SLUG, name: 'Cool App', appBlockId };
+    // `externalUrl` present for the same reason as `offsiteListing` above: republish
+    // is a go-live and runs the off-site actionability gate.
+    return {
+      userId,
+      status,
+      kind,
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId,
+      externalUrl: kind === 'offsite' ? EXTERNAL_URL : null,
+      connectClientId: null,
+    };
   }
 
   it('OWNER hides their approved OFF-SITE listing (approved → removed) + one owner-unpublish event, no notif/publish-request/block-flip', async () => {
@@ -1004,7 +1114,18 @@ describe('unpublishOwnListing', () => {
 
 describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
-    return { userId, status, kind, slug: SLUG, name: 'Cool App', appBlockId };
+    // `externalUrl` present for the same reason as `offsiteListing` above: republish
+    // is a go-live and runs the off-site actionability gate.
+    return {
+      userId,
+      status,
+      kind,
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId,
+      externalUrl: kind === 'offsite' ? EXTERNAL_URL : null,
+      connectClientId: null,
+    };
   }
 
   it('OWNER restores their OWN owner-unpublished OFF-SITE listing (removed → approved) + owner-republish event, no block-flip', async () => {

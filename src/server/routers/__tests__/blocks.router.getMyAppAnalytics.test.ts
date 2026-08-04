@@ -8,8 +8,8 @@ import { TRPCError } from '@trpc/server';
  * stubbed so importing the router doesn't drag in the stale generated
  * Prisma client). The analytics SERVICE is mocked at the boundary — this
  * test asserts the ROUTER wiring:
- *   - moderatorProcedure + enforceAppBlocksFlag gate (non-mod / anon rejected,
- *     dark behind the appBlocks flag);
+ *   - appDeveloperProcedure (the `appBlocksAuthor` capability) + enforceAppBlocksFlag
+ *     gate (non-author / anon rejected, dark behind the appBlocks flag);
  *   - the caller's session user id is threaded into the service (ownership is
  *     enforced inside the service, covered by app-analytics.service.test.ts);
  *   - the zod input is validated (appBlockId length cap, from/to datetime).
@@ -74,6 +74,9 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
   getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
   getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
+  // Mirrors the real `emptyRevenue()`, INCLUDING the `unavailable` discriminator that
+  // function bakes in. Without this key the flag-OFF test below cannot observe the
+  // contract at all, and the proc stays correct-by-inspection with no CI-visible guard.
   emptyRevenue: () => ({
     summary: {
       pending: { count: 0, grossCents: 0, shareCents: 0 },
@@ -83,6 +86,7 @@ vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
     },
     topApps: [],
     recentAttributions: [],
+    unavailable: 'notEntitled',
   }),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -208,7 +212,12 @@ describe('getMyAppAnalytics — gate', () => {
   });
 
   it('flag OFF (even for a moderator): returns zeroed analytics + runs NO aggregate', async () => {
-    // moderatorProcedure passes (mod), but the appBlocks flag is OFF →
+    // Two DIFFERENT gates, both keyed off isModerator by different code — hence the
+    // "moderator" test names. appDeveloperProcedure passes because `hasAppBlocksAuthor`
+    // reads `getFeatureFlags(ctx).appBlocksAuthor`, which this file does NOT mock, so it
+    // resolves from the static `availability: ['mod']` fallback against
+    // `modUser.isModerator`. Separately `fakePerUserFlag` mocks `isAppBlocksEnabled` —
+    // the DARK flag — and here it is forced OFF →
     // enforceAppBlocksFlag marks _appBlocksDisabled on the query ctx → the proc
     // short-circuits to the empty shape and never touches the aggregate service.
     mockIsAppBlocksEnabled.mockResolvedValue(false);
@@ -317,5 +326,183 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     expect(result.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
     expect(mockGetRevenueForOwner).not.toHaveBeenCalled();
     expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
+    // 🔴 THE POINT OF THE CHANGE, and the only assertion in CI that sits at the proc
+    // boundary this contract actually ships through. Without it, the zeroed buckets
+    // above are byte-identical to a publisher who genuinely earned nothing — which is
+    // exactly the bug. The renderer guards live in the `component` project, which CI
+    // does not run at all, so do not delete this on the grounds that a panel test
+    // covers it.
+    expect(result.unavailable).toBe('notEntitled');
+  });
+
+  it('DISCRIMINATOR: a measured revenue result is NOT flagged unavailable', async () => {
+    // Byte-identical zero buckets are possible on this path too (a publisher with no
+    // earnings yet), so the flag-ON case must leave `unavailable` absent. Without this,
+    // a change that flagged everything would satisfy the test above and silently deny
+    // every publisher their real dashboard.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+    expect(result.unavailable).toBeUndefined();
+    expect(mockGetRevenueForOwner).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * OAuth token-scope gate on getMyAppAnalytics — the proc `civitai app metrics`
+ * calls. It was UN-annotated, so `enforceTokenScope` implicitly required
+ * `TokenScope.Full`: a personal API key worked but the `civitai login` OAuth token
+ * (the CLI's default auth path) 403'd. Now
+ * `.meta({ requiredScope: TokenScope.AppBlocksSubmit })` — the same bit
+ * `GET /api/v1/blocks/submissions` requires, which the same command already calls
+ * to resolve slug → appBlockId. Mirrors app-listings.router.cli-scope.test.ts.
+ *
+ * Bitmasks are hard-coded so an enum drift trips the sanity test rather than
+ * silently re-pointing the gate.
+ *
+ * 🔴 WHICH OF THESE IS ACTUAL REGRESSION COVERAGE — measured, not assumed. With the
+ * `.meta` line deleted, ONLY 'CLI OAuth login token … reaches the service' goes red,
+ * and it fails with this gate's own error ("Your API key does not have the required
+ * scope for this action", thrown by runEnforceTokenScope) — the exact 403 this change
+ * fixes.
+ *
+ * EVERY other test in this describe block stays GREEN on pre-change code — currently
+ * the three behavioural cases below, the enum-only bitmask sanity test, and the
+ * schema-cap test at the end. Count them at the source rather than trusting a number
+ * written here; a previous revision of this comment said "four" and was made stale by
+ * a later round appending a fifth. Exactly ONE test in this block is regression
+ * coverage. The rest are INVARIANT guards:
+ *   - NO_SUBMIT was already FORBIDDEN before, because an un-annotated proc implicitly
+ *     requires `Full` and that token lacks Full too. It pins that narrowing the gate
+ *     did not accidentally WIDEN it — a different property, worth keeping, but it
+ *     would not have caught the original bug.
+ *   - the Full-key and session cases pin no-regression, and passed before by
+ *     construction.
+ * Do not read a block of green tests here as a block of tests OF THE FIX.
+ */
+const FULL = 33554431; // TokenScope.Full — a Full personal API key
+const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel = 67108865 — lacks AppBlocksSubmit
+
+// A token-authenticated caller (apiKeyId set) carrying `scope`. The user stays a
+// moderator so the author/flag gates are satisfied and the ONLY variable is scope.
+function tokenCtx(scope: number) {
+  return { ...fakeCtx(modUser), apiKeyId: 999, tokenScope: scope };
+}
+
+describe('getMyAppAnalytics — OAuth scope gate', () => {
+  it('the hard-coded bitmasks match the enum', () => {
+    expect(TokenScope.Full).toBe(FULL);
+    expect(TokenScope.AppBlocksSubmit).toBe(1 << 25);
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
+      CLI
+    );
+    expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(NO_SUBMIT);
+    // Full deliberately EXCLUDES AppBlocksSubmit — so it is enforceTokenScope's
+    // early-return on Full, NOT hasFlag(Full, AppBlocksSubmit), that preserves the
+    // existing personal-API-key path. If someone ever folds bit 25 into Full, this
+    // fails and the reasoning above has to be revisited.
+    expect((TokenScope.Full & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(
+      false
+    );
+  });
+
+  it('CLI OAuth login token (carries AppBlocksSubmit) reaches the service', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(CLI) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  it('Full personal API key still reaches the service (no regression)', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(FULL) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  it('a scoped token WITHOUT AppBlocksSubmit is FORBIDDEN and never reaches the service', async () => {
+    const caller = blocksRouter.createCaller(tokenCtx(NO_SUBMIT) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('scope'),
+    });
+    // The denial must come from the SCOPE gate, before any aggregate runs — not from
+    // the author/flag gate, which this ctx satisfies.
+    expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+
+  it('a session (no bearer token) is unaffected — the web panel path', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getMyAppAnalytics({ appBlockId: 'apb_1' })).resolves.toBe(SENTINEL);
+    expect(mockGetMyAppAnalytics).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 The no-regression property is CONDITIONAL, and this is what it rests on.
+   *
+   * enforceTokenScope's bypass is exact equality (`ctx.tokenScope !== TokenScope.Full`),
+   * NOT `hasFlag`. So a mask that is a strict SUPERSET of Full but lacks bit 25 —
+   * `Full|AppBlocksDevTunnel` = 100663295 — satisfied the un-annotated gate before and
+   * is FORBIDDEN after. A real allow→deny flip.
+   *
+   * 🔴 SCOPE OF THIS TEST — it does NOT prove the flip is globally unreachable, and an
+   * earlier revision of this comment wrongly implied it did. It pins the two PUBLIC
+   * (zod-validated) surfaces only:
+   *   - a personal API key's `tokenScope`, and
+   *   - an OAuth client's `allowedScopes` via tRPC create/update.
+   * It does NOT cover the non-zod writers, of which there are at least three — treat this
+   * list as "the ones known when this was written", not a partition:
+   *   - OAuth ACCESS tokens: the hub bounds a requested scope against `ALL_SCOPES`, not
+   *     Full (deliberately, so an opt-in bit is not dropped), so a token's real ceiling is
+   *     its client's `allowedScopes | UserRead`.
+   *   - `allowedScopes` written by RAW SQL MIGRATION — exactly how the one client
+   *     exceeding Full got its value (civitai-cli, 100663297, which is NOT a superset of
+   *     Full: bit 0 and none of 1..24, which is why the flip is unreachable in practice).
+   *   - `allowedScopes` written by publish-request.service for `appblk-*` clients. Safe
+   *     by construction (mapped bits are all below 25, and `grants: []` means no bearer
+   *     token) rather than by any cap this test can assert on.
+   *
+   * So: if either cap below is raised, this test goes red. If a MIGRATION grants some
+   * client `Full | <opt-in bit>`, nothing here will notice — that case is held only by
+   * inspection.
+   */
+  it('the two zod-validated credential surfaces reject a superset-of-Full mask', async () => {
+    const { addApiKeyInputSchema } = await import('~/server/schema/api-key.schema');
+    const { createOauthClientSchema, updateOauthClientSchema } = await import(
+      '~/server/schema/oauth-client.schema'
+    );
+
+    const SUPERSET = TokenScope.Full | TokenScope.AppBlocksDevTunnel;
+    expect(SUPERSET).toBe(100663295);
+    // Sanity: this really is the allow→deny case — it satisfies Full by hasFlag (so it
+    // passed the un-annotated gate) yet does not carry bit 25.
+    expect((SUPERSET & TokenScope.Full) === TokenScope.Full).toBe(true);
+    expect((SUPERSET & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(false);
+
+    // A personal API key cannot be created with it...
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: SUPERSET }).success).toBe(false);
+    // ...nor an OAuth client be granted it, on create or update.
+    const clientBase = {
+      name: 'c',
+      redirectUris: ['https://example.com/cb'],
+    };
+    expect(
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: SUPERSET }).success
+    ).toBe(false);
+    expect(updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: SUPERSET }).success).toBe(
+      false
+    );
+    // Boundary controls: each cap must still ADMIT Full, or the rejections above prove
+    // nothing (a fixture missing a required field would reject regardless of the scope,
+    // and the test would still pass with the cap removed). One per assertion above —
+    // the fixtures differ ONLY in the scope field, so a green here isolates the cap as
+    // the cause.
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: TokenScope.Full }).success).toBe(
+      true
+    );
+    expect(
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: TokenScope.Full }).success
+    ).toBe(true);
+    expect(
+      updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: TokenScope.Full }).success
+    ).toBe(true);
   });
 });

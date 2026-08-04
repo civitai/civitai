@@ -56,13 +56,31 @@
  *     explicitly in the "no on-site state strands the viewer" matrix test — but
  *     the branch is vacuous today: every approved on-site listing declares a
  *     page, so nothing takes it.
- *   - off-site external-link (https) → **Visit ↗** → external anchor.
- *   - off-site external-link (missing / non-https) → **informational** (guarded
- *     out; no target).
- *   - off-site connect (OAuth) → **Connect** STUB: a complete OAuth authorize
- *     URL is NOT derivable from the public DTO (needs redirect_uri /
- *     response_type / scope), so the connect flow is an honest stub with a note
- *     until the cutover wires it — no dead 404 nav.
+ *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
+ *     external anchor. 🔴 The sub-kind does NOT decide this; the presence of a
+ *     destination does. See the connect note below.
+ *   - off-site external-link with no usable target (missing / non-https) →
+ *     **informational** (guarded out; no target).
+ *   - off-site connect (OAuth) with no usable target → **Connect** STUB with a
+ *     note — the only remaining state with nowhere to send the viewer.
+ *
+ * 🔴 THE CONNECT STUB USED TO BE UNCONDITIONAL, AND THAT WAS THE BUG. Every
+ * off-site listing with a linked OAuth client rendered a dead
+ * "Connecting this app will be available soon." affordance — no href, disabled
+ * button — because `resolveOffsiteSubKind` routes on `connectClientId != null`
+ * alone (`app-listing.service.ts`), so linking a client was the ONLY thing that
+ * moved a listing off the working `Visit ↗` path. Three approved, live listings
+ * were in that state; a fourth, with no client, worked.
+ *
+ * The stub's stated premise — "a complete OAuth authorize URL is NOT derivable
+ * from the public DTO" — is true and irrelevant. These are CONFIDENTIAL clients
+ * that own their own `redirect_uri` / `state` / PKCE and start the flow from
+ * their own site; the store never needed to build an authorize URL, only to get
+ * the viewer to the app. That destination is already on the public DTO as
+ * `externalUrl`, https-guarded, and the external-link branch has always
+ * rendered it correctly. So connect now reuses that same proven path rather
+ * than growing a second one, and the stub survives only for a connect listing
+ * with genuinely no destination — where it still fails safe.
  */
 
 import { safeExternalHref } from '~/components/Apps/appListingCardView';
@@ -171,10 +189,17 @@ export function getDetailPrimaryAction(
     };
   }
 
-  // Off-site.
+  // Off-site — BOTH sub-kinds. An off-site app lives at its own address, and
+  // that address is the only thing this page can route to; a connect app then
+  // runs its own confidential-client OAuth flow from there. So the destination,
+  // not the sub-kind, decides the action: one https-guarded path
+  // (`safeExternalHref`), shared with the external-link case that has always
+  // worked. Do NOT reintroduce a sub-kind test above this line — that is
+  // precisely what made a linked OAuth client the sole cause of a dead CTA.
+  const href = safeExternalHref(kd.externalUrl);
+  if (href) return { label: 'Visit', mode: 'visit', href, external: true };
+
   if (kd.subKind === 'external-link') {
-    const href = safeExternalHref(kd.externalUrl);
-    if (href) return { label: 'Visit', mode: 'visit', href, external: true };
     return {
       label: 'Unavailable',
       mode: 'info',
@@ -183,7 +208,8 @@ export function getDetailPrimaryAction(
     };
   }
 
-  // Off-site connect (OAuth) — honest stub (see docstring: no derivable authorize URL).
+  // Off-site connect with NO usable destination — the honest stub, now reached
+  // only in that genuinely-nowhere-to-go state. Fails safe: no dead nav.
   return {
     label: 'Connect',
     mode: 'connect',

@@ -140,7 +140,6 @@ import {
   getCollectionRandomSeed,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
-  removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -353,8 +352,17 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
       );
     }
     await purgeResizeCache({ url: url });
-  } catch (e) {
-    // do nothing
+  } catch (error) {
+    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
+    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    await logToAxiom({
+      type: 'error',
+      name: 'delete-image-from-s3-failed',
+      message: 'S3 delete failed; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 }
 
@@ -395,9 +403,6 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
-    // Remove image from all collections before deleting
-    await removeEntityFromAllCollections('image', id);
-
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -441,10 +446,6 @@ export const deleteImageById = async ({
 
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
-    // Remove images from all collections before deleting
-    // Note: Since we're using raw SQL delete, Prisma cascades won't trigger automatically
-    await Promise.all(ids.map((id) => removeEntityFromAllCollections('image', id)));
-
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`

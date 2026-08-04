@@ -89,6 +89,15 @@ describe('decideFromObservations', () => {
     expect(result.violations).toContain('sexual/adult content');
   });
 
+  // Only the first frame reaches the model, so a reference later in the video is invisible.
+  it('escalates rather than rejects a video with no buzz reference in frame one', () => {
+    const result = decideFromObservations({ ...clean, hasBuzzReference: false }, { isVideo: true });
+    expect(result.decision).toBe('escalate');
+    expect(result.escalations).toContain('no buzz reference in first frame');
+    expect(result.violations).not.toContain('no buzz reference');
+    expect(result.neverReject).toBe(true);
+  });
+
   it('rejects a missing buzz reference', () => {
     const result = decideFromObservations({ ...clean, hasBuzzReference: false });
     expect(result.decision).toBe('reject');

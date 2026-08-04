@@ -39,12 +39,17 @@ vi.mock('./lag', () => ({
   isWritePool: () => false,
   preventReplicationLag: async () => {},
 }));
-vi.mock('./clients/axiom', () => ({ logToAxiom: vi.fn(async () => {}), safeError: (e: unknown) => e }));
+vi.mock('./clients/axiom', () => ({
+  logToAxiom: vi.fn(async () => {}),
+  safeError: (e: unknown) => e,
+}));
 
 import { createNotificationsBulk } from './operations';
 
-const updateCall = () => h.state.notifCalls.find((c) => c.sql.includes('UPDATE "PendingNotification"'));
-const insertCall = () => h.state.notifCalls.find((c) => c.sql.includes('INSERT INTO "PendingNotification"'));
+const updateCall = () =>
+  h.state.notifCalls.find((c) => c.sql.includes('UPDATE "PendingNotification"'));
+const insertCall = () =>
+  h.state.notifCalls.find((c) => c.sql.includes('INSERT INTO "PendingNotification"'));
 
 const row = (key: string, users: number[]) => ({
   key,
@@ -80,5 +85,61 @@ describe('createNotificationsBulk users-array merge on upsert', () => {
     expect(ins.sql).toContain('unnest("PendingNotification"."users" || excluded."users")');
     expect(ins.sql).toContain('SELECT DISTINCT');
     expect(ins.sql).not.toMatch(/"users"\s*=\s*excluded\."users"/);
+  });
+});
+
+describe('createNotificationsBulk dedupeKey passthrough', () => {
+  it('carries the dedupeKey into the PendingNotification INSERT so the worker can fan it out', async () => {
+    h.state.updatedKeys = [];
+    await createNotificationsBulk([{ ...row('comment:1', [11, 22]), dedupeKey: 'comment:v2:1' }]);
+
+    const ins = insertCall()!;
+    expect(ins.sql).toContain('"dedupeKey"');
+    expect(ins.sql).toContain("'comment:v2:1'");
+  });
+
+  it('emits NULL for rows that opt out of dedup', async () => {
+    h.state.updatedKeys = [];
+    await createNotificationsBulk([row('comment:1', [11, 22])]);
+
+    const ins = insertCall()!;
+    expect(ins.sql).toContain('"dedupeKey"');
+    expect(ins.sql).toContain('NULL');
+  });
+
+  it('columns and VALUES tuples stay the same arity (an off-by-one here shifts every column)', async () => {
+    h.state.updatedKeys = [];
+    await createNotificationsBulk([{ ...row('comment:1', [11]), dedupeKey: 'comment:v2:1' }]);
+
+    const ins = insertCall()!;
+    const columns = ins.sql.match(/INSERT INTO "PendingNotification" \(([^)]+)\)/)![1].split(',');
+    expect(columns).toHaveLength(7);
+  });
+});
+
+describe('createNotificationsBulk dedupeKey on the UPDATE-first path', () => {
+  it('back-fills dedupeKey onto a pending row that predates the column', async () => {
+    // A row queued by the previous build carries NULL; without this it fans out un-deduped.
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([{ ...row('comment:1', [11]), dedupeKey: 'comment:v2:1' }]);
+
+    const upd = updateCall()!;
+    expect(upd.sql).toContain('"dedupeKey" = COALESCE(pn."dedupeKey", u."dedupeKey")');
+    expect(upd.sql).toContain("'comment:v2:1'");
+  });
+
+  it('never overwrites an existing dedupeKey (same key always means the same source event)', async () => {
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([{ ...row('comment:1', [11]), dedupeKey: 'comment:v2:1' }]);
+
+    // COALESCE(existing, incoming) — not a bare assign, which would let a later batch retarget the row.
+    expect(updateCall()!.sql).not.toMatch(/"dedupeKey"\s*=\s*u\."dedupeKey"\s*[,\n]/);
+  });
+
+  it('VALUES tuples still line up with the aliased column list', async () => {
+    h.state.updatedKeys = ['comment:1'];
+    await createNotificationsBulk([row('comment:1', [11])]);
+
+    expect(updateCall()!.sql).toContain('AS u(key, users, "dedupeKey")');
   });
 });

@@ -17,9 +17,10 @@ import type { SessionUser } from '~/types/session';
 // Narrow cross-app write for a model version's paid-access config — the creator
 // studio (SvelteKit spoke) calls this server-to-server, forwarding the shared
 // .civitai.com session cookie that AuthedEndpoint validates. Body: the
-// updateModelVersionPaidAccessSchema shape ({ id, paidAccess, donationGoal }); a null
-// paidAccess clears the gate. Version-level rules live in the service; user-level
-// limits (max days / max concurrent EA models) are enforced here.
+// updateModelVersionPaidAccessSchema shape ({ id, paidAccess, donationGoal, rightsAffirmed });
+// a null paidAccess clears the gate, and rightsAffirmed is the creator's confirmation that they
+// may monetize (required by the service the first time a version charges). Version-level rules
+// live in the service; user-level limits (max days / max concurrent EA models) are enforced here.
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     const parsed = updateModelVersionPaidAccessSchema.safeParse(req.body);

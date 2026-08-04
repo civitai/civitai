@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Button,
+  Checkbox,
   Divider,
   Group,
   Loader,
@@ -33,6 +34,7 @@ import {
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
+  RIGHTS_AFFIRMATION_STATEMENT,
   computeCreatorShopSplit,
   isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
@@ -74,6 +76,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     acceptsBlueBuzz,
     offsets,
     offsetsChanged,
+    rightsAffirmed,
+    requiresAffirmation,
     imageId,
     localUrl,
     checks,
@@ -424,6 +428,17 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             feeAccountBalance={feeAccountBalance}
             canAffordFee={canAffordFee}
           />
+        )}
+
+        {requiresAffirmation && (
+          <Paper withBorder radius="md" p="sm">
+            <Checkbox
+              checked={rightsAffirmed}
+              onChange={(e) => form.setRightsAffirmed(e.currentTarget.checked)}
+              label={RIGHTS_AFFIRMATION_STATEMENT}
+              description="We keep a record of this confirmation with your submission."
+            />
+          </Paper>
         )}
 
         {notice && (

@@ -189,13 +189,43 @@ describe('getListingCta — off-site (P2c: View details → unified detail)', ()
       external: false,
     });
   });
-  it('connect → View details → unified detail (Connect affordance lives on the detail page)', () => {
-    expect(getListingCta(offsiteCard('connect', null), { canOpenPage: true })).toEqual({
-      label: 'View details',
-      action: 'detail',
-      href: '/apps/store-preview/ext-app',
-      external: false,
+  /**
+   * 🔴 INTENT CHANGED alongside the detail view-model. Connect used to route to
+   * "View details" unconditionally, on the premise that the Connect affordance
+   * lived on the detail page — but that affordance was a dead stub, so the card
+   * sent the viewer to a page with no way to open the app. The detail now
+   * renders a real `Visit ↗` whenever an off-site listing carries an https
+   * `externalUrl`; the card matches, so the two cannot disagree about whether an
+   * app is reachable.
+   */
+  it('🔴 connect + https externalUrl → Visit ↗ (matches the detail, was View details)', () => {
+    expect(
+      getListingCta(offsiteCard('connect', 'https://connect.app'), { canOpenPage: true })
+    ).toEqual({
+      label: 'Visit',
+      action: 'visit',
+      href: 'https://connect.app',
+      external: true,
     });
+  });
+  it('🔴 connect and external-link with the SAME url produce the SAME CTA', () => {
+    const url = 'https://same-target.app';
+    expect(getListingCta(offsiteCard('connect', url), { canOpenPage: true })).toEqual(
+      getListingCta(offsiteCard('external-link', url), { canOpenPage: true })
+    );
+  });
+  it('connect with no usable target → View details → unified detail (fails safe)', () => {
+    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
+      expect(
+        getListingCta(offsiteCard('connect', externalUrl), { canOpenPage: true }),
+        String(externalUrl)
+      ).toEqual({
+        label: 'View details',
+        action: 'detail',
+        href: '/apps/store-preview/ext-app',
+        external: false,
+      });
+    }
   });
 });
 

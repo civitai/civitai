@@ -241,6 +241,7 @@ describe('uses is required for stickers', () => {
     imageUrl: 'img',
     slug: 'party_cat',
     price: 500,
+    rightsAffirmed: true,
   };
 
   it('rejects a sticker submitted without uses', () => {

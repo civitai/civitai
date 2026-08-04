@@ -7,6 +7,7 @@ import {
   normalizeSlotId,
   observeAppBlockLaunch,
 } from '~/server/metrics/app-block-runtime.metrics';
+import { logToAxiom } from '~/server/logging/client';
 import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
 import { blockRenderSchema, blockRenderTrackerPayload } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -92,6 +93,37 @@ export default PublicEndpoint(
     // metrics failure break the beacon.
     try {
       const appBlockIdLabel = await boundAppBlockIdLabel(result.data.appBlockId);
+
+      // ── UNKNOWN-APP DETECTION (observe, NEVER gate) ───────────────────────
+      // `other` means the id is not in the TTL-cached approved-app set. This
+      // endpoint is unauthenticated and `appBlockId` comes from the request
+      // body, so an unknown id is worth seeing — see the trust caveat on
+      // `app-views.service.ts`. Surfacing it costs nothing: the lookup already
+      // ran for the prom label.
+      //
+      // 🔴 It stays a LOG, not a gate, for two independent reasons.
+      // (1) `other` is ALSO the honest value for a genuinely new app inside
+      //     the cache's <=5-minute TTL window — and for EVERY app if
+      //     `loadKnownAppBlockIds` fails, because it fails to an empty set and
+      //     caches that, so a brief DB blip would make every id look unknown.
+      // (2) `blockRenders` is a fire-and-forget beacon with no status column,
+      //     so a wrongly-rejected beacon makes App loads UNDER-report silently
+      //     and permanently — strictly worse than over-reporting, because
+      //     nothing surfaces the loss.
+      // Read a rise here as a prompt to investigate, not as a count of attacks.
+      if (appBlockIdLabel === 'other') {
+        logToAxiom(
+          {
+            name: 'block-render-unknown-app',
+            type: 'warning',
+            message: 'block-render beacon for an id outside the approved-app set',
+            slotId: result.data.slotId,
+            status,
+          },
+          'clickhouse'
+        ).catch(() => undefined);
+      }
+
       const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();
       rendersTotal.inc({
         app_block_id: appBlockIdLabel,

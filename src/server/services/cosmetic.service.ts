@@ -248,6 +248,62 @@ export const grantCosmetics = async ({
 // spoke app (apps/moderator, Kysely). The shared grantCosmetics helper above stays (payments/referrals).
 
 /**
+ * Revoke cosmetics from users across the cross product. Deletes every UserCosmetic row for the pairs,
+ * including equipped ones — equipped placements are captured first so entity caches and search indexes
+ * can be refreshed once the rows are gone.
+ */
+export async function revokeCosmeticsFromUsers({
+  userIds,
+  cosmeticIds,
+}: {
+  userIds: number[];
+  cosmeticIds: number[];
+}) {
+  const uniqueUserIds = [...new Set(userIds)];
+  const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+
+  const equipped = await dbWrite.userCosmetic.findMany({
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      equippedToId: { not: null },
+    },
+    select: { equippedToId: true, equippedToType: true },
+  });
+
+  const { count } = await dbWrite.userCosmetic.deleteMany({
+    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds } },
+  });
+
+  await userCosmeticCache.refresh(uniqueUserIds);
+  await refreshOwnedStickerCache(uniqueUserIds);
+
+  const equippedByType = new Map<CosmeticEntity, number[]>();
+  for (const { equippedToId, equippedToType } of equipped) {
+    if (!equippedToId || !equippedToType) continue;
+    equippedByType.set(equippedToType, [
+      ...(equippedByType.get(equippedToType) ?? []),
+      equippedToId,
+    ]);
+  }
+  for (const [type, ids] of equippedByType) {
+    await cosmeticEntityCaches[type].refresh(ids);
+    if (type === 'Model')
+      await modelsSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+    if (type === 'Image')
+      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    if (type === 'Article')
+      await articlesSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+  }
+
+  return { revoked: count };
+}
+
+/**
  * Resolve a target descriptor (collection of approved items, or explicit
  * userIds) to the set of users that should receive a cosmetic, then grant it.
  *

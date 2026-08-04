@@ -25,6 +25,7 @@ export const appRouter = router({
   chat: lazy(() => import('./chat.router').then((m) => m.chatRouter)),
   collection: lazy(() => import('./collection.router').then((m) => m.collectionRouter)),
   comment: lazy(() => import('./comment.router').then((m) => m.commentRouter)),
+  contestScore: lazy(() => import('./contest-score.router').then((m) => m.contestScoreRouter)),
   commentv2: lazy(() => import('./commentv2.router').then((m) => m.commentv2Router)),
   common: lazy(() => import('~/server/routers/common.router').then((m) => m.commonRouter)),
   content: lazy(() => import('./content.router').then((m) => m.contentRouter)),

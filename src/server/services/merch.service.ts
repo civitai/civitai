@@ -4,6 +4,10 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { merchBuzzCreditedEmail, merchClaimInviteEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
+// From the package rather than the `~/server/redis/client` shim on purpose: it is a pure helper
+// with no client state, and importing it through the shim would force every suite that mocks the
+// shim to add it to its mock factory.
+import { prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
 import { setCustomerCivitaiUserId } from '~/server/http/shopify/shopify.caller';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
@@ -75,7 +79,9 @@ function verifyOrderKey(key: string): string | null {
 const CLAIM_RATE_WINDOW_SECONDS = 600; // 10 min
 const CLAIM_RATE_MAX = 20;
 async function withinClaimRateLimit(userId: number) {
-  const key = `merch:claim-rate:${userId}`;
+  // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
+  // environment namespace from the key table — apply it explicitly. No-op in production.
+  const key = prefixCacheKey(`merch:claim-rate:${userId}`);
   try {
     const count = await redis.incrBy(key as never, 1);
     if (count === 1) await redis.expire(key as never, CLAIM_RATE_WINDOW_SECONDS);

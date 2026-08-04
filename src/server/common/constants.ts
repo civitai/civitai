@@ -1751,4 +1751,23 @@ export const EARLY_ACCESS_CONFIG: {
 export const KEY_VALUE_KEYS = {
   REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
   MODEL_FILE_OPTIONS: 'modelFileOptions',
+  CONTEST_SCORING: 'contestScoring',
 } as const;
+
+// Snapshot rows are one KeyValue per run: `contestSnapshot:<collectionId>:<takenAt ISO>`.
+export const CONTEST_SNAPSHOT_KEY_PREFIX = 'contestSnapshot';
+
+/**
+ * Bumped whenever a change to contest scoring could move a ranking. Recorded in every
+ * snapshot so a disputed result can be traced to the code that produced it, and read
+ * by the results UI to mark a snapshot taken by an older scorer.
+ *
+ * It lives HERE rather than beside the scorer because the client reads it: a value
+ * import from `contest-score.service` would pull `~/server/db/client` and `~/env/server`
+ * into the browser bundle, and neither module can be tree-shaken away (both run side
+ * effects at import). That failure only surfaces at `next build`.
+ */
+export const CONTEST_SCORE_CODE_VERSION = 5;
+
+/** Scoring counted every version of a model before this. */
+export const CONTEST_VERSION_SCOPING_CODE_VERSION = 3;

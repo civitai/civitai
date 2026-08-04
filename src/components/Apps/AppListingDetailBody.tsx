@@ -379,8 +379,15 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   }
 
   if (action.mode === 'connect') {
-    // Honest stub — no derivable OAuth authorize URL from the public DTO. Inert
-    // button + a note so the affordance is never a dead 404 link.
+    // Honest stub for a connect listing with NO destination at all: inert button
+    // + a note, so the affordance is never a dead 404 link.
+    //
+    // 🔴 This is NOT the ordinary connect case any more. A connect listing that
+    // carries an https `externalUrl` — which is every one in production — takes
+    // the `visit` branch above and renders a real `Visit ↗`. The mode used to be
+    // returned unconditionally for the sub-kind, which made this inert button
+    // the ONLY thing a viewer ever saw for an app with a linked OAuth client.
+    // See `getDetailPrimaryAction`.
     const GlyphIcon = glyphFor('connect');
     return (
       <Stack gap={4}>

@@ -1216,6 +1216,9 @@ export type CollectionItemsResult = {
   nextCursor?: string;
 };
 
+// The AI review job stamps this as the reviewer on items it hands to a human.
+export const AI_REVIEW_SYSTEM_USER_ID = -1;
+
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
@@ -1230,6 +1233,7 @@ export const getCollectionItemsByCollectionId = async ({
     collectionId,
     cursor,
     forReview,
+    awaitingHumanReview,
     reviewSort,
     collectionTagId,
   } = input;
@@ -1264,6 +1268,12 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
+
+  // The system user stamps every item it touches, accept and reject included, so the stamp alone
+  // means "the AI saw this". Only a stamped item still sitting in REVIEW is waiting on a person.
+  const awaitingHumanCondition = awaitingHumanReview
+    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID} AND ci.status = 'REVIEW'::"CollectionItemStatus"`
+    : Prisma.sql``;
 
   // For contest mode, use hash-based random ordering with cursor support
   let collectionItems: {
@@ -1338,6 +1348,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
@@ -1415,6 +1426,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
@@ -1830,6 +1842,17 @@ export const getAvailableCollectionItemsFilterForUser = ({
 export const COLLECTION_AI_REVIEW_KEY_PREFIX = 'collection-ai-review:';
 export const collectionAiReviewKey = (collectionId: number) =>
   `${COLLECTION_AI_REVIEW_KEY_PREFIX}${collectionId}`;
+
+// The prompt is deliberately not in the repo: it describes exactly which signals reject versus
+// escalate, and this repository is public.
+export const getCollectionAiReviewDefaultPrompt = async () => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: `${COLLECTION_AI_REVIEW_KEY_PREFIX}default` },
+    select: { value: true },
+  });
+  const value = row?.value as { prompt?: string } | null;
+  return value?.prompt ?? '';
+};
 
 export const getCollectionAiReview = async (collectionId: number) => {
   const row = await dbRead.keyValue.findUnique({

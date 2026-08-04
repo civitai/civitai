@@ -153,6 +153,7 @@ export enum SignalMessages {
   ReferralClawback = 'referral:clawback',
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
+  ContestScoreRunUpdate = 'contest-score:run-update',
 }
 
 export enum BountySort {
@@ -384,6 +385,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  ContestScore = 'contest-score', // with :collectionId
 }
 
 export enum NewOrderImageRatingStatus {

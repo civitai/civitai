@@ -18,7 +18,9 @@ describe('PENDING_CLAIM_QUERY', () => {
     // FOR UPDATE SKIP LOCKED must sit after LIMIT (inside the CTE) so only the claimed batch is locked.
     // Order matters: `... LIMIT <n> FOR UPDATE SKIP LOCKED )` then the outer UPDATE.
     expect(sql).toMatch(/LIMIT \d+ FOR UPDATE SKIP LOCKED \)/);
-    expect(sql.indexOf('FOR UPDATE SKIP LOCKED')).toBeLessThan(sql.indexOf('UPDATE "PendingNotification" pn'));
+    expect(sql.indexOf('FOR UPDATE SKIP LOCKED')).toBeLessThan(
+      sql.indexOf('UPDATE "PendingNotification" pn')
+    );
   });
 
   it('claims by stamping claimedAt and reclaims rows stuck past the too-old window', () => {
@@ -34,5 +36,12 @@ describe('PENDING_CLAIM_QUERY', () => {
 
   it('returns the claimed rows so the worker can fan them out', () => {
     expect(sql).toMatch(/RETURNING \*$/);
+  });
+});
+
+describe('PENDING_CLAIM_QUERY — dedupeKey', () => {
+  it('selects dedupeKey so the fan-out can stamp it onto UserNotification', () => {
+    // Omitting it here makes the column silently undefined at fan-out and cross-type dedup a no-op.
+    expect(sql).toContain('"dedupeKey"');
   });
 });

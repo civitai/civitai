@@ -1393,16 +1393,56 @@ export async function getRevenueForOwner({
 }
 
 /**
+ * Why there is exactly ONE reason value and not two.
+ *
+ * `getRevenueForOwner` never *computes* ownership — it scopes every aggregate
+ * with `appOwnerUserId: ownerUserId` in the WHERE clause. So a caller who asks
+ * for an appBlockId they do not own gets a zero-row aggregate, and those zeros
+ * are a truthful measurement ("your attributed revenue on that app is zero"),
+ * not a fabricated one. There is no not-owned branch in the revenue path that
+ * could report `notOwned`, so adding that value would declare a state nothing
+ * can ever produce and force an unreachable branch into every renderer — the
+ * same "declared but never satisfied" trap that let the analytics bug hide.
+ *
+ * The dark `appBlocks` flag is therefore the only path that returns zeros it
+ * never measured, hence the single `notEntitled`. If revenue ever grows a real
+ * ownership probe, widen this union AND add the matching renderer branch in the
+ * same change.
+ */
+export type RevenueUnavailableReason = 'notEntitled';
+
+/**
+ * The PLACEHOLDER payload only — named `Empty…` deliberately. `recentAttributions: []`
+ * (an empty tuple) and a REQUIRED `unavailable` mean this type can describe nothing else,
+ * so typing the real measurement path with it would force a developer to add
+ * `unavailable` to a genuine result — the exact inverse of the bug this fixes. It was
+ * briefly called `RevenuePayload`, which invited precisely that.
+ */
+export type EmptyRevenuePayload = {
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+  recentAttributions: [];
+  /**
+   * REQUIRED here, because on this type the zeroed buckets are always a placeholder.
+   * The contract as seen by a CALLER is "present only when the zeros are a placeholder,
+   * absent on a genuine measurement" — a measured result comes back from
+   * `getRevenueForOwner`, which never returns this type, so it never carries the field.
+   */
+  unavailable: RevenueUnavailableReason;
+};
+
+/**
  * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue.
  * Mirrors getRevenueForOwner's `{ summary, topApps }` (+ empty attributions
  * feed) with every bucket at zero so a flag-off caller gets no data and we
  * run NO aggregate queries. Pure constant; no DB access.
+ *
+ * The `unavailable` discriminator is baked in rather than passed by the caller:
+ * this helper exists SOLELY for the dark-flag short-circuit, so there is no
+ * legitimate way to build this payload without the flag, and a future second
+ * call site cannot silently omit it.
  */
-export function emptyRevenue(): {
-  summary: RevenueSummary;
-  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
-  recentAttributions: [];
-} {
+export function emptyRevenue(): EmptyRevenuePayload {
   const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
   return {
     summary: {
@@ -1413,6 +1453,7 @@ export function emptyRevenue(): {
     },
     topApps: [],
     recentAttributions: [],
+    unavailable: 'notEntitled',
   };
 }
 
