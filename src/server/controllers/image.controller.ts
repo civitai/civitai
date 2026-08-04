@@ -299,15 +299,12 @@ export const getInfiniteImagesHandler = async ({
   //   Only forces the DB when scoped to a model (its sole legit use â€” the model
   //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
   //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
-  // - newCreators: filters on a resolved set of user ids, and the images index
-  //   has no filterable `user.id` (only `user.username`)
   const requiresDbPath =
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
-    !!input.newCreators ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
 
@@ -335,6 +332,7 @@ export const getInfiniteImagesHandler = async ({
       return await getAllImagesIndex({
         ...input,
         user,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
@@ -408,10 +406,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
           buildFliptContext(user)
         );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    // `newCreators` filters on a resolved set of user ids and the images index has no
-    // filterable `user.id`, so the index would silently return the UNFILTERED feed.
-    // No UI sends it here today, but this is a public procedure that accepts the field.
-    const useIndex = (useBitdex || features.imageIndexFeed) && !input.newCreators;
+    const useIndex = useBitdex || features.imageIndexFeed;
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true

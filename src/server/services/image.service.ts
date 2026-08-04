@@ -2702,6 +2702,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
+  domain?: DomainColor;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3290,6 +3291,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
+    newCreators,
+    domain,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -3377,6 +3380,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  // Creators on the "new & upcoming" board. Same shape as `followed` above, but the
+  // set is global per domain rather than per viewer. An unpopulated board returns
+  // nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -3944,6 +3956,8 @@ export async function getImagesFromBitdexPreFilter(
     minorOnly,
     blockedFor,
     requiringMeta,
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -4008,6 +4022,13 @@ export async function getImagesFromBitdexPreFilter(
     const userIds = followedUsers.map((x) => x.targetUserId);
     if (!userIds.length) return null;
     filters.push(_in('userId', userIds.map(_int)));
+  }
+
+  // --- New & upcoming creators ---
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return null;
+    filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
   // --- NSFW Browsing Level ---
@@ -4179,6 +4200,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     // TODO check the unused stuff in here
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -4253,6 +4276,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db
