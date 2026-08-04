@@ -19,6 +19,7 @@ import { MantineReactTable } from 'mantine-react-table';
 import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MinorFlagAppealActions } from '~/components/Moderation/MinorFlagAppealActions';
+import { MinorFlagNoMatchAlert } from '~/components/Moderation/MinorFlagNoMatchAlert';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type {
   MinorFlagAppealRow,
@@ -73,11 +74,13 @@ function MatchDetail({
   detail,
   model,
   match,
+  flagSource,
   isLoading,
 }: {
   detail: MinorHashMatchDetail | null;
   model: PanelModel;
   match: PanelMatch | null;
+  flagSource?: string | null;
   isLoading: boolean;
 }) {
   if (isLoading) return <Loader size="sm" />;
@@ -167,13 +170,7 @@ function MatchDetail({
           </Stack>
         </>
       ) : (
-        <Alert color="yellow" title="No matching flagged model">
-          <Text size="sm">
-            Nothing a moderator has flagged minor still shares a file with this model. The match is
-            resolved live, so this means the model it matched has since been unflagged or its hashes
-            were permanently deleted — worth checking before you keep the flag.
-          </Text>
-        </Alert>
+        <MinorFlagNoMatchAlert flagSource={flagSource} />
       )}
     </div>
   );
@@ -222,7 +219,7 @@ type AutoFlaggedRow = {
 type FlaggedPanelRow = Pick<
   AutoFlaggedRow,
   'modelId' | 'modelName' | 'userId' | 'username' | 'status'
->;
+> & { flagSource?: string | null };
 
 // The flag is already in force on these rows, so the evidence matters more here
 // than on the review queue, where nothing has happened to the model yet.
@@ -236,6 +233,9 @@ function AutoFlaggedDetailPanel({ row }: { row: FlaggedPanelRow }) {
     <MatchDetail
       isLoading={isLoading}
       detail={data?.detail ?? null}
+      // The Auto-flagged tab's query filters on source='auto', so its rows carry
+      // no flagSource of their own.
+      flagSource={row.flagSource ?? 'auto'}
       model={{
         id: row.modelId,
         name: row.modelName,
