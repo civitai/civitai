@@ -26,7 +26,12 @@ vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn(() => Promise.resolve()),
 }));
 
-import { getAppViews, emptyViews, unavailableViews } from '../app-views.service';
+import {
+  VIEWS_QUERY_TIMEOUT_SECONDS,
+  emptyViews,
+  getAppViews,
+  unavailableViews,
+} from '../app-views.service';
 
 const IDS = ['apb_one', 'apb_two'];
 const FROM = new Date('2026-07-01T00:00:00.000Z');
@@ -185,7 +190,13 @@ describe('getAppViews — latency is bounded, not just errors', () => {
     };
     // Client-side abort alone leaves the query running on the cluster, so the
     // server-side cap is the one that actually protects ClickHouse.
-    expect(arg.clickhouse_settings?.max_execution_time).toBeGreaterThan(0);
+    //
+    // Pin the VALUE, not just its existence. `toBeGreaterThan(0)` lets the
+    // constant drift — measured: raising it 10s → 25s left the suite fully
+    // green, so a regression to ~29s on a per-app-row fan-out path would ship
+    // silently. The magnitude is the whole point of the guard.
+    expect(VIEWS_QUERY_TIMEOUT_SECONDS).toBe(10);
+    expect(arg.clickhouse_settings?.max_execution_time).toBe(VIEWS_QUERY_TIMEOUT_SECONDS);
     expect(arg.abort_signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -193,13 +204,45 @@ describe('getAppViews — latency is bounded, not just errors', () => {
     // The degrade-don't-throw contract originally covered errors only. A SLOW
     // ClickHouse is the more likely failure: the driver's own request_timeout
     // defaults to five minutes, which would hold the whole Promise.all open.
-    const ch = fakeCh({ hangUntilAborted: true });
+    //
+    // Fake timers so this costs ~0ms instead of a real 10s on every unit run
+    // (and 30s when the abort is broken). The guard is unweakened: the promise
+    // still resolves only via the abort event, so if the timer never fired or
+    // the signal were not wired the assertion below could not pass.
+    vi.useFakeTimers();
+    try {
+      const ch = fakeCh({ hangUntilAborted: true });
+      const pending = getAppViews({ ...baseArgs, ch: asCh(ch) });
 
-    const views = await getAppViews({ ...baseArgs, ch: asCh(ch) });
+      await vi.advanceTimersByTimeAsync(VIEWS_QUERY_TIMEOUT_SECONDS * 1000 + 1);
 
-    expect(views).toEqual(unavailableViews());
-    expect(views.unavailable).toBe(true);
-  }, 30000);
+      const views = await pending;
+      expect(views).toEqual(unavailableViews());
+      expect(views.unavailable).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT abort a query that answers within the timeout', async () => {
+    // Positive control for the test above: the same clock, advanced to just
+    // BEFORE the deadline, must still yield a measured result. Without this a
+    // too-aggressive timeout (or a timer that fires immediately) would look
+    // identical to a correct one.
+    vi.useFakeTimers();
+    try {
+      const ch = fakeCh();
+      const pending = getAppViews({ ...baseArgs, ch: asCh(ch) });
+
+      await vi.advanceTimersByTimeAsync(VIEWS_QUERY_TIMEOUT_SECONDS * 1000 - 1);
+
+      const views = await pending;
+      expect(views.unavailable).toBeUndefined();
+      expect(views.count).toBe(124);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('getAppViews — query construction', () => {
@@ -250,10 +293,15 @@ describe('getAppViews — query construction', () => {
 
     expect(ch.calls.length).toBeGreaterThan(0);
     for (const call of ch.calls) {
-      expect(normalise(call.query)).toContain(where);
-      // Belt and braces on the two mutations that survived fragment matching:
-      // a commented-out clause keeps the TEXT present while killing the code.
-      expect(call.query).not.toMatch(/--|\/\*/);
+      const normalised = normalise(call.query);
+      expect(normalised).toContain(where);
+      // Belt and braces: a commented-out conjunct keeps the TEXT present while
+      // killing the code, so the whole-clause match above could still pass.
+      // Scoped to the predicate itself rather than the whole query — banning
+      // comments outright would also forbid a legitimate query-tag comment
+      // (`/* app-views */`) used for ClickHouse-side attribution.
+      const predicate = normalised.slice(normalised.indexOf('WHERE'));
+      expect(predicate).not.toMatch(/--|\/\*/);
     }
   });
 

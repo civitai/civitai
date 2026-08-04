@@ -165,6 +165,51 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
     await expect.element(page.getByText('Active installs')).toBeInTheDocument();
   });
 
+  test('every container breakpoint is a real CSS length, not a theme key name', async () => {
+    /*
+     * Regression guard for a defect that shipped and was inert-by-default.
+     *
+     * Mantine's SimpleGrid `type="container"` branch interpolates the `cols`
+     * KEY verbatim into the query — `simple-grid (min-width: ${key})` — while
+     * the `media` branch resolves `theme.breakpoints[key]`. So `{ sm: 2 }` in
+     * container mode emits `(min-width: sm)`, which is not a valid <length>;
+     * the query never matches and EVERY width silently falls back to `base`,
+     * i.e. one column everywhere. Measured: named keys rendered 1 column at
+     * 1400px where lengths render 5.
+     *
+     * It reads as a pure styling nit, so it is worth saying why it is pinned:
+     * the failure is invisible in this tier (no Mantine stylesheet is loaded,
+     * so `grid-template-columns` computes to `none` and any layout assertion
+     * would pass either way) AND invisible in review (the diff looks like a
+     * normal responsive prop). Asserting on the emitted QUERY TEXT is the one
+     * check that can see it, and it needs no stylesheet.
+     */
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+
+    const styles = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n');
+    const queries = Array.from(new Set(styles.match(/@container[^{]*/g) ?? []));
+
+    // Positive control: if the panel stops emitting container queries at all
+    // (e.g. someone reverts to type="media"), this test must fail loudly
+    // rather than pass over an empty set.
+    expect(queries.length).toBeGreaterThan(1);
+
+    for (const q of queries) {
+      const value = q.match(/min-width:\s*([^)]+)\)/)?.[1]?.trim();
+      expect(value, `no min-width parsed from ${q}`).toBeDefined();
+      // `base` is Mantine's own sentinel — its value is applied unconditionally
+      // via baseStyles, so that one never-matching query is a harmless no-op.
+      if (value === 'base') continue;
+      expect(value, `"${value}" is not a CSS length — container queries need units`).toMatch(
+        /^\d+(\.\d+)?(em|rem|px)$/
+      );
+    }
+  });
+
   test('the coverage note no longer claims anonymous viewers are uncounted', async () => {
     mocks.analytics.current = { ...ZEROED };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);

@@ -43,7 +43,17 @@ import { logToAxiom } from '~/server/logging/client';
  * counts MOUNT ATTEMPTS, not successful loads. `/api/track/block-render` writes
  * a row even when the launch FAILS (it is a failed mount's only beacon) and the
  * table carries no status column, so this reader cannot exclude them. An app
- * that fails to load for everyone still reports views.
+ * that fails to load for everyone still reports loads.
+ *
+ * ⚠️ TRUST CAVEAT — this number is not adversary-proof, and reading it here is
+ * what makes that matter. The writer, `/api/track/block-render`, is a
+ * `PublicEndpoint` whose only gate is an Origin/Referer host comparison, which
+ * any non-browser client can forge, and `appBlockId` arrives from the client.
+ * So anyone can inflate an arbitrary author's load count. That is a pre-existing
+ * WRITER-side weakness, deliberately not fixed in the change that added this
+ * reader (it needs its own change to the ingest path) — but do not build
+ * payouts, ranking, or anything else with an incentive to cheat on top of this
+ * figure until the writer is authenticated.
  */
 
 /** Impressions for a set of owned app blocks over a bounded range. */
@@ -113,7 +123,7 @@ function chDateTime(d: Date): string {
  * SERVER-side (`max_execution_time`) as well as client-side (`abort_signal`),
  * because aborting the socket alone leaves the query running on the cluster.
  */
-const VIEWS_QUERY_TIMEOUT_SECONDS = 10;
+export const VIEWS_QUERY_TIMEOUT_SECONDS = 10;
 
 type RollupRow = {
   impressions: number | string;

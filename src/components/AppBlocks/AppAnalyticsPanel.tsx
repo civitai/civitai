@@ -268,17 +268,32 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
       {analytics && !unavailable && (
         <>
           {/*
-            `type="container"` is load-bearing, not tidiness. This panel is
-            rendered BOTH full-width and inside AppAnalyticsInline's
+            `type="container"` is load-bearing, not tidiness. This panel renders
+            BOTH full-width (/apps/revenue) and inside AppAnalyticsInline's
             `Modal size="xl"` (48.75rem ≈ 780px). Mantine's default `media`
             breakpoints resolve against the VIEWPORT, so on any ≥1200px screen
-            the modal would take the 5-column branch inside 780px — roughly
-            135px per card, ~103px of usable width after Card padding, for a
-            heading number plus a two-clause sub-line. Container queries
-            resolve against the panel's own width, so the embedded copy steps
-            down instead of squeezing.
+            the modal would take the 5-column branch inside 780px — ~135px per
+            card, ~103px usable after Card padding, for a heading number plus a
+            two-clause sub-line. Container queries resolve against the panel's
+            own width, so the embedded copy steps down instead of squeezing.
+
+            🔴 The keys MUST be explicit lengths, not `sm`/`md`/`lg`. Mantine's
+            container branch interpolates the key VERBATIM into the query
+            (`SimpleGridVariables.mjs`: `simple-grid (min-width: ${key})`),
+            unlike the media branch, which resolves `theme.breakpoints[key]`.
+            Named keys therefore emit `(min-width: sm)` — not a valid <length>,
+            so the query NEVER matches and every width silently falls back to
+            `base`, i.e. one column everywhere. Measured: with named keys the
+            full-width page rendered 1 column at 1400px; with lengths, 5. These
+            values are Mantine's own sm/md/lg (48em/62em/75em), which this app
+            does not override. `ContainerGrid2` passes explicit breakpoints for
+            the same reason.
           */}
-          <SimpleGrid type="container" cols={{ base: 1, sm: 2, md: 3, lg: 5 }} spacing="md">
+          <SimpleGrid
+            type="container"
+            cols={{ base: 1, '48em': 2, '62em': 3, '75em': 5 }}
+            spacing="md"
+          >
             <MetricCard
               label="Active installs"
               value={analytics.installs.active.toLocaleString()}
@@ -363,7 +378,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             </Text>
           </Alert>
 
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
             <Card padding="md" radius="md" withBorder>
               <Title order={5}>New installs over time</Title>
               <MiniLineChart
@@ -380,7 +395,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             </Card>
           </SimpleGrid>
 
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
             <Card padding="md" radius="md" withBorder>
               <Group justify="space-between">
                 <Title order={5}>Top scopes</Title>
