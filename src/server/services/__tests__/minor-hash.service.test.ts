@@ -1216,4 +1216,32 @@ describe('rollbackMinorHashAutoFlags', () => {
 
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
+
+  // Aging out is a decision that the flag stands. A blanket "undo the backfill"
+  // that silently reverted thousands of them would be indistinguishable from a bug.
+  it('excludes accepted flags from a blanket rollback', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 10 });
+
+    const rendered = mockDbRead.$queryRaw.mock.calls
+      .flatMap(([, ...values]) => values)
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain(`NOT (m.meta ? `);
+  });
+
+  it('still reverts an accepted flag when it is named explicitly', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 10, modelIds: [77] });
+
+    // `scope` is interpolated as a Prisma.Sql fragment, so its text lands in
+    // values, not in the outer query's own template strings.
+    const [, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const rendered = values
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain('m.id = ANY(');
+  });
 });

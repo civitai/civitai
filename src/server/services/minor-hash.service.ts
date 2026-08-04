@@ -667,6 +667,14 @@ const autoFlaggedPredicate = Prisma.sql`
   m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'manual'
 `;
 
+// Aging out of the review window is itself a decision that the flag stands, so a
+// blanket rollback must leave it alone for the same reason it leaves a moderator's
+// confirmation alone. A targeted `modelIds` request still overrides — naming the
+// model IS the deliberate decision.
+const notAcceptedPredicate = Prisma.sql`
+  NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
+`;
+
 export type RollbackOutcome = 'rolledBack' | 'skipped' | 'failed';
 export type RollbackSample = { modelId: number; outcome: RollbackOutcome };
 
@@ -709,6 +717,7 @@ export async function rollbackMinorHashAutoFlags({
           WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
             AND ${autoFlaggedPredicate}
             AND ${humanConfirmedPredicate}
+            AND ${notAcceptedPredicate}
         )
         SELECT (SELECT count(*)::int FROM confirmed) AS total,
                COALESCE(
@@ -719,7 +728,7 @@ export async function rollbackMinorHashAutoFlags({
 
   const scope = targeted
     ? Prisma.sql`m.id = ANY(${modelIds}::int[])`
-    : Prisma.sql`${autoFlaggedPredicate} AND NOT ${humanConfirmedPredicate}`;
+    : Prisma.sql`${autoFlaggedPredicate} AND NOT ${humanConfirmedPredicate} AND ${notAcceptedPredicate}`;
 
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
