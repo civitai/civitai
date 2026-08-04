@@ -267,6 +267,58 @@ ruleTester.run('no-wholesale-module-mock', rule, {
        const useQuery = () => { return { data: undefined, isLoading: false }; };
        return { ...actual, trpc: { model: { getAll: { useQuery } } } };
      });`,
+
+    // ================================================================
+    // `completeFactories` — the designated-helper escape
+    // ================================================================
+    // For `~/server/db/pgDb`, `importOriginal()` would construct REAL pg pools in
+    // a unit test, so the remedy is a shared helper whose completeness the TYPE
+    // system enforces. The helper call is accepted only when this factory got it
+    // from the configured module (the invalid[] cases below pin that).
+    {
+      code: `vi.mock('~/server/db/pgDb', async () => {
+               const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+               return createPgDbMock();
+             });`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+    },
+    // Same, with overrides passed through.
+    {
+      code: `vi.mock('~/server/db/pgDb', async () => {
+               const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+               return createPgDbMock({ pgDbWrite: { query: mockQuery } });
+             });`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+    },
+    // An `importOriginal` spread must STILL be accepted for a module that also
+    // nominates a helper — the option adds a path, it does not replace one.
+    {
+      code: `vi.mock('~/server/db/pgDb', async (importOriginal) => ({
+               ...(await importOriginal<Record<string, unknown>>()),
+             }));`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+    },
   ],
 
   invalid: [
@@ -766,6 +818,89 @@ ruleTester.run('no-wholesale-module-mock', rule, {
           },
         },
       ],
+    },
+
+    // ================================================================
+    // `completeFactories` — the helper must come FROM the configured module
+    // ================================================================
+    // Without these, the option would be a rubber stamp: any function that
+    // happened to be named `createPgDbMock` would silence the rule.
+    //
+    // A same-named LOCAL function is not the designated helper.
+    {
+      code: `vi.mock('~/server/db/pgDb', async () => {
+               const createPgDbMock = () => ({ pgDbRead: {} });
+               return createPgDbMock();
+             });`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+      errors: [
+        {
+          messageId: 'unprovableMock',
+          data: { module: '~/server/db/pgDb', shape: 'CallExpression' },
+        },
+      ],
+    },
+    // Right name, WRONG source module.
+    {
+      code: `vi.mock('~/server/db/pgDb', async () => {
+               const { createPgDbMock } = await import('~/test-utils/somewhere-else');
+               return createPgDbMock();
+             });`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+      errors: [
+        {
+          messageId: 'unprovableMock',
+          data: { module: '~/server/db/pgDb', shape: 'CallExpression' },
+        },
+      ],
+    },
+    // Correct helper, but nominated for a DIFFERENT module — must not leak.
+    {
+      code: `vi.mock('~/server/db/pgDb', async () => {
+               const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+               return createPgDbMock();
+             });`,
+      options: [
+        {
+          modules: ['~/server/db/pgDb'],
+          completeFactories: {
+            '~/utils/trpc': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+      errors: [
+        {
+          messageId: 'unprovableMock',
+          data: { module: '~/server/db/pgDb', shape: 'CallExpression' },
+        },
+      ],
+    },
+    // The option must not weaken a module it was not configured for.
+    {
+      code: `vi.mock('~/utils/trpc', () => ({ trpc: {} }));`,
+      options: [
+        {
+          modules: ['~/utils/trpc', '~/server/db/pgDb'],
+          completeFactories: {
+            '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+          },
+        },
+      ],
+      errors: [{ messageId: 'wholesaleMock', data: { module: '~/utils/trpc' } }],
     },
   ],
 });

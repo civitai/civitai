@@ -297,6 +297,43 @@ const noIoInTransaction = {
  *
  * Intentional exceptions should use:
  *   // eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>
+ *
+ * ---------------------------------------------------------------------------
+ * `completeFactories` — when spreading the original is ITSELF the hazard
+ * ---------------------------------------------------------------------------
+ *
+ * The `importOriginal` remedy assumes evaluating the real module is harmless. For
+ * `~/utils/trpc` it is. For `~/server/db/pgDb` it is NOT: importing it runs
+ * `getClient()` and constructs real `pg` pools, so the factory hands every suite a
+ * LIVE, query-capable pool. Measured directly — spreading the original yields a
+ * `BoundPool` whose `.query('SELECT 1')` opens a real socket, and it failed only
+ * because nothing was listening on that port. That converts today's loud, offline
+ * `TypeError: pgDbRead.query is not a function` into a real connection attempt
+ * against whatever `DATABASE_URL` points at. Trading a silently-empty suite for a
+ * unit test that can reach a database is not an improvement.
+ *
+ * So a target module may instead nominate a shared factory helper:
+ *
+ *   completeFactories: {
+ *     '~/server/db/pgDb': { name: 'createPgDbMock', from: '~/test-utils/pgDbMock' },
+ *   }
+ *
+ * A factory that returns `createPgDbMock(...)` is then accepted, PROVIDED this
+ * factory actually obtained the helper from the configured module
+ * (`const { createPgDbMock } = await import('~/test-utils/pgDbMock')`) — a same-named
+ * local stub does not pass.
+ *
+ * The completeness proof does not disappear, it MOVES. The helper types its stub
+ * object as `Record<keyof typeof import('~/server/db/pgDb'), unknown>`, so an export
+ * added to pgDb fails `tsc`, naming the missing export, in ONE file. `Typecheck` is a
+ * blocking CI job, so it is still a static pre-merge gate — it is simply the type
+ * checker rather than this rule holding it. (The rule's note above that "TypeScript
+ * cannot catch this" is about the INLINE factory form, where Vitest types the return
+ * as `Partial<unknown>`; it does not apply to a separately-typed helper.)
+ *
+ * Use this sparingly, only where `importOriginal` is genuinely unsafe. For an
+ * ordinary module the AST-visible spread is the better proof, because it needs no
+ * second mechanism to stay honest.
  */
 const DEFAULT_WHOLESALE_MOCK_MODULES = ['~/utils/trpc'];
 
@@ -624,6 +661,17 @@ const noWholesaleModuleMock = {
         type: 'object',
         properties: {
           modules: { type: 'array', items: { type: 'string' }, minItems: 1 },
+          // Per-module escape from the `importOriginal` remedy, for modules where
+          // spreading the REAL module is itself the hazard. See the doc block.
+          completeFactories: {
+            type: 'object',
+            additionalProperties: {
+              type: 'object',
+              properties: { name: { type: 'string' }, from: { type: 'string' } },
+              required: ['name', 'from'],
+              additionalProperties: false,
+            },
+          },
         },
         additionalProperties: false,
       },
@@ -643,6 +691,17 @@ const noWholesaleModuleMock = {
         .map((m) => canonicalModulePath(m, filename))
         .filter(Boolean)
     );
+
+    // module -> { name, from } for the designated complete-factory helpers.
+    const completeFactories = new Map();
+    for (const [mod, spec] of Object.entries(options.completeFactories || {})) {
+      const canonical = canonicalModulePath(mod, filename);
+      if (!canonical || !spec) continue;
+      completeFactories.set(canonical, {
+        name: spec.name,
+        from: canonicalModulePath(spec.from, filename),
+      });
+    }
 
     return {
       CallExpression(node) {
@@ -666,6 +725,45 @@ const noWholesaleModuleMock = {
 
         const isOriginalPreserving = createOriginalAnalyzer(factory, targetCanonical, filename);
 
+        // A designated complete-factory helper is accepted in place of an
+        // `importOriginal` spread — but ONLY when this factory demonstrably got the
+        // helper from the configured module, so a same-named local stub cannot pass.
+        const complete = completeFactories.get(targetCanonical);
+        const helperIsBoundFromConfiguredModule = () => {
+          if (!complete || !complete.from) return false;
+          let bound = false;
+          if (factory.body && factory.body.type === 'BlockStatement') {
+            walkSkippingFunctions(factory.body, (n) => {
+              if (bound) return;
+              if (n.type !== 'VariableDeclarator' || !n.init) return;
+              // `const { createPgDbMock } = await import('<from>')`
+              const init = unwrapExpression(
+                n.init.type === 'AwaitExpression' ? n.init.argument : n.init
+              );
+              if (!init || init.type !== 'ImportExpression') return;
+              const spec = readModuleSpecifier(init.source);
+              if (canonicalModulePath(spec, filename) !== complete.from) return;
+              if (n.id.type === 'ObjectPattern') {
+                bound = n.id.properties.some(
+                  (p) =>
+                    p.type === 'Property' &&
+                    ((p.key && p.key.name === complete.name) ||
+                      (p.value && p.value.name === complete.name))
+                );
+              }
+            });
+          }
+          return bound;
+        };
+        const isCompleteFactoryCall = (node) => {
+          if (!complete) return false;
+          const expr = unwrapExpression(node);
+          if (!expr || expr.type !== 'CallExpression') return false;
+          if (!expr.callee || expr.callee.type !== 'Identifier') return false;
+          if (expr.callee.name !== complete.name) return false;
+          return helperIsBoundFromConfiguredModule();
+        };
+
         // Classify each un-provable return so the AUTHOR gets advice they can
         // act on. The split is "did you even try to spread?":
         //
@@ -681,7 +779,9 @@ const noWholesaleModuleMock = {
         let wholesale = false;
         let unprovable = null;
         for (const returned of collectFactoryReturns(factory)) {
-          if (returned && isOriginalPreserving(returned)) continue;
+          if (returned && (isOriginalPreserving(returned) || isCompleteFactoryCall(returned))) {
+            continue;
+          }
           const shape = returned ? unwrapExpression(returned) : null;
           if (shape && shape.type === 'ObjectExpression') {
             const spreads = shape.properties.filter((p) => p.type === 'SpreadElement');

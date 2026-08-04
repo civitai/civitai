@@ -46,7 +46,10 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', async () => {
+  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+  return createPgDbMock();
+});
 
 // Stub getJobDate so the processor never touches a real timestamp store. Return
 // a far-past date so `shouldUpdate` / `shouldUpdateRank` is true — the flag is

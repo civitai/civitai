@@ -73,7 +73,10 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 // All three pools: kyselyDb builds a client per tier at module load, so a
 // missing one fails the import rather than the code under test.
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
+vi.mock('~/server/db/pgDb', async () => {
+  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+  return createPgDbMock();
+});
 // Keep the REAL REDIS_KEYS (the ~/server/redis/caches module reads nested keys
 // like REDIS_KEYS.*.RESOURCE_DATA at module load), but stub the redis/sysRedis
 // CLIENTS so no real connection opens. importOriginal here does not connect

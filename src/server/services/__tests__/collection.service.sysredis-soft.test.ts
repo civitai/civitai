@@ -47,7 +47,10 @@ vi.mock('@civitai/db', () => ({
 // Collapse the heavy sibling graph — getCollectionRandomSeed touches only
 // sysRedis + computeHourlySeed, so DB / cache / other service infra is inert.
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', async () => {
+  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+  return createPgDbMock();
+});
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),

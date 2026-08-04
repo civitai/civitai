@@ -17,7 +17,10 @@ const { pgQuery, batchProcessor, tagBust, tagByNameBust, bustGetTagsCache } = vi
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: any) => handler,
 }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbWrite: { query: pgQuery } }));
+vi.mock('~/server/db/pgDb', async () => {
+  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
+  return createPgDbMock({ pgDbWrite: { query: pgQuery } });
+});
 vi.mock('~/server/db/db-helpers', () => ({ batchProcessor }));
 vi.mock('~/server/redis/caches', () => ({
   tagCache: { bust: tagBust },
