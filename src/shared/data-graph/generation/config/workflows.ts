@@ -23,6 +23,7 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
   viduVersionIds,
@@ -165,6 +166,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate an AI image from text',
     category: 'image',
     ecosystemIds: TXT2IMG_IDS,
+    // Grok image generation is version-less on the API — v1.5 is video-only.
+    excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
   'txt2img:draft': {
@@ -202,6 +205,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate or edit using reference images',
     category: 'image',
     ecosystemIds: EDIT_IMG_IDS,
+    excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
   'img2img:face-fix': {
@@ -309,8 +313,10 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.WanVideo27,
       ECO.HappyHorse,
       ECO.MiniMaxH3,
+      ECO.Grok,
     ],
-    excludeModelVersionIds: [viduVersionIds.q3],
+    // Grok referenceToVideo is a v1.5-only operation.
+    excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0']],
   },
 
   // ===========================================================================
@@ -339,7 +345,8 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
     // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
-    excludeModelVersionIds: [happyHorseVersionIds['v1.1']],
+    // Grok edit-video is likewise v1.0-only.
+    excludeModelVersionIds: [happyHorseVersionIds['v1.1'], grokVersionIds['v1.5']],
   },
 
   // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once

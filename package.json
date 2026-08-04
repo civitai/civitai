@@ -118,7 +118,7 @@
     "@civitai/app-sdk": "^0.14.0",
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
-    "@civitai/client": "0.2.0-beta.83",
+    "@civitai/client": "0.2.0-beta.84",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",

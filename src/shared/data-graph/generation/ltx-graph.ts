@@ -29,6 +29,7 @@ import type { AspectRatioOption, VersionGroup } from './common';
 import {
   seedNode,
   aspectRatioNode,
+  negativePromptGraph,
   promptGraph,
   sliderNode,
   snippetsGraph,
@@ -484,10 +485,11 @@ export const ltxGraph = new DataGraph<LTXCtx, GenerationCtx>()
     []
   )
 
-  // Prompt + triggerWords are common to all LTX versions (no negativePrompt for LTX).
+  // Prompt + triggerWords are common to all LTX versions.
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
-  .merge(promptGraph);
+  .merge(promptGraph)
+  .merge(negativePromptGraph);
 
 // =============================================================================
 // Exports
