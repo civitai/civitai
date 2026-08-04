@@ -640,6 +640,7 @@ export type MinorFlagAppealRow = {
   minor: boolean;
   flaggedAt: Date | null;
   flagSource: string | null;
+  flagConfirmedFrom: string | null;
   prevNsfw: boolean | null;
   prevGalleryLevel: number | null;
 };
@@ -660,6 +661,10 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
            m.status::text AS status, m.minor,
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
            m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
+           -- A moderator affirming an auto-flag rewrites source to 'manual', so this
+           -- is the only surviving record that a hash match started it. Consumers
+           -- COALESCE the two, same as the model-flagged-minor notification query.
+           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'confirmedFrom' AS "flagConfirmedFrom",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
     FROM "Appeal" a

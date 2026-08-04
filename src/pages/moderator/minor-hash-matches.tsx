@@ -75,12 +75,14 @@ function MatchDetail({
   model,
   match,
   flagSource,
+  flagConfirmedFrom,
   isLoading,
 }: {
   detail: MinorHashMatchDetail | null;
   model: PanelModel;
   match: PanelMatch | null;
   flagSource?: string | null;
+  flagConfirmedFrom?: string | null;
   isLoading: boolean;
 }) {
   if (isLoading) return <Loader size="sm" />;
@@ -170,7 +172,7 @@ function MatchDetail({
           </Stack>
         </>
       ) : (
-        <MinorFlagNoMatchAlert flagSource={flagSource} />
+        <MinorFlagNoMatchAlert flagSource={flagSource} flagConfirmedFrom={flagConfirmedFrom} />
       )}
     </div>
   );
@@ -219,7 +221,7 @@ type AutoFlaggedRow = {
 type FlaggedPanelRow = Pick<
   AutoFlaggedRow,
   'modelId' | 'modelName' | 'userId' | 'username' | 'status'
-> & { flagSource?: string | null };
+> & { flagSource?: string | null; flagConfirmedFrom?: string | null };
 
 // The flag is already in force on these rows, so the evidence matters more here
 // than on the review queue, where nothing has happened to the model yet.
@@ -236,6 +238,7 @@ function AutoFlaggedDetailPanel({ row }: { row: FlaggedPanelRow }) {
       // The Auto-flagged tab's query filters on source='auto', so its rows carry
       // no flagSource of their own.
       flagSource={row.flagSource ?? 'auto'}
+      flagConfirmedFrom={row.flagConfirmedFrom}
       model={{
         id: row.modelId,
         name: row.modelName,

@@ -1363,6 +1363,19 @@ describe('getMinorFlagAppealsForReview', () => {
     expect(text).not.toMatch(/AND\s+m\."?minor"?/);
   });
 
+  // confirmMinorHashAutoFlag promotes an affirmed auto-flag to source='manual',
+  // so source alone reads as "a moderator flagged this directly" for a row that
+  // really did start as a hash match. confirmedFrom is the only surviving record.
+  it('returns the confirmed origin alongside the current flag source', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorFlagAppealsForReview({ limit: 1000 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain(`->>'confirmedFrom' AS "flagConfirmedFrom"`);
+  });
+
   it('reports truncation with the extra row the cap hid', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ modelId: 1 }, { modelId: 2 }]);
 

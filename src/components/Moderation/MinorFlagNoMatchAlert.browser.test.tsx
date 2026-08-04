@@ -20,4 +20,20 @@ describe('MinorFlagNoMatchAlert', () => {
 
     await expect.element(page.getByText(/permanently deleted/)).toBeVisible();
   });
+
+  // A moderator affirming an automated flag rewrites source to 'manual' and keeps
+  // the origin in confirmedFrom. The row really was a hash match and its match
+  // really has since vanished, so the manual copy would be the opposite lie.
+  test('a confirmed auto-flag keeps the lost-evidence copy', async () => {
+    renderWithProviders(<MinorFlagNoMatchAlert flagSource="manual" flagConfirmedFrom="auto" />);
+
+    await expect.element(page.getByText(/permanently deleted/)).toBeVisible();
+  });
+
+  test('a moderator confirming their own manual flag keeps the manual copy', async () => {
+    renderWithProviders(<MinorFlagNoMatchAlert flagSource="manual" flagConfirmedFrom="manual" />);
+
+    await expect.element(page.getByText(/no hash match/i)).toBeVisible();
+    expect(document.body.textContent).not.toContain('permanently deleted');
+  });
 });

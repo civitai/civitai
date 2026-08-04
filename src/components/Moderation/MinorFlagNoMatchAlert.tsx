@@ -3,8 +3,17 @@ import { Alert, Text } from '@mantine/core';
 // A moderator's own Set-as-Minor never had a hash match, so the auto copy's
 // "the evidence has since vanished" invents a reason to doubt a decision that
 // was made without hashes in the first place.
-export function MinorFlagNoMatchAlert({ flagSource }: { flagSource?: string | null }) {
-  if (flagSource === 'manual')
+export function MinorFlagNoMatchAlert({
+  flagSource,
+  flagConfirmedFrom,
+}: {
+  flagSource?: string | null;
+  flagConfirmedFrom?: string | null;
+}) {
+  // A moderator affirming an auto-flag rewrites source to 'manual', so source alone
+  // would tell them a hash match never existed for a row that really lost one. Same
+  // COALESCE the model-flagged-minor notification query polls on.
+  if ((flagConfirmedFrom ?? flagSource) === 'manual')
     return (
       <Alert color="blue" title="No hash match">
         <Text size="sm">
