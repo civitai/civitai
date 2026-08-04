@@ -1353,17 +1353,25 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
   // 'promptAudit' runs `auditPromptServer` in the SUBMIT phase — the SAME audit
   // `textToImage` and `customComfy` run, host-side and before submission.
   // 'textOutput' runs an xGuardModeration text scan in the OUTPUT phase, at the
-  // read boundary, and withholds on a policy hit. It ALSO withholds on most —
-  // 🔴 not all — scanner failures: scan threw or the hard deadline fired, no
-  // output (submit failed, or the workflow was still running when the scan wait
-  // elapsed), content over the scanned-character cap, and a requested label
-  // absent from `results[]`. NOT on a per-label `error`, which currently
-  // RELEASES; `./text-output-moderation` documents that gap at the verdict
-  // function. Do not restate this as "any scanner failure" — three separate
-  // comments said exactly that, it was false in all three, and a safety claim
-  // stronger than the code is what a maintainer deletes a guard on the strength
-  // of. Re-derive from `decideTextOutputVerdict` before trusting this summary in
-  // EITHER direction.
+  // read boundary, and withholds on a policy hit. It ALSO withholds on every
+  // scanner failure THIS SIDE CAN OBSERVE: scan threw or the hard deadline
+  // fired, no output (submit failed, or the workflow was still running when the
+  // scan wait elapsed), content over the scanned-character cap, a requested
+  // label absent from `results[]`, and — since the per-label error fix — a
+  // requested label the scanner evaluated and FAILED on (a populated
+  // `results[].error`). That last one previously RELEASED; this comment said so,
+  // and that sentence is now stale in the opposite direction, which is why it is
+  // rewritten rather than left.
+  //
+  // 🔴 STILL DO NOT RESTATE THIS AS "any scanner failure". Three separate
+  // comments said exactly that while it was false, and it remains false for a
+  // DIFFERENT reason now: a failure in one SEGMENT of a multi-segment scan is
+  // discarded upstream by max-score result selection before it ever reaches
+  // this codebase, so it cannot be withheld on here at all. Reachable above
+  // ~16,000 characters. `./text-output-moderation` documents that masking path
+  // on `screenGeneratedText`. A safety claim stronger than the code is what a
+  // maintainer deletes a guard on the strength of — re-derive from
+  // `decideTextOutputVerdict` before trusting this summary in EITHER direction.
   // Both handlers live in `./moderation`, which asserts at ITS load that each
   // posture has a handler in exactly the phases `posturePhaseRequirements` names.
   return posture === 'none' || posture === 'promptAudit' || posture === 'textOutput';
