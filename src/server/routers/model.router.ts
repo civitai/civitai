@@ -85,6 +85,7 @@ import {
   getRecentlyBid,
   getRecentlyManuallyAdded,
   getRecentlyRecommended,
+  getModelEarlyAccessRefundRequirement,
   getSimpleModelWithVersions,
   migrateResourceToCollection,
   setAssociatedResources,
@@ -217,6 +218,16 @@ export const modelRouter = router({
     .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelHandler),
+  getEarlyAccessRefundRequirement: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(async ({ input }) => {
+      const { purchases, buyerCount, totalBuzz } = await getModelEarlyAccessRefundRequirement(
+        input
+      );
+      return { purchaseCount: purchases.length, buyerCount, totalBuzz };
+    }),
   // TODO - TEMP HACK for reporting modal
   getModelReportDetails: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

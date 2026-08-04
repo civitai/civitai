@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
+import pLimit from 'p-limit';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
@@ -109,6 +110,11 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import {
+  getMultiAccountTransactionsByPrefix,
+  getUserBuzzAccountByAccountTypes,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -136,6 +142,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
+  throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
@@ -2676,10 +2683,153 @@ export const publishModelById = async ({
   return model;
 };
 
+export type ModelEarlyAccessRefundRequirement = {
+  purchases: {
+    modelVersionId: number;
+    buyerId: number;
+    buzzTransactionIds: string[];
+  }[];
+  buyerCount: number;
+  totalBuzz: number;
+};
+
+// Early access is sold per model VERSION, so the refund set is computed version-by-version and each
+// purchase keeps its modelVersionId; this only aggregates because unpublishing acts on the whole
+// model (the owner has no per-version unpublish — that menu item is moderator-only).
+//
+// Refundable = a buzz-purchased EntityAccess grant on a version whose PaidAccess gate is still
+// active (permanent, or a timed window that hasn't lapsed). Lapsed-window buyers already got what
+// they paid for, so they don't block. Gate/grant rows are read fresh from the primary (dbWrite),
+// not the cache/replica — this guard protects buyers' money.
+export const getModelEarlyAccessRefundRequirement = async ({
+  id,
+}: GetByIdInput): Promise<ModelEarlyAccessRefundRequirement> => {
+  const empty: ModelEarlyAccessRefundRequirement = { purchases: [], buyerCount: 0, totalBuzz: 0 };
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { modelId: id },
+    select: { id: true, meta: true },
+  });
+  const flagged = versions.filter(
+    (v) => (v.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase
+  );
+  if (flagged.length === 0) return empty;
+
+  const gates = await dbWrite.paidAccess.findMany({
+    where: { entityType: 'ModelVersion', entityId: { in: flagged.map((v) => v.id) } },
+    select: { entityId: true, endsAt: true },
+  });
+  const now = new Date();
+  const activeGateVersionIds = gates
+    .filter((gate) => isPaidAccessActive(gate, now))
+    .map((gate) => gate.entityId);
+  if (activeGateVersionIds.length === 0) return empty;
+
+  const accessRows = await dbWrite.entityAccess.findMany({
+    where: {
+      accessToType: 'ModelVersion',
+      accessToId: { in: activeGateVersionIds },
+      accessorType: 'User',
+    },
+    select: { accessToId: true, accessorId: true, meta: true },
+  });
+
+  // Only rows carrying a purchase transaction id count — owner-granted access has nothing to refund.
+  const purchases = accessRows
+    .map((row) => {
+      const rowMeta = (row.meta ?? {}) as Record<string, unknown>;
+      const buzzTransactionIds = ['download-buzzTransactionId', 'generation-buzzTransactionId']
+        .map((key) => rowMeta[key])
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+      return { modelVersionId: row.accessToId, buyerId: row.accessorId, buzzTransactionIds };
+    })
+    .filter((purchase) => purchase.buzzTransactionIds.length > 0);
+  if (purchases.length === 0) return empty;
+
+  // Refund amounts come from the ledger, not current terms — prices can change after purchase.
+  const limit = pLimit(5);
+  const amounts = await Promise.all(
+    purchases
+      .flatMap((purchase) => purchase.buzzTransactionIds)
+      .map((prefix) =>
+        limit(async () => {
+          const transactions = await getMultiAccountTransactionsByPrefix(prefix);
+          return transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+        })
+      )
+  );
+
+  return {
+    purchases,
+    buyerCount: new Set(purchases.map((purchase) => purchase.buyerId)).size,
+    totalBuzz: amounts.reduce((sum, amount) => sum + amount, 0),
+  };
+};
+
+const refundModelEarlyAccessPurchases = async ({
+  modelId,
+  requirement,
+}: {
+  modelId: number;
+  requirement: ModelEarlyAccessRefundRequirement;
+}) => {
+  const model = await dbWrite.model.findUniqueOrThrow({
+    where: { id: modelId },
+    select: { name: true, userId: true },
+  });
+
+  // Refunds debit the owner's yellow account — the account the purchases paid into.
+  const balances = await getUserBuzzAccountByAccountTypes(model.userId, ['yellow']);
+  const balance = balances.yellow ?? 0;
+  if (balance < requirement.totalBuzz) {
+    throw throwInsufficientFundsError(
+      `Refunding early access buyers requires ${requirement.totalBuzz} Buzz but the account only has ${balance}.`
+    );
+  }
+
+  let refundedCount = 0;
+  for (const purchase of requirement.purchases) {
+    try {
+      for (const prefix of purchase.buzzTransactionIds) {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: prefix,
+          description: `Refund early access purchase: ${model.name} (model unpublished)`,
+        });
+      }
+      // Revoke the now-refunded grant so a retry after a mid-loop failure skips this buyer
+      // instead of refunding them twice. deleteMany, not delete: the money already moved, so an
+      // already-gone row must not abort the loop.
+      await dbWrite.entityAccess.deleteMany({
+        where: {
+          accessToId: purchase.modelVersionId,
+          accessToType: 'ModelVersion',
+          accessorId: purchase.buyerId,
+          accessorType: 'User',
+        },
+      });
+      refundedCount++;
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-unpublish-early-access-refund',
+        message: `Failed to refund early access purchases for model ${modelId}`,
+        error,
+        modelId,
+        modelVersionId: purchase.modelVersionId,
+        buyerId: purchase.buyerId,
+        refundedCount,
+      });
+      throw throwBadRequestError(
+        `Failed to refund early access buyers (${refundedCount} of ${requirement.purchases.length} refunded). The model was not unpublished — please try again.`
+      );
+    }
+  }
+};
+
 export const unpublishModelById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   userId,
   isModerator,
@@ -2689,22 +2839,14 @@ export const unpublishModelById = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) {
-    const versions = await dbRead.modelVersion.findMany({
-      where: { modelId: id },
-      select: { id: true, meta: true },
-    });
-
-    if (
-      versions.some((v) => {
-        const meta = v.meta as ModelVersionMeta | null;
-        if (meta?.hadEarlyAccessPurchase) {
-          return true;
-        }
-      })
-    ) {
-      throw throwBadRequestError(
-        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
-      );
+    const requirement = await getModelEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a model with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      await refundModelEarlyAccessPurchases({ modelId: id, requirement });
     }
   }
 
