@@ -25,10 +25,11 @@ type InlineAnalytics = {
  * Caveat (informational): both figures shown HERE undercount anonymous /
  * no-scope activity, but for DIFFERENT reasons — do not collapse them into one
  * claim (an earlier version of this comment named the wrong table for `runs`).
- * `runs` comes from `block_spend_attribution`, so it counts only activity that
- * SPENT Buzz — an anonymous viewer cannot. `activeUsers` comes from
- * `block_scope_invocations`, which is written only on authenticated,
- * scope-gated calls. The render-event instrumentation (#2695) has since
+ * `runs` comes from `block_spend_attribution`, one row per AUTHENTICATED
+ * generation submitted through the app — note a zero-cost run (cache hit,
+ * free gen) still writes a row, so this is "submits", not "spent Buzz".
+ * `activeUsers` comes from `block_scope_invocations`, written only on
+ * authenticated, scope-gated calls. The render-event instrumentation (#2695) has since
  * SHIPPED; this inline stat deliberately does not read it. The "App loads"
  * figure that does is inside the panel this button opens.
  */
@@ -76,7 +77,7 @@ export function AppAnalyticsInline({
         </Tooltip>
       ) : data ? (
         <Tooltip
-          label="Runs (Buzz-spending activity) and unique users (authenticated scoped calls) in the last 30 days. Both undercount anonymous / no-scope visitors. Open Analytics for App loads, which counts every load."
+          label="Generations run through your app, and unique users making scoped API calls, in the last 30 days. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
           multiline
           maw={260}
           withinPortal

@@ -193,10 +193,23 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
       .join('\n');
     const queries = Array.from(new Set(styles.match(/@container[^{]*/g) ?? []));
 
-    // Positive control: if the panel stops emitting container queries at all
-    // (e.g. someone reverts to type="media"), this test must fail loudly
-    // rather than pass over an empty set.
-    expect(queries.length).toBeGreaterThan(1);
+    // Pin the EXACT set, not a lower bound. `toBeGreaterThan(1)` had far too
+    // much slack: reverting only the METRIC grid to named keys — reintroducing
+    // precisely the modal squeeze this exists to prevent — still left the two
+    // chart grids emitting `62em`, so the count stayed at 2 and the test
+    // passed. Only an all-three revert tripped it. An exact set catches a
+    // partial revert, and doubles as the positive control: if the panel stops
+    // emitting container queries at all (someone reverts to `type="media"`, or
+    // Mantine changes how it serialises them) this fails loudly rather than
+    // passing over an empty set.
+    expect(new Set(queries)).toEqual(
+      new Set([
+        '@container simple-grid (min-width: base)',
+        '@container simple-grid (min-width: 48em)',
+        '@container simple-grid (min-width: 62em)',
+        '@container simple-grid (min-width: 75em)',
+      ])
+    );
 
     for (const q of queries) {
       const value = q.match(/min-width:\s*([^)]+)\)/)?.[1]?.trim();

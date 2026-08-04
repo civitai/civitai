@@ -286,8 +286,14 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             `base`, i.e. one column everywhere. Measured: with named keys the
             full-width page rendered 1 column at 1400px; with lengths, 5. These
             values are Mantine's own sm/md/lg (48em/62em/75em), which this app
-            does not override. `ContainerGrid2` passes explicit breakpoints for
-            the same reason.
+            does not override — so the rendered result matches what the named
+            keys produced before container mode was introduced.
+
+            Note this trap is specific to `SimpleGrid`. `Grid`/`ContainerGrid2`
+            resolve named keys against the theme in BOTH modes
+            (`GridVariables.mjs`), so the `breakpoints` prop there swaps the
+            SCALE — it is not a workaround for this bug, and `SimpleGrid` has
+            no such prop.
           */}
           <SimpleGrid
             type="container"

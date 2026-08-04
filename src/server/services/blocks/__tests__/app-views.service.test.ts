@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Coverage for the `blockRenders` impression reader.
@@ -49,6 +49,23 @@ const TO = new Date('2026-07-31T23:59:59.000Z');
 type ChCall = { query: string; query_params: Record<string, unknown> };
 type FakeCh = { calls: ChCall[]; query: ReturnType<typeof vi.fn> };
 
+/**
+ * How long the fake ClickHouse "takes". Must be > 0 so an over-aggressive
+ * timeout can lose the race and be caught, and far below
+ * VIEWS_QUERY_TIMEOUT_SECONDS so the correct implementation always wins it.
+ * Under real timers this costs a few ms per test; under fake timers it costs
+ * nothing.
+ */
+const FAKE_QUERY_LATENCY_MS = 5;
+
+// vi.useFakeTimers() must never escape a test. The `finally` blocks below do
+// NOT run if a test TIMES OUT (the awaited promise never settles), which would
+// leave every subsequent test in the file on a frozen clock — and that is
+// exactly the scenario where a timer test fails.
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 function fakeCh(opts?: {
   rollup?: Record<string, unknown>;
   throws?: boolean;
@@ -78,7 +95,19 @@ function fakeCh(opts?: {
           );
         });
       }
-      return { json: async () => [rollup] };
+      // Take FAKE_QUERY_LATENCY_MS and honour the abort signal even on the
+      // happy path. Resolving instantly instead made the "does NOT abort
+      // within the timeout" control vacuous: the service clears its timer in
+      // `finally` before any test can advance the clock, so a timeout of 1ms
+      // — total breakage in production — was indistinguishable from 10s.
+      // With a latency the abort can actually win the race, and it does.
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => resolve({ json: async () => [rollup] }), FAKE_QUERY_LATENCY_MS);
+        arg.abort_signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(new Error('The user aborted a request.'));
+        });
+      });
     }),
   };
 }
@@ -205,10 +234,11 @@ describe('getAppViews — latency is bounded, not just errors', () => {
     // ClickHouse is the more likely failure: the driver's own request_timeout
     // defaults to five minutes, which would hold the whole Promise.all open.
     //
-    // Fake timers so this costs ~0ms instead of a real 10s on every unit run
-    // (and 30s when the abort is broken). The guard is unweakened: the promise
-    // still resolves only via the abort event, so if the timer never fired or
-    // the signal were not wired the assertion below could not pass.
+    // Fake timers so this costs ~0ms instead of a real 10s on every unit run.
+    // The guard is unweakened: the promise still resolves only via the abort
+    // event, so if the timer never fired or the signal were not wired the
+    // assertion below could not pass — it would instead hit the project-wide
+    // 60s testTimeout (measured, when `controller.abort()` is neutered).
     vi.useFakeTimers();
     try {
       const ch = fakeCh({ hangUntilAborted: true });
@@ -225,10 +255,16 @@ describe('getAppViews — latency is bounded, not just errors', () => {
   });
 
   it('does NOT abort a query that answers within the timeout', async () => {
-    // Positive control for the test above: the same clock, advanced to just
-    // BEFORE the deadline, must still yield a measured result. Without this a
-    // too-aggressive timeout (or a timer that fires immediately) would look
-    // identical to a correct one.
+    // Positive control for the test above: a query that takes
+    // FAKE_QUERY_LATENCY_MS must still return a MEASURED result when the clock
+    // is advanced to just before the deadline.
+    //
+    // This only discriminates because the fake client takes real (fake) time
+    // AND honours the abort signal. With an instantly-resolving fake it was
+    // vacuous — the service clears its timer in `finally` before any test can
+    // advance the clock, so shortening the timeout to 1ms (every production
+    // query aborted) still passed. Verified by mutation: with the latency in
+    // place, that same 1ms mutant now fails here.
     vi.useFakeTimers();
     try {
       const ch = fakeCh();
@@ -295,13 +331,21 @@ describe('getAppViews — query construction', () => {
     for (const call of ch.calls) {
       const normalised = normalise(call.query);
       expect(normalised).toContain(where);
-      // Belt and braces: a commented-out conjunct keeps the TEXT present while
-      // killing the code, so the whole-clause match above could still pass.
-      // Scoped to the predicate itself rather than the whole query — banning
-      // comments outright would also forbid a legitimate query-tag comment
-      // (`/* app-views */`) used for ClickHouse-side attribution.
-      const predicate = normalised.slice(normalised.indexOf('WHERE'));
-      expect(predicate).not.toMatch(/--|\/\*/);
+      // 🔴 Ban comment markers across the WHOLE query, not just the predicate.
+      // A commented-out line keeps the TEXT present while killing the code, so
+      // neither the clause match above nor any aggregation test can see it —
+      // the fake client never executes SQL, so it returns the fixture whatever
+      // the SELECT list says.
+      //
+      // This was briefly scoped to the predicate to leave room for a
+      // ClickHouse query-tag comment. That was a hypothetical need (no such
+      // tag exists here) paid for with a real regression: with the narrower
+      // check, commenting out `uniqExactIf(ip, isAnon = 1) AS anonViewers` and
+      // rebinding it to `0` — in the SELECT list, above the WHERE — SURVIVED,
+      // silently dropping every anonymous viewer from `uniqueViewers`. If a
+      // query tag is ever wanted, widen this deliberately to allow exactly one
+      // leading `/* … */` and keep the `--` ban absolute.
+      expect(normalised).not.toMatch(/--|\/\*/);
     }
   });
 
