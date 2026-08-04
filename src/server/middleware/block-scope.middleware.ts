@@ -963,9 +963,10 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
  * wrapped handler when the URL matches one of the 12 route files verbatim except
  * for their `[id]` positions, so any segment not listed here arrived in a dynamic
  * position and is caller-supplied. Kept in lockstep with those route files by
- * `block-scope.normalize-endpoint.drift.test.ts`, which derives the set by
- * walking `src/pages/api` for `export default withBlockScope(` rather than
- * trusting this comment.
+ * `block-scope.normalize-endpoint.test.ts`, which derives the set by walking
+ * `src/pages/api` for every page extension Next accepts and matching both the
+ * direct and indirect `withBlockScope(` wrap, rather than trusting this
+ * comment.
  *
  * Not listed on purpose: `submissions`, `submit-version`, `withdraw`,
  * `dev-token`, `block-tokens`. Those routes live under `/api/v1/blocks` too but

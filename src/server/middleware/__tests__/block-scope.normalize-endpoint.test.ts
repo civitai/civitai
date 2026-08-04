@@ -184,10 +184,22 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
         const child = path.join(abs, entry.name);
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(child);
-        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
-          // The wrap must be the DEFAULT EXPORT — `src/pages/api/v1/me.ts` merely
-          // names the middleware in a comment explaining why it is not wrapped.
-          if (/export default withBlockScope\(/.test(readFileSync(child, 'utf8'))) {
+          // Match every extension Next treats as a page. `pageExtensions` is NOT
+          // set in next.config.mjs, so the default applies: ['tsx','ts','jsx','js'].
+          // Scanning only `.ts` was not hypothetical under-coverage — this repo
+          // ALREADY ships `.tsx` API routes (src/pages/api/v1/vault/*.tsx), so a
+          // wrapped `.tsx` route added later would have recorded every one of its
+          // static segments as `:seg` with NOTHING going red. Measured: the same
+          // fake wrapped route failed this guard as `.ts` and passed it as `.tsx`.
+        } else if (/\.(t|j)sx?$/.test(entry.name) && !/\.test\.(t|j)sx?$/.test(entry.name)) {
+          const src = readFileSync(child, 'utf8');
+          // The wrap must reach the DEFAULT EXPORT — `src/pages/api/v1/me.ts`
+          // merely names the middleware in a comment explaining why it is not
+          // wrapped. Both spellings count: the direct
+          // `export default withBlockScope(...)`, and the indirect
+          // `const handler = withBlockScope(...); export default handler`, which
+          // is one refactor away and was previously invisible to this walk.
+          if (/export default\s+withBlockScope\(/.test(src) || /=\s*withBlockScope\(/.test(src)) {
             out.push(path.relative(PAGES_API, child));
           }
         }
