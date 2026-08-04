@@ -668,6 +668,11 @@ function CreatorShopReviewPage() {
 
                   {/* Meta */}
                   <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
+                    {/* One grid, ordered so the pricing reads as a sequence:
+                        what it costs, what that buys, what a refill costs, then
+                        who gets what. Splitting it into rows made the sticker
+                        fields look like a separate concern rather than the rest
+                        of the same price. */}
                     <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
                       <MoneyTile
                         label="List price"
@@ -675,6 +680,40 @@ function CreatorShopReviewPage() {
                         icon={<IconBolt size={14} />}
                         iconColor="var(--mantine-color-yellow-5)"
                       />
+                      {isSticker && (
+                        <>
+                          <MoneyTile
+                            label="Uses per purchase"
+                            value={
+                              stickerEconomics?.uses
+                                ? `${numberWithCommas(stickerEconomics.uses)} placements${
+                                    bulkRatePerUse
+                                      ? ` · ${numberWithCommas(bulkRatePerUse)} Buzz each`
+                                      : ''
+                                  }`
+                                : 'Not set — sells an unlimited balance'
+                            }
+                            icon={<IconRepeat size={14} />}
+                            iconColor="var(--mantine-color-indigo-5)"
+                          />
+                          <MoneyTile
+                            label="Price per extra use"
+                            value={
+                              stickerEconomics?.pricePerUse
+                                ? `${numberWithCommas(stickerEconomics.pricePerUse)} Buzz${
+                                    bulkRatePerUse && stickerEconomics.pricePerUse > bulkRatePerUse
+                                      ? ` · ${(
+                                          stickerEconomics.pricePerUse / bulkRatePerUse
+                                        ).toFixed(1)}x the bulk rate`
+                                      : ''
+                                  }`
+                                : 'Not set — cannot be topped up'
+                            }
+                            icon={<IconBolt size={14} />}
+                            iconColor="var(--mantine-color-orange-5)"
+                          />
+                        </>
+                      )}
                       <MoneyTile
                         label="Creator earns"
                         value={`${numberWithCommas(
@@ -689,9 +728,6 @@ function CreatorShopReviewPage() {
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />
-                    </SimpleGrid>
-
-                    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
                       <MoneyTile
                         label="Quantity"
                         value={
@@ -725,41 +761,6 @@ function CreatorShopReviewPage() {
                         iconColor="var(--mantine-color-teal-5)"
                       />
                     </SimpleGrid>
-
-                    {isSticker && (
-                      <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
-                        <MoneyTile
-                          label="Uses per purchase"
-                          value={
-                            stickerEconomics?.uses
-                              ? `${numberWithCommas(stickerEconomics.uses)} placements${
-                                  bulkRatePerUse
-                                    ? ` · ${numberWithCommas(bulkRatePerUse)} Buzz each`
-                                    : ''
-                                }`
-                              : 'Not set — sells an unlimited balance'
-                          }
-                          icon={<IconRepeat size={14} />}
-                          iconColor="var(--mantine-color-indigo-5)"
-                        />
-                        <MoneyTile
-                          label="Price per extra use"
-                          value={
-                            stickerEconomics?.pricePerUse
-                              ? `${numberWithCommas(stickerEconomics.pricePerUse)} Buzz${
-                                  bulkRatePerUse && stickerEconomics.pricePerUse > bulkRatePerUse
-                                    ? ` · ${(stickerEconomics.pricePerUse / bulkRatePerUse).toFixed(
-                                        1
-                                      )}x the bulk rate`
-                                    : ''
-                                }`
-                              : 'Not set — cannot be topped up'
-                          }
-                          icon={<IconBolt size={14} />}
-                          iconColor="var(--mantine-color-orange-5)"
-                        />
-                      </SimpleGrid>
-                    )}
 
                     <ChecksCard
                       icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
