@@ -19,6 +19,8 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 import {
   appBlockTag,
   assertCheckpointVersionSupportsWorkflow,
+  MAX_BLOCK_POLL_WAIT_SECONDS,
+  resolveBlockPollWaitSeconds,
   buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
   buildTextToImageInput,
@@ -2589,5 +2591,53 @@ describe('sourceImages[] — normalization + per-ecosystem cap', () => {
     // Guard the guard: if the enumeration ever silently matches nothing, an
     // empty `missing` would look like a pass.
     expect(checked).toBeGreaterThan(15);
+  });
+});
+
+describe('resolveBlockPollWaitSeconds', () => {
+  /**
+   * The clamp that decides how long `blocks.pollWorkflow` asks the orchestrator
+   * to hold a read open. Pure, so it is tested directly rather than through the
+   * router — the router test proves it is WIRED, this one proves it is RIGHT.
+   */
+  it('returns undefined (no hold) for an absent / zero / negative / non-finite value', () => {
+    // `undefined` and not `0`, so the caller omits the query entirely and the
+    // request stays byte-identical to the pre-long-poll one.
+    for (const input of [undefined, 0, -1, -0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveBlockPollWaitSeconds(input), `input=${String(input)}`).toBeUndefined();
+    }
+  });
+
+  it('passes a value inside the bound through unchanged', () => {
+    expect(resolveBlockPollWaitSeconds(1)).toBe(1);
+    expect(resolveBlockPollWaitSeconds(7)).toBe(7);
+    expect(resolveBlockPollWaitSeconds(MAX_BLOCK_POLL_WAIT_SECONDS)).toBe(
+      MAX_BLOCK_POLL_WAIT_SECONDS
+    );
+  });
+
+  it('CLAMPS anything above the bound instead of rejecting it', () => {
+    // A block asking for more than we allow is not an error — failing the poll
+    // would break a generation over a tuning value.
+    expect(resolveBlockPollWaitSeconds(MAX_BLOCK_POLL_WAIT_SECONDS + 1)).toBe(
+      MAX_BLOCK_POLL_WAIT_SECONDS
+    );
+    expect(resolveBlockPollWaitSeconds(3600)).toBe(MAX_BLOCK_POLL_WAIT_SECONDS);
+  });
+
+  it('FLOORS a fractional value, so 0.9 reads as no hold rather than a hold', () => {
+    expect(resolveBlockPollWaitSeconds(0.9)).toBeUndefined();
+    expect(resolveBlockPollWaitSeconds(2.9)).toBe(2);
+  });
+
+  it('🔴 stays strictly BELOW the shared getWorkflow abort backstop (20s)', () => {
+    // ORCHESTRATOR_GET_TIMEOUT_MS in ~/server/services/orchestrator/workflows is
+    // applied unconditionally to every single-workflow read. A bound at or above
+    // it makes every long poll die as a TimeoutError → 503, i.e. the feature
+    // would look like an orchestrator outage. Deliberately hard-coded here
+    // rather than imported: this test's job is to fail if EITHER number moves.
+    expect(MAX_BLOCK_POLL_WAIT_SECONDS).toBeLessThan(20);
+    // …and to leave real slack for connect + response, not just one second.
+    expect(20 - MAX_BLOCK_POLL_WAIT_SECONDS).toBeGreaterThanOrEqual(5);
   });
 });

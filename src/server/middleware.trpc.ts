@@ -10,7 +10,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
@@ -328,6 +328,22 @@ export const applyRequestDomainColor = middleware(async (options) => {
   // so there's an object to stamp the domain onto when the caller sends no input.
   const input = options.input as { domain?: string } | undefined;
   if (input) input.domain = getRequestDomainColor(ctx.req);
+
+  return next();
+});
+
+/**
+ * Same contract as `applyRequestDomainColor`, but resolves `red` for red-capable
+ * hosts — see `getRequestBoardDomainColor`. Use this for anything that has SFW and
+ * mature variants of the same content; the plain color walk never yields `red`.
+ *
+ * Must be `.use()`d BEFORE `cacheIt`, which keys on a hash of the input: a domain
+ * stamped afterwards would leave one cache entry shared across every color.
+ */
+export const applyRequestBoardDomainColor = middleware(async (options) => {
+  const { next, ctx } = options;
+  const input = options.input as { domain?: string } | undefined;
+  if (input) input.domain = getRequestBoardDomainColor(ctx.req);
 
   return next();
 });

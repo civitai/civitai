@@ -110,7 +110,7 @@ export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => 
       negativePrompt: negativePromptRef,
     } = createChainedPromptEnhancementStep(
       {
-        ecosystem: data.ecosystem.toLowerCase(),
+        ecosystem: data.ecosystem,
         prompt: data.prompt,
         negativePrompt,
         preserveTriggerWords: data.triggerWords,

@@ -89,6 +89,8 @@ vi.mock('~/utils/trpc', () => ({
 
 // eslint-disable-next-line import/first
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+// eslint-disable-next-line import/first
+import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
 
 /**
  * W10 lazy-consent gap regression (page surface).
@@ -148,6 +150,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Budgeted Generator',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -912,5 +916,41 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
 
     // The new mount emitted a 2nd, independent impression → total 2.
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(2));
+  });
+});
+
+/**
+ * The readiness-announce SEAM on the PAGE host. Mirrors the model-slot coverage
+ * in IframeHost.browser.test.tsx — each host is a separate call site, so each
+ * needs its own proof that a real postMessage reaches the controller.
+ */
+describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
+  async function mountAndWait() {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+  }
+
+  test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    await mountAndWait();
+    expect(helloSpy).not.toHaveBeenCalled(); // positive control
+
+    postFromBlock('BLOCK_HELLO');
+
+    await vi.waitFor(() => expect(helloSpy).toHaveBeenCalled());
+    helloSpy.mockRestore();
+  });
+
+  test('an unrelated message type does NOT reach notifyHello (negative control)', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    await mountAndWait();
+
+    postFromBlock('BLOCK_HELLO_NOT_REALLY');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(helloSpy).not.toHaveBeenCalled();
+    helloSpy.mockRestore();
   });
 });

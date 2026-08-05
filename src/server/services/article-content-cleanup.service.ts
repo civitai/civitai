@@ -8,16 +8,12 @@ type TiptapNode = {
   content?: TiptapNode[];
 };
 
-/** Extracts all media (images and videos) from article tiptap/HTML content.
+/** Extracts all media (images and videos) from article HTML content.
  *  Handles `media` nodes (edge-media), `image` nodes (img tags). */
 export function getContentMedia(content: string): ExtractedMedia[] {
   let doc: { content?: TiptapNode[] };
   try {
-    if (content.startsWith('{')) {
-      doc = JSON.parse(content);
-    } else {
-      doc = generateJSON(content, tiptapExtensions);
-    }
+    doc = generateJSON(content, tiptapExtensions);
   } catch {
     return [];
   }

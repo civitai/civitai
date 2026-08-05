@@ -1,5 +1,10 @@
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-import { type ModelVersionTerms, generationPrice, generationTrialLimit } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  generationPrice,
+  generationTrialLimit,
+  isPermanentGate,
+} from '@civitai/buzz';
 import { IconAlertCircle, IconBrush } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -73,6 +78,9 @@ export const ModelVersionEarlyAccessPurchase = ({
     .filter(Boolean)
     .join(' or ');
   const resourceLabel = getDisplayName(modelVersion?.model.type ?? '');
+  // A permanent gate never becomes free, so the timed copy (and its countdown to nothing) would tell the
+  // buyer to just wait it out.
+  const permanent = !!paidAccess && isPermanentGate(paidAccess);
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
@@ -84,24 +92,31 @@ export const ModelVersionEarlyAccessPurchase = ({
         <Stack>
           {reason === 'generation' && supportsGeneration && !supportsGenerationPurchase && (
             <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-              The creator of this {resourceLabel} has not made generation available during the early
-              access period.
+              The creator of this {resourceLabel} has not made generation available
+              {permanent ? '' : ' during the early access period'}.
             </AlertWithIcon>
           )}
           {reason === 'download' && !supportsDownloadPurchase && (
             <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-              The creator of this {resourceLabel} has not made download access available during the
-              early access period.
+              The creator of this {resourceLabel} has not made download access available
+              {permanent ? '' : ' during the early access period'}.
             </AlertWithIcon>
           )}
-          <Text size="sm">
-            The creator of this {resourceLabel} has set this version to early access, You can{' '}
-            {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
-            period or just waiting until it becomes public. The remaining time for early access is{' '}
-            <Text component="span" fw="bold">
-              <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
+          {permanent ? (
+            <Text size="sm">
+              The creator of this {resourceLabel} charges for access. You can {userCanDoLabel} with
+              this {resourceLabel} by purchasing it — access is permanent and does not expire.
             </Text>
-          </Text>
+          ) : (
+            <Text size="sm">
+              The creator of this {resourceLabel} has set this version to early access, You can{' '}
+              {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
+              period or just waiting until it becomes public. The remaining time for early access is{' '}
+              <Text component="span" fw="bold">
+                <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
+              </Text>
+            </Text>
+          )}
           <Stack>
             {supportsDownloadPurchase && (
               <Stack gap="xs">

@@ -8,6 +8,8 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { blockInitFragmentEnabled, type BlockHostSurface } from './blockInitFragmentGate';
+import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
@@ -211,6 +213,14 @@ export interface PageBlockHostProps {
   appName: string;
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
+  /**
+   * Which surface mounted this host. REQUIRED, and passed explicitly by each
+   * call site rather than inferred, because it is one of the two axes the
+   * init-fragment gate keys on — and the axis that refuses the DEV TUNNEL
+   * unconditionally, which an allowlist keyed on blockId/slug structurally
+   * cannot do (the tunnel serves the same blockId the author will publish).
+   */
+  surface: BlockHostSurface;
   /** manifest.iframe.sandbox, server-resolved. */
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
@@ -335,6 +345,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  surface,
   sandbox,
   trustTier,
   slug,
@@ -616,6 +627,20 @@ export function PageBlockHost({
     }
   }, [iframeSrc]);
 
+  // The `src` actually rendered: the publisher's src plus the init-fragment
+  // fast path, but ONLY when this block+surface is gated on for it. Off by
+  // default for every block, and unconditionally off for `dev-tunnel`.
+  // `expectedOrigin` above is deliberately derived from the BASE src so the
+  // postMessage target can never be influenced by the fragment.
+  //
+  // The page host's render mode is `'iframe'` by construction — the literal
+  // this component already puts in its BLOCK_INIT payload below.
+  const renderedIframeSrc = useBlockIframeSrc(
+    iframeSrc,
+    { theme, renderMode: 'iframe', blockInstanceId },
+    blockInitFragmentEnabled({ surface, blockId, slug })
+  );
+
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so the two can never
   // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
@@ -858,6 +883,23 @@ export function PageBlockHost({
     });
     return off;
   }, [token, expiresAt, grantedScopes, send, onMessage]);
+
+  // INVERTED HANDSHAKE: the block announces that its message listener is
+  // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
+  // waiting out the current retry tick.
+  //
+  // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
+  // post on start(), the retry interval and the readiness timeout are all
+  // unchanged, so a block that never announces (older SDK) behaves exactly as
+  // today and a block that announces but never acks still times out. The retry
+  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
+  // so it is still doing all of the work.
+  useEffect(() => {
+    const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      controllerRef.current?.notifyHello();
+    });
+    return off;
+  }, [onMessage]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
@@ -3221,7 +3263,7 @@ export function PageBlockHost({
             // re-armed init handshake then talks to a clean frame.
             key={reloadNonce}
             ref={iframeRef}
-            src={iframeSrc}
+            src={renderedIframeSrc}
             sandbox={effectiveSandbox}
             referrerPolicy="no-referrer"
             // Sanitize the publisher-controlled appName for the iframe title too

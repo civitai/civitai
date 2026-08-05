@@ -83,6 +83,22 @@ export const INLINE_STUB =
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
   //    page that ignores them just no-ops; documented per host) ───────────────
+  //
+  // The block's readiness ANNOUNCE — posted by the SDK transport the moment its
+  // message listener is attached, so the host can push BLOCK_INIT in response
+  // instead of waiting out a retry tick. Fire-and-forget and, uniquely in this
+  // table, an ACCELERATOR rather than a bridge: an unhandled BLOCK_HELLO costs
+  // only latency, because every host keeps its own immediate-post + bounded
+  // retry + readiness-timeout schedule. Marked `required` on the two live hosts
+  // anyway — the whole point of the parity gate is that a message the SDK sends
+  // has a named answer on every host that could receive it.
+  BLOCK_HELLO: {
+    request: false,
+    reply: '',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   BLOCK_READY: {
     request: false,
     reply: '',

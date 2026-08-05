@@ -687,6 +687,7 @@ export const HomeBlockType = {
   CosmeticShop: 'CosmeticShop',
   FeaturedModelVersion: 'FeaturedModelVersion',
   FeaturedCollections: 'FeaturedCollections',
+  Feed: 'Feed',
 } as const;
 
 export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];

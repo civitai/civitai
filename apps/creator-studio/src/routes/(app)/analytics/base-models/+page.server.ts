@@ -1,4 +1,5 @@
 import type { PageServerLoad } from './$types';
+import { readTableSort } from '$lib/server/table-sort';
 import { getBaseModelPerformance } from '$lib/server/models-earnings';
 import { getBaseModelTrends } from '$lib/server/base-model-trends';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
@@ -25,5 +26,5 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
       }).catch(() => null)
     : null;
   const ownBaseModels = baseModels ? [...new Set(baseModels.map((b) => b.baseModel))] : [];
-  return { baseModels, platformTrends, platformTrendsCompare, ownBaseModels, range };
+  return { baseModels, platformTrends, platformTrendsCompare, ownBaseModels, range , tableSort: readTableSort(cookies, 'base-models') };
 };

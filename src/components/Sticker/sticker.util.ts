@@ -15,6 +15,8 @@ export type ResolvedSticker = {
   slug: string;
   url: string;
   animated?: boolean;
+  /** What one more use costs. Absent = this sticker doesn't sell top-ups. */
+  pricePerUse?: number;
 };
 
 /** Matches the `ids` cap on `getStickerCosmeticsSchema`. */
@@ -42,6 +44,7 @@ export function useOwnedSticker() {
         slug: stickerData?.slug,
         url: stickerData?.url,
         animated: stickerData?.animated,
+        pricePerUse: stickerData?.pricePerUse,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)

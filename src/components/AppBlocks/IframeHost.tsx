@@ -37,6 +37,8 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { blockInitFragmentEnabled } from './blockInitFragmentGate';
+import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -606,14 +608,28 @@ export function IframeHost({
   // used everywhere else modelCtx.slotId is read in this component.
   const slotId = modelCtx.slotId ?? 'model.sidebar_top';
 
-  const iframeSrc = install.manifest.iframe?.src ?? '';
+  // The publisher's declared src. The rendered `src` adds the init-fragment
+  // fast path on top ONLY when this block is gated on for it (see
+  // blockInitFragmentGate.ts — off by default for every block). The ORIGIN is
+  // derived from the BASE so the postMessage target can never be affected by
+  // the fragment.
+  const baseIframeSrc = install.manifest.iframe?.src ?? '';
+  const iframeSrc = useBlockIframeSrc(
+    baseIframeSrc,
+    {
+      theme: modelCtx.theme ?? 'light',
+      renderMode: install.renderMode,
+      blockInstanceId: install.blockInstanceId,
+    },
+    blockInitFragmentEnabled({ surface: 'model-slot', blockId: install.blockId })
+  );
   const expectedOrigin = useMemo(() => {
     try {
-      return new URL(iframeSrc).origin;
+      return new URL(baseIframeSrc).origin;
     } catch {
       return '';
     }
-  }, [iframeSrc]);
+  }, [baseIframeSrc]);
 
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so they can never
@@ -884,6 +900,32 @@ export function IframeHost({
     }, TOKEN_WAIT_TIMEOUT_MS);
     return () => clearTimeout(t);
   }, [status, token]);
+
+  // INVERTED HANDSHAKE: the block announces that its message listener is
+  // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response, instead of
+  // relying purely on the blind retry tick to eventually land after the
+  // listener exists.
+  //
+  // 🔴 PURELY ADDITIVE. `IframeInitController` still posts init immediately on
+  // start() and re-posts every INIT_RETRY_INTERVAL_MS until BLOCK_READY, and
+  // still arms the readiness timeout. A block on an older SDK never sends this
+  // message and is served exactly as it is today; a block that announces but
+  // never acks still times out. `notifyHello()` is a once-per-controller
+  // accelerator (see its doc comment), and a hello arriving before the
+  // controller exists is a no-op because `start()` posts init immediately
+  // anyway.
+  //
+  // 🔴 THE RETRY LOOP IS NOT REMOVED AND MUST NOT BE. As of 2026-08-05 NO
+  // deployed block sends BLOCK_HELLO (a full enumeration of the 20 live bundles
+  // found `BLOCK_HELLO` x0) because the SDK half is merged but unpublished, so
+  // the retry loop is currently doing 100% of the work. It stays as the bounded
+  // fallback for every block that never announces.
+  useEffect(() => {
+    const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      controllerRef.current?.notifyHello();
+    });
+    return off;
+  }, [onMessage]);
 
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', (raw) => {

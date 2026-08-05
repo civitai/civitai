@@ -69,6 +69,7 @@ import {
   registerCounter,
   registerCounterWithLabels,
 } from '~/server/prom/client';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import {
@@ -190,6 +191,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
+  DomainColor,
   ModelType,
   ReportReason,
   ReviewReactions,
@@ -1303,6 +1305,8 @@ type GetAllImagesRaw = {
 type GetAllImagesInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
+  // Request color, used to pick which "new & upcoming" board backs `newCreators`.
+  domain?: DomainColor;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -1380,6 +1384,8 @@ export const getAllImages = async (
     tags,
     generation,
     reviewId,
+    newCreators,
+    domain,
     prioritizedUserIds,
     include,
     // hideAutoResources,
@@ -1468,6 +1474,7 @@ export const getAllImages = async (
     prefetchedTargetUser,
     prefetchedIsFlipt,
     prefetchedUserFollows,
+    prefetchedNewCreators,
     prefetchedCollectionPermissions,
     prefetchedCollectionSeed,
   ] = await Promise.all([
@@ -1489,6 +1496,7 @@ export const getAllImages = async (
         })
       : false,
     userId && followed ? getUserFollows(userId) : undefined,
+    newCreators ? getNewCreatorUserIds({ entity: 'images', domain }) : undefined,
     collectionId
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
@@ -1654,6 +1662,20 @@ export const getAllImages = async (
   if (userId && followed && prefetchedUserFollows?.length) {
     isPersonalized = true; // per-user follow set
     AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`);
+  }
+
+  // Filter to creators on the "new & upcoming" board. Unlike `followed` this set is
+  // global (per domain, not per viewer), so it deliberately does NOT set
+  // isPersonalized — the feed stays cacheable, and the id list is part of the query
+  // text the cache keys on.
+  if (newCreators) {
+    // An empty board (never populated, or a failed nightly run) must return nothing
+    // rather than silently degrading to the unfiltered global feed.
+    AND.push(
+      prefetchedNewCreators?.length
+        ? Prisma.sql`i."userId" IN (${Prisma.join(prefetchedNewCreators)})`
+        : Prisma.sql`1 = 0`
+    );
   }
 
   // Filter to specific tags
@@ -2663,6 +2685,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
+  domain?: DomainColor;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3251,6 +3274,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
+    newCreators,
+    domain,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -3338,6 +3363,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  // Creators on the "new & upcoming" board. Same shape as `followed` above, but the
+  // set is global per domain rather than per viewer. An unpopulated board returns
+  // nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -3905,6 +3939,8 @@ export async function getImagesFromBitdexPreFilter(
     minorOnly,
     blockedFor,
     requiringMeta,
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -3969,6 +4005,13 @@ export async function getImagesFromBitdexPreFilter(
     const userIds = followedUsers.map((x) => x.targetUserId);
     if (!userIds.length) return null;
     filters.push(_in('userId', userIds.map(_int)));
+  }
+
+  // --- New & upcoming creators ---
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return null;
+    filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
   // --- NSFW Browsing Level ---
@@ -4140,6 +4183,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     // TODO check the unused stuff in here
+    newCreators,
+    domain,
   } = input;
   let { browsingLevel, userId } = input;
 
@@ -4214,6 +4259,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
 
   // nb: commenting this out while we try checking existence in the db

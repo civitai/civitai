@@ -21,6 +21,13 @@
     IconTrophy,
   } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
+  import {
+    BANKABLE_CURRENCIES,
+    FILTERABLE_CURRENCIES,
+    currencySelectionKind,
+  } from '$lib/buzz-currency-filter';
+  import * as ToggleGroup from '@civitai/ui/components/ui/toggle-group/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
@@ -85,17 +92,15 @@
 
   // Earnings headline (A1 Part 1 — buzzTransactions, already owner-keyed). Buzz colors are summed for this glance
   // number (all buzz, same unit); cash is separate. The /earnings page keeps every currency distinct.
-  const sumWhere = (pred: (currency: string) => boolean) =>
-    (data.earnings ?? []).filter((b) => pred(b.currency)).reduce((s, b) => s + b.total, 0);
+  const currencies = buzzCurrencyState(() => data.buzzCurrencies);
+  const selected = $derived(new Set<string>(currencies.value));
+  const counted = (currency: string) =>
+    currencyMeta(currency).family === 'buzz' && selected.has(currency);
+  const sumBuzz = (buckets: { currency: string; total: number }[] | null | undefined) =>
+    (buckets ?? []).filter((b) => counted(b.currency)).reduce((s, b) => s + b.total, 0);
   // Buzz earned this period vs the previous one, for the "Buzz earned" delta chip.
-  const buzzNow = $derived(sumWhere((c) => currencyMeta(c).family === 'buzz'));
-  const buzzPrev = $derived(
-    data.earningsPrev
-      ? data.earningsPrev
-          .filter((b) => currencyMeta(b.currency).family === 'buzz')
-          .reduce((s, b) => s + b.total, 0)
-      : null
-  );
+  const buzzNow = $derived(sumBuzz(data.earnings));
+  const buzzPrev = $derived(data.earningsPrev ? sumBuzz(data.earningsPrev) : null);
   // Cash is Creator-Program-only; hide those cards for non-members (they'd be a meaningless $0 — or a stuck
   // skeleton if the buzz service has no cash account for them).
   const cashStats: Stat[] = $derived(
@@ -128,15 +133,29 @@
         ]
       : []
   );
-  const topModel = $derived(data.topModels?.[0] ?? null);
+  // Re-ranked rather than taking [0]: the top model by yellow isn't necessarily the top model by blue.
+  // The server's TOP_N slice is still by all-buzz, so a model that leads only in a deselected currency
+  // could sit outside it — acceptable for a glance tile.
+  const modelBuzz = (m: { currencies: { currency: string; total: number }[] }) =>
+    sumBuzz(m.currencies);
+  const topModel = $derived(
+    [...(data.topModels ?? [])].sort((a, b) => modelBuzz(b) - modelBuzz(a))[0] ?? null
+  );
   // The model name is the subtext under the top-earning card's buzz value.
   const topModelName = $derived(
     topModel
       ? (topModel.modelName ?? topModel.versionName ?? `Version ${topModel.modelVersionId}`)
       : null
   );
-  // The buzz currencies summed into "Buzz earned" — shown as coloured dots so the legend fits one line.
-  const buzzLegend = ['#ffd43b', '#4dabf7', '#40c057'];
+  // The buzz currencies actually summed into "Buzz earned" — coloured dots so the legend fits one line.
+  const selectionLabel = $derived(
+    currencySelectionKind(currencies.value) === 'bankable'
+      ? 'Withdrawable'
+      : currencySelectionKind(currencies.value) === 'all'
+        ? 'All buzz'
+        : currencies.value.map((c) => currencyMeta(c).label).join(' + ')
+  );
+  const buzzLegend = $derived(currencies.value.map((c) => currencyMeta(c).color));
   const stats: Stat[] = $derived([
     {
       label: 'Buzz earned',
@@ -151,8 +170,8 @@
     {
       label: 'Top-earning model',
       // Buzz earned is the headline; the model name is the subtext (see topModelName).
-      value: topModel ? formatBuzz(topModel.buzzTotal) : null,
-      buzz: topModel?.buzzTotal,
+      value: topModel ? formatBuzz(modelBuzz(topModel)) : null,
+      buzz: topModel ? modelBuzz(topModel) : undefined,
       // Loaded-but-empty shows the em dash; a failed load (null) falls through to the skeleton.
       pending: data.topModels != null && !topModel,
       hint: topModel ? 'Last 30 days' : 'No model earnings yet',
@@ -209,8 +228,35 @@
 </section>
 
 <section class="mb-8">
-  <div class="mb-2 flex items-center justify-between">
-    <p class="text-xs uppercase tracking-wide text-dark-2">Earnings</p>
+  <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+    <div class="flex items-center gap-2">
+      <p class="text-xs uppercase tracking-wide text-dark-2">Earnings</p>
+      <ToggleGroup.Root
+        type="multiple"
+        variant="outline"
+        size="sm"
+        spacing={1}
+        value={[...currencies.value]}
+        onValueChange={(v: string[]) => currencies.set(v)}
+        aria-label="Which buzz types the earnings figures count"
+      >
+        {#each FILTERABLE_CURRENCIES as c (c)}
+          {@const withdrawable = (BANKABLE_CURRENCIES as readonly string[]).includes(c)}
+          <ToggleGroup.Item
+            value={c}
+            title="{currencyMeta(c).label} — {withdrawable
+              ? 'can be withdrawn'
+              : 'cannot be withdrawn'}"
+            class="gap-1.5 text-xs"
+          >
+            <span class="size-2 shrink-0 rounded-full" style="background:{currencyMeta(c).color}"
+            ></span>
+            {currencyMeta(c).label}
+          </ToggleGroup.Item>
+        {/each}
+      </ToggleGroup.Root>
+      <span class="rounded bg-dark-5 px-1.5 py-0.5 text-xs text-dark-2">{selectionLabel}</span>
+    </div>
     <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
   </div>
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

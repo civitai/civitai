@@ -1088,3 +1088,68 @@ export function createBlockCustomComfyStep(
     input,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LONG-POLL BOUNDS for `blocks.pollWorkflow`.
+//
+// The orchestrator's `GET /v2/consumer/workflows/{id}` accepts `?wait=<seconds>`
+// and holds the response until the workflow reaches a terminal status, replying
+// 202 with the current snapshot if the hold elapses first
+// (`GetWorkflowData.query.wait`, `@civitai/client`). civitai already uses it on
+// four non-blocks paths (`orchestrator.service.ts`, `comics/orchestrator-chat`,
+// `product-badge.service`, `training.service`); the blocks poll did not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The longest hold `blocks.pollWorkflow` will ask the orchestrator for.
+ *
+ * 🔴 THIS CEILING IS SET BY A CONSTANT IN ANOTHER FILE, NOT BY TASTE.
+ * `getWorkflow` (`~/server/services/orchestrator/workflows`) applies
+ * `AbortSignal.timeout(ORCHESTRATOR_GET_TIMEOUT_MS)` — 20_000 — UNCONDITIONALLY
+ * to every single-workflow read. A hold at or above 20s is therefore killed by
+ * our own backstop before the orchestrator can answer, and it fails as a
+ * `TimeoutError` mapped to a retry-able 503 — i.e. it would look like an
+ * orchestrator outage rather than a misconfigured bound. 15 leaves 5s of slack
+ * for connect + the response itself.
+ *
+ * 🔴 RAISING THIS REQUIRES CHANGING THAT BACKSTOP FIRST, and that backstop is
+ * shared with the whole generation status-update path (#2883, added to stop a
+ * parked orchestrator read from pinning an api-pool slot). Do not raise it here
+ * alone: the result is silently ineffective.
+ *
+ * The second ceiling, further out: the poll runs an inline output-moderation
+ * scan (`screenGeneratedText`, ~12s hard deadline) AFTER this read,
+ * sequentially — so the procedure's own worst case is 15 + 12 = 27s. That is
+ * the number to check against the edge/proxy response budgets before raising
+ * this bound; both were verified to sit well above it at the time of writing.
+ */
+export const MAX_BLOCK_POLL_WAIT_SECONDS = 15;
+
+/**
+ * Normalize a caller-supplied `waitSeconds` into a value safe to hand the
+ * orchestrator.
+ *
+ * 🔴 THE INPUT IS UNTRUSTED — it originates in an app block's iframe, forwarded
+ * by the host. It is clamped rather than rejected because a block asking for a
+ * hold longer than we allow is not an error, it is a request we satisfy less
+ * generously; failing the poll would break a generation over a tuning value.
+ *
+ * 🔴 THE DEFAULT IS 0 — NO HOLD — AND THAT IS DELIBERATE, NOT AN OVERSIGHT.
+ * Enabling long polling for every caller would change the CONCURRENCY profile of
+ * every already-deployed block, whose poll loops we do not control and cannot
+ * assume are sequential. A block driving `setInterval(poll, 2000)` against a
+ * 15s hold stacks ~7 concurrent requests per workflow instead of one — the
+ * opposite of the intended effect. So the hold is opt-in per request, and the
+ * SDK only sends it from `useBuzzWorkflow().watch()`, whose loop awaits each
+ * poll before issuing the next.
+ *
+ * Returns `undefined` (rather than 0) when there is no hold, so the caller can
+ * omit the `query` entirely and keep the request byte-identical to today's.
+ */
+export function resolveBlockPollWaitSeconds(waitSeconds?: number): number | undefined {
+  if (typeof waitSeconds !== 'number' || !Number.isFinite(waitSeconds)) return undefined;
+  // Floor before the bounds check: 0.9 must read as "no hold", not as a hold.
+  const floored = Math.floor(waitSeconds);
+  if (floored <= 0) return undefined;
+  return Math.min(floored, MAX_BLOCK_POLL_WAIT_SECONDS);
+}

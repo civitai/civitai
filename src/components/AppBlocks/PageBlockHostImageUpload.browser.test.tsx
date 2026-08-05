@@ -134,6 +134,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Gen App',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',

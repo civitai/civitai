@@ -91,6 +91,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -146,6 +147,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
+import { stripMinorHashMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -162,7 +164,7 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
+import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
@@ -280,9 +282,7 @@ type ModelRaw = {
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
 
-export async function getModelEarlyAccessDeadlines(
-  modelIds: number[]
-): Promise<Map<number, Date>> {
+export async function getModelEarlyAccessDeadlines(modelIds: number[]): Promise<Map<number, Date>> {
   if (!modelIds.length) return new Map();
   const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
     SELECT mv."modelId", MAX(pa."endsAt") AS deadline
@@ -311,6 +311,7 @@ export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
@@ -318,6 +319,8 @@ export const getModelsRaw = async ({
     take?: number;
     skip?: number;
   };
+  // Request color, used to pick which "new & upcoming" board backs `newCreators`.
+  domain?: DomainColor;
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
   /**
@@ -347,6 +350,7 @@ export const getModelsRaw = async ({
     cursor,
     query,
     followed,
+    newCreators,
     archived,
     tag,
     tagname,
@@ -617,6 +621,18 @@ export const getModelsRaw = async ({
     }
 
     isPrivate = true;
+  }
+
+  // Creators on the "new & upcoming" board. Global per domain rather than per
+  // viewer, so unlike `followed` it doesn't mark the query private. An unpopulated
+  // board returns nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'models', domain });
+    AND.push(
+      newCreatorIds.length
+        ? Prisma.sql`mm."userId" IN (${Prisma.join(newCreatorIds, ',')})`
+        : Prisma.sql`1 = 0`
+    );
   }
 
   // Base model filtering:
@@ -1006,19 +1022,25 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, earlyAccessDeadlines] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelEarlyAccessDeadlines(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    earlyAccessDeadlines,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      getModelEarlyAccessDeadlines(modelIds),
+    ])
+  );
   for (const model of models) {
     model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
   }
@@ -1406,12 +1428,14 @@ export const getModelsWithImagesAndModelVersions = async ({
   // flag. When false, the per-request owner-settings + membership work below is
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
+  domain,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
+  domain?: DomainColor;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1432,6 +1456,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take: input.limit },
     user,
+    domain,
     include: ['cosmetics'],
   });
 
@@ -1626,6 +1651,14 @@ export const getModelVersionsMicro = async ({
   });
 };
 
+// Mutations hand their updated row straight back to the caller, so the moderation-only
+// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
+// these rows feed many callers, and the keys are only ever read back through the
+// minor-hash service's own raw SQL.
+function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
+  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+}
+
 export const updateModelById = async ({
   id,
   data,
@@ -1665,7 +1698,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return model;
+  return withoutMinorHashMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -2114,11 +2147,62 @@ export async function applyModelFlagSideEffects({
 // fields the "Set as Minor" quick action locks against creator edits.
 export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
 
+export type ModelMinorActivity =
+  | 'setMinor'
+  | 'unsetMinor'
+  | 'setMinorAutoHash'
+  | 'rollbackMinorAutoHash';
+
+export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
+
+// Flagging minor overwrites nsfw/sfwOnly/gallerySettings.level and propagates
+// `minor` to every image, keeping no record of what was there before — so without
+// this the change is unrecoverable, whether a job or a moderator made it.
+// `source` is what lets a bulk rollback undo only the automated flags and leave
+// deliberate moderator decisions alone.
+// Idempotent via the WHERE guard: a re-flag can never clobber the original
+// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// the flag itself, so failures are logged rather than thrown.
+async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
+          'at', now(),
+          'source', ${source},
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+          'prevMinorImageIds', COALESCE((
+            SELECT jsonb_agg(i.id)
+            FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            JOIN "Image" i ON i."postId" = p.id
+            WHERE mv."modelId" = m.id AND i.minor
+          ), '[]'::jsonb)
+        )
+      )
+      WHERE m.id = ${modelId}
+        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'minor-flag-snapshot',
+      message: error instanceof Error ? error.message : String(error),
+      modelId,
+    }).catch(() => null);
+  }
+}
+
 export async function setModelMinor({
   id,
   minor,
   userId,
-}: SetModelMinorInput & { userId: number }) {
+  activity,
+}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2131,6 +2215,11 @@ export async function setModelMinor({
     },
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Must run before the update below and before side effects propagate `minor`
+  // to images, or the snapshot records post-flag state.
+  if (minor)
+    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2176,7 +2265,7 @@ export async function setModelMinor({
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: minor ? 'setMinor' : 'unsetMinor',
+    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2349,7 +2438,7 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
-    return { ...result, meta: modelMeta };
+    return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -2491,7 +2580,7 @@ export const upsertModel = async (
     // errors); the only post-commit write left in this branch.
     await bustPublicModelResponseCache(result.id);
 
-    return result;
+    return withoutMinorHashMeta(result);
   }
 };
 
@@ -4395,7 +4484,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    return result;
+    return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
       where: { id },
@@ -4820,7 +4909,7 @@ export const getTrainingModelsForModerators = async ({
   const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
 
   return {
-    items,
+    items: items.map(withoutMinorHashMeta),
     nextCursor,
   };
 };

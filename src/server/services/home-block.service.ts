@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -20,6 +20,7 @@ import {
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
+import { getAllImagesIndex } from '~/server/services/image.service';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
@@ -40,9 +41,11 @@ import {
 import {
   allBrowsingLevelsFlag,
   hasSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const homeBlockSelect = {
@@ -131,6 +134,7 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
 
 export const getHomeBlockById = async ({
   id,
+  domain,
 }: GetHomeBlockByIdInputSchema & {
   // SessionUser required because it's passed down to getHomeBlockData
   user?: SessionUser;
@@ -156,18 +160,30 @@ export const getHomeBlockById = async ({
     return null;
   }
 
-  return getHomeBlockCached({
-    ...homeBlock,
-    metadata: homeBlock.metadata as HomeBlockMetaSchema,
-  });
+  return getHomeBlockCached(
+    {
+      ...homeBlock,
+      metadata: homeBlock.metadata as HomeBlockMetaSchema,
+    },
+    domain
+  );
 };
 
-type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
+// `moreHref` is carried from the block's own metadata, not from the board row, so
+// it has to be grafted onto the service's return type.
+type GetLeaderboardsWithResults = (AsyncReturnType<typeof getLeaderboardsWithResults>[number] & {
+  moreHref?: string;
+})[];
 type GetAnnouncements = AsyncReturnType<typeof getCurrentAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
 };
 type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>[number];
+
+/** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
+export type FeedBlockItems =
+  | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
 
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
@@ -189,9 +205,36 @@ export type HomeBlockWithData = {
   cosmeticShopSection?: GetShopSectionsWithItems;
   featuredModels?: GetModelsWithImagesAndModelVersions[];
   pickedCollections?: PickedFeaturedCollection[];
+  feedItems?: FeedBlockItems;
 };
 
+// Baseline feed inputs a Feed block always applies. These are the shape the feed
+// services require, not policy — anything a block should be able to vary belongs in
+// the metadata allowlist instead.
+const imageFeedDefaults = {
+  period: MetricTimeframe.Week,
+  periodMode: 'published',
+  sort: ImageSort.MostReactions,
+  include: [] as never[],
+  withMeta: false,
+  types: undefined,
+} as const;
+
+const modelFeedDefaults = {
+  period: MetricTimeframe.Week,
+  periodMode: 'published',
+  sort: ModelSort.HighestRated,
+  favorites: false,
+  hidden: false,
+} as const;
+
+// PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
+// nothing on the home page has passed human review before appearing there.
+const feedBrowsingLevel = (level?: 'public' | 'sfw') =>
+  level === 'sfw' ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+
 const readThroughTypes: HomeBlockType[] = [
+  HomeBlockType.Feed,
   HomeBlockType.Leaderboard,
   HomeBlockType.CosmeticShop,
   HomeBlockType.FeaturedCollections,
@@ -209,7 +252,9 @@ export const getHomeBlockData = async ({
     userId?: number;
     sourceId?: number | null;
   };
-  input: GetHomeBlocksInputSchema;
+  // `domain` isn't part of the public getHomeBlocks input — it's supplied by the
+  // by-id cached path, which is the only caller whose blocks are domain-scoped.
+  input: GetHomeBlocksInputSchema & { domain?: DomainColor };
   // Session user required because it's passed down to collection get items service
   // which requires it for models/posts/etc
   user?: SessionUser;
@@ -276,18 +321,65 @@ export const getHomeBlockData = async ({
       const leaderboardsWithResults = await getLeaderboardsWithResults({
         ids: leaderboardIds,
         isModerator: user?.isModerator || false,
+        domain: input.domain,
       });
 
       return {
         ...homeBlock,
         metadata,
-        leaderboards: leaderboardsWithResults.sort((a, b) => {
-          const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
-          const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+        leaderboards: leaderboardsWithResults
+          .map((board) => ({
+            ...board,
+            moreHref: leaderboards.find((item) => item.id === board.id)?.moreHref,
+          }))
+          .sort((a, b) => {
+            const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+            const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
 
-          return aIndex - bIndex;
-        }),
+            return aIndex - bIndex;
+          }),
       };
+    }
+    case HomeBlockType.Feed: {
+      const feed = sourceMetadata?.feed ?? metadata.feed;
+      if (!feed) return null;
+
+      // Overfetch so `maxPerUser` has a pool to thin, matching how Collection blocks
+      // pair a larger fetch limit with their cap.
+      const limit = feed.maxPerUser ? Math.min(feed.limit * 3, 200) : feed.limit;
+
+      if (feed.entity === 'images') {
+        const { items } = await getAllImagesIndex({
+          ...imageFeedDefaults,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          limit,
+          domain: input.domain,
+          sort: (feed.sort as ImageSort) ?? ImageSort.MostReactions,
+          period: feed.period ?? MetricTimeframe.Week,
+          newCreators: feed.newCreators,
+          types: feed.types,
+          user,
+          headers: { src: 'getHomeBlockData:feed' },
+        });
+
+        return { ...homeBlock, metadata, feedItems: { entity: 'images' as const, items } };
+      }
+
+      const { items } = await getModelsWithImagesAndModelVersions({
+        input: {
+          ...modelFeedDefaults,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          limit,
+          sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
+          period: feed.period ?? MetricTimeframe.Week,
+          newCreators: feed.newCreators,
+          baseModels: feed.baseModels,
+        },
+        user,
+        domain: input.domain,
+      });
+
+      return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
     }
     case HomeBlockType.CosmeticShop: {
       const cosmeticShopSectionMeta =

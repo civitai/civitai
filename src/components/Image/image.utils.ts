@@ -57,6 +57,7 @@ export const imagesQueryParamSchema = z
     hideAutoResources: booleanString(),
     hideManualResources: booleanString(),
     followed: booleanString(),
+    newCreators: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),
     includeBaseModel: booleanString(),

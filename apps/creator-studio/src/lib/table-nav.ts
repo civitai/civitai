@@ -1,9 +1,9 @@
 import { page } from '$app/state';
 import { goto } from '$app/navigation';
 
-// URL-driven table sort + pagination. Uses goto (reliable page.url update + reactivity); the load re-run is a
-// Redis cache hit since sort/page aren't part of the fetch's cache key. Sort replaces history; pagination pushes
-// so Back walks pages.
+// URL-driven pagination. Uses goto (reliable page.url update + reactivity); the load re-run is a Redis cache
+// hit since page isn't part of the fetch's cache key. Pushes history so Back walks pages. Sort is NOT here —
+// it's a cookie the server reads (state/table-sort.svelte.ts).
 
 function urlWith(mutate: (p: URLSearchParams) => void): string {
   const p = new URLSearchParams(page.url.searchParams);
@@ -12,22 +12,10 @@ function urlWith(mutate: (p: URLSearchParams) => void): string {
   return qs ? `${page.url.pathname}?${qs}` : page.url.pathname;
 }
 
-export function setSortParam(key: string, currentSort: string, currentDir: 'asc' | 'desc') {
-  goto(
-    urlWith((p) => {
-      if (currentSort === key) p.set('dir', currentDir === 'desc' ? 'asc' : 'desc');
-      else {
-        p.set('sort', key);
-        p.set('dir', 'desc');
-      }
-      p.delete('page'); // a new sort starts at page 1
-    }),
-    { keepFocus: true, noScroll: true, replaceState: true }
-  );
-}
-
+// Returns the navigation promise so a caller that also triggers a load (e.g. a cookie write) can sequence
+// them — running both at once lets the goto supersede the invalidateAll, whose promise then never settles.
 export function setPageParam(n: number) {
-  goto(
+  return goto(
     urlWith((p) => {
       if (n <= 1) p.delete('page');
       else p.set('page', String(n));

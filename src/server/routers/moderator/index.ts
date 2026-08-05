@@ -18,6 +18,14 @@ import {
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
 import {
+  getAutoFlaggedMinorDetailSchema,
+  getAutoFlaggedMinorModelsSchema,
+  getMinorFlagAppealsSchema,
+  getMinorHashMatchDetailSchema,
+  getMinorHashMatchesSchema,
+  resolveMinorFlagAppealSchema,
+} from '~/server/schema/minor-hash.schema';
+import {
   getCash,
   getWithdrawalHistory,
   modAdjustCashBalance,
@@ -32,6 +40,17 @@ import {
   getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
+import {
+  confirmMinorHashAutoFlag,
+  dismissMinorHashMatch,
+  getAutoFlaggedMinorDetail,
+  getAutoFlaggedMinorModels,
+  getMinorFlagAppealsForReview,
+  getMinorHashMatchDetail,
+  getMinorHashMatchesForReview,
+  resolveMinorFlagAppeal,
+  revertMinorHashAutoFlag,
+} from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
 
 const trainingModerationProcedure = protectedProcedure.use(
@@ -61,6 +80,39 @@ export const modRouter = router({
     getChangeHistory: moderatorProcedure
       .input(getByIdSchema)
       .query(({ input }) => getModelChangeHistory({ modelId: input.id })),
+    queryMinorHashMatches: moderatorProcedure
+      .input(getMinorHashMatchesSchema)
+      .query(({ input }) => getMinorHashMatchesForReview(input)),
+    queryMinorHashMatchDetail: moderatorProcedure
+      .input(getMinorHashMatchDetailSchema)
+      .query(({ input }) => getMinorHashMatchDetail(input)),
+    dismissMinorHashMatch: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        dismissMinorHashMatch({ modelId: input.id, userId: ctx.user.id })
+      ),
+    queryAutoFlaggedMinorModels: moderatorProcedure
+      .input(getAutoFlaggedMinorModelsSchema)
+      .query(({ input }) => getAutoFlaggedMinorModels(input)),
+    queryAutoFlaggedMinorDetail: moderatorProcedure
+      .input(getAutoFlaggedMinorDetailSchema)
+      .query(({ input }) => getAutoFlaggedMinorDetail(input)),
+    confirmMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
+      ),
+    revertMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
+      ),
+    queryMinorFlagAppeals: moderatorProcedure
+      .input(getMinorFlagAppealsSchema)
+      .query(({ input }) => getMinorFlagAppealsForReview(input)),
+    resolveMinorFlagAppeal: moderatorProcedure
+      .input(resolveMinorFlagAppealSchema)
+      .mutation(({ input, ctx }) => resolveMinorFlagAppeal({ ...input, userId: ctx.user.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure

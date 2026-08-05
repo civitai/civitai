@@ -96,8 +96,15 @@ export function currentMonthRange(today = new Date()): DateRange {
   return monthRange(today.getUTCFullYear(), today.getUTCMonth());
 }
 
+/** The most recent month that has fully elapsed. */
+export function lastCompletedMonthRange(today = new Date()): DateRange {
+  return monthRange(today.getUTCFullYear(), today.getUTCMonth() - 1);
+}
+
 /** Parse ?from&to into a **calendar-month** range — snapping to the month that contains `from`, so even a stale
- *  rolling-window URL resolves to a clean month. Falls back to the current month when absent/invalid. */
+ *  rolling-window URL resolves to a clean month. Falls back to the last COMPLETED month when absent/invalid:
+ *  defaulting to the current one puts a part-month against a whole one, which on the 1st is one day against
+ *  thirty-one and reads as a collapse in earnings. The month picker still reaches the current month. */
 export function parseMonthRange(
   fromParam: string | null,
   _toParam: string | null,
@@ -107,7 +114,7 @@ export function parseMonthRange(
     const d = new Date(`${fromParam}T00:00:00Z`);
     if (!Number.isNaN(d.getTime())) return monthRange(d.getUTCFullYear(), d.getUTCMonth());
   }
-  return currentMonthRange(today);
+  return lastCompletedMonthRange(today);
 }
 
 /** 'YYYY-MM' key of a month range. */
