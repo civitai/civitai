@@ -46,9 +46,19 @@ type ChatMessage = {
  * of a percent while holding a Node request open. Day-to-day variance is what
  * decides it: on the two worst of seven days the median moved from <5s into
  * (25,50] and the =<50s fraction fell to ~91%, so 60s degrades materially
- * exactly when the orchestrator is already struggling. That duration INCLUDES
- * queue time (mean claim 7.9s; 27.6% of jobs wait >5s to be claimed), so this
- * wait competes with scheduler backlog, not just token generation.
+ * exactly when the orchestrator is already struggling.
+ *
+ * That duration INCLUDES time before the job was claimed — `JobGrain.cs` sets
+ * `JobDuration = UtcNow - job.CreatedAt`, so the wait competes with scheduler
+ * backlog, not just token generation. HOW MUCH of it is queue is deliberately
+ * NOT quoted here, because it is not cleanly derivable from the metrics we
+ * have: `ClaimDuration = UtcNow - claim.CreatedDate` measures how long a claim
+ * LASTED, not how long the job waited for one, and `IsFinalClaimEvent` also
+ * fires on Rejected/LateRejected/ClaimExpired, so ONE job emits SEVERAL claim
+ * observations against a single duration observation. The two means are over
+ * different populations; subtracting them gives ~5s, while dividing the claim
+ * sum by the job count gives ~0s. A 260x spread between two defensible-looking
+ * estimates is the tell that neither is a measurement.
  *
  * 🔴 CAVEAT: that slice could not be confirmed as this code path. The job
  * metrics carry no `model` or `tags` label, so `gpt-4o-mini` / `tags:['comics']`
@@ -63,6 +73,15 @@ type ChatMessage = {
  * returns its fallback with NO refund — a silent charge for a discarded
  * completion. Money is unchanged in that band (billed 1x either way), so it is
  * a quality/UX risk rather than a billing one.
+ *
+ * ❓ OPEN: civitai.com is Cloudflare-proxied, and CF's non-enterprise origin
+ * read timeout is ~100s (524). If that applies to the browser-driven
+ * `iterateGenerate` caller, it can never observe the last ~20s of a 120s hold,
+ * making 120 worth no more than ~90 for that path. NOT a regression this
+ * introduces — the previous value was strictly worse — and the origin side is
+ * not the constraint (Traefik is configured `readTimeout: 1h`, `writeTimeout:
+ * 0`). Unresolved because the CF plan tier is not recorded in the infra repo
+ * and a 524 is generated at the edge, so it never reaches origin logs.
  *
  * 🔴 A long-poll can never be the ONLY path: ~1% of jobs run past any value
  * that is safe to hold here. Callers must tolerate the empty-content result.

@@ -118,22 +118,61 @@ describe('orchestratorChatCompletion — the `wait` it sends is a SECONDS value'
  * anchored on `query:` would miss all of them, so a new caller passing `60000`
  * through `submitTextModeration` would sail straight past this file.
  *
- * What it CANNOT bound is a value only known at runtime. Those are enumerated
- * separately below and pinned by ledger, not by value.
+ * Values fall in exactly three buckets, and each is handled differently rather
+ * than being quietly folded into "resolvable":
+ *   - LITERAL / same-file `const`  -> bounded by value.
+ *   - identifier or member access  -> runtime forward. CANNOT be bounded here;
+ *     pinned by ledger only, so a new one has to be declared.
+ *   - anything else (arithmetic, a call, a ternary) -> REJECTED outright. This
+ *     bucket exists because a token-shaped scan truncates `60 * 1000` to `60`
+ *     and then reports it as in-envelope — the millisecond bug wearing the
+ *     costume of a fix.
+ *
+ * This scope statement is load-bearing; an earlier revision of this file
+ * claimed to pin "every v2 `query: { wait }` site" while an ES-shorthand
+ * forward and a quoted key both walked past it.
  */
 describe('every statically-resolvable `wait:` in src/ is a seconds value', () => {
   const SRC = path.resolve(__dirname, '../../../..'); // -> src/
-  // Any `wait:` property, wherever it appears — plus the ES-shorthand `{ wait }`
-  // forward, captured as the sentinel token `wait` so it lands in the runtime
-  // bucket rather than vanishing. Dots are allowed in the token so a forward
-  // like `wait: input.wait` is SEEN and classified, not silently unmatched.
-  const WAIT_SITE = /(?:\bwait:\s*([A-Za-z0-9_.]+)|\{\s*(wait)\s*\})/g;
+  /**
+   * Any `wait` property, wherever it appears — plus the ES-shorthand `{ wait }`
+   * forward, captured as the sentinel token `wait` so it lands in the runtime
+   * bucket rather than vanishing.
+   *
+   * The key may be QUOTED. That is not hypothetical tidiness: with an
+   * unquoted-only key pattern, a planted `{ "wait": 60000 }` passed all 8 tests
+   * — a 60,000-SECOND value fully bypassing the guard.
+   *
+   * The value is captured WHOLE (to the next `,`/`}`/newline) rather than as a
+   * token, because a token pattern stops at the first word and silently
+   * TRUNCATES an expression: `wait: 60 * 1000` was read as `60` and blessed as
+   * in-envelope, which is precisely the millisecond-conversion shape this file
+   * exists to catch.
+   *
+   * The key is anchored to an object-KEY position (`{` or `,` or line start).
+   * Without that anchor, allowing a quoted key makes a ternary's colon look
+   * like a key separator, and `cursor: x ? 'wait' : 'pointer'` in
+   * `CandidateImageModal.tsx` reported as a wait site with the value
+   * `'pointer'`.
+   */
+  const WAIT_SITE = /(?:[{,]|^)\s*["']?\bwait["']?\s*:\s*([^,}\n]+)|\{\s*(wait)\s*\}/gm;
 
-  /** Resolve a `wait` token: a numeric literal, or a same-file `const X = <number>`. */
-  const resolveWait = (token: string, source: string): number | undefined => {
-    if (/^\d+$/.test(token)) return Number(token);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) return undefined; // `input.wait` etc.
-    const decl = new RegExp(`const\\s+${token}\\s*=\\s*(\\d[\\d_]*)\\s*;`).exec(source);
+  type Kind = 'literal' | 'identifier' | 'expression';
+  const classify = (value: string): Kind => {
+    if (/^\d[\d_]*$/.test(value)) return 'literal';
+    // A bare identifier or member access (`input.wait`) — a runtime forward.
+    if (/^[A-Za-z_$][A-Za-z0-9_$.]*$/.test(value)) return 'identifier';
+    // Anything else: arithmetic, a call, a ternary, a template. NOT resolvable,
+    // and deliberately NOT silently truncated to its first number.
+    return 'expression';
+  };
+
+  /** Resolve a `wait` value: an integer literal, or a same-file `const X = <integer>`. */
+  const resolveWait = (value: string, source: string): number | undefined => {
+    const kind = classify(value);
+    if (kind === 'literal') return Number(value.replace(/_/g, ''));
+    if (kind === 'expression') return undefined;
+    const decl = new RegExp(`const\\s+${value}\\s*=\\s*(\\d[\\d_]*)\\s*;`).exec(source);
     return decl ? Number(decl[1].replace(/_/g, '')) : undefined;
   };
 
@@ -176,17 +215,19 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
     const source = stripComments(raw);
     return [...source.matchAll(WAIT_SITE)]
       .map((m) => {
-        const token = m[1] ?? m[2];
+        const token = (m[1] ?? m[2]).trim();
         return {
           file: path.relative(SRC, file),
           token,
+          kind: classify(token),
           seconds: resolveWait(token, source),
         };
       })
       .filter((s) => !isSchemaDecl(s.token));
   });
   const numeric = sites.filter((s) => s.seconds !== undefined);
-  const runtime = sites.filter((s) => s.seconds === undefined);
+  const runtime = sites.filter((s) => s.seconds === undefined && s.kind !== 'expression');
+  const expressions = sites.filter((s) => s.kind === 'expression');
 
   // POSITIVE CONTROL. A reassuring zero here would be indistinguishable from a
   // scanner wired to nothing. This asserts BOTH buckets are non-empty and that
@@ -216,6 +257,48 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
     expect(resolveWait('input.wait', 'const wait = 5;')).toBeUndefined();
   });
 
+  /**
+   * BYPASS CONTROLS. Each of these shapes was planted in a real source file and
+   * run against this suite; the first two passed 8/8 before this fix, i.e. a
+   * 60,000-second value fully escaped the guard. They are pinned here as unit
+   * cases so the escape cannot silently reopen.
+   */
+  const scan = (src: string) => [...src.matchAll(WAIT_SITE)].map((m) => (m[1] ?? m[2]).trim());
+
+  it('a quoted key is still seen (bypass control)', () => {
+    expect(scan('f({ "wait": 60000 });')).toEqual(['60000']);
+    expect(scan("f({ 'wait': 60000 });")).toEqual(['60000']);
+    expect(resolveWait('60000', '')).toBe(60000);
+    // …and the unquoted and multi-line forms still match.
+    expect(scan('f({ wait: 30 });')).toEqual(['30']);
+    expect(scan('f({\n  wait: 9,\n});')).toEqual(['9']);
+  });
+
+  // The anchor that makes the quoted form safe. A ternary VALUE `'wait'` is not
+  // a key, and treating it as one made a CSS `cursor` rule report as a wait site.
+  it("a ternary value 'wait' is not mistaken for a key (control)", () => {
+    expect(scan("style={{ cursor: busy ? 'wait' : 'pointer' }}")).toEqual([]);
+  });
+
+  it('an arithmetic value is NOT truncated to its first number (bypass control)', () => {
+    // The old token pattern read `60 * 1000` as `60` and blessed it as in-range.
+    // It must now refuse to resolve, so it cannot be bounds-checked into safety.
+    expect(classify('60 * 1000')).toBe('expression');
+    expect(resolveWait('60 * 1000', '')).toBeUndefined();
+    expect(classify('60000')).toBe('literal');
+    expect(classify('input.wait')).toBe('identifier');
+  });
+
+  /**
+   * An expression-valued `wait` is rejected outright rather than ledgered. This
+   * is the one shape that is ALWAYS suspicious here: `N * 1000` is literally the
+   * millisecond conversion, and no legitimate site needs to compute a wait
+   * inline — the repo's convention is a named `*_WAIT_SECONDS` constant.
+   */
+  it('no wait is written as an inline expression', () => {
+    expect(expressions.map((s) => `${s.file}:${s.token}`)).toEqual([]);
+  });
+
   // The comment stripper is itself a harness component, so it gets its own
   // controls: it must remove a commented site (else the ledger fills with
   // prose) and must NOT eat a real one hiding behind a URL.
@@ -228,6 +311,11 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
   // THE bound. Any `wait:` anywhere in src/ that resolves to a number must be a
   // plausible seconds value — including one written at a caller that forwards
   // into the orchestrator wrappers rather than calling the client directly.
+  // NOTE on mutation coverage: flipping `>` to `>=` here SURVIVES, because no
+  // live site sits at exactly MAX_WAIT_SECONDS. That is a real gap in the
+  // sweep, recorded rather than papered over with a fixture whose only purpose
+  // is to kill the mutant — the boundary itself is exercised by the
+  // CHAT_COMPLETION_WAIT_SECONDS mutation matrix (150 passes, 151 fails).
   it('no statically-resolvable wait exceeds the seconds envelope', () => {
     const offenders = numeric.filter((s) => (s.seconds as number) > MAX_WAIT_SECONDS);
     expect(offenders).toEqual([]);
