@@ -1387,7 +1387,7 @@ describe('the Buzz call bound', () => {
   // An aborted request is not cancelled server-side, so retrying a timeout puts
   // a second write on the wire with the same external id while the first may
   // still be running. runLeg owns the retry; the client's must stay out of it.
-  it('retries a refused connection but never a timeout', async () => {
+  it('retries only failures that provably never reached the server', async () => {
     givenPlacement();
     await holdPlacementEscrow({
       placementId: 1,
@@ -1411,9 +1411,20 @@ describe('the Buzz call bound', () => {
       const timeout = new Error('The operation was aborted due to timeout');
       timeout.name = 'TimeoutError';
       expect(call[1].shouldRetry(timeout)).toBe(false);
-      // ...but a refused connection must be, because nothing happened. Handing
-      // that to runLeg costs an attempt from a budget of five and 30 minutes.
-      expect(call[1].shouldRetry(new Error('ECONNREFUSED'))).toBe(true);
+
+      // A 504 means the *gateway* gave up; the write may well have landed. Same
+      // outcome-unknown class as the abort, arriving through a status code.
+      const gatewayTimeout = new Error('request failed: 504 Gateway Timeout');
+      expect(call[1].shouldRetry(gatewayTimeout)).toBe(false);
+      const serverError = new Error('request failed: 500 Internal Server Error');
+      expect(call[1].shouldRetry(serverError)).toBe(false);
+
+      // ...but a refused connection must retry, because nothing happened.
+      // Handing that to runLeg costs an attempt from a budget of five, and 30
+      // minutes, for a rolling restart.
+      const refused = new TypeError('fetch failed');
+      (refused as unknown as { cause: { code: string } }).cause = { code: 'ECONNREFUSED' };
+      expect(call[1].shouldRetry(refused)).toBe(true);
     }
   });
 

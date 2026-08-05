@@ -100,7 +100,7 @@ export type BuzzWriteOptions = {
   /** Per-call retry override. `0` disables the client's internal retry entirely. */
   retries?: number;
   /**
-   * Which failures are worth retrying.
+   * Which failures are worth retrying. See `isSafeToRetry`.
    *
    * A client-side abort does not cancel the server side, so retrying a
    * *timeout* on a non-idempotent write puts a second request on the wire while
@@ -121,6 +121,14 @@ export type BuzzRefundTransactionInput = {
   details?: Record<string, unknown> | null;
 };
 
+function safePredicate(predicate: (error: unknown) => boolean, error: unknown) {
+  try {
+    return predicate(error) === true;
+  } catch {
+    return false;
+  }
+}
+
 async function withRetries<T>(
   fn: () => Promise<T>,
   retries: number,
@@ -129,15 +137,36 @@ async function withRetries<T>(
   try {
     return await fn();
   } catch (error) {
-    if (retries > 0 && (shouldRetry?.(error) ?? true))
-      return withRetries(fn, retries - 1, shouldRetry);
+    // Absent predicate keeps the historical behaviour: retry everything. A
+    // predicate that is present but inconclusive — returns a non-true value, or
+    // throws — must NOT retry: for a non-idempotent write, "I don't know" has to
+    // mean "don't send it again", and a throwing predicate would otherwise also
+    // replace the real failure with its own.
+    const retryable = shouldRetry ? safePredicate(shouldRetry, error) : true;
+    if (retries > 0 && retryable) return withRetries(fn, retries - 1, shouldRetry);
     throw error;
   }
 }
 
-/** A client-side abort, which says nothing about whether the server ran the write. */
-export const isTimeoutError = (error: unknown) =>
-  error instanceof Error && error.name === 'TimeoutError';
+/**
+ * Failures where the request provably never reached the server.
+ *
+ * An **allowlist**, deliberately. The rule is *may the server have run this?* —
+ * and a denylist of known-unsafe errors gets that backwards: every 5xx, every
+ * hang-up, and anything added later is retried by default. A 504 in particular
+ * means the *gateway* gave up, which says nothing about whether the write landed;
+ * retrying it sends a second identical write.
+ *
+ * Node's `fetch` reports a failure to connect as a `TypeError` carrying the
+ * syscall code. Those are the only cases where "nothing happened" is knowable.
+ */
+export const isSafeToRetry = (error: unknown) => {
+  const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+  return (
+    error instanceof TypeError &&
+    (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+  );
+};
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 

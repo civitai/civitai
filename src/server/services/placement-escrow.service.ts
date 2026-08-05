@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { placementExhaustedLegsGauge } from '~/server/prom/client';
-import { isTimeoutError } from '@civitai/buzz';
+import { isSafeToRetry } from '@civitai/buzz';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -104,12 +104,13 @@ export const BUZZ_CALL_TIMEOUT_MS = Math.min((LEG_RETRY_BACKOFF_MINUTES * 60_000
  */
 const BUZZ_CALL_OPTIONS = {
   timeoutMs: BUZZ_CALL_TIMEOUT_MS,
-  // Not `retries: 0`. That would also discard the retry that is *safe* — a
-  // rolling restart refuses connections for a few seconds, nothing ran
-  // server-side, and the client absorbs it in milliseconds. Handing that to
-  // `runLeg` instead spends one of five attempts and waits 30 minutes for a
-  // non-failure. Only the timeout is unsafe to retry.
-  shouldRetry: (error: unknown) => !isTimeoutError(error),
+  // An allowlist of failures that provably never reached the server, not a
+  // denylist of known-unsafe ones. A rolling restart refuses connections for a
+  // few seconds and the client absorbs that in milliseconds — handing it to
+  // `runLeg` would spend one of five attempts and wait 30 minutes for a
+  // non-failure. Everything else, including a 504 that may have landed after the
+  // write, is outcome-unknown and belongs to `runLeg`.
+  shouldRetry: isSafeToRetry,
 };
 
 /**
