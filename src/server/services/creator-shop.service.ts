@@ -9,6 +9,7 @@ import {
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import {
+  appendItemHistory,
   buildCosmeticData,
   creatorGrantRemaining,
   patchCosmeticData,
@@ -41,6 +42,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type {
   CosmeticPurchaseMeta,
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
@@ -235,6 +237,9 @@ const buildRightsAffirmation = (userId: number) => ({
   statement: RIGHTS_AFFIRMATION_STATEMENT,
 });
 
+const offsetsLabel = (offsets?: CosmeticOffsets | null) =>
+  offsets ? `T${offsets.top} R${offsets.right} B${offsets.bottom} L${offsets.left}` : undefined;
+
 // ---------------------------------------------------------------------------
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
@@ -350,6 +355,14 @@ export const submitCreatorShopItem = async ({
             sellerShare: sellableByOthers ? sellerShare : 0,
             acceptsBlueBuzz,
             rightsAffirmation: buildRightsAffirmation(userId),
+            history: [
+              {
+                at: new Date().toISOString(),
+                userId,
+                kind: 'submitted',
+                status: CosmeticShopItemStatus.PendingReview,
+              },
+            ],
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -372,6 +385,10 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
+      // Prior values, so an edit can record what it moved from.
+      title: true,
+      description: true,
+      availableQuantity: true,
       cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
@@ -576,6 +593,39 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
+  const changes: CosmeticShopItemHistoryChange[] = [];
+  const recordChange = (
+    field: string,
+    from: string | number | null | undefined,
+    to: string | number | null | undefined
+  ) => {
+    if (from !== to) changes.push({ field, from, to });
+  };
+  if (name !== undefined) recordChange('name', existing.title, name);
+  if (description !== undefined) recordChange('description', existing.description, description);
+  // The pre-swap url, captured before `data` is rebuilt — it's the only way the
+  // queue can show what the artwork used to be.
+  if (artChanged) recordChange('artwork', existingData.url as string | undefined, imageUrl);
+  if (offsetsChange)
+    recordChange('offsets', offsetsLabel(existingData.offsets), offsetsLabel(nextOffsets));
+  if (slugChange) recordChange('slug', existingSlug, nextSlug);
+  if (usesChange) recordChange('uses', existingEconomics.uses, nextEconomics.uses);
+  if (pricePerUseChange)
+    recordChange('pricePerUse', existingEconomics.pricePerUse, nextEconomics.pricePerUse);
+  if (price != null) recordChange('price', existing.unitAmount, price);
+  if (availableQuantity !== undefined)
+    recordChange('quantity', existing.availableQuantity, availableQuantity);
+
+  const reviewNote = !backToReview
+    ? undefined
+    : isPublished
+    ? `Returned to review: price moved more than ${Math.round(
+        PRICE_REVIEW_THRESHOLD * 100
+      )}% from the approved ${base} Buzz`
+    : existing.status === CosmeticShopItemStatus.RequestedChanges
+    ? 'Resubmitted for review after requested changes'
+    : 'Edited while awaiting review';
+
   if (contentChanged) {
     const patchedData = patchCosmeticData({
       existingData,
@@ -597,6 +647,31 @@ export const updateCreatorShopItem = async ({
     });
   }
 
+  const updatedMeta: CosmeticShopItemMeta = {
+    ...meta,
+    ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
+    ...(artwork
+      ? {
+          autoChecks: artwork.checks,
+          imageMeta: artwork.imageMeta,
+          imageHash: artwork.imageHash,
+        }
+      : {}),
+    ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+  };
+  // An edit that moved nothing (e.g. a resubmit with identical values) isn't
+  // worth a row in the history.
+  const nextMeta = changes.length
+    ? appendItemHistory(updatedMeta, {
+        at: new Date().toISOString(),
+        userId,
+        kind: 'edited',
+        status,
+        note: reviewNote,
+        changes,
+      })
+    : updatedMeta;
+
   return dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
@@ -607,18 +682,7 @@ export const updateCreatorShopItem = async ({
       status,
       // Clear the prior verdict whenever it re-enters the review queue.
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
-      meta: {
-        ...meta,
-        ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
-        ...(artwork
-          ? {
-              autoChecks: artwork.checks,
-              imageMeta: artwork.imageMeta,
-              imageHash: artwork.imageHash,
-            }
-          : {}),
-        ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
-      } as Prisma.InputJsonValue,
+      meta: nextMeta as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });
@@ -1257,6 +1321,29 @@ export const reviewCreatorShopItem = async ({
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
+  const nextStatus =
+    action === 'approve'
+      ? CosmeticShopItemStatus.Published
+      : action === 'reject'
+      ? CosmeticShopItemStatus.Rejected
+      : action === 'revert'
+      ? CosmeticShopItemStatus.PendingReview
+      : CosmeticShopItemStatus.RequestedChanges;
+  // The verdict is recorded on the history too, not just on rejectionReason —
+  // the next edit clears that column, and a re-review needs to see what was
+  // said last time.
+  const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
+    appendItemHistory(
+      { ...meta, ...extra },
+      {
+        at: now.toISOString(),
+        userId: reviewerId,
+        kind: 'reviewed',
+        status: nextStatus,
+        action,
+        note: rejectionReason ?? undefined,
+      }
+    ) as Prisma.InputJsonValue;
 
   const updated =
     action === 'approve'
@@ -1266,9 +1353,9 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status: CosmeticShopItemStatus.Published,
+            status: nextStatus,
             rejectionReason: null,
-            meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
           },
           select: creatorShopItemSelect,
         })
@@ -1279,13 +1366,9 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status:
-              action === 'reject'
-                ? CosmeticShopItemStatus.Rejected
-                : action === 'revert'
-                ? CosmeticShopItemStatus.PendingReview
-                : CosmeticShopItemStatus.RequestedChanges,
+            status: nextStatus,
             rejectionReason: rejectionReason ?? null,
+            meta: reviewedMeta({}),
           },
           select: creatorShopItemSelect,
         });
@@ -1404,10 +1487,16 @@ export const takedownCosmeticShopItem = async ({
       status: CosmeticShopItemStatus.Archived,
       listed: false,
       archivedAt: now,
-      meta: {
-        ...meta,
-        takedown: { reason, moderatorId, at: now.toISOString() },
-      } as Prisma.InputJsonValue,
+      meta: appendItemHistory(
+        { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
+        {
+          at: now.toISOString(),
+          userId: moderatorId,
+          kind: 'takedown',
+          status: CosmeticShopItemStatus.Archived,
+          note: reason,
+        }
+      ) as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });

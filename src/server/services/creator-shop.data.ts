@@ -1,3 +1,7 @@
+import type {
+  CosmeticShopItemHistoryEntry,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -38,6 +42,25 @@ export const buildCosmeticData = (
   if (type === CosmeticType.Badge) return { url: imageUrl, animated: !!animated };
   return { url: imageUrl };
 };
+
+// Oldest entries are dropped first: a long-lived item's recent edits are what a
+// re-review needs, and meta is a JSON column we don't want growing unbounded.
+export const CREATOR_SHOP_HISTORY_LIMIT = 25;
+
+/**
+ * Appends an event to an item's review history, oldest-first, capped.
+ *
+ * Takes and returns the whole meta so callers can drop it straight into the
+ * `cosmeticShopItem.update` they were already making — recording history must
+ * never cost an extra round trip, or it will get skipped on some path.
+ */
+export const appendItemHistory = (
+  meta: CosmeticShopItemMeta,
+  entry: CosmeticShopItemHistoryEntry
+): CosmeticShopItemMeta => ({
+  ...meta,
+  history: [...(meta.history ?? []), entry].slice(-CREATOR_SHOP_HISTORY_LIMIT),
+});
 
 /**
  * Resolves the `Cosmetic.data` write for an edit. Replaced artwork rebuilds the
