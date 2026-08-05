@@ -227,11 +227,27 @@ export const computePackAmountDue = ({
         .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
         .reduce((sum, m) => sum + m.listPrice, 0)
     : 0;
+
+  // The pack's own lister buying their own pack is the same round-trip one level
+  // up: the remainder is *their* revenue, so charging it and paying it back
+  // costs them the platform's cut to buy their own bundle. They pay only what is
+  // owed to other people. This is the third of the three roles a buyer can hold
+  // in their own purchase — member creator, member reseller, pack lister — and
+  // all three are now refused for the same reason.
+  const buyerIsPackCreator = !!buyerId && buyerId === packCreatorId;
+  const foreignSum = members.reduce(
+    (sum, m) => (m.createdById === packCreatorId ? sum : sum + m.listPrice),
+    0
+  );
+  const amountDue = buyerIsPackCreator
+    ? Math.min(packPrice, foreignSum)
+    : Math.max(0, packPrice - discount - selfAuthored);
+
   return {
-    discount,
+    discount: buyerIsPackCreator ? packPrice - amountDue : discount,
     perMember,
     selfAuthored,
-    amountDue: Math.max(0, packPrice - discount - selfAuthored),
+    amountDue,
   };
 };
 

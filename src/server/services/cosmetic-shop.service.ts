@@ -218,7 +218,8 @@ export const upsertCosmeticShopItem = async ({
   // over its members, no snapshot to re-take. Today a required `cosmeticId`
   // happens to reject it; that is an accident of the schema, and the moment
   // anyone widens that field this becomes a floor-bypassing pack price editor.
-  if (id && (!existingItem || existingItem.cosmeticId == null))
+  if (id && !existingItem) throw new Error('Shop item not found');
+  if (id && existingItem?.cosmeticId == null)
     throw new Error('Packs are edited through the pack editor');
 
   const data = {

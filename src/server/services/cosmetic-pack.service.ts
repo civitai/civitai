@@ -340,7 +340,11 @@ export const computePackPayouts = ({
   }
 
   const remainder = Math.max(0, packPrice - foreignTotal);
-  const packCreatorAmount = packCreatorId ? computeCreatorShopSplit(remainder).creatorPool : 0;
+  // Not paid to the buyer: a pack creator buying their own pack is not charged
+  // for their own portion (see computePackAmountDue), so there is nothing to pay
+  // back — and paying it would book a Sell crediting them for a sale they funded.
+  const packCreatorAmount =
+    packCreatorId && packCreatorId !== buyerId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
   return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
 };

@@ -412,8 +412,11 @@ export const getPackDetail = async ({
     listPrice: snapshotByCosmetic.get(m.cosmeticId) ?? m.listPrice,
   }));
 
+  // On the writer, like the purchase path: the quote gates the buy button, so a
+  // replica that hasn't caught up quotes a price above what will be charged and
+  // blocks a buyer who can afford the real one.
   const owned = userId
-    ? await dbRead.userCosmetic.findMany({
+    ? await dbWrite.userCosmetic.findMany({
         where: { userId, cosmeticId: { in: members.map((m) => m.cosmeticId) } },
         select: { cosmeticId: true },
       })

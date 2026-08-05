@@ -153,6 +153,10 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
     const ownerQueries = mocks.userCosmeticFindMany.mock.calls.filter(
       (call) => call[0]?.where?.cosmeticId
     );
+    // Pinned both ways: today the guard skips the query entirely, so the loop
+    // below runs zero times. Without this, a future change that always runs it
+    // would silently turn this test into a no-op.
+    expect(ownerQueries).toHaveLength(0);
     for (const [query] of ownerQueries) expect(query.where.claimKey).toBeDefined();
   });
 

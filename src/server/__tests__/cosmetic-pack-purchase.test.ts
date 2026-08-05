@@ -19,7 +19,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: (...args: unknown[]) => getBlockedPairIds(...args),
 }));
 vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+vi.mock('~/server/logging/client', () => ({
+  // Returns a promise like the real one: code in this path attaches `.catch`,
+  // and a bare `vi.fn()` throws inside the block that calls it.
+  logToAxiom: vi.fn().mockResolvedValue(undefined),
+}));
 
 const { assertPackPurchasable, computePackPayouts, grantPackMembers, packBlueBuzzVeto } =
   await import('~/server/services/cosmetic-pack.service');

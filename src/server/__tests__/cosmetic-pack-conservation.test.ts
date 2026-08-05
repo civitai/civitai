@@ -324,6 +324,11 @@ const SHAPES: Shape[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   ownedFindMany.mockResolvedValue([]);
+  // Distinct per call, as the real service returns: a takedown reverses payouts
+  // by refunding each recorded transaction id, so a regression recording one id
+  // for every payout has to be visible.
+  let payoutSeq = 0;
+  pay.mockImplementation(async () => ({ transactionId: `payout-tx-${++payoutSeq}` }));
   spend.mockImplementation(({ amount }: { amount: number }) => ({
     transactionCount: 1,
     transactionIds: [{ accountType: 'yellow', amount }],
@@ -347,8 +352,17 @@ describe.each(SHAPES)(
     acceptsBlue = false,
   }) => {
     const setup = async () => {
-      if (owned?.length)
-        ownedFindMany.mockResolvedValue(owned.map((cosmeticId) => ({ cosmeticId })));
+      // Honours its `where`, so a lookup against the wrong user or the wrong
+      // member set is visible. A stub returning the same rows regardless makes
+      // every "the right rows were selected" property untestable.
+      ownedFindMany.mockImplementation(
+        async ({ where }: { where: { userId: number; cosmeticId: { in: number[] } } }) =>
+          where.userId === buyerId
+            ? (owned ?? [])
+                .filter((id) => where.cosmeticId.in.includes(id))
+                .map((cosmeticId) => ({ cosmeticId }))
+            : []
+      );
       if (blueShare)
         spend.mockImplementation(({ amount }: { amount: number }) => ({
           transactionCount: 2,
@@ -402,6 +416,10 @@ describe.each(SHAPES)(
       const selfAuthored = members
         .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
         .reduce((sum, m) => sum + m.floorAmount, 0);
+      // The pack's own lister pays only what is owed to other people — the
+      // remainder is their own revenue, and round-tripping it would cost them
+      // the platform's cut to buy their own bundle.
+      if (buyerId === packCreatorId) return Math.min(price, foreignSum);
       return Math.max(0, price - discount - selfAuthored);
     };
 
@@ -447,7 +465,8 @@ describe.each(SHAPES)(
               : []),
           ])
       );
-      if (packCreatorId) expected.add(packCreatorId);
+      // Not whitelisted when they are the buyer — that is the case this catches.
+      if (packCreatorId && packCreatorId !== buyerId) expected.add(packCreatorId);
       for (const payout of payouts) expect(expected.has(payout.toAccountId)).toBe(true);
     });
 
@@ -496,7 +515,9 @@ describe.each(SHAPES)(
 
     it('never pays the buyer for their own work', async () => {
       const { payouts } = await setup();
-      expect(payouts.some((p) => p.toAccountId === BUYER)).toBe(false);
+      // `buyerId`, not the module constant: a shape that varies the buyer only
+      // discriminates if the property varies with it too.
+      expect(payouts.some((p) => p.toAccountId === buyerId)).toBe(false);
     });
 
     it('gives every payout a distinct external id', async () => {
