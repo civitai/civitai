@@ -200,6 +200,14 @@ export interface PlanCounts {
   ready: number;
   /** Constraint present but `NOT VALID` — a previous run stopped half way. */
   needsValidation: number;
+  /**
+   * Constraint present, but the catalog carried no `convalidated` data.
+   *
+   * Counted apart from `satisfied` because folding it in reports a constraint nobody can
+   * vouch for as enforced — the same reassuring failure the `not-valid` state exists to
+   * prevent, wearing a different hat.
+   */
+  validityUnknown: number;
   blocked: number;
   refused: number;
   /** Relations whose orphan remediation is a DELETE. The number the SetNull test pins. */

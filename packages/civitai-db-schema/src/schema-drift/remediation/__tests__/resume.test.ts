@@ -433,3 +433,70 @@ describe('the backup INSERT names its columns', () => {
     ).toThrow(/No column list/);
   });
 });
+
+describe('quoteInterval rejects the value that silently disables the guard', () => {
+  it('🔴 rejects zero — SET lock_timeout = 0 means wait FOREVER', () => {
+    // The one well-formed value that turns the bound off entirely, which is why it is
+    // rejected as a value rather than caught as a syntax error.
+    expect(() => quoteInterval('0s')).toThrow(/Invalid lock timeout/);
+    expect(() => quoteInterval('0ms')).toThrow(/Invalid lock timeout/);
+    expect(() => quoteInterval('000s')).toThrow(/Invalid lock timeout/);
+  });
+
+  it('POSITIVE control: non-zero intervals still pass', () => {
+    expect(quoteInterval('1ms')).toBe("'1ms'");
+    expect(quoteInterval('3s')).toBe("'3s'");
+    expect(quoteInterval('10min')).toBe("'10min'");
+  });
+});
+
+describe('referenced-side uniqueness is matched as a SET, not positionally', () => {
+  // Postgres accepts FOREIGN KEY (y, x) REFERENCES p(b, a) against UNIQUE (a, b) — the
+  // constraint has to cover the same columns, not list them in the same order. A
+  // positional test is stricter than the database and refuses a legal relation.
+  const composite = `
+model Child {
+  id Int @id
+  a  Int
+  b  Int
+  p  Parent @relation(fields: [b, a], references: [bb, aa], onDelete: Cascade)
+}
+model Parent {
+  aa Int
+  bb Int
+  @@id([aa, bb])
+}
+`;
+  function planWithUnique(uniqueCols: string[]) {
+    return buildRemediationPlan(
+      schemaFrom(composite),
+      catalogFrom({
+        tables: ['Child', 'Parent'],
+        columns: [
+          ['Child', 'id', true],
+          ['Child', 'a', true],
+          ['Child', 'b', true],
+          ['Parent', 'aa', true],
+          ['Parent', 'bb', true],
+        ],
+        indexes: [['Child', 'b', 'a']],
+        uniqueIndexes: [['Parent', ...uniqueCols]],
+      }),
+      { only: ['Child.b+a'], orphanCounts: { 'Child.b+a': 0 } }
+    );
+  }
+
+  it('accepts a unique index whose column ORDER differs from the reference order', () => {
+    // references: [bb, aa] against UNIQUE (aa, bb) — legal, and previously refused.
+    expect(
+      relation(planWithUnique(['aa', 'bb']), 'Child.b+a').refusals.map((r) => r.code)
+    ).not.toContain('referenced-columns-not-unique');
+  });
+
+  it('NEGATIVE control: a unique index over DIFFERENT columns is still refused', () => {
+    // Order-insensitivity must not decay into ignoring which columns they are.
+    expect(relation(planWithUnique(['aa']), 'Child.b+a').refusals.map((r) => r.code)).toContain(
+      'referenced-columns-not-unique'
+    );
+  });
+});

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parsePrismaSchema } from '../../parse-prisma-schema';
 import { buildRemediationPlan } from '../plan';
+import { formatPlan } from '../report';
 import type { RemediationCatalog } from '../types';
 import { countDeletes, countUpdates, planSql, relation } from './helpers';
 
@@ -88,8 +89,19 @@ describe('the whole schema, against the production catalog', () => {
     // A plan that considered nothing produces the same clean numbers as a plan that found
     // nothing to do.
     expect(plan.counts.relationsConsidered).toBeGreaterThan(400);
-    expect(plan.counts.satisfied).toBeGreaterThan(300);
     expect(plan.unmatchedSelectors).toEqual([]);
+
+    // 🔴 `satisfied` is ZERO against this catalog, and that is the correct answer.
+    //
+    // The snapshot predates `convalidated`, so it cannot establish that a single one of
+    // the ~408 existing constraints actually enforces the rows that predate it. They are
+    // counted as `validityUnknown` instead. This assertion previously read
+    // `satisfied > 300` and was passing while the report told the operator that 408
+    // constraints were "already enforced (no action)" on the strength of a catalog that
+    // says nothing of the kind — blocker 2's failure mode relocated to the `--catalog`
+    // path. The pair below is the point: nothing certified, everything accounted for.
+    expect(plan.counts.satisfied).toBe(0);
+    expect(plan.counts.validityUnknown).toBeGreaterThan(300);
   });
 
   it('finds both strategies in use — neither set is empty', () => {
@@ -233,5 +245,38 @@ describe('index coverage, read from the real catalog', () => {
   it('does NOT find Collection.imageId covered — 16.9M rows with no index on imageId', () => {
     expect(relation(plan, 'Collection.imageId').indexCoverage).not.toBe('covered');
     expect(relation(plan, 'Collection.imageId').outcome).toBe('blocked');
+  });
+});
+
+describe('🔴 the report does not call an unverifiable constraint "already enforced"', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+  const text = formatPlan(plan);
+
+  it('separates validated from validity-not-established in the summary', () => {
+    expect(text).toContain('already enforced (validated)   : 0');
+    expect(text).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*\d+/);
+  });
+
+  it('does not print a non-zero "already enforced" count for this catalog', () => {
+    // The regression: 408 relations were reported as enforced against a catalog carrying
+    // zero `convalidated` entries, in default, --verbose and --json alike.
+    expect(text).not.toMatch(/already enforced \(validated\)\s*:\s*[1-9]/);
+  });
+
+  it('POSITIVE control: the summary block is actually present', () => {
+    // Otherwise the two assertions above pass on an empty string.
+    expect(text).toContain('relations considered');
+    expect(text).toContain('Orphan remediation, derived from');
+  });
+
+  it('shows a satisfied relation that carries a prerequisite, without --verbose', () => {
+    // plan.ts claims the unknown state is "surfaced as a prerequisite so it appears in the
+    // report". The default filter used to drop every `satisfied` relation, making that
+    // comment false — and a comment that contradicts the code is how a guard gets deleted.
+    const withPrereq = plan.relations.find(
+      (r) => r.outcome === 'satisfied' && r.prerequisites.length > 0
+    );
+    expect(withPrereq).toBeDefined();
+    expect(text).toContain(withPrereq!.key);
   });
 });

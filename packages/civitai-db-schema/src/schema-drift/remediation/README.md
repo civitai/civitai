@@ -91,12 +91,23 @@ gives you is not a population:
 
 - **A. Deliberately dropped by a committed migration.** All 688 files under
   `prisma/migrations` scanned for `ADD`/`DROP CONSTRAINT` on each of the 37 expected
-  constraint names, keeping those whose *last* recorded operation is a `DROP`. Exactly
-  three: **`Article.coverId`** (`20250614053144_remove_article_cover_id_fkey`, a migration
-  whose entire content is that one drop), **`ImageConnection.imageId`** and
-  **`TagsOnImageNew.imageId`** (both dropped by `20240307231126_nsfw_level_update_queue` —
-  the same migration that drops the four `CollectionItem` keys and introduces `JobQueue`,
-  i.e. the deliberate replacement of FK-enforced cleanup with an application-level queue).
+  constraint names, keeping those whose *last* recorded operation is a `DROP`. Three:
+  **`Article.coverId`** (`20250614053144_remove_article_cover_id_fkey`, a migration whose
+  entire content is that one drop); **`ImageConnection.imageId`** (dropped by
+  `20240307231126_nsfw_level_update_queue` — the same migration that drops the four
+  `CollectionItem` keys and introduces `JobQueue`, i.e. the deliberate replacement of
+  FK-enforced cleanup with an application-level queue); and **`TagsOnImageNew.imageId`**,
+  which is a *different* migration pair — the table did not exist in 2024, and its key was
+  added by `20250303170613_tags_on_image_new` and dropped by
+  `20250314203912_drop_tags_on_image`, one day after the trigger took over.
+
+  🔴 **What the criterion actually depends on.** Applied literally to every constraint name
+  in the schema it returns eight, not three; it narrows to three only in conjunction with
+  the live catalog, i.e. restricted to relations that are *also* currently missing their
+  foreign key. A `RENAME CONSTRAINT` is invisible to a last-operation timeline (one did
+  occur, `ModelHash.modelVersionId`, and was filtered out by the catalog restriction rather
+  than by the method noticing it), and the scan assumes Prisma's `<Table>_<column>_fkey`
+  naming — six foreign keys here do not follow it, one of them inside the 37.
 - **B. Rebuilt by a CTAS.** `recreateRankTable` rebuilds a rank table with
   `CREATE TABLE "<X>Rank_New" AS SELECT * FROM "<X>Rank_Live"` → `DROP` → rename, and a CTAS
   copies no constraints — so a foreign key added there is gone at the next refresh,
@@ -253,3 +264,32 @@ never been shown to produce anything else is a fact about the instrument. Every 
 helper is exercised there against an input it must report on and one it must not, and
 `production-plan.test.ts` runs the `Cascade` set through the *same* plan and the *same*
 helper as a positive control. The pair is the evidence; neither half is.
+
+## Limitations
+
+Things this tool does **not** consider. None of them are checked, so their absence from a
+plan is not evidence that they are fine.
+
+- **Triggers.** The tool has no trigger awareness at all. It reads `pg_catalog` for tables,
+  columns, constraints and indexes, and nothing else. That matters in both directions: a
+  trigger may already enforce what a constraint would (`TagsOnImageNew` is the known case,
+  and it is on the never-add list for that reason — but it is on the list because someone
+  looked, not because the tool detected it), and a trigger may make the remediation itself
+  fail. `ImageResourceNew` has an `AFTER DELETE … FOR EACH ROW` trigger that runs
+  `REFRESH MATERIALIZED VIEW CONCURRENTLY`, which cannot run inside a transaction, so a
+  qualifying batch would error with SQLSTATE 25001. **`ImageResourceNew.imageId` is in the
+  Cascade set and this is not guarded.** Detection was deliberately not implemented: the
+  committed programmability files have already drifted from what is deployed, so a check
+  built from them would assert something unverifiable. **Before remediating any relation,
+  read the triggers on its table.**
+- **Rules, deferred constraints, inheritance and partitioning.** Not read.
+- **Whether the orphan rows should be removed at all.** A `READY` outcome means the
+  mechanics are safe, not that the change is correct. Whether a referenced entity is
+  soft-deleted rather than gone, and whether an application-level cleanup already owns the
+  relation, are product questions this tool cannot answer.
+- **`VALIDATE CONSTRAINT` completing.** See above — it can be killed by a statement
+  timeout the tool cannot raise. The state is then resumable and visible, not finished.
+- **Replication lag and downstream consumers.** A large batched DELETE generates WAL.
+- **Whether the catalog is current.** With `--catalog` it is a snapshot, and a snapshot
+  captured before `convalidated` was collected cannot establish that any constraint is
+  actually enforcing — which the report now says out loud rather than counting as enforced.

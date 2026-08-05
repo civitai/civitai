@@ -21,19 +21,31 @@
  * over primary sources, not a spot check:
  *
  *   A. Every one of the 688 files under `prisma/migrations` was scanned for
- *      `ADD CONSTRAINT` / `DROP CONSTRAINT` on each of the 37 expected constraint names,
- *      keeping those whose LAST recorded operation is a DROP. That returns exactly three:
- *      `Article.coverId`, `ImageConnection.imageId`, `TagsOnImageNew.imageId`. Absence is
- *      intentional and recorded; "restoring" one reverts a decision.
- *   B. Every relation whose table is rebuilt by `recreateRankTable` — all seven `*Rank`
- *      models. A `CREATE TABLE ... AS SELECT` copies no constraints.
+ *      `ADD CONSTRAINT` / `DROP CONSTRAINT` on each expected constraint name, keeping
+ *      those whose LAST recorded operation is a DROP. Absence is intentional and
+ *      recorded; "restoring" one reverts a decision. Yields three:
+ *      `Article.coverId`, `ImageConnection.imageId`, `TagsOnImageNew.imageId`.
+ *   B. Every relation on a table rebuilt by `recreateRankTable` — all NINE owning-side
+ *      `*Rank` relations. A `CREATE TABLE ... AS SELECT` copies no constraints.
  *   C. `TagsOnImageNew.imageId` again, independently: enforcement is a live trigger.
  *
- * Union: **10**. An earlier revision of this file had 9 — it took the list as given
- * instead of deriving it, and `ImageConnection.imageId` was missed even though it sits in
- * the same `DROP CONSTRAINT` block as the four `CollectionItem` keys whose restoration
- * started this whole campaign. The derivation is in the commit that added it; re-run it
- * rather than trusting this paragraph if the schema has moved.
+ * **Union: 12** — nine rank relations plus `Article.coverId` and `ImageConnection.imageId`
+ * (`TagsOnImageNew.imageId` is in both A and C). That is the number of entries in the
+ * array below; if the two ever disagree, the array is authoritative and this comment is
+ * stale.
+ *
+ * 🔴 WHAT CRITERION A ACTUALLY DEPENDS ON, because the number is not reproducible from the
+ * sentence alone. Applied literally to every constraint name in the schema it returns
+ * EIGHT, not three; it narrows to three only in conjunction with the live catalog, i.e.
+ * restricted to relations that are ALSO currently missing their foreign key. Two further
+ * dependencies are load-bearing and neither is obvious:
+ *   - A `RENAME CONSTRAINT` is invisible to a last-operation timeline. One did materialise
+ *     (`ModelHash.modelVersionId`) and was filtered out incidentally by the catalog
+ *     restriction rather than by the method noticing it.
+ *   - The scan assumes Prisma's `<Table>_<column>_fkey` name. Six foreign keys in this
+ *     database do not follow it, one of them (`DownloadHistory.modelVersionId`) inside the
+ *     37 — matched only because its name happens to coincide.
+ * Re-run the derivation rather than trusting this paragraph if the schema has moved.
  */
 
 export interface Exclusion {
@@ -164,6 +176,13 @@ export const EXCLUSIONS: readonly Exclusion[] = Object.freeze([
  * missing, and fails again when a new rank model appears.
  */
 export function isCtasRebuiltModel(model: string): boolean {
+  // 🔴 A SPELLED GUARD, and knowingly so. This matches a NAME, not the mechanism: there are
+  // ten `*Rank` models and `NewOrderRank` is a static enum-keyed lookup table, not a
+  // CTAS-rebuilt metrics table. It is over-inclusive rather than under-inclusive, which is
+  // the safe direction for a never-add list, and harmless today because `NewOrderRank`
+  // declares no owning-side relation. The authoritative signal would be a `rank: { table }`
+  // declaration in `src/server/metrics/*.metrics.ts`; this module cannot read that without
+  // depending on the application, so the name is used and the limitation is written down.
   return model.endsWith('Rank');
 }
 

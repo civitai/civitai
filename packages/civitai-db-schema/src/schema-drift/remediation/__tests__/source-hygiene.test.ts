@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseArgs } from '../cli';
@@ -21,7 +21,11 @@ import { parseArgs } from '../cli';
  * it is a test.
  */
 const here = fileURLToPath(new URL('.', import.meta.url));
-const moduleRoot = join(here, '..');
+// The WHOLE schema-drift tree, not just `remediation/`. The narrower scope was itself a
+// spelled guard: this round changed `catalog.ts` and `types.ts` one directory up, and a
+// sweep rooted at `remediation/` would have left exactly those unswept while reading as
+// full coverage.
+const moduleRoot = join(here, '../..');
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -36,8 +40,12 @@ const files = sourceFiles(moduleRoot);
 describe('source hygiene', () => {
   it('found the module sources (positive control on the sweep below)', () => {
     // A zero-length file list would make every assertion below vacuously true.
-    expect(files.length).toBeGreaterThan(10);
+    expect(files.length).toBeGreaterThan(20);
     expect(files.some((f) => f.endsWith('plan.ts'))).toBe(true);
+    // Named explicitly: these two live OUTSIDE `remediation/`, were changed by this work,
+    // and were the files the narrower sweep silently missed.
+    expect(files.some((f) => f.endsWith(`schema-drift${sep}catalog.ts`))).toBe(true);
+    expect(files.some((f) => f.endsWith(`schema-drift${sep}types.ts`))).toBe(true);
   });
 
   it.each(files.map((f) => [f.slice(moduleRoot.length + 1), f]))(

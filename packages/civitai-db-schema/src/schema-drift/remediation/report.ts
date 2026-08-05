@@ -94,7 +94,20 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
   lines.push('Foreign-key remediation plan (DRY RUN unless --apply was passed)');
   lines.push('');
   lines.push(`  relations considered           : ${counts.relationsConsidered}`);
-  lines.push(`  already enforced (no action)   : ${counts.satisfied}`);
+  // 🔴 SPLIT ON PURPOSE. These used to be one "already enforced (no action)" line, which
+  // reported every constraint the catalog could not vouch for as enforced — 408 of them
+  // against the committed snapshot, which carries no `convalidated` data for a single
+  // relation. That is the half-applied-constraint failure mode relocated from the live
+  // path to the `--catalog` path, and it was reassuring in exactly the same way.
+  lines.push(`  already enforced (validated)   : ${counts.satisfied}`);
+  if (counts.validityUnknown > 0) {
+    lines.push(`  🔴 constraint present, VALIDITY NOT ESTABLISHED : ${counts.validityUnknown}`);
+    lines.push('     This catalog carries no convalidated data. A NOT VALID constraint is present');
+    lines.push(
+      '     but has never checked the rows that predate it, and is indistinguishable here'
+    );
+    lines.push('     from a validated one. Re-read from a live database to resolve.');
+  }
   lines.push(`  READY                          : ${counts.ready}`);
   lines.push(`  NEEDS VALIDATION (resume)      : ${counts.needsValidation}`);
   lines.push(`  blocked on a prerequisite      : ${counts.blocked}`);
@@ -128,7 +141,17 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
     lines.push('');
   }
 
-  const shown = plan.relations.filter((r) => options.verbose || r.outcome !== 'satisfied');
+  // A `satisfied` relation is hidden by default because on a full run there are hundreds of
+  // them — but one carrying a prerequisite or a refusal is NOT nothing-to-do, and hiding it
+  // is what made the comment in plan.ts ("surfaced as a prerequisite so it appears in the
+  // report") false. The filter now agrees with that comment.
+  const shown = plan.relations.filter(
+    (r) =>
+      options.verbose ||
+      r.outcome !== 'satisfied' ||
+      r.prerequisites.length > 0 ||
+      r.refusals.length > 0
+  );
   const order: Record<RelationPlan['outcome'], number> = {
     refused: 0,
     'needs-validation': 1,

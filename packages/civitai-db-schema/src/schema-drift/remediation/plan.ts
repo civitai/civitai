@@ -395,25 +395,34 @@ function planRelation(
         'retried as many times as needed.',
     });
 
+    const resumePrerequisites: Prerequisite[] =
+      orphanCount === null
+        ? [
+            {
+              code: 'orphan-count-not-measured' as const,
+              message:
+                'Orphans have not been counted. A constraint left NOT VALID usually means ' +
+                'validation failed; if that was because orphans remain, VALIDATE will keep ' +
+                'failing until they are cleared.',
+              sql: countOrphansSql(ctx),
+            },
+          ]
+        : [];
+
     return {
       ...base,
-      outcome: 'needs-validation',
+      // 🔴 The outcome is CONDITIONAL on the prerequisites, exactly as the ordinary path
+      // is. It used to be hardcoded to 'needs-validation', which put the relation past
+      // `executePlan`'s not-ready net while carrying an unmet prerequisite — so the same
+      // relation, with the same prerequisite, was REFUSED on the ordinary path and
+      // EXECUTED (including the DELETE batch) on the resume path. The CLI happens to
+      // measure orphans first, so it was not reachable there; `executePlan` is exported
+      // public API and is the safety net, so it must not depend on its caller's ordering.
+      outcome: resumePrerequisites.length > 0 ? 'blocked' : 'needs-validation',
       strategy,
       refusals: [],
       constraintValidity,
-      prerequisites:
-        orphanCount === null
-          ? [
-              {
-                code: 'orphan-count-not-measured',
-                message:
-                  'Orphans have not been counted. A constraint left NOT VALID usually means ' +
-                  'validation failed; if that was because orphans remain, VALIDATE will keep ' +
-                  'failing until they are cleared.',
-                sql: countOrphansSql(ctx),
-              },
-            ]
-          : [],
+      prerequisites: resumePrerequisites,
       indexCoverage: coverageFor(live, model.table, columns),
       statements: resumeStatements,
     };
@@ -505,8 +514,13 @@ function planRelation(
   // for a reason that has nothing to do with uniqueness.
   if (live.tables.has(refTable)) {
     const uniques = live.uniqueByTable.get(refTable) ?? [];
+    // Compared as an unordered SET, not positionally. Postgres accepts
+    // `FOREIGN KEY (y, x) REFERENCES p(b, a)` against `UNIQUE (a, b)` — the constraint has
+    // to cover the same columns, not list them in the same order. A positional test is
+    // stricter than the database and would refuse a relation Postgres would allow.
+    const wanted = [...refColumns].sort().join('\0');
     const exact = uniques.some(
-      (u) => u.length === refColumns.length && u.every((c, i) => c === refColumns[i])
+      (u) => u.length === refColumns.length && [...u].sort().join('\0') === wanted
     );
     if (!exact) {
       refusals.push({
@@ -712,7 +726,10 @@ export function buildRemediationPlan(
 
   const counts: PlanCounts = {
     relationsConsidered: relations.length,
-    satisfied: relations.filter((r) => r.outcome === 'satisfied').length,
+    satisfied: relations.filter(
+      (r) => r.outcome === 'satisfied' && r.constraintValidity === 'validated'
+    ).length,
+    validityUnknown: relations.filter((r) => r.constraintValidity === 'unknown').length,
     ready: relations.filter((r) => r.outcome === 'ready').length,
     needsValidation: relations.filter((r) => r.outcome === 'needs-validation').length,
     blocked: relations.filter((r) => r.outcome === 'blocked').length,

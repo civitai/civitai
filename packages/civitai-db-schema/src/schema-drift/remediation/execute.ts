@@ -131,6 +131,19 @@ export async function executePlan(
         '. Run the plan to see each reason.'
     );
   }
+  // Independent of the outcome label. A relation reaches here only if its outcome says it
+  // is executable, but the outcome is DERIVED from the prerequisites in two separate
+  // places, and one of them had already got it wrong once — so this asserts the invariant
+  // directly rather than trusting whichever branch computed it.
+  const unmet = actionable.filter((r) => r.prerequisites.length > 0);
+  if (unmet.length > 0) {
+    throw new RemediationRefused(
+      `Refusing to execute: ${unmet
+        .map((r) => `${r.key} (${r.prerequisites.map((p) => p.code).join(', ')})`)
+        .join('; ')}. A relation with an unmet prerequisite is not executable regardless of ` +
+        'the outcome it carries.'
+    );
+  }
   if (actionable.length === 0) {
     throw new RemediationRefused(
       'Refusing to execute: the plan contains no actionable relation. An empty run reports ' +
@@ -199,6 +212,25 @@ export async function executePlan(
 /** Postgres raises this when `lock_timeout` expires while waiting for a lock. */
 export const LOCK_NOT_AVAILABLE = '55P03';
 
+/** `current transaction is aborted, commands ignored until end of transaction block`. */
+export const IN_FAILED_SQL_TRANSACTION = '25P02';
+
+/**
+ * Return the session to a usable state after a statement inside an explicit transaction
+ * failed.
+ *
+ * Errors from the ROLLBACK itself are swallowed on purpose: if there is no open
+ * transaction Postgres emits a warning and succeeds, and if the connection is genuinely
+ * gone then the original error is the one worth reporting, not this one.
+ */
+async function rollbackQuietly(runner: CatalogQueryRunner): Promise<void> {
+  try {
+    await runner.query<unknown>('ROLLBACK;');
+  } catch {
+    // Deliberately ignored — see above.
+  }
+}
+
 function sqlState(error: unknown): string | null {
   if (typeof error !== 'object' || error === null || !('code' in error)) return null;
   const code = (error as { code: unknown }).code;
@@ -230,6 +262,21 @@ async function runWithLockRetry(
       await runner.query<unknown>(sql);
       return attempt;
     } catch (error) {
+      // 🔴 ROLLBACK FIRST, BEFORE LOOKING AT THE ERROR AT ALL.
+      //
+      // The statement is `BEGIN; SET LOCAL lock_timeout = …; ALTER …; COMMIT;`. Under the
+      // simple query protocol a failure aborts the rest of the string, so when the ALTER
+      // times out the COMMIT never runs and the session is left in an aborted transaction
+      // block. Every subsequent statement on that connection then fails with 25P02
+      // (`current transaction is aborted`) — including the retry, which therefore sees
+      // 25P02 instead of 55P03, is judged non-retryable, and rethrows. The bounded lock
+      // wait converted a stall into a failed run, and poisoned the connection for the rest
+      // of the campaign, with an operator-facing error that mentions nothing about locks.
+      //
+      // This is why the recovery is unconditional and comes before `sqlState`: the session
+      // has to be usable again whether or not this error turns out to be retryable, since
+      // the caller may go on to use the same client for something else.
+      await rollbackQuietly(runner);
       if (sqlState(error) !== LOCK_NOT_AVAILABLE) throw error;
       if (attempt >= maxAttempts) {
         throw new Error(

@@ -222,7 +222,11 @@ export function nullOrphanBatchSql(ctx: RelationSqlContext): string {
  * land in SQL unquoted.
  */
 export function quoteInterval(value: string): string {
-  if (!/^\d{1,7}\s*(ms|s|min)$/.test(value)) {
+  // 🔴 A ZERO IS REJECTED, not merely a malformed value. `SET lock_timeout = '0s'` means
+  // wait FOREVER in Postgres — so the one value that silently disables the guard looks
+  // like a perfectly well-formed setting. `0`, `0s`, `000ms` and friends are all caught by
+  // the leading-non-zero requirement.
+  if (!/^\d{1,7}\s*(ms|s|min)$/.test(value) || /^0+\s*(ms|s|min)$/.test(value)) {
     throw new Error(
       `Invalid lock timeout ${JSON.stringify(value)}. Expected something like '3s', ` +
         "'500ms' or '1min' — it is interpolated into SET LOCAL, which takes no parameter."
