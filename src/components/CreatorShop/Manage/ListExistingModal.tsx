@@ -73,8 +73,12 @@ function PublicShopItemCard({
           )}
           <Text size="xs" c="dimmed" lineClamp={1}>
             {getDisplayName(item.cosmetic.type)}
-            {item.addedBy?.username ? ` · by @${item.addedBy.username}` : ''}
           </Text>
+          {item.addedBy?.username && (
+            <Text size="xs" c="dimmed" className="break-words">
+              by @{item.addedBy.username}
+            </Text>
+          )}
           <Text size="xs">
             {numberWithCommas(item.unitAmount)} Buzz · you keep{' '}
             <Text span c="green" fw={600}>
@@ -118,8 +122,12 @@ function ResoldListRow({
           </Text>
           <Text size="xs" c="dimmed" lineClamp={1}>
             {getDisplayName(item.cosmetic.type)}
-            {item.addedBy?.username ? ` · by @${item.addedBy.username}` : ''}
           </Text>
+          {item.addedBy?.username && (
+            <Text size="xs" c="dimmed" className="break-words">
+              by @{item.addedBy.username}
+            </Text>
+          )}
         </Stack>
         <ActionIcon
           color="red"
