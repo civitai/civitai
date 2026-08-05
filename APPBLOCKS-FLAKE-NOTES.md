@@ -397,6 +397,36 @@ race is exactly what the brief forbids. Diagnosis for the immediate follow-up:
 - Verify with the same instrument as this PR: shrink the debounce (accelerated control),
   N>=10 each side, plus a mutation that wires the input straight through.
 
+## 7e. 🔴 SESSION 2 — PAIRED FULL-SUITE CONTROL, and the class is WIDER than three
+
+A full-suite run at HEAD showed ~12 failures and briefly looked like collateral damage from
+this PR. It is not. **Ran the cheap discriminating control instead of theorising**: the whole
+125-file `component` suite at BASE (`origin/main`) and at HEAD, back-to-back, same box:
+
+| ref | failing tests | wall | load at start |
+|---|---|---|---|
+| BASE `54c2ff8e4b` | **12** | 153s | 98.87 |
+| HEAD `c14143010f` | **12** | 139s | 77.59 |
+
+**9 of the 12 are the SAME tests on both refs**, including `the "Try again" control refetches
+the query` — which lives in the file I edited but is a test I never touched. **Neither of my
+two rewritten tests appears in either failure list.** So the change neither causes nor cures
+the ambient instability: at load 80-120 with 26+ competing node processes from other agents,
+this suite flakes ~12 tests per full run regardless of ref.
+
+⚠️ Honest caveat on the instrument: the `Test Files` / `Tests` summary lines did NOT appear in
+either captured half, so these are counts of `×` lines, not the runner's own totals. Both
+sides were counted identically, so the COMPARISON holds, but I cannot quote suite totals.
+
+🔴 **The important secondary finding: several failures on BOTH refs sit at ~15.2-15.8s** —
+`the icon form is the one SHOWN at 280 and the text form at 460`, `the Generations label stays
+unambiguous even with the Runs tooltip mounted`, `does NOT clobber a name the user already
+typed`, `selecting a category shows "Explore all apps"`. That is the **full-matcher-budget
+signature**, i.e. more instances of the very class this PR fixes, in files nobody has looked
+at. **So the count is not three defects — it is a class with at least three CONFIRMED members
+and several more strongly suspected.** Anyone continuing this arc should treat "~15.0s failing
+test" as the search key rather than chasing individual test names.
+
 ## 8. APPENDIX A — proposed `CLAUDE.md` addition (NOT applied; awaiting review)
 
 Reverted from the working tree pending a decision. Recorded here so it survives.
