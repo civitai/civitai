@@ -25,6 +25,57 @@ import {
 const DB_QUERY_TIMEOUT_MS = 30_000;
 const DB_QUERY_TIMEOUT_SECONDS = DB_QUERY_TIMEOUT_MS / 1000;
 
+/** Rows `query_database` will hand back to the model. */
+const MAX_RESULT_ROWS = 50;
+
+/**
+ * Rows actually asked of the database: one more than we return, so a full page
+ * is distinguishable from a truncated one. Slicing a buffered array cannot make
+ * that distinction, which is why the old code could not say whether "50 rows"
+ * meant "50 rows existed" or "we threw the rest away".
+ */
+const ROW_FETCH_LIMIT = MAX_RESULT_ROWS + 1;
+
+/**
+ * Alias for the bounding subquery. Postgres requires a derived table be named,
+ * and the name is unlikely enough to collide with a model-chosen alias — though
+ * a collision would be harmless anyway: an inner alias lives at its own query
+ * level, verified against Postgres 18.
+ */
+const ROW_BOUND_ALIAS = '__civitai_row_bound';
+
+/**
+ * Wrap the model's statement so the ROW BOUND is the database's to enforce,
+ * matching the other two bounds (`checkQueryScope` for relations, `SET LOCAL
+ * statement_timeout` for time).
+ *
+ * Why this is not a `rows.slice(0, 50)`: `queryWithTimeout` goes through
+ * node-postgres `client.query()`, which is NOT streaming — it accumulates every
+ * row of the result into the Node heap before the promise resolves. A
+ * model-written `SELECT * FROM "User"` with no LIMIT therefore materialised the
+ * whole table in-process and only then discarded all but 50 rows, so the 50 was
+ * a bound on the model's context window, not on this process's memory. The tool
+ * description promises the bounds are "enforced by the server, not by
+ * convention"; an outer LIMIT is what makes that true of the row count too.
+ *
+ * Semantics of the wrap were verified against a real Postgres rather than
+ * reasoned about — `ORDER BY` (including on an unprojected column, by ordinal,
+ * and across a `UNION`), `UNION`/`UNION ALL`, `DISTINCT ON`, `GROUP BY`/
+ * `HAVING`, window functions, and an inner `LIMIT`/`OFFSET` all survive it, and
+ * duplicate output column names in the inner statement are legal in a derived
+ * table (`SELECT * FROM (SELECT 1 AS a, 2 AS a) x` is accepted, both columns
+ * preserved). The plan is `Limit -> ...`, so the scan really stops early rather
+ * than filtering afterwards.
+ *
+ * The trailing `;` that `checkQueryScope` permits has to go first, or the wrap
+ * is a syntax error.
+ */
+function boundRowCount(sql: string): string {
+  const trimmed = sql.trim();
+  const withoutTerminator = trimmed.endsWith(';') ? trimmed.slice(0, -1) : trimmed;
+  return `SELECT * FROM (${withoutTerminator}) ${ROW_BOUND_ALIAS} LIMIT ${ROW_FETCH_LIMIT}`;
+}
+
 // --- Tool definitions ---
 
 const getTicketTool: ToolDefinitionJson = {
@@ -268,14 +319,14 @@ const queryDatabaseTool: ToolDefinitionJson = {
     name: 'query_database',
     description: [
       'Execute a SELECT query against the Civitai database. Use this to verify facts, look up user info, or check system data when the purpose-built investigation tools do not cover what you need.',
-      'The following are enforced by the server, not by convention — a query that breaks any of them is rejected or cancelled, so write to them up front:',
+      'The following are enforced by the server, not by convention — a query that breaks any of them is rejected, cancelled, or truncated, so write to them up front:',
       `- It can only read these tables: ${FRESHDESK_QUERY_TABLES.map((t) => `"${t}"`).join(', ')}.`,
       '- It runs inside a read-only transaction, so nothing can be written.',
       `- The database cancels the statement after ${DB_QUERY_TIMEOUT_SECONDS} seconds. Always use LIMIT and filter on indexed columns.`,
       '- One statement only. No comments, no CTEs (WITH), no schema prefixes, no table functions.',
       '- Reference tables by their exact double-quoted name, e.g. FROM "User".',
       "- FROM-inside-a-function-call is not supported: use date_part('epoch', col) rather than EXTRACT(EPOCH FROM col), and substr(...) rather than SUBSTRING(x FROM 1).",
-      'At most 50 rows are returned.',
+      `- At most ${MAX_RESULT_ROWS} rows come back. The server wraps the statement in its own outer LIMIT, so this holds whether or not you wrote a LIMIT, and the result says so explicitly when it truncated. Your own LIMIT is still worth writing — the outer one caps what is returned, not how much the database has to sort or aggregate first.`,
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -411,24 +462,32 @@ async function executeQueryDatabase(sql: string): Promise<string> {
     return 'Error: Only SELECT queries are allowed.';
   }
 
-  // Bound WHICH relations the statement can reach before it touches a connection.
+  // Bound WHICH relations the statement can reach before it touches a
+  // connection. This reads the model's ORIGINAL text — `boundRowCount` below
+  // rewrites the statement, and a scope check run against the rewrite would be
+  // auditing our own wrapper rather than the model's query.
   const scope = checkQueryScope(sql);
   if (!scope.ok) return scope.error;
 
   try {
     // `queryWithTimeout` wraps the statement in BEGIN READ ONLY + SET LOCAL
-    // statement_timeout, so both bounds are the database's to enforce. A
-    // `Promise.race` here would only abandon the promise — the backend would
-    // keep running and keep holding its pooled connection.
+    // statement_timeout, so both of those bounds are the database's to enforce.
+    // A `Promise.race` here would only abandon the promise — the backend would
+    // keep running and keep holding its pooled connection. `boundRowCount`
+    // makes the row bound the database's too: node-postgres buffers the whole
+    // result set into the heap, so a bound applied after the await is not a
+    // bound on this process at all.
     const { rows } = await queryWithTimeout<Record<string, unknown>>(
       pgDbRead,
       DB_QUERY_TIMEOUT_MS,
-      sql
+      boundRowCount(sql)
     );
     if (rows.length === 0) return 'No results found.';
-    // Limit output size
-    const truncated = rows.slice(0, 50);
-    return JSON.stringify(truncated, null, 2);
+    if (rows.length > MAX_RESULT_ROWS) {
+      const shown = JSON.stringify(rows.slice(0, MAX_RESULT_ROWS), null, 2);
+      return `${shown}\n\nTruncated: more than ${MAX_RESULT_ROWS} rows matched and only the first ${MAX_RESULT_ROWS} are shown. Narrow the query — add a WHERE filter, an ORDER BY, or a smaller LIMIT.`;
+    }
+    return JSON.stringify(rows, null, 2);
   } catch (err) {
     if (
       typeof err === 'object' &&
