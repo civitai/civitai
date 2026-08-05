@@ -37,6 +37,8 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { blockInitFragmentEnabled } from './blockInitFragmentGate';
+import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -606,14 +608,28 @@ export function IframeHost({
   // used everywhere else modelCtx.slotId is read in this component.
   const slotId = modelCtx.slotId ?? 'model.sidebar_top';
 
-  const iframeSrc = install.manifest.iframe?.src ?? '';
+  // The publisher's declared src. The rendered `src` adds the init-fragment
+  // fast path on top ONLY when this block is gated on for it (see
+  // blockInitFragmentGate.ts — off by default for every block). The ORIGIN is
+  // derived from the BASE so the postMessage target can never be affected by
+  // the fragment.
+  const baseIframeSrc = install.manifest.iframe?.src ?? '';
+  const iframeSrc = useBlockIframeSrc(
+    baseIframeSrc,
+    {
+      theme: modelCtx.theme ?? 'light',
+      renderMode: install.renderMode,
+      blockInstanceId: install.blockInstanceId,
+    },
+    blockInitFragmentEnabled({ surface: 'model-slot', blockId: install.blockId })
+  );
   const expectedOrigin = useMemo(() => {
     try {
-      return new URL(iframeSrc).origin;
+      return new URL(baseIframeSrc).origin;
     } catch {
       return '';
     }
-  }, [iframeSrc]);
+  }, [baseIframeSrc]);
 
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so they can never
