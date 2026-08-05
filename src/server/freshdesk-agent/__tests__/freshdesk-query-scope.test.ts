@@ -194,8 +194,13 @@ describe('checkQueryScope — relations outside the allowed set', () => {
    * `VALUES` is UNRESERVED in Postgres (`pg_get_keywords.catcode = 'C'`), so
    * `CREATE TABLE values (...)` is legal and a bare `values` in relation
    * position is a real relation reference — unlike `SELECT`, which is reserved.
-   * It is a from_item only at the head of a parenthesized sub-query, so every
-   * other position must still be refused.
+   *
+   * What separates the two is the NEXT token, not the position: a `VALUES`
+   * clause is always immediately followed by `(`, and a relation named `values`
+   * never can be (`FROM values (id)` and `FROM values(1)` are both syntax
+   * errors). So each case below is a relation reference and must be refused —
+   * including the last one, where the next token is a quoted identifier whose
+   * TEXT is `(` and only its token KIND distinguishes it from a real clause.
    */
   it.each([
     ['bare, as the only relation', 'SELECT * FROM values'],
