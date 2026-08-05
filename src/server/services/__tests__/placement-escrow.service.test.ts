@@ -747,3 +747,131 @@ describe('when the lock cannot be acquired', () => {
     expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
   });
 });
+
+describe('the sweeper converges', () => {
+  // A leg with nothing to pay can never acquire a receipt, so persisting one
+  // leaves it in the sweeper's result set forever. Past `take: limit` those
+  // rows crowd out genuinely stranded legs, and the recovery path starves while
+  // reporting success every run.
+  it('does not persist a leg that moves no money', async () => {
+    givenPlacement({ sellerId: null });
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(legsFor(1)).not.toHaveProperty('toSeller');
+  });
+
+  it('reports nothing stranded once a placement is fully paid', async () => {
+    givenPlacement({ sellerId: null });
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    const first = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+    const second = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(first.stranded).toBe(0);
+    expect(second.stranded).toBe(0);
+  });
+
+  // The batch is bounded, so a permanently-unclearable row is not merely waste:
+  // enough of them and a genuinely stranded leg never makes it into a run.
+  it('still finds a stranded leg when other placements are settled', async () => {
+    for (const id of [1, 2, 3]) {
+      givenPlacement({ id, sellerId: null });
+      await holdPlacementEscrow({
+        placementId: id,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      });
+      await settlePlacement({ placementId: id, action: 'approve', actorId: OWNER });
+    }
+
+    givenPlacement({ id: 4, sellerId: null });
+    await holdPlacementEscrow({
+      placementId: 4,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+    await expect(
+      settlePlacement({ placementId: 4, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
+
+    expect(swept.stranded).toBe(1);
+    expect(db.legs.get('4:toOwner')?.transactionId).toBe('buzz-tx');
+  });
+});
+
+describe('when two callers claim different amounts', () => {
+  // Two callers read live config at slightly different moments, so they can
+  // compute different numbers for the same leg. Whoever loses the insert must
+  // pay what the ledger records, not its own copy — otherwise the escrow moves
+  // an amount reconciliation cannot see.
+  // The payout path is covered by the plan being re-read from the ledger. The
+  // hold path is not: its amounts are computed locally from live config on every
+  // call, so a caller that loses the insert across a rate change would otherwise
+  // charge a number the ledger does not record.
+  it('charges the held amount the winning claim recorded, not its own', async () => {
+    givenPlacement();
+    // A concurrent hold got there first, at the rate as it stood then.
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 200,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    const feeCall = createMultiAccountBuzzTransaction.mock.calls.find(
+      (c) => c[0].externalTransactionIdPrefix === 'placement-1-holdFee'
+    );
+    expect(feeCall?.[0].amount).toBe(200);
+    expect(legsFor(1).holdFee).toBe(200);
+  });
+
+  it('pays the payout amounts the ledger holds, not a freshly computed plan', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    db.legs.set('1:toOwner', {
+      placementId: 1,
+      kind: 'toOwner',
+      amount: 400,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(expect.objectContaining({ amount: 400 }));
+    expect(createBuzzTransaction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 700 })
+    );
+  });
+});

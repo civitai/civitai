@@ -86,7 +86,7 @@ async function runLeg(
   placementId: number,
   kind: PlacementTransactionKind,
   amount: number,
-  pay: (externalTransactionId: string) => Promise<string | null>
+  pay: (externalTransactionId: string, amount: number) => Promise<string | null>
 ) {
   if (amount <= 0) return null;
 
@@ -117,7 +117,14 @@ async function runLeg(
       });
       if (claimed?.transactionId) return claimed.transactionId;
 
-      const transactionId = await pay(placementTransactionId(placementId, kind));
+      // The winning claim decides the amount, not this caller's copy of it. Two
+      // callers can compute different numbers — they read live config at
+      // slightly different moments — and whoever lost the insert would otherwise
+      // move an amount the ledger does not record.
+      const transactionId = await pay(
+        placementTransactionId(placementId, kind),
+        claimed?.amount ?? amount
+      );
 
       await dbWrite.placementTransaction.update({
         where: { placementId_kind: { placementId, kind } },
@@ -169,9 +176,9 @@ export async function holdPlacementEscrow({
   const principal = amount - fee;
 
   const hold = (kind: PlacementTransactionKind, holdAmount: number) =>
-    runLeg(placementId, kind, holdAmount, async (externalTransactionIdPrefix) => {
+    runLeg(placementId, kind, holdAmount, async (externalTransactionIdPrefix, payAmount) => {
       const result = await createMultiAccountBuzzTransaction({
-        amount: holdAmount,
+        amount: payAmount,
         fromAccountId: placerId,
         toAccountId: ESCROW_ACCOUNT_ID,
         type: TransactionType.Fee,
@@ -273,14 +280,26 @@ async function planPayout(placement: PlacementRow, held: Map<string, number>) {
   });
   if (existing.length) return existing as PlannedLeg[];
 
-  const legs = await computePayoutLegs(placement, held);
+  // Zero-amount legs are not movements of money and must not be persisted: they
+  // could never acquire a receipt (a leg with nothing to pay returns before
+  // writing one), so they would sit in the sweeper's result set forever, and
+  // past its batch limit they would crowd out genuinely stranded legs — starving
+  // the one mechanism that recovers from an outage, while reporting success.
+  const legs = (await computePayoutLegs(placement, held)).filter((leg) => leg.amount > 0);
 
   await dbWrite.placementTransaction.createMany({
     data: legs.map((leg) => ({ placementId: placement.id, ...leg })),
     skipDuplicates: true,
   });
 
-  return legs;
+  // Re-read rather than returning what we just computed: `skipDuplicates` means
+  // a concurrent caller may have written the plan first, and its numbers are the
+  // ones on disk. Trusting the local copy would pay amounts the ledger disagrees
+  // with.
+  return (await dbWrite.placementTransaction.findMany({
+    where: { placementId: placement.id, kind: { in: [...PAYOUT_KINDS] } },
+    select: { kind: true, amount: true },
+  })) as PlannedLeg[];
 }
 
 async function computePayoutLegs(
@@ -339,9 +358,9 @@ async function payOutPlacement(placement: PlacementRow) {
   const plan = await planPayout(placement, held);
 
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
-    runLeg(placement.id, kind, amount, async (externalTransactionId) => {
+    runLeg(placement.id, kind, amount, async (externalTransactionId, payAmount) => {
       const { transactionId } = await createBuzzTransaction({
-        amount,
+        amount: payAmount,
         fromAccountId: ESCROW_ACCOUNT_ID,
         toAccountId,
         type: TransactionType.Fee,
@@ -450,7 +469,7 @@ export async function sweepUnpaidLegs({
 }: { limit?: number; olderThanMinutes?: number } = {}) {
   const before = new Date(Date.now() - olderThanMinutes * 60_000);
   const stranded = await dbWrite.placementTransaction.findMany({
-    where: { transactionId: null, createdAt: { lt: before } },
+    where: { transactionId: null, amount: { gt: 0 }, createdAt: { lt: before } },
     select: { placementId: true },
     distinct: ['placementId'],
     take: limit,
