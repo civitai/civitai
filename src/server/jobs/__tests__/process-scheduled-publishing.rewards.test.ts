@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockApply, mockSetLastRun, jobDate } = vi.hoisted(() => ({
+const { mockDbWrite, mockApply, mockSetLastRun, mockLogToAxiom, jobDate } = vi.hoisted(() => ({
   mockDbWrite: {
     $queryRaw: vi.fn(),
     $executeRaw: vi.fn(),
@@ -11,10 +11,16 @@ const { mockDbWrite, mockApply, mockSetLastRun, jobDate } = vi.hoisted(() => ({
   },
   mockApply: vi.fn(),
   mockSetLastRun: vi.fn(),
+  mockLogToAxiom: vi.fn(() => Promise.resolve()),
   jobDate: { lastRun: new Date(0) },
 }));
 
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+// Hand-listed rather than spread via importOriginal: the rewards barrel reaches
+// modules that build query caches from the db client at import time, so pulling the
+// real one in drops this suite to zero collected tests.
 vi.mock('~/server/rewards', () => ({ firstDailyPostReward: { apply: mockApply } }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
 vi.mock('~/server/redis/caches', () => ({
@@ -38,8 +44,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 
 type Row = { id: number; userId: number };
 
-// The job fires five tagged-template reads; route on the SQL text so the test
-// doesn't break when their order changes.
+// Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({ scheduled = [], newlyLive = [] }: { scheduled?: Row[]; newlyLive?: Row[] }) => {
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const sql = (args[0] as string[]).join(' ');
@@ -84,31 +89,53 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockApply).toHaveBeenCalledWith({ postId: 2, posterId: 20 });
   });
 
+  // The two reads can't overlap today — the flip happens after both — so this pins
+  // the guard that keeps that true if either query moves.
   it('rewards a post once when both queries return it', async () => {
     stubReads({ scheduled: [{ id: 3, userId: 30 }], newlyLive: [{ id: 3, userId: 30 }] });
     await runJob();
     expect(mockApply).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps publishing when a reward fails', async () => {
+  it('reports a failed reward to Axiom and keeps publishing', async () => {
     mockApply.mockRejectedValueOnce(new Error('buzz down'));
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    stubReads({ newlyLive: [{ id: 4, userId: 40 }, { id: 5, userId: 50 }] });
+    stubReads({
+      newlyLive: [
+        { id: 4, userId: 40 },
+        { id: 5, userId: 50 },
+      ],
+    });
     await runJob();
     expect(mockApply).toHaveBeenCalledTimes(2);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', postId: 4 })
+    );
     expect(mockSetLastRun).toHaveBeenCalled();
+  });
+
+  it('warns instead of silently truncating when the sweep hits its row limit', async () => {
+    stubReads({ newlyLive: Array.from({ length: 5000 }, (_, i) => ({ id: i, userId: i })) });
+    await runJob();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', message: expect.stringContaining('row limit') })
+    );
   });
 });
 
 describe('processScheduledPublishing :: standalone sweep window', () => {
-  it('clamps an epoch job date so a fresh env does not sweep every post ever published', async () => {
+  // The reward's dedup entry expires at UTC midnight, so a window reaching back past
+  // it would re-grant yesterday's posts on today's cap.
+  it('never reaches back past the start of the UTC day', async () => {
     await runJob();
-    const [, windowStart, now] = standaloneCall() as [unknown, Date, Date];
-    expect(now.getTime() - windowStart.getTime()).toBe(60 * 60 * 1000);
+    const [, windowStart] = standaloneCall() as [unknown, Date];
+    expect(windowStart.toISOString()).toBe(
+      new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString()
+    );
   });
 
-  it('starts at the previous run when that is inside the lookback limit', async () => {
-    jobDate.lastRun = new Date(Date.now() - 60 * 1000);
+  it('starts at the previous run when that is inside the current UTC day', async () => {
+    const startOfDay = new Date().setUTCHours(0, 0, 0, 0);
+    jobDate.lastRun = new Date(Math.max(Date.now() - 60 * 1000, startOfDay + 1));
     await runJob();
     const [, windowStart] = standaloneCall() as [unknown, Date];
     expect(windowStart).toEqual(jobDate.lastRun);
@@ -118,7 +145,9 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
   // takes int4, so the query fails to resolve the function (42883) on every run.
   it('inlines the schedule offset rather than binding it', async () => {
     await runJob();
-    const interval = standaloneCall().at(-1) as Prisma.Sql;
+    const interval = standaloneCall().find(
+      (value) => typeof (value as Prisma.Sql)?.sql === 'string'
+    ) as Prisma.Sql;
     expect(interval.sql).toBe('make_interval(mins => 60)');
     expect(interval.values).toEqual([]);
   });

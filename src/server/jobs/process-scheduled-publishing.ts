@@ -4,6 +4,7 @@ import { eventEngine } from '~/server/events';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
+import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { firstDailyPostReward } from '~/server/rewards';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -23,10 +24,9 @@ type ScheduledEntity = {
   extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
-// Ceiling on how far back the standalone-post reward sweep will look. The stored
-// job date defaults to the epoch when the KeyValue row is missing (fresh env),
-// which would otherwise sweep every post ever published.
-const REWARD_LOOKBACK_LIMIT_MS = 60 * 60 * 1000;
+// Blast-radius guard on the reward sweep: any bulk write that stamps "publishedAt"
+// across a large batch would otherwise be reward-applied row by row in one run.
+const REWARD_SWEEP_LIMIT = 5000;
 
 export const processScheduledPublishing = createJob(
   'process-scheduled-publishing',
@@ -82,17 +82,24 @@ export const processScheduledPublishing = createJob(
       WHERE
         (p."publishedAt" IS NULL)
       AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now}
+      AND m."userId" = p."userId"
       AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
     `;
 
     // Standalone scheduled posts go live passively once feeds stop filtering on
     // "publishedAt" — no status flips, so this window is the only publish-time hook.
-    // The createdAt offset can't exclude a scheduled post (it's enforced at schedule
-    // time); the instant publishes it lets through were already rewarded inline and
-    // dedup by postId makes those a no-op.
-    const rewardWindowStart = new Date(
-      Math.max(lastRun.getTime(), now.getTime() - REWARD_LOOKBACK_LIMIT_MS)
-    );
+    // The createdAt offset can't exclude a scheduled post (the offset is enforced at
+    // schedule time) but it does let through drafts that sat over an hour before
+    // being published normally — roughly a sixth of all publishes. They're harmless
+    // to the reward, which dedups per post, but any further side effect added to this
+    // sweep fires on them too.
+    //
+    // Never widen the window past the start of the UTC day: the reward's dedup entry
+    // expires then, so a window spanning midnight re-grants yesterday's posts. That
+    // also bounds a fresh environment, where the stored job date reads as the epoch.
+    const startOfUtcDay = new Date(now);
+    startOfUtcDay.setUTCHours(0, 0, 0, 0);
+    const rewardWindowStart = new Date(Math.max(lastRun.getTime(), startOfUtcDay.getTime()));
     const newlyLivePosts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
       SELECT
         p.id,
@@ -102,7 +109,9 @@ export const processScheduledPublishing = createJob(
         AND p."publishedAt" <= ${now}
         AND p."publishedAt" >= p."createdAt" + ${Prisma.raw(
           `make_interval(mins => ${POST_MINIMUM_SCHEDULE_MINUTES})`
-        )};
+        )}
+      ORDER BY p."publishedAt"
+      LIMIT ${REWARD_SWEEP_LIMIT};
     `;
 
     // Get scheduled comic chapters
@@ -301,15 +310,29 @@ export const processScheduledPublishing = createJob(
       });
     }
 
-    // Neither scheduled path reaches the inline reward in post.controller: the posts
-    // flipped above had no publishedAt for it to fire on, and standalone ones skip it
-    // at schedule time so the grant lands on the day they actually go live.
+    // Neither scheduled path reaches the inline reward in post.controller, so the
+    // grant lands here on the day the post actually goes live.
+    if (newlyLivePosts.length === REWARD_SWEEP_LIMIT) {
+      await logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'warning',
+        message: 'Reward sweep hit its row limit; the remainder of this window is dropped',
+        windowStart: rewardWindowStart.toISOString(),
+      }).catch(() => undefined);
+    }
     for (const post of uniqBy([...scheduledPosts, ...newlyLivePosts], 'id')) {
-      await firstDailyPostReward
-        .apply({ postId: post.id, posterId: post.userId })
-        .catch((error) =>
-          console.error(`Failed to apply first daily post reward for post ${post.id}:`, error)
-        );
+      // Caught per post so one failure can't abort the job — but routed to Axiom
+      // rather than swallowed, since base.reward rethrows genuine ClickHouse schema
+      // breaks precisely so they stay visible.
+      await firstDailyPostReward.apply({ postId: post.id, posterId: post.userId }).catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'Failed to apply first daily post reward',
+          postId: post.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
     }
 
     // Reindex the just-published posts' images so the metrics_images feed picks
