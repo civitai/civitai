@@ -415,7 +415,16 @@ async function gate(args: string[]): Promise<Run> {
   }
 }
 
-describe('drift-gate CLI', () => {
+// Every case below spawns the real entry point as a PROCESS, so each pays a cold tsx
+// transpile plus a Node start before its first assertion. Measured on an idle machine the
+// slowest is 3.5s against Vitest's 5s default — a 1.4x margin, which a 2-core CI runner will
+// not honour. That is a test that fails on ambient machine speed rather than on the code, and
+// a different case each run, which is the worst kind of red. 60s still bounds a genuine hang.
+//
+// Set here rather than in the package's vitest.config.ts on purpose: the config is a shared
+// file and a concurrent change to it is already in flight for the sibling cli.test.ts, which
+// has the same shape and the same problem.
+describe('drift-gate CLI', { timeout: 60_000 }, () => {
   let dir: string;
   let driftedSchema: string;
   let pendingSchema: string;
