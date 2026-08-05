@@ -52,7 +52,10 @@ const db = {
 };
 
 type LedgerQuery = {
-  where: Record<string, { in?: string[]; not?: string; lt?: Date } | number | null | undefined>;
+  where: Record<
+    string,
+    { in?: string[]; not?: string | null; lt?: Date } | number | null | undefined
+  >;
   distinct?: string[];
   take?: number;
 };
@@ -137,6 +140,17 @@ Object.assign(dbWriteMock, {
           if (where.kind?.in && !where.kind.in.includes(leg.kind)) return false;
           if (where.kind?.not && leg.kind === where.kind.not) return false;
           if (where.transactionId === null && leg.transactionId !== null) return false;
+          // `{ not: null }` means receipted-only. Ignoring it would let a
+          // claimed-but-unpaid hold count as money in escrow, which is the
+          // defect this predicate exists to prevent.
+          if (
+            where.transactionId &&
+            typeof where.transactionId === 'object' &&
+            'not' in where.transactionId &&
+            where.transactionId.not === null &&
+            leg.transactionId === null
+          )
+            return false;
           return true;
         });
         const withAge = rows.filter((leg) =>
@@ -954,5 +968,106 @@ describe('a settlement always leaves a plan', () => {
     expect(createBuzzTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ toAccountId: OWNER, amount: 700 })
     );
+  });
+});
+
+describe('an unfunded placement', () => {
+  // The trap: asserting "no payout happens" passes for the wrong reason if the
+  // hold legs are simply absent. The case that bites is a hold leg PRESENT with
+  // a null transactionId — claimed but never charged — which is exactly what a
+  // Redis outage leaves behind.
+  const givenClaimedButUnpaidHolds = () => {
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+    db.legs.set('1:holdPrincipal', {
+      placementId: 1,
+      kind: 'holdPrincipal',
+      amount: 700,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+  };
+
+  it('pays nothing out, because that Buzz was never taken', async () => {
+    givenPlacement();
+    givenClaimedButUnpaidHolds();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).not.toHaveBeenCalled();
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
+  });
+
+  it('refunds nothing on decline either', async () => {
+    givenPlacement();
+    givenClaimedButUnpaidHolds();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('is surfaced by the unplanned-settlement sweep rather than disappearing', async () => {
+    givenPlacement();
+    givenClaimedButUnpaidHolds();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    // The placement settled with no payout legs, which is the state the second
+    // sweep exists to find.
+    expect(legsFor(1)).not.toHaveProperty('toOwner');
+  });
+});
+
+describe('the unpaid-leg sweep only covers legs it can finish', () => {
+  // Hold legs also match "claimed but unpaid", and this sweep can never finish
+  // one: it skips pending placements, and nothing writes a hold receipt after a
+  // settle. They would sit in the batch forever and starve it.
+  it('never returns a pending placement whose hold was claimed but not charged', async () => {
+    givenPlacement();
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(swept.stranded).toBe(0);
+  });
+
+  it('still finds a genuinely stranded payout leg alongside one', async () => {
+    givenPlacement({ id: 1 });
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: null,
+      createdAt: new Date(0),
+    });
+
+    givenPlacement({ id: 2 });
+    await holdPlacementEscrow({
+      placementId: 2,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+    await expect(
+      settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
+
+    expect(swept.stranded).toBe(1);
+    expect(db.legs.get('2:toOwner')?.transactionId).toBe('buzz-tx');
   });
 });

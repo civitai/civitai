@@ -166,6 +166,13 @@ async function runLeg(
  *
  * Paid Buzz only. This refuses on the mutation rather than relying on a listing
  * or a picker to filter: a listing that filters is not a mutation that refuses.
+ *
+ * **Callers must create the placement row and call this in one transaction.**
+ * The row must exist first — its id is a parameter here — so a caller that
+ * commits it separately and then fails to take the escrow leaves a pending
+ * placement backed by nothing. Nothing downstream will pay out against it (the
+ * hold amounts are read receipted-only), but it is a live placement nobody paid
+ * for, and only the caller can prevent it.
  */
 export async function holdPlacementEscrow({
   placementId,
@@ -289,7 +296,7 @@ export async function settlePlacement({
       },
     });
 
-    if (updated.count > 0 && legs.length)
+    if (updated.count > 0)
       await tx.placementTransaction.createMany({
         data: legs.map((leg) => ({ placementId, ...leg })),
         skipDuplicates: true,
@@ -366,6 +373,12 @@ async function computePayoutLegs(
  * nothing to pay can never acquire a receipt, so persisting one leaves a row the
  * sweeper can never clear, and past its batch limit those crowd out genuinely
  * stranded legs.
+ *
+ * **Every field this reads must be either immutable or overridden by the
+ * synthesised row in `settlePlacement`.** It runs twice against the same
+ * placement — once inside the settle transaction against a row that does not
+ * exist yet, and once from `planPayout` on resume — and a plan-affecting field
+ * that only one of them sees would make those two disagree silently.
  */
 async function payoutLegsFor(
   placement: PlacementRow,
@@ -483,9 +496,21 @@ async function payOutPlacement(placement: PlacementRow) {
   }
 }
 
+/**
+ * What is actually sitting in the escrow account for this placement.
+ *
+ * **Receipted holds only.** A claimed-but-unpaid hold is a leg that was planned
+ * and never charged — Redis down, or the process died mid-hold — and counting it
+ * would size payouts against Buzz that was never taken, paying real money out of
+ * an account that never received it. An unfunded placement must plan nothing.
+ */
 const heldAmountsFor = async (placementId: number) => {
   const rows = await dbWrite.placementTransaction.findMany({
-    where: { placementId, kind: { in: [...HOLD_KINDS] } },
+    where: {
+      placementId,
+      kind: { in: [...HOLD_KINDS] },
+      transactionId: { not: null },
+    },
     select: { kind: true, amount: true },
   });
 
@@ -540,7 +565,17 @@ export async function sweepUnpaidLegs({
 }: { limit?: number; olderThanMinutes?: number } = {}) {
   const before = new Date(Date.now() - olderThanMinutes * 60_000);
   const stranded = await dbWrite.placementTransaction.findMany({
-    where: { transactionId: null, amount: { gt: 0 }, createdAt: { lt: before } },
+    // Payout kinds only. Hold legs also match "claimed but unpaid", and this
+    // sweep can never finish one — it skips pending placements, and after a
+    // settle nothing writes a hold's receipt either. They would be permanent
+    // residents, and past `take` they crowd out legs that can actually be
+    // finished: the recovery path starves while reporting a healthy count.
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      createdAt: { lt: before },
+    },
     select: { placementId: true },
     distinct: ['placementId'],
     take: limit,
