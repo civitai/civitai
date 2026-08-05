@@ -64,6 +64,20 @@ describe('checkQueryScope — statements it confirms', () => {
     ],
     ['a sub-select in the FROM list', 'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x'],
     [
+      'a parenthesized join of allowed tables',
+      'SELECT * FROM ("User" JOIN "Model" ON true) LIMIT 5',
+    ],
+    ['an inline VALUES list in the FROM list', 'SELECT x FROM (VALUES (1), (2)) AS t(x)'],
+    [
+      'a LATERAL sub-select, whose keyword sits between JOIN and the relation',
+      'SELECT * FROM "User" u, LATERAL (SELECT 1) s',
+    ],
+    ['a LATERAL inline VALUES list', 'SELECT * FROM "User" u, LATERAL (VALUES (1)) AS t(x)'],
+    [
+      'an inline VALUES list joined to an allowed table',
+      'SELECT * FROM (VALUES (1)) AS t(x) JOIN "User" u ON u.id = t.x',
+    ],
+    [
       'a sub-select in the FROM list followed by another relation',
       'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x, "Model" m',
     ],
@@ -129,6 +143,111 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     const result = checkQueryScope(
       'SELECT * FROM "User" WHERE id IN (SELECT "userId" FROM (SELECT "userId" FROM "Session") s)'
     );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  /**
+   * A parenthesized join expression is a relation position, not a sub-select:
+   * `FROM ("A" JOIN "B" ON ...)` is valid Postgres and its FIRST item is a
+   * relation. Every other `FROM (` case in this file is a sub-select, so these
+   * pin the other reading of the same two characters — the leading relation
+   * must still be checked, at any depth and for every join flavour.
+   */
+  it('refuses a disallowed table leading a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("Session" JOIN "User" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table leading a parenthesized CROSS JOIN', () => {
+    const result = checkQueryScope('SELECT * FROM ("ApiKey" CROSS JOIN "User") LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "ApiKey"');
+  });
+
+  it('refuses a disallowed table leading a doubly-parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM (("Account" JOIN "User" ON true)) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Account"');
+  });
+
+  it('still refuses a disallowed table in the trailing position of a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("User" JOIN "Session" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table reached from inside an inline VALUES list', () => {
+    const result = checkQueryScope('SELECT * FROM (VALUES ((SELECT id FROM "Session"))) AS t(x)');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  /**
+   * `VALUES` is UNRESERVED in Postgres (`pg_get_keywords.catcode = 'C'`), so
+   * `CREATE TABLE values (...)` is legal and a bare `values` in relation
+   * position is a real relation reference — unlike `SELECT`, which is reserved.
+   *
+   * What separates the two is the NEXT token, not the position: a `VALUES`
+   * clause is always immediately followed by `(`, and a relation named `values`
+   * never can be (`FROM values (id)` and `FROM values(1)` are both syntax
+   * errors). So each case below is a relation reference and must be refused —
+   * including the last one, where the next token is a quoted identifier whose
+   * TEXT is `(` and only its token KIND distinguishes it from a real clause.
+   */
+  it.each([
+    ['bare, as the only relation', 'SELECT * FROM values'],
+    ['bare, in a comma list', 'SELECT * FROM "User" u, values v'],
+    ['bare, inside a parenthesized join', 'SELECT * FROM ("User" u JOIN values v ON true)'],
+    ['bare, reached through a join', 'SELECT * FROM "User" u JOIN values v ON true'],
+    ['bare, case-folded', 'SELECT * FROM VaLuEs'],
+    ['bare, in a sub-select', 'SELECT * FROM "User" WHERE id IN (SELECT id FROM values)'],
+    // The head item of the outer paren is itself a parenthesized group, so a
+    // position-tracking gate can leave a stale "this is the head" state behind
+    // and wave the later join through. The discriminator is the next token, not
+    // the position, so these must refuse at any nesting depth.
+    ['bare, after a nested sub-query head', 'SELECT * FROM ((SELECT 1) s JOIN values v ON true)'],
+    [
+      'bare, after a nested join head',
+      'SELECT * FROM (("User" u JOIN "Image" i ON true) JOIN values v ON true)',
+    ],
+    [
+      'bare, after a LATERAL nested head',
+      'SELECT * FROM (LATERAL (SELECT 1) s JOIN values v ON true)',
+    ],
+    // `values` LEADING a parenthesized joined_table is a relation reference too:
+    // it is followed by an alias, never by `(`.
+    // The next token here is a QUOTED identifier whose text happens to be `(`
+    // (a legal, if perverse, alias). Only the token's kind separates it from a
+    // real `VALUES (` clause.
+    ['bare, aliased with a quoted paren', 'SELECT * FROM values "("'],
+    ['bare, leading a parenthesized CROSS JOIN', 'SELECT * FROM (values v CROSS JOIN "User" u)'],
+    ['bare, leading a parenthesized join', 'SELECT * FROM (values v JOIN "User" u ON true) x'],
+  ])('refuses `values` used as a relation name — %s', (_label, sql) => {
+    expect(checkQueryScope(sql).ok).toBe(false);
+  });
+
+  it('refuses the double-quoted relation "values", which is not on the list', () => {
+    const result = checkQueryScope('SELECT * FROM "values"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "values"');
+  });
+
+  it('refuses a bare identifier that merely starts with a sub-query keyword', () => {
+    expect(checkQueryScope('SELECT * FROM selectfoo').ok).toBe(false);
+    expect(checkQueryScope('SELECT * FROM valuesbar').ok).toBe(false);
+  });
+
+  it('refuses a disallowed table following a sub-select in the FROM list', () => {
+    const result = checkQueryScope('SELECT * FROM (SELECT id FROM "User") x, "Session" m');
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.error).toContain('cannot read "Session"');
