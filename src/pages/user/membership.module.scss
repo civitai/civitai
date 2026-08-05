@@ -1,9 +1,6 @@
 .card {
   height: '100%';
-  background: light-dark(
-    var(--mantine-color-gray-0),
-    var(--mantine-color-dark-8)
-  );
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
   border-radius: var(--mantine-radius-md);
   padding: var(--mantine-spacing-lg);
 }
@@ -18,4 +15,10 @@
   background: light-dark(var(--mantine-color-red-0), var(--mantine-color-dark-6));
   border: 1px solid var(--mantine-color-red-3);
   border-left: 4px solid var(--mantine-color-red-6);
+}
+
+.buzzMembershipCallout {
+  background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-6));
+  border: 1px solid var(--mantine-color-blue-3);
+  border-left: 4px solid var(--mantine-color-blue-6);
 }

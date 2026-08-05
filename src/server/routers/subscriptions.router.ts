@@ -3,6 +3,7 @@ import {
   getPlansSchema,
   getUserSubscriptionSchema,
   claimPrepaidTokenSchema,
+  purchaseMembershipWithBuzzSchema,
 } from '~/server/schema/subscriptions.schema';
 import {
   getPlansHandler,
@@ -15,8 +16,10 @@ import {
   claimAllPrepaidTokens,
   unlockTokensForUser,
   getHistoricalPrepaidDeliveries,
+  purchaseMembershipWithBuzz,
 } from '~/server/services/subscriptions.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export const subscriptionsRouter = router({
   getPlans: publicProcedure
@@ -35,6 +38,20 @@ export const subscriptionsRouter = router({
     .input(claimPrepaidTokenSchema)
     .mutation(async ({ input, ctx }) => {
       return claimPrepaidToken({ tokenId: input.tokenId, userId: ctx.user.id });
+    }),
+  purchaseWithBuzz: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(purchaseMembershipWithBuzzSchema)
+    .mutation(async ({ input, ctx }) => {
+      // Domain decides the currency: green on .com, yellow on .red. Resolved here rather
+      // than accepted as input so a crafted request can't spend the other colour.
+      const [buzzType] = getAllowedAccountTypes(ctx.features);
+
+      return purchaseMembershipWithBuzz({
+        priceId: input.priceId,
+        buzzType,
+        userId: ctx.user.id,
+      });
     }),
   claimAllPrepaidTokens: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })

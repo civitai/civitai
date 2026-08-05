@@ -15,7 +15,13 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
+import { useState } from 'react';
+import {
+  IconBolt,
+  IconExclamationMark,
+  IconInfoCircle,
+  IconInfoTriangleFilled,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import Image from 'next/image';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -98,17 +104,32 @@ export function MembershipPlans({
   const features = useFeatureFlags();
   const redirectReason = reason ? joinRedirectReasons[reason] : undefined;
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
+  const [payWithBuzz, setPayWithBuzz] = useState(false);
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
-    interval,
+    interval: payWithBuzz ? 'month' : interval,
     buzzType: selectedBuzzType, // Filter plans by selected buzz type
+    buzzPurchase: payWithBuzz,
     paymentProvider:
-      features.disablePayments || selectedBuzzType === 'yellow' ? 'Civitai' : paymentProvider,
+      payWithBuzz || features.disablePayments || selectedBuzzType === 'yellow'
+        ? 'Civitai'
+        : paymentProvider,
   });
 
   const isLoading = productsLoading;
 
+  // A Buzz membership is deliberately absent from the cash catalog and sits on a different
+  // provider, so both checks below would flag it as a discontinued plan. It isn't — it's a
+  // live membership from the other catalog, and it's meant to be replaceable by a cash one.
+  const subscriptionIsBuzzPurchase = !!(
+    subscription?.product?.metadata as SubscriptionProductMetadata | undefined
+  )?.buzzPurchase;
+
+  // The alerts below all compare the user's subscription against the cash catalog, so
+  // they're meaningless while the Buzz catalog is on screen.
   const currentMembershipUnavailable =
+    !payWithBuzz &&
+    !subscriptionIsBuzzPurchase &&
     !features.disablePayments &&
     ((subscription && !subscription?.product?.active) ||
       (!!subscription &&
@@ -119,7 +140,11 @@ export function MembershipPlans({
         !(products ?? []).some((p) => p.provider === subscription.product.provider)));
 
   const activeSubscriptionIsNotDefaultProvider =
-    !features.disablePayments && subscription && subscriptionPaymentProvider !== paymentProvider;
+    !payWithBuzz &&
+    !subscriptionIsBuzzPurchase &&
+    !features.disablePayments &&
+    subscription &&
+    subscriptionPaymentProvider !== paymentProvider;
   const isHolidays = isHolidaysTime();
   const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
 
@@ -218,36 +243,87 @@ export function MembershipPlans({
               </Text>
             </AlertWithIcon>
           )}
-          {((features.annualMemberships && !features.isGreen) || interval === 'year') && (
-            <Center>
+          {features.buzzMemberships && (
+            <Stack gap={6} align="center">
               <SegmentedControl
                 radius="md"
-                value={interval}
-                onChange={(value) => onIntervalChange(value as 'month' | 'year')}
                 size="md"
+                value={payWithBuzz ? 'buzz' : 'cash'}
+                onChange={(value) => setPayWithBuzz(value === 'buzz')}
                 data={[
-                  { value: 'month', label: 'Monthly Plans' },
+                  { value: 'cash', label: 'Pay with Card' },
                   {
-                    value: 'year',
+                    value: 'buzz',
                     label: (
                       <Center>
-                        <Box mr={6}>Annual Plans</Box>
-                        <Badge
-                          p={5}
-                          className="flex"
-                          variant="filled"
-                          radius="xl"
-                          style={{ backgroundColor: buzzConfig.color }}
-                        >
-                          1 month for free!
-                        </Badge>
+                        <IconBolt
+                          size={16}
+                          style={{ color: buzzConfig.color, marginRight: 4 }}
+                          fill="currentColor"
+                        />
+                        Pay with {buzzTypeLabel}
                       </Center>
                     ),
                   },
                 ]}
               />
-            </Center>
+              {payWithBuzz && (
+                <Text size="xs" c="dimmed" className="text-center">
+                  Perks only — no monthly Buzz, no bonus Buzz, no monthly badge, and no Creator
+                  Program.
+                </Text>
+              )}
+            </Stack>
           )}
+
+          {payWithBuzz && !!subscription && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+              maw="calc(50% - 8px)"
+              mx="auto"
+            >
+              <Text lh={1.2}>
+                You already have a membership. You can purchase one with {buzzTypeLabel} once it
+                expires.
+              </Text>
+            </AlertWithIcon>
+          )}
+
+          {!payWithBuzz &&
+            ((features.annualMemberships && !features.isGreen) || interval === 'year') && (
+              <Center>
+                <SegmentedControl
+                  radius="md"
+                  value={interval}
+                  onChange={(value) => onIntervalChange(value as 'month' | 'year')}
+                  size="md"
+                  data={[
+                    { value: 'month', label: 'Monthly Plans' },
+                    {
+                      value: 'year',
+                      label: (
+                        <Center>
+                          <Box mr={6}>Annual Plans</Box>
+                          <Badge
+                            p={5}
+                            className="flex"
+                            variant="filled"
+                            radius="xl"
+                            style={{ backgroundColor: buzzConfig.color }}
+                          >
+                            1 month for free!
+                          </Badge>
+                        </Center>
+                      ),
+                    },
+                  ]}
+                />
+              </Center>
+            )}
 
           {subscription?.price?.interval === 'year' && interval === 'month' && (
             <AlertWithIcon

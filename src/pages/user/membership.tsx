@@ -1,11 +1,13 @@
 import {
   Alert,
   Anchor,
+  Badge,
   Box,
   Button,
   Card,
   Center,
   Container,
+  Divider,
   Grid,
   Group,
   Loader,
@@ -17,6 +19,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  IconBolt,
   IconGift,
   IconInfoCircle,
   IconInfoTriangleFilled,
@@ -58,7 +61,15 @@ import type {
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { dbRead } from '~/server/db/client';
+import {
+  BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  getBuzzMembershipPrice,
+  getSubscriptionDisplayBuzzType,
+} from '~/shared/utils/buzz-membership';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { formatDate } from '~/utils/date-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
@@ -80,13 +91,22 @@ export const getServerSideProps = createServerSideProps({
 
     // Allow users with subscriptionId OR users in memberInBadState to access the page
     // Users in bad state need to be able to manage/cancel their subscription
-    if (!session.user.subscriptionId && !session.user.memberInBadState && !session.user.tier)
-      return {
-        redirect: {
-          destination: '/pricing',
-          permanent: false,
-        },
-      };
+    if (!session.user.subscriptionId && !session.user.memberInBadState && !session.user.tier) {
+      // A Buzz-purchased membership sets none of those session fields, so this gate used to
+      // bounce those users to /pricing with no way to see what they'd bought.
+      const buzzMembership = await dbRead.customerSubscription.findFirst({
+        where: { userId: session.user.id, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+        select: { id: true },
+      });
+
+      if (!buzzMembership)
+        return {
+          redirect: {
+            destination: '/pricing',
+            permanent: false,
+          },
+        };
+    }
   },
 });
 
@@ -103,6 +123,7 @@ export default function UserMembership() {
     useActiveSubscription({
       checkWhenInBadState: true,
       buzzType: activeBuzzType,
+      includeBuzzPurchase: true,
     });
 
   // Check for subscriptions in other buzz types
@@ -287,6 +308,12 @@ export default function UserMembership() {
     subscription.metadata as (SubscriptionMetadata & { membershipGiftId?: string }) | null
   )?.membershipGiftId;
   const showKeepMembership = features.giftMemberships && isStripe && !!subscription.cancelAt;
+  const isBuzzMembership = !!(subscription.product.metadata as SubscriptionProductMetadata)
+    ?.buzzPurchase;
+  // Buzz memberships are also on the Civitai provider but are NOT prepaid/tokenized: they
+  // carry no tokens and no redeemable code, so the prepaid UI below must skip them.
+  const isPrepaidMembership = isCivitaiProvider && !isBuzzMembership;
+  const displayBuzzType = getSubscriptionDisplayBuzzType(subscription.buzzType, activeBuzzType);
 
   return (
     <>
@@ -296,6 +323,65 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack gap="xl">
               <Title>My Membership Plan</Title>
+              {isBuzzMembership && (
+                <Paper withBorder radius="lg" p="lg" className={styles.buzzMembershipCallout}>
+                  <Stack gap="md">
+                    <Group gap="sm" wrap="nowrap" align="flex-start">
+                      <ThemeIcon size={42} radius="md" variant="light" color="blue">
+                        <IconBolt size={26} strokeWidth={2.5} />
+                      </ThemeIcon>
+                      <Stack gap={2}>
+                        <Group gap="xs">
+                          <Text fw={700} size="lg" lh={1.2}>
+                            {capitalize(subscription.product.metadata.tier ?? '')} Perks
+                          </Text>
+                          <Badge color="blue" variant="filled" radius="sm">
+                            Buzz purchase
+                          </Badge>
+                        </Group>
+                        <Text size="sm" c="dimmed" lh={1.3}>
+                          A perks-only membership bought with Buzz — not a paid subscription.
+                        </Text>
+                      </Stack>
+                    </Group>
+
+                    <Divider />
+
+                    <Group align="flex-start" gap="xl" wrap="wrap">
+                      <Stack gap={4} style={{ flex: 1, minWidth: 220 }}>
+                        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+                          What you get
+                        </Text>
+                        <Text size="sm" lh={1.4}>
+                          Every {capitalize(subscription.product.metadata.tier ?? '')} perk below
+                          &mdash; generation limits, priority, Vault, private models and support
+                          &mdash; through{' '}
+                          <Text component="span" fw={600}>
+                            {formatDate(subscription.currentPeriodEnd)}
+                          </Text>
+                          .
+                        </Text>
+                      </Stack>
+                      <Stack gap={4} style={{ flex: 1, minWidth: 220 }}>
+                        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+                          What it does not include
+                        </Text>
+                        <Text size="sm" lh={1.4}>
+                          Monthly Buzz, bonus Buzz on purchases or rewards, the monthly badge, and
+                          the Creator Program.
+                        </Text>
+                      </Stack>
+                    </Group>
+
+                    <Text size="sm" c="dimmed" lh={1.4}>
+                      It <strong>does not renew automatically</strong>. When it expires you can{' '}
+                      <Anchor href="/pricing/buzz">buy another month with Buzz</Anchor> or{' '}
+                      <Anchor href="/pricing">start a paid membership</Anchor> for the full set of
+                      benefits.
+                    </Text>
+                  </Stack>
+                </Paper>
+              )}
               <ReferralCallout variant="compact" />
               {otherSubscription && subscription && (
                 <BuzzEnvironmentAlert
@@ -415,13 +501,27 @@ export default function UserMembership() {
                         )}
                         {price && (
                           <Text>
+                            {/* Never show a dollar figure for a Buzz membership: the Price row
+                                carries the cash amount purely so the Buzz cost can be derived
+                                from it, and no money changed hands. */}
                             <Text component="span" className={styles.price}>
-                              {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                              {isBuzzMembership
+                                ? numberWithCommas(
+                                    getBuzzMembershipPrice({
+                                      unitAmount: price.unitAmount,
+                                      buzzPrice: (
+                                        subscription.product.metadata as SubscriptionProductMetadata
+                                      )?.buzzPrice,
+                                    })
+                                  )
+                                : getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                             </Text>{' '}
                             <Text component="span" c="dimmed" size="sm">
-                              {price.currency.toUpperCase() +
-                                '/' +
-                                shortenPlanInterval(price.interval)}
+                              {isBuzzMembership
+                                ? `Buzz/${shortenPlanInterval(price.interval)}`
+                                : price.currency.toUpperCase() +
+                                  '/' +
+                                  shortenPlanInterval(price.interval)}
                             </Text>
                           </Text>
                         )}
@@ -529,7 +629,7 @@ export default function UserMembership() {
                       </Text>
                     </Group>
                   )}
-                  {isCivitaiProvider && (
+                  {isPrepaidMembership && (
                     <Text c="yellow">
                       You are on a prepaid membership. Tokens unlock monthly — claim them to receive
                       your Buzz.
@@ -538,9 +638,9 @@ export default function UserMembership() {
                 </Stack>
               </Paper>
 
-              {isCivitaiProvider && <PrepaidTimelineProgress subscription={subscription} />}
+              {isPrepaidMembership && <PrepaidTimelineProgress subscription={subscription} />}
 
-              {isCivitaiProvider &&
+              {isPrepaidMembership &&
                 (() => {
                   const prepaidTokens = getPrepaidTokens({
                     metadata: subscription.metadata as SubscriptionMetadata,
@@ -558,7 +658,7 @@ export default function UserMembership() {
                   );
                 })()}
 
-              {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
+              {isPrepaidMembership && <PurchasedCodesCard defaultFilter="Membership" />}
 
               {benefits && (
                 <div
@@ -567,17 +667,25 @@ export default function UserMembership() {
                     '--buzz-color': buzzColorRgb,
                   }}
                 >
+                  {/* No colour word for a Buzz membership: it grants no coloured Buzz, so
+                      "Your Green membership benefits" claims something that isn't true. */}
                   <Title order={3}>
-                    Your{' '}
-                    <Text component="span" className="text-xl font-bold text-buzz">
-                      {activeBuzzType === 'green' ? 'Green' : 'Yellow'}
-                    </Text>{' '}
-                    membership benefits
+                    {isBuzzMembership ? (
+                      <>Your membership benefits</>
+                    ) : (
+                      <>
+                        Your{' '}
+                        <Text component="span" className="text-xl font-bold text-buzz">
+                          {activeBuzzType === 'green' ? 'Green' : 'Yellow'}
+                        </Text>{' '}
+                        membership benefits
+                      </>
+                    )}
                   </Title>
                   <Paper withBorder className={styles.card}>
                     <PlanBenefitList
                       benefits={benefits}
-                      buzzType={subscription.buzzType}
+                      buzzType={displayBuzzType}
                       tier={subscription.product.metadata.tier}
                     />
                   </Paper>

@@ -8,15 +8,23 @@ import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
   includeCanceled,
   buzzType,
+  includeBuzzPurchase,
 }: {
   checkWhenInBadState?: boolean;
   includeCanceled?: boolean;
   buzzType?: BuzzSpendType;
+  /**
+   * Fall back to a Buzz-purchased membership when the colour slot is empty. Set it when
+   * you're asking "does this user have a membership"; leave it off when you're probing a
+   * specific colour to decide whether to point them at the other site.
+   */
+  includeBuzzPurchase?: boolean;
 } = {}) => {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
@@ -31,18 +39,41 @@ export const useActiveSubscription = ({
       buzzType: buzzType || mainBuzzType,
       includeBadState: checkWhenInBadState,
       includeCanceled,
+      includeBuzzPurchase,
     },
     {
       enabled: !!currentUser && !!(isMember || checkWhenInBadState || includeCanceled),
     }
   );
 
-  const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
+  // getUserSubscription reads ONE `CustomerSubscription.buzzType` slot, and a Buzz-purchased
+  // membership lives in its own — so it can't answer "does this user have a membership".
+  // getAllUserSubscriptions is buzzType-agnostic and is the source of truth here; fall back
+  // to it rather than to a second single-slot read, which is what kept failing.
+  const { data: allSubscriptions, isLoading: allLoading } =
+    trpc.subscriptions.getAllUserSubscriptions.useQuery(undefined, {
+      enabled: !!currentUser && !!includeBuzzPurchase && !subscription,
+    });
+
+  const buzzMembership = includeBuzzPurchase
+    ? allSubscriptions?.find((s) => s.buzzType === BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE)
+    : undefined;
+
+  // Shapes differ only in that getAllUserSubscriptions leaves product.metadata unparsed;
+  // every field the consumers read is present on both.
+  const activeSubscription = subscription ?? (buzzMembership as typeof subscription) ?? null;
+
+  const meta = activeSubscription?.product?.metadata as SubscriptionProductMetadata;
+
+  // `!isMember` short-circuits loading to false, but a Buzz membership may not set the
+  // session tier — so with the fallback on, report real loading instead of "done, nothing",
+  // which is what flashed the empty state on /user/membership.
+  const stillLoading = isLoading || isFetching || allLoading;
 
   return {
-    subscription,
-    subscriptionLoading: !isMember || !currentUser ? false : isLoading || isFetching,
-    subscriptionPaymentProvider: subscription?.product?.provider,
+    subscription: activeSubscription,
+    subscriptionLoading: !currentUser || (!isMember && !includeBuzzPurchase) ? false : stillLoading,
+    subscriptionPaymentProvider: activeSubscription?.product?.provider,
     isFreeTier: (meta?.tier ?? currentUser?.tier ?? 'free') === 'free',
     tier: meta?.tier ?? currentUser?.tier ?? 'free',
     meta,

@@ -12,7 +12,11 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
-import { TransactionType, type BuzzAccountType } from '~/shared/constants/buzz.constants';
+import {
+  TransactionType,
+  type BuzzAccountType,
+  type BuzzSpendType,
+} from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
 import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -23,6 +27,10 @@ import {
   TIER_BUZZ_AMOUNTS,
   type MembershipTier,
 } from '~/shared/utils/subscription-tokens';
+import {
+  BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  getBuzzMembershipPrice,
+} from '~/shared/utils/buzz-membership';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -33,12 +41,14 @@ export const getPlans = async ({
   includeInactive = false,
   interval = 'month',
   buzzType,
+  buzzPurchase = false,
 }: {
   paymentProvider?: PaymentProvider;
   includeFree?: boolean;
   includeInactive?: boolean;
   interval?: 'month' | 'year';
   buzzType?: string;
+  buzzPurchase?: boolean;
 }) => {
   const products = await dbWrite.product.findMany({
     where: {
@@ -92,10 +102,14 @@ export const getPlans = async ({
         hasTier = !!metadata[key] && (metadata[key] !== 'free' || includeFree);
       }
 
-      // Filter by buzzType if provided
-      const matchesBuzzType = buzzType ? metadata.buzzType === buzzType : true;
+      const matchesCatalog = !!metadata.buzzPurchase === buzzPurchase;
 
-      return hasTier && matchesBuzzType;
+      // Buzz memberships are one catalog shared by every site — they grant no Buzz, so
+      // there's nothing to split green from yellow over. Only the cash plans, which do
+      // grant a colour, are filtered by it.
+      const matchesBuzzType = buzzPurchase || !buzzType ? true : metadata.buzzType === buzzType;
+
+      return hasTier && matchesBuzzType && matchesCatalog;
     })
 
     .sort((a, b) => (a.price?.unitAmount ?? 0) - (b.price?.unitAmount ?? 0));
@@ -108,49 +122,66 @@ export const getUserSubscription = async ({
   buzzType,
   includeBadState,
   includeCanceled,
+  includeBuzzPurchase,
 }: GetUserSubscriptionInput & {
   buzzType?: string;
   includeBadState?: boolean;
   includeCanceled?: boolean;
+  includeBuzzPurchase?: boolean;
 }) => {
   // If buzzType is provided, use the composite unique key
   // Otherwise, get the first subscription (backward compatibility - defaults to yellow)
-  const subscription = await dbWrite.customerSubscription.findFirst({
-    where: { userId, buzzType: buzzType ?? 'yellow' }, // Default to yellow for backward compatibility
-    select: {
-      id: true,
-      status: true,
-      cancelAtPeriodEnd: true,
-      cancelAt: true,
-      canceledAt: true,
-      currentPeriodStart: true,
-      currentPeriodEnd: true,
-      createdAt: true,
-      endedAt: true,
-      metadata: true,
-      buzzType: true,
-      product: {
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          metadata: true,
-          provider: true,
-          active: true,
-        },
-      },
-      price: {
-        select: {
-          id: true,
-          unitAmount: true,
-          interval: true,
-          intervalCount: true,
-          currency: true,
-          active: true,
-        },
+  const subscriptionSelect = {
+    id: true,
+    status: true,
+    cancelAtPeriodEnd: true,
+    cancelAt: true,
+    canceledAt: true,
+    currentPeriodStart: true,
+    currentPeriodEnd: true,
+    createdAt: true,
+    endedAt: true,
+    metadata: true,
+    buzzType: true,
+    product: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        metadata: true,
+        provider: true,
+        active: true,
       },
     },
-  });
+    price: {
+      select: {
+        id: true,
+        unitAmount: true,
+        interval: true,
+        intervalCount: true,
+        currency: true,
+        active: true,
+      },
+    },
+  } satisfies Prisma.CustomerSubscriptionSelect;
+
+  // Buzz memberships live in their own slot, so the requested one comes up empty for a
+  // user whose only membership was bought with Buzz — which is how they were invisible on
+  // /user/membership, account settings and the pricing page. Opt-in fallback: callers
+  // asking "does this user have a membership at all" set it; callers probing the OTHER
+  // colour to offer a cross-site link must not, or a Buzz membership answers for a green
+  // or yellow one that doesn't exist.
+  const subscription =
+    (await dbWrite.customerSubscription.findFirst({
+      where: { userId, buzzType: buzzType ?? 'yellow' }, // Default to yellow for backward compatibility
+      select: subscriptionSelect,
+    })) ??
+    (includeBuzzPurchase && buzzType !== BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE
+      ? await dbWrite.customerSubscription.findFirst({
+          where: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+          select: subscriptionSelect,
+        })
+      : null);
 
   // Statuses that always exclude a subscription (terminal states)
   const terminalStatuses = ['canceled', 'incomplete_expired'];
@@ -288,6 +319,16 @@ export const getHighestTierSubscription = async (userId: number) =>
  * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
  * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
  */
+/**
+ * Highest tier among subscriptions the user actually paid money for. Buzz-purchased
+ * (perks-only) memberships are excluded, so cash-gated perks — Creator Program
+ * membership, banking, cash out — never resolve off one.
+ */
+export const getHighestPaidTierSubscription = async (userId: number) =>
+  pickHighestTier(
+    (await getAllUserSubscriptions(userId)).filter((s) => !s.productMeta.buzzPurchase)
+  );
+
 export const getCapTier = async (userId: number): Promise<string | null> => {
   const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
   return pickHighestTier(subscriptions)?.tier ?? null;
@@ -362,6 +403,10 @@ export const deliverMonthlyCosmetics = async ({
         AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
         AND pr.provider = 'Civitai'
         AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+        -- Buzz-purchased memberships buy perks, not the monthly badge. Explicit rather
+        -- than relying on them having no monthlyBuzz key, so adding one can't quietly
+        -- start granting badges.
+        AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
       )
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
       SELECT DISTINCT
@@ -429,6 +474,155 @@ export const syncFreshdeskMembership = async ({
   });
 
   return { success: true, userId: user.id, tier };
+};
+
+/**
+ * Buys one month of a perks-only membership with Buzz.
+ *
+ * One month at a time, and only when the user holds no membership at all: a cash
+ * membership must be allowed to stay the better deal, and stockpiled months would make
+ * this hard to withdraw if it gets abused.
+ */
+export const purchaseMembershipWithBuzz = async ({
+  userId,
+  priceId,
+  buzzType,
+}: {
+  userId: number;
+  priceId: string;
+  /**
+   * The account to debit — the calling domain's currency (green on .com, yellow on .red),
+   * resolved by the router. Deliberately NOT read off the product's `buzzType`, which is
+   * the colour the membership is associated with rather than what it's paid for in.
+   */
+  buzzType: BuzzSpendType;
+}) => {
+  const { createBuzzTransaction, refundTransaction } = await import(
+    '~/server/services/buzz.service'
+  );
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  const dayjs = (await import('~/shared/utils/dayjs')).default;
+
+  const price = await dbWrite.price.findFirst({
+    where: { id: priceId, active: true },
+    select: {
+      id: true,
+      interval: true,
+      unitAmount: true,
+      product: { select: { id: true, name: true, metadata: true, provider: true, active: true } },
+    },
+  });
+
+  if (!price || !price.product.active) throw new Error('Membership is not available');
+  if (price.product.provider !== PaymentProvider.Civitai)
+    throw new Error('This membership cannot be purchased with Buzz');
+  if (price.interval !== 'month')
+    throw new Error('Memberships can only be purchased with Buzz one month at a time');
+
+  const productMeta = subscriptionProductMetadataSchema.parse(price.product.metadata);
+  if (!productMeta.buzzPurchase) throw new Error('This membership cannot be purchased with Buzz');
+  if (!productMeta.tier || productMeta.tier === 'free' || productMeta.tier === 'founder')
+    throw new Error('This membership cannot be purchased with Buzz');
+
+  // Enforced at the debit rather than trusting the caller: Blue is earned, not bankable,
+  // and must never buy a membership.
+  if (buzzType !== 'green' && buzzType !== 'yellow')
+    throw new Error('Memberships can only be purchased with Green or Yellow Buzz');
+
+  const existing = await getAllUserSubscriptions(userId);
+  if (existing.some((s) => !s.isBadState && s.currentPeriodEnd > new Date()))
+    throw new Error(
+      'You already have an active membership. Let it lapse before purchasing one with Buzz.'
+    );
+
+  const amount = getBuzzMembershipPrice({
+    unitAmount: price.unitAmount ?? 0,
+    buzzPrice: productMeta.buzzPrice,
+  });
+  if (amount <= 0) throw new Error('This membership has no Buzz price configured');
+
+  const now = dayjs.utc();
+  // Same-day retries reuse the id so a client double-submit can't double-charge. The paid
+  // currency is part of it so a retry that switches colour isn't swallowed as a duplicate.
+  const externalTransactionId = `buzz-membership:${userId}:${price.id}:${buzzType}:${now.format(
+    'YYYY-MM-DD'
+  )}`;
+
+  const { transactionId } = await createBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountType: buzzType,
+    toAccountId: 0,
+    toAccountType: buzzType,
+    amount,
+    type: TransactionType.Purchase,
+    externalTransactionId,
+    description: `${price.product.name} membership (1 month)`,
+    details: { type: 'buzz-membership', tier: productMeta.tier, priceId: price.id, buzzType },
+    insufficientFundsErrorMsg: `You need ${amount} Buzz to purchase this membership.`,
+  });
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Re-check inside the transaction: the balance check above is a network round trip,
+      // so a concurrent purchase could have created a membership in the meantime.
+      const conflicting = await tx.customerSubscription.findFirst({
+        where: {
+          userId,
+          status: { notIn: ['canceled', 'incomplete_expired'] },
+          currentPeriodEnd: { gt: now.toDate() },
+        },
+        select: { id: true },
+      });
+      if (conflicting) throw new Error('You already have an active membership');
+
+      // Upsert rather than insert: a repeat buyer's lapsed row still holds the
+      // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
+      // conflicting check above already proved this row carries no live benefit.
+      const period = {
+        productId: price.product.id,
+        priceId: price.id,
+        status: 'active',
+        currentPeriodStart: now.toDate(),
+        currentPeriodEnd: now.add(1, 'month').toDate(),
+        // Never renews — buying another month is an explicit purchase.
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        canceledAt: null,
+        endedAt: null,
+        metadata: {},
+      };
+
+      await tx.customerSubscription.upsert({
+        where: {
+          userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+        },
+        create: {
+          id: externalTransactionId,
+          userId,
+          buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+          createdAt: now.toDate(),
+          ...period,
+        },
+        update: { ...period, updatedAt: now.toDate() },
+      });
+
+      // No deliverMonthlyCosmetics here: Buzz memberships don't earn the monthly badge.
+    });
+  } catch (error) {
+    if (transactionId)
+      await refundTransaction(transactionId, 'Failed to purchase membership with Buzz');
+    throw error;
+  }
+
+  await invalidateSubscriptionCaches(userId);
+  await syncFreshdeskMembership({ userId });
+
+  return {
+    tier: productMeta.tier,
+    amount,
+    buzzType,
+    currentPeriodEnd: now.add(1, 'month').toDate(),
+  };
 };
 
 export const claimPrepaidToken = async ({
