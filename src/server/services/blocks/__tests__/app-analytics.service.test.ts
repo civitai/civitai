@@ -249,6 +249,27 @@ describe('getMyAppAnalytics (ownership enforcement)', () => {
     expect(result.installs.total).toBe(0);
     expect(mockDbRead.blockSpendAttribution.aggregate).not.toHaveBeenCalled();
   });
+
+  // The RECORDED DECISION, pinned at the service boundary so it cannot drift
+  // back: owning no apps is a truthful measured zero, so the payload carries no
+  // `unavailable` discriminator. `notEntitled` / `notOwned` mean "we never ran
+  // the query"; this path skips the aggregates only because their answer over
+  // an empty owned set is already known to be zero. The sibling case lives in
+  // `emptyAnalytics` above — this one pins that getMyAppAnalytics actually
+  // reaches it, which the helper tests cannot show.
+  it('does NOT flag the owns-nothing payload as unavailable', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([]);
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID });
+
+    expect(result.unavailable).toBeUndefined();
+    expect('unavailable' in result).toBe(false);
+    // `views` has its own flag and tracks the payload's (#3613), so it stays
+    // unflagged here too — an author who owns nothing has genuinely had zero
+    // impressions, not unmeasurable ones.
+    expect(result.views.unavailable).toBeUndefined();
+    expect('unavailable' in result.views).toBe(false);
+  });
 });
 
 describe('emptyAnalytics (measurement vs placeholder discriminator)', () => {
