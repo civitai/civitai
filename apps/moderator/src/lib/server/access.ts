@@ -27,6 +27,9 @@ export type NavLink = {
   path?: string;
   countKey?: string;
   external?: boolean;
+  // Count is informational only — the dashboard keeps it out of "needs attention". For backlogs nobody
+  // works through, like articles unpublished for spam.
+  informational?: boolean;
   children?: NavLink[];
 };
 
@@ -57,7 +60,12 @@ export const NAVIGATION: NavLink[] = [
     label: 'Articles',
     path: '/articles',
     children: [
-      { path: '/articles/unpublished', label: 'Unpublished', countKey: 'articles' },
+      {
+        path: '/articles/unpublished',
+        label: 'Unpublished',
+        countKey: 'articles',
+        informational: true,
+      },
       { path: '/articles/ratings', label: 'Rating Disputes', countKey: 'articleRatings' },
     ],
   },
@@ -192,7 +200,15 @@ export type PageEntry = { path: string; label: string; depth: number; group: boo
 
 // The admin page's editing surface: only pages a role can actually be granted, with only the roles that
 // can hold a grant. What isn't stored isn't checked — there are no implied grants to display.
-export function pageAccessState(): { pages: PageEntry[]; granted: Record<string, Role[]> } {
+// `source` lets the admin page pass grants read straight from Postgres; omitting it falls back to the
+// request cache, which is fine for read-only callers but never for the editing surface.
+export function pageAccessState(source?: Record<string, string[]>): {
+  pages: PageEntry[];
+  granted: Record<string, Role[]>;
+} {
+  const from = source
+    ? Object.fromEntries(Object.entries(source).map(([p, r]) => [p, r.filter(isGrantableRole)]))
+    : stored;
   const pages: PageEntry[] = [];
   const granted: Record<string, Role[]> = {};
   const walk = (links: NavLink[], depth: number) => {
@@ -200,7 +216,7 @@ export function pageAccessState(): { pages: PageEntry[]; granted: Record<string,
       const group = !!link.children;
       if (link.path && !link.external && (group || isGrantable(link.path))) {
         pages.push({ path: link.path, label: link.label, depth, group });
-        if (!group) granted[link.path] = stored[link.path] ?? [];
+        if (!group) granted[link.path] = from[link.path] ?? [];
       }
       if (link.children) walk(link.children, depth + 1);
     }

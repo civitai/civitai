@@ -8,11 +8,11 @@ import {
   pageAccessState,
   requireAccess,
 } from '$lib/server/access';
-import { setPageRoles } from '$lib/server/page-access';
+import { readPageAccessGrants, setPageRoles } from '$lib/server/page-access';
 
-export const load: PageServerLoad = ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
-  return { roles: GRANTABLE_ROLES, ...pageAccessState() };
+  return { roles: GRANTABLE_ROLES, ...pageAccessState(await readPageAccessGrants()) };
 };
 
 const changesSchema = z.record(z.string(), z.array(z.string()));

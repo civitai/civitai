@@ -16,13 +16,16 @@ let memo: PageAccessGrants = {};
 let memoUntil = 0;
 
 // Read on every gated request, so it must never throw and never hit Postgres per request: in-process memo
-// → sysRedis → Postgres. On failure the last known map stands (initially empty = the committed defaults).
-// A write on one server is visible to the others within MEMO_TTL_MS.
+// → sysRedis → Postgres. A write on one server is visible to the others within MEMO_TTL_MS.
+//
+// The memo is only extended on SUCCESS. An empty map is indistinguishable from "nobody is granted
+// anything", so caching a failed load would revoke every non-admin moderator's access for the length of
+// the TTL; retrying on the next request keeps an outage to the requests it actually touches.
 export async function loadPageAccessGrants(): Promise<PageAccessGrants> {
   if (Date.now() < memoUntil) return memo;
-  memoUntil = Date.now() + MEMO_TTL_MS;
   try {
     memo = await readThrough();
+    memoUntil = Date.now() + MEMO_TTL_MS;
   } catch (e) {
     console.error('[page-access] load failed, keeping last known grants', e);
   }
@@ -33,6 +36,13 @@ async function readThrough(): Promise<PageAccessGrants> {
   const cached = await getSysRedis().get(KEY);
   if (cached) return JSON.parse(cached) as PageAccessGrants;
   return publish(await getPageAccessGrants(dbRead, APP));
+}
+
+// The admin page edits grants, so it reads Postgres directly rather than the request cache — a stale or
+// empty cache would render every checkbox blank and invite someone to "fix" it by re-saving, wiping the
+// real grants. The gate can tolerate 30s of staleness; the editing surface cannot.
+export function readPageAccessGrants(): Promise<PageAccessGrants> {
+  return getPageAccessGrants(dbRead, APP);
 }
 
 export async function setPageRoles(input: {
