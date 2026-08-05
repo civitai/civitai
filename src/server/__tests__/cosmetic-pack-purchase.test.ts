@@ -329,7 +329,10 @@ describe('grantPackMembers', () => {
       claimKey: 'pack-tx',
     });
     expect(createManyUserCosmetic).toHaveBeenCalledWith({
-      data: [{ userId: BUYER, cosmeticId: 62, claimKey: 'pack-tx' }],
+      // `remaining` is read from the cosmetic's data rather than left NULL, so
+      // the durable branch cannot grant an unlimited balance if a type is ever
+      // consumable without `isConsumableCosmeticType` saying so.
+      data: [{ userId: BUYER, cosmeticId: 62, claimKey: 'pack-tx', remaining: 40 }],
     });
   });
 

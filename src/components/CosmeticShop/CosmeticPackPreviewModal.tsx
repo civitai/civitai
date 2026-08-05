@@ -57,6 +57,9 @@ export const CosmeticPackPreviewModal = ({
   // repeatable, and each one stacks another consumable balance. Say so here
   // rather than letting the button fail.
   const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
+  // The server refuses the lister outright. Without this the button renders
+  // priced and enabled for the one person guaranteed to fail.
+  const isOwnPack = !!pack?.isPackCreator;
 
   const handlePurchase = async () => {
     if (!pack) return;
@@ -120,13 +123,20 @@ export const CosmeticPackPreviewModal = ({
                 {acceptsBlue && (
                   <PayWithSelector value={payWith} onChange={setPayWith} domainType={domainType} />
                 )}
-                {nothingLeftToBuy && (
+                {isOwnPack ? (
                   <Text size="xs" c="dimmed">
-                    You already own everything in this pack.
+                    This is your pack. Anything in it made by other creators is on sale
+                    individually.
                   </Text>
+                ) : (
+                  nothingLeftToBuy && (
+                    <Text size="xs" c="dimmed">
+                      You already own everything in this pack.
+                    </Text>
+                  )
                 )}
                 <BuzzTransactionButton
-                  disabled={purchasingShopItem || unavailable || nothingLeftToBuy}
+                  disabled={purchasingShopItem || unavailable || nothingLeftToBuy || isOwnPack}
                   loading={purchasingShopItem}
                   buzzAmount={pack.amountDue}
                   radius="xl"

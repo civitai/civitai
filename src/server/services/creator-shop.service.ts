@@ -1483,11 +1483,23 @@ export const takedownCosmeticShopItem = async ({
 
   for (const purchase of purchases) {
     const price = purchase.unitAmount;
-    // A pack can price to zero (own everything discountable, author the rest),
-    // and that path deliberately moves no Buzz — so its transaction id was never
-    // seen by the Buzz service. Asking to refund it would fail forever on every
-    // re-run while the buyer's cosmetics were already revoked.
+    // Unreachable for anything the current code writes — a purchase computing to
+    // zero is refused rather than completed. Kept because the failure mode if a
+    // zero-price row ever appears by another route (a backfill, a data fix) is
+    // that the refund is asked to reverse a transaction the Buzz service never
+    // saw, which fails on every re-run while the cosmetics are already revoked.
+    // Logged rather than silently swallowed: this branch marks a purchase
+    // refunded without refunding it, which should never be routine.
     if (price === 0) {
+      void logToAxiom({
+        level: 'warn',
+        message: 'Takedown skipped the refund for a zero-price purchase',
+        data: {
+          shopItemId: id,
+          userId: purchase.userId,
+          transactionId: purchase.buzzTransactionId,
+        },
+      }).catch(() => undefined);
       await dbWrite.userCosmeticShopPurchases.update({
         where: { buzzTransactionId: purchase.buzzTransactionId },
         data: { refunded: true },

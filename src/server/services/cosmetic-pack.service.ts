@@ -173,7 +173,9 @@ export const assertPackPurchasable = async ({
   // refuse. Their own members are already theirs; foreign ones can be bought
   // individually.
   if (packCreatorId && packCreatorId === userId)
-    throw throwBadRequestError('You already own everything you put in this pack');
+    throw throwBadRequestError(
+      "You can't buy your own pack — the items other creators made are on sale individually"
+    );
 
   // Compared against the count recorded when the pack was built, not against the
   // join rows themselves: a member Cosmetic being deleted cascades its join row
@@ -255,7 +257,16 @@ export const grantPackMembers = async ({
     const toGrant = durable.filter((m) => !ownedIds.has(m.cosmeticId));
     if (toGrant.length)
       await tx.userCosmetic.createMany({
-        data: toGrant.map((m) => ({ userId, cosmeticId: m.cosmeticId, claimKey })),
+        // Reads the balance rather than assuming NULL, exactly as the single
+        // purchase does for every type. Partitioning on `isConsumableCosmeticType`
+        // is an optimisation; if it ever disagrees with what a cosmetic's data
+        // says, this branch must not be the one that grants unlimited uses.
+        data: toGrant.map((m) => ({
+          userId,
+          cosmeticId: m.cosmeticId,
+          claimKey,
+          remaining: stickerUsesFromCosmeticData(m.data),
+        })),
       });
   }
 };
@@ -421,16 +432,18 @@ export const purchaseCosmeticPack = async ({
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
+  // A pack can price to zero, and not only through the discount: `selfAuthored`
+  // is computed over the members the buyer created, so a pack made entirely of
+  // someone else's listings of the buyer's own work reaches zero with no
+  // discount involved at all. What such a purchase delivers is free repeat
+  // top-ups of the buyer's own consumables, and every repeat also consumes a
+  // member's remaining quantity — which is what makes third-party packs
+  // containing that member refuse. Nothing to pay means nothing left to buy.
+  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+
   // Random rather than a timestamp: a pack is repeatable (a consumable member
   // tops up), so two calls in the same millisecond would share an external id —
   // and a duplicate reads as "the money already moved".
-  // A pack can price to zero — own everything discountable and have authored the
-  // rest — and completing that is not a free gift, it is a repeatable one: each
-  // purchase grants another consumable balance and consumes a member's remaining
-  // quantity, which is what makes third-party packs containing that member
-  // refuse. Nothing to pay means nothing left to buy.
-  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
-
   const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
   const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
 
 /**
  * A conservation property over the whole pack purchase, table-driven rather than
@@ -620,7 +621,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
           }),
         ],
       })
-    ).rejects.toThrow(/already own/i);
+    ).rejects.toThrow(/your own pack/i);
     expect(spend).not.toHaveBeenCalled();
   });
 
@@ -690,39 +691,94 @@ describe('purchaseCosmeticPack — generated member combinations', () => {
     { label: 'third-party', addedBy: () => RESELLER },
     { label: 'buyer-listed', addedBy: () => BUYER },
   ];
-  const TYPES = [CosmeticType.Badge, CosmeticType.Sticker];
+  // Derived, not a literal list: the point of this dimension is that the grant
+  // branches agree with `isConsumableCosmeticType`, so keying it on
+  // `CosmeticType.Sticker` would go stale exactly when a new consumable is added.
+  const TYPES = Object.values(CosmeticType).filter(
+    (type, _i, all) =>
+      type === all.find((t) => isConsumableCosmeticType(t)) || type === CosmeticType.Badge
+  );
+  // Ownership was pinned to "nothing owned", and the only branch in
+  // `computePackAmountDue` with arithmetic left in it is the one ownership drives.
+  const OWNERSHIP = [
+    { label: 'owns nothing', owned: [] as number[] },
+    { label: 'owns the lister member', owned: [1001] },
+  ];
 
   const combos = CREATORS.flatMap((creator) =>
     RESELLERS.flatMap((reseller) =>
-      TYPES.map((type) => ({
-        label: `${creator.label} / ${reseller.label} / ${type}`,
-        member: mkMember({
-          cosmeticId: 1002,
-          type,
+      TYPES.flatMap((type) =>
+        OWNERSHIP.map((ownership) => ({
+          label: `${creator.label} / ${reseller.label} / ${type} / ${ownership.label}`,
+          owned: ownership.owned,
           createdById: creator.createdById,
-          addedById: reseller.addedBy(creator.createdById),
-          listingMeta: { purchases: 0, acceptsBlueBuzz: false, sellerShare: 25 },
-          floorAmount: 2900,
-        }),
-      }))
+          member: mkMember({
+            cosmeticId: 1002,
+            type,
+            createdById: creator.createdById,
+            addedById: reseller.addedBy(creator.createdById),
+            listingMeta: { purchases: 0, acceptsBlueBuzz: false, sellerShare: 25 },
+            floorAmount: 2900,
+          }),
+        }))
+      )
     )
   );
 
-  it.each(combos)('$label — pays out within the collected amount', async ({ member }) => {
+  it.each(combos)('$label', async ({ member, owned, createdById }) => {
     const members = [mkMember(), member];
-    ownedFindMany.mockResolvedValue([]);
-    await purchaseCosmeticPack({
-      userId: BUYER,
-      shopItem: shopItem(9100, members.length),
-      members,
-      stickersEnabled: true,
-    });
+    ownedFindMany.mockImplementation(
+      async ({ where }: { where: { cosmeticId: { in: number[] } } }) =>
+        owned.filter((id) => where.cosmeticId.in.includes(id)).map((cosmeticId) => ({ cosmeticId }))
+    );
+    const buy = () =>
+      purchaseCosmeticPack({
+        userId: BUYER,
+        shopItem: shopItem(9100, members.length),
+        members,
+        stickersEnabled: true,
+      });
+
+    // Some crossings legitimately come to nothing owed — a buyer who authored the
+    // foreign member and owns the lister's. The claim is a disjunction: either
+    // the purchase refuses cleanly and moves nothing, or it satisfies every
+    // invariant below. Predicting which would mean reimplementing the pricing
+    // here, which is how a test comes to ratify the bug it should catch.
+    try {
+      await buy();
+    } catch (error) {
+      expect((error as Error).message).toMatch(/already own/i);
+      expect(spend).not.toHaveBeenCalled();
+      expect(createManyUserCosmetic).not.toHaveBeenCalled();
+      expect(executeRaw).not.toHaveBeenCalled();
+      return;
+    }
     const charged: number = spend.mock.calls[0]?.[0]?.amount ?? 0;
-    const payouts = pay.mock.calls.map((c) => c[0] as { toAccountId: number; amount: number });
+    const payouts = pay.mock.calls.map(
+      (c) => c[0] as { toAccountId: number; amount: number; externalTransactionId: string }
+    );
     const paid = payouts.reduce((sum, p) => sum + p.amount, 0);
     expect(paid).toBeLessThanOrEqual(Math.floor(charged * (1 - PLATFORM_KEEPS)));
     // No role a buyer can hold — member creator, member reseller, pack lister —
     // may make them a recipient of their own purchase.
     expect(payouts.some((p) => p.toAccountId === BUYER)).toBe(false);
+
+    // A payable creator silently dropped from the payout set is invisible to the
+    // bound above: the remainder simply grows and the pack creator takes it.
+    const payable = createdById != null && createdById !== PACK_CREATOR && createdById !== BUYER;
+    if (payable)
+      expect(payouts.some((p) => p.externalTransactionId.includes(`:${member.cosmeticId}`))).toBe(
+        true
+      );
+
+    // The grant branches must agree with `isConsumableCosmeticType` — the type
+    // dimension is otherwise inert.
+    const granted: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
+      (row: { cosmeticId: number }) => row.cosmeticId
+    );
+    const consumables = members.filter((m) => isConsumableCosmeticType(m.type));
+    expect(executeRaw.mock.calls).toHaveLength(consumables.length);
+    for (const id of owned) expect(granted).not.toContain(id);
+    expect(new Set(granted).size).toBe(granted.length);
   });
 });

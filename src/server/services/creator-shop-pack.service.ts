@@ -446,6 +446,10 @@ export const getPackDetail = async ({
     // A member the pack no longer resolves is a member that can't be sold; the
     // purchase refuses on the same condition, so say so before they try.
     unavailableCount: item.members.length - members.length,
+    // The purchase refuses the lister outright, and without this the client
+    // cannot tell them apart — it would render a priced, enabled button that
+    // always fails.
+    isPackCreator: !!userId && userId === item.addedById,
     discount,
     selfAuthored,
     /** What this viewer will actually be charged. */
