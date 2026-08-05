@@ -294,10 +294,26 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
   return placement;
 };
 
-/** Moves a leg's last attempt outside the retry gap, standing in for elapsed time. */
-const ageLastAttempt = (key: string) => {
-  const leg = db.legs.get(key);
-  if (leg?.lastAttemptAt)
+/**
+ * Moves every attempted leg of a placement outside the retry gap, standing in
+ * for elapsed time.
+ *
+ * Per-*placement*, not per-leg, because the sweep selects placements and
+ * `payOutPlacement` re-runs all of their legs — ageing one and asserting on it
+ * would let a sibling stay silently stranded inside its own backoff, which is
+ * the same list-vs-guard mismatch that has bitten the production code twice.
+ *
+ * Throws on a miss rather than no-opping: a helper that silently does nothing
+ * lets a test asserting a negative pass without the setup it claims.
+ */
+const ageLastAttempt = (placementId: number) => {
+  const legs = [...db.legs.values()].filter(
+    (leg) => leg.placementId === placementId && leg.lastAttemptAt
+  );
+  if (!legs.length)
+    throw new Error(`ageLastAttempt: placement ${placementId} has no attempted legs to age`);
+
+  for (const leg of legs)
     leg.lastAttemptAt = new Date(Date.now() - (LEG_RETRY_BACKOFF_MINUTES + 1) * 60_000);
 };
 
@@ -918,7 +934,7 @@ describe('the sweeper converges', () => {
       settlePlacement({ placementId: 4, action: 'approve', actorId: OWNER })
     ).rejects.toThrow();
 
-    ageLastAttempt('4:toOwner');
+    ageLastAttempt(4);
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
 
     expect(swept.stranded).toBe(1);
@@ -1141,7 +1157,7 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
       settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER })
     ).rejects.toThrow();
 
-    ageLastAttempt('2:toOwner');
+    ageLastAttempt(2);
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
 
     expect(swept.stranded).toBe(1);
@@ -1197,7 +1213,7 @@ describe('a leg that can never succeed', () => {
     // Ages rather than clears, so the leg still carries a recent attempt when the
     // ceiling stops it — which is what the alert window keys on.
     for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
-      ageLastAttempt('1:toOwner');
+      ageLastAttempt(1);
       await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
     }
 
@@ -1209,7 +1225,7 @@ describe('a leg that can never succeed', () => {
   it('clears its error when a later attempt succeeds', async () => {
     await givenPermanentlyFailingLeg();
     createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
-    ageLastAttempt('1:toOwner');
+    ageLastAttempt(1);
 
     await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
@@ -1323,7 +1339,7 @@ describe('the exhausted-leg alert', () => {
     ).rejects.toThrow();
 
     for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
-      ageLastAttempt('1:toOwner');
+      ageLastAttempt(1);
       await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
     }
   };
