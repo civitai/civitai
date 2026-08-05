@@ -10,7 +10,7 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import {
   computeCreatorShopSplit,
-  computePackOwnershipDiscount,
+  computePackAmountDue,
   isConsumableCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import {
@@ -293,16 +293,7 @@ export const computePackPayouts = ({
   // a repeatable one. Every component is therefore scaled into the collected
   // amount rather than trusted to fit inside it.
   const scale = snapshotTotal > packPrice && snapshotTotal > 0 ? packPrice / snapshotTotal : 1;
-  // Reaching here means a pack was sold for less than its members' snapshots,
-  // which the floor and the re-snapshot are both supposed to prevent. Everyone
-  // is paid proportionally less, so the shortfall is real money and silence
-  // would make it invisible until a creator counted it themselves.
-  if (scale !== 1)
-    logToAxiom({
-      level: 'error',
-      message: 'Pack payouts scaled down to fit the collected amount',
-      data: { packPrice, snapshotTotal, packCreatorId, members: payable.length },
-    });
+
   let foreignTotal = 0;
 
   for (const member of payable) {
@@ -316,9 +307,14 @@ export const computePackPayouts = ({
       member.listingMeta.sellerShare ?? 0
     );
     // The member's own reseller, if it has one, is paid out of that member's
-    // pool rather than the pack creator's.
+    // pool rather than the pack creator's — unless the reseller is the buyer,
+    // in which case the seller share would be a discount they fund for
+    // themselves. The single purchase refuses this in as many words; a pack
+    // reaches the same state through a member and needs the same answer.
     const resellerId =
-      member.addedById && member.addedById !== member.createdById ? member.addedById : null;
+      member.addedById && member.addedById !== member.createdById && member.addedById !== buyerId
+        ? member.addedById
+        : null;
     if (resellerId && sellerAmount > 0) {
       if (creatorAmount > 0)
         components.push({
@@ -346,7 +342,7 @@ export const computePackPayouts = ({
   const remainder = Math.max(0, packPrice - foreignTotal);
   const packCreatorAmount = packCreatorId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
-  return { components, foreignTotal, remainder, packCreatorAmount };
+  return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
 };
 
 export const purchaseCosmeticPack = async ({
@@ -385,22 +381,19 @@ export const purchaseCosmeticPack = async ({
     where: { userId, cosmeticId: { in: members.map((m) => m.cosmeticId) } },
     select: { cosmeticId: true },
   });
-  const { discount } = computePackOwnershipDiscount({
+  const { amountDue: amountCharged } = computePackAmountDue({
     packPrice: shopItem.unitAmount,
     members: members.map((m) => ({
       cosmeticId: m.cosmeticId,
       type: m.type,
       listPrice: m.floorAmount,
       isOwn: m.createdById === shopItem.addedById,
+      createdById: m.createdById,
     })),
     ownedCosmeticIds: [...new Set(owned.map((o) => o.cosmeticId))],
+    buyerId: userId,
+    packCreatorId: shopItem.addedById,
   });
-  // A member the buyer created is theirs already; charging for it and paying
-  // them back through the bank would cost them 30% to buy their own work.
-  const selfAuthored = members
-    .filter((m) => m.createdById === userId && m.createdById !== shopItem.addedById)
-    .reduce((sum, m) => sum + m.floorAmount, 0);
-  const amountCharged = Math.max(0, shopItem.unitAmount - discount - selfAuthored);
 
   // AND across members, not the pack's own flag: the pack listing's
   // acceptsBlueBuzz is a request, and one member's opt-out vetoes it.
@@ -517,12 +510,26 @@ export const purchaseCosmeticPack = async ({
   try {
     await withRetries(async () => {
       const price = amountCharged;
-      const { components, packCreatorAmount } = computePackPayouts({
+      const { components, packCreatorAmount, scaled } = computePackPayouts({
         packPrice: price,
         packCreatorId: shopItem.addedById,
         members,
         buyerId: userId,
       });
+      // Reaching this means a pack sold for less than its members' snapshots,
+      // which the floor and the re-snapshot both exist to prevent. Everyone is
+      // paid proportionally less, so the shortfall is real money and silence
+      // makes it invisible until a creator counts it themselves. Logged here
+      // rather than inside computePackPayouts, which is also called inside the
+      // write transaction and would emit twice.
+      if (scaled)
+        void logToAxiom({
+          level: 'error',
+          message: 'Pack payouts scaled down to fit the collected amount',
+          data: { shopItemId: shopItem.id, userId, transactionId, price },
+          // `.catch`, not `await`: a degraded Axiom returns a rejecting promise,
+          // and unattached that is an unhandled rejection.
+        }).catch(() => undefined);
       const recipients = [
         ...components.map((c) => ({
           userId: c.userId,

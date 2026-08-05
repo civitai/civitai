@@ -133,13 +133,27 @@ describe('takedownCosmeticShopItem — pack scoping', () => {
   });
 
   it('revokes NOTHING when every purchase was already refunded', async () => {
-    // The query filters `refunded: false`, so an all-refunded pack looks
-    // identical to one that never sold — and must behave identically.
-    mocks.purchaseFindMany.mockResolvedValue([]);
+    // Driven through the service's own `refunded: false` filter rather than by
+    // handing it an empty array — otherwise this asserts the mock, not the code.
+    mocks.purchaseFindMany.mockImplementation(({ where }: { where: { refunded: boolean } }) =>
+      where.refunded === false ? [] : [purchase('already-refunded')]
+    );
     mocks.userCosmeticFindMany.mockResolvedValue(ownersByOtherRoutes);
     await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
     const args = revokeArgs();
     expect(args === undefined || args.claimKeys?.length === 0).toBe(true);
+  });
+
+  // Not tidiness: unscoped, this query pulls every holder of every member
+  // cosmetic into memory, which for a popular member is a production hazard in
+  // its own right.
+  it('does not scan every holder of every member when the pack never sold', async () => {
+    mocks.userCosmeticFindMany.mockResolvedValue(ownersByOtherRoutes);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const ownerQueries = mocks.userCosmeticFindMany.mock.calls.filter(
+      (call) => call[0]?.where?.cosmeticId
+    );
+    for (const [query] of ownerQueries) expect(query.where.claimKey).toBeDefined();
   });
 
   it('scopes the revoke to this pack purchases claim keys', async () => {

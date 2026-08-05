@@ -39,6 +39,7 @@ import {
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
+import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -182,8 +183,11 @@ export const upsertCosmeticShopItem = async ({
   videoUrl,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
+  // Read on the writer: this row gates a write (the pack refusal and the
+  // quantity check below), and a lagging replica returning nothing would skip
+  // both while the update still ran against the primary.
   const existingItem = id
-    ? await dbRead.cosmeticShopItem.findUnique({
+    ? await dbWrite.cosmeticShopItem.findUnique({
         where: { id },
         select: {
           id: true,
@@ -214,7 +218,7 @@ export const upsertCosmeticShopItem = async ({
   // over its members, no snapshot to re-take. Today a required `cosmeticId`
   // happens to reject it; that is an accident of the schema, and the moment
   // anyone widens that field this becomes a floor-bypassing pack price editor.
-  if (existingItem && existingItem.cosmeticId == null)
+  if (id && (!existingItem || existingItem.cosmeticId == null))
     throw new Error('Packs are edited through the pack editor');
 
   const data = {
@@ -242,6 +246,12 @@ export const upsertCosmeticShopItem = async ({
         },
         select: cosmeticShopItemSelect,
       });
+
+  // D14's fourth entry point. Archiving here stamps `archivedAt` without moving
+  // `status`, and pack member resolution now excludes archived listings — so
+  // without this a pack keeps its storefront slot until someone opens it and
+  // finds it unbuyable.
+  if (archived && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
 
   if (videoUrl && item.cosmeticId != null) {
     await upsertCosmetic({

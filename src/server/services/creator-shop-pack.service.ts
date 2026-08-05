@@ -11,7 +11,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
-  computePackOwnershipDiscount,
+  computePackAmountDue,
   isConsumableCosmeticType,
   packPriceFloor,
   type PackMemberPricing,
@@ -420,20 +420,16 @@ export const getPackDetail = async ({
     : [];
   const ownedCosmeticIds = [...new Set(owned.map((o) => o.cosmeticId))];
 
-  const { discount, perMember } = computePackOwnershipDiscount({
+  // The same helper the purchase path charges with, so the quote and the charge
+  // cannot drift.
+  const { discount, perMember, selfAuthored, amountDue } = computePackAmountDue({
     packPrice: item.unitAmount,
     members,
     ownedCosmeticIds,
+    buyerId: userId,
+    packCreatorId: item.addedById,
   });
   const discountByCosmetic = new Map(perMember.map((m) => [m.cosmeticId, m.discount]));
-  // Mirrors the purchase path's `selfAuthored`. Without it the button quotes a
-  // price the server won't charge, and its balance check blocks a buyer who can
-  // actually afford the real one.
-  const selfAuthored = userId
-    ? members
-        .filter((m) => m.createdById === userId && m.createdById !== item.addedById)
-        .reduce((sum, m) => sum + m.listPrice, 0)
-    : 0;
 
   return {
     id: item.id,
@@ -450,7 +446,7 @@ export const getPackDetail = async ({
     discount,
     selfAuthored,
     /** What this viewer will actually be charged. */
-    amountDue: Math.max(0, item.unitAmount - discount - selfAuthored),
+    amountDue,
     members: members.map((m) => ({
       cosmeticId: m.cosmeticId,
       name: m.name,

@@ -1466,6 +1466,11 @@ export const takedownCosmeticShopItem = async ({
   // A pack's author is its lister; it has no cosmetic creator of its own.
   const creatorId = item.cosmetic?.createdById ?? item.addedById;
   let unrecoveredResellerShare = 0;
+  // Kept separate from the reseller slice: for a single item that counter means
+  // "the part we couldn't claw back because we don't know who took it", and the
+  // creator's own slice WAS recovered. For a pack nothing is recovered, so
+  // folding the two together would make a total loss read like a partial one.
+  let unrecoveredPackPool = 0;
   let refundedValue = 0;
   const refundedUserIds: number[] = [];
 
@@ -1548,11 +1553,15 @@ export const takedownCosmeticShopItem = async ({
     // creator pool would bill the wrong person for money they never received —
     // so it goes to `failures` for a moderator to settle by hand instead.
     if (isPack) {
-      const { creatorPool } = computeCreatorShopSplit(price, meta.sellerShare ?? 0);
+      // A pack listing carries no sellerShare; the pool is the whole 70%.
+      const { creatorPool } = computeCreatorShopSplit(price);
       // Counted as unrecovered rather than left out of the summary: the whole
       // pool really is unrecovered, and a report that only says so in `failures`
       // reads as a smaller loss than it was.
-      unrecoveredResellerShare += creatorPool;
+      // An upper bound, not the exact figure: scaling or a skipped sub-1 basis
+      // means less was actually paid, and this branch only runs when the record
+      // that would say so is missing. Over-stating a loss is the safe direction.
+      unrecoveredPackPool += creatorPool;
       failures.push({
         stage: 'clawback',
         userId: item.addedById ?? 0,
@@ -1739,6 +1748,7 @@ export const takedownCosmeticShopItem = async ({
     owedBack,
     clawedBack,
     unrecoveredResellerShare,
+    unrecoveredPackPool,
     revokedFrom: revoked,
     failures,
   });
@@ -1755,6 +1765,7 @@ export const takedownCosmeticShopItem = async ({
     clawedBack,
     clawedBackPct: refundedValue > 0 ? Math.round((owedBack / refundedValue) * 100) : 0,
     unrecoveredResellerShare,
+    unrecoveredPackPool,
     revokedFrom: revoked,
     failures,
   };

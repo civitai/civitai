@@ -193,6 +193,48 @@ export const computePackOwnershipDiscount = ({
   return { discount: perMember.reduce((sum, m) => sum + m.discount, 0), perMember };
 };
 
+/**
+ * What a specific viewer owes for a pack.
+ *
+ * Shared deliberately: the detail view quotes this and the purchase charges it.
+ * Two implementations of the same arithmetic drifted apart once already — the
+ * button subtracted a discount the server never applied — and the only way that
+ * cannot recur is for there to be one.
+ */
+export const computePackAmountDue = ({
+  packPrice,
+  members,
+  ownedCosmeticIds,
+  buyerId,
+  packCreatorId,
+}: {
+  packPrice: number;
+  members: (PackMemberPricing & { createdById: number | null })[];
+  ownedCosmeticIds: number[];
+  buyerId?: number;
+  packCreatorId: number | null;
+}) => {
+  const { discount, perMember } = computePackOwnershipDiscount({
+    packPrice,
+    members,
+    ownedCosmeticIds,
+  });
+  // A member the buyer created is theirs already; charging for it and paying
+  // them back through the bank would cost them the platform's cut to buy their
+  // own work. They are excluded from the payout for the same reason.
+  const selfAuthored = buyerId
+    ? members
+        .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
+        .reduce((sum, m) => sum + m.listPrice, 0)
+    : 0;
+  return {
+    discount,
+    perMember,
+    selfAuthored,
+    amountDue: Math.max(0, packPrice - discount - selfAuthored),
+  };
+};
+
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
 export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
   (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
