@@ -17,8 +17,12 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
 // reaching the Buzz call after one has claimed the ledger row, so a double that
 // always grants it would hide the defect it exists to prevent.
 const heldLocks = new Set<string>();
+const lockState = { available: true };
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: async (options: { key: string }, operation: () => Promise<unknown>) => {
+    // Redis down, or the key contended past maxRetries: the real helper returns
+    // null WITHOUT running the operation.
+    if (!lockState.available) return null;
     if (heldLocks.has(options.key)) return null;
     heldLocks.add(options.key);
     try {
@@ -222,6 +226,7 @@ beforeEach(() => {
   db.placements.clear();
   db.legs.clear();
   heldLocks.clear();
+  lockState.available = true;
   configState.rate = 0.3;
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
@@ -670,5 +675,59 @@ describe('the expiry deadline', () => {
     });
 
     expect(db.placements.get(1)?.expiresAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('when the lock cannot be acquired', () => {
+  // `withDistributedLock` returns null without running when Redis is unavailable.
+  // If the ledger claim lived inside the lock, that would leave no row at all:
+  // the placement reads settled, nobody is paid, and the sweeper has nothing to
+  // find. Claiming outside it makes the worst case a receipt-less row.
+  it('still records the claim, so the sweeper can finish it', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    lockState.available = false;
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(createBuzzTransaction).not.toHaveBeenCalled();
+    expect(legsFor(1)).toMatchObject({ feeToOwner: 300, principalToPlacer: 700 });
+    expect(db.legs.get('1:feeToOwner')?.transactionId).toBeNull();
+
+    lockState.available = true;
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(db.legs.get('1:feeToOwner')?.transactionId).toBe('buzz-tx');
+    expect(db.legs.get('1:principalToPlacer')?.transactionId).toBe('refund-tx');
+  });
+
+  it('does not take the escrow twice when the hold is retried after a lock failure', async () => {
+    givenPlacement();
+    lockState.available = false;
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
+
+    lockState.available = true;
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(2);
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
   });
 });

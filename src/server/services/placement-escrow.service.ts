@@ -90,19 +90,32 @@ async function runLeg(
 ) {
   if (amount <= 0) return null;
 
-  const result = await withDistributedLock(
+  // The claim is taken OUTSIDE the lock, deliberately. `withDistributedLock`
+  // returns null without running when Redis is unavailable or the key is
+  // contended — so a claim inside it would leave no row at all, the placement
+  // would read settled with nobody paid, and `sweepUnpaidLegs` would have
+  // nothing to find. Claiming first means the worst case is always a
+  // receipt-less row, which is exactly what the sweeper is for.
+  try {
+    await dbWrite.placementTransaction.create({ data: { placementId, kind, amount } });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
+
+  const existing = await dbWrite.placementTransaction.findUnique({
+    where: { placementId_kind: { placementId, kind } },
+  });
+  if (existing?.transactionId) return existing.transactionId;
+
+  return withDistributedLock(
     { key: `placement:${placementId}:${kind}`, autoRenew: true },
     async () => {
-      try {
-        await dbWrite.placementTransaction.create({ data: { placementId, kind, amount } });
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
-
-        const existing = await dbWrite.placementTransaction.findUnique({
-          where: { placementId_kind: { placementId, kind } },
-        });
-        if (existing?.transactionId) return existing.transactionId;
-      }
+      // Re-read inside the lock: a holder that finished between the check above
+      // and the acquisition has already paid this leg.
+      const claimed = await dbWrite.placementTransaction.findUnique({
+        where: { placementId_kind: { placementId, kind } },
+      });
+      if (claimed?.transactionId) return claimed.transactionId;
 
       const transactionId = await pay(placementTransactionId(placementId, kind));
 
@@ -114,10 +127,9 @@ async function runLeg(
       return transactionId;
     }
   );
-
-  // Lock not acquired: another caller is mid-payment on this exact leg. Doing
-  // nothing is correct — it is finishing, and the sweeper covers it if it dies.
-  return result;
+  // A null result means the lock was not acquired — another caller is mid-payment,
+  // or Redis is down. Either way the claim row is on disk with no receipt, so the
+  // sweeper finishes it rather than the money being silently skipped.
 }
 
 /**
