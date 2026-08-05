@@ -44,8 +44,24 @@ const PLATFORM_KEEP_RECEIPT = 'platform-keep';
  * rather than work landed. Three separate instances were fixed by narrowing a
  * query; this is the general answer, so the fourth is a page rather than a
  * silence.
+ *
+ * The cost, stated plainly: a leg that exhausts its attempts is **not paid**,
+ * and its share stays in the escrow account until a human acts. That is the
+ * deliberate trade — money parked and reported beats money parked and silent —
+ * but it means the ceiling must not be reachable by an outage that would have
+ * cleared on its own, which is what the backoff below is for.
  */
 export const MAX_LEG_ATTEMPTS = 5;
+
+/**
+ * Minimum gap between attempts on the same leg.
+ *
+ * Without it the ceiling is a function of how often the sweep runs rather than
+ * of how long the failure lasted: a ten-minute cron would burn all five attempts
+ * inside an hour, so a transient Buzz outage would permanently strand a leg that
+ * only needed waiting out.
+ */
+export const LEG_RETRY_BACKOFF_MINUTES = 30;
 
 const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 const PAYOUT_KINDS = [
@@ -160,6 +176,16 @@ async function runLeg(
       // would skip *choosing* an exhausted leg and still retry it — a list
       // operation where a refusal is needed.
       if ((claimed?.attempts ?? 0) >= MAX_LEG_ATTEMPTS) return null;
+
+      // Backoff belongs here for the same reason as the ceiling: the sweep picks
+      // *placements* and `payOutPlacement` then re-runs every leg, so a leg that
+      // failed moments ago would be retried immediately on the back of some other
+      // eligible leg on the same placement.
+      if (
+        claimed?.lastAttemptAt &&
+        claimed.lastAttemptAt > new Date(Date.now() - LEG_RETRY_BACKOFF_MINUTES * 60_000)
+      )
+        return null;
 
       await dbWrite.placementTransaction.update({
         where: { placementId_kind: { placementId, kind } },
@@ -612,6 +638,12 @@ export async function sweepUnpaidLegs({
       amount: { gt: 0 },
       attempts: { lt: MAX_LEG_ATTEMPTS },
       createdAt: { lt: before },
+      // Spread the attempts out, so the budget measures how long the failure has
+      // persisted rather than how often the sweep happens to run.
+      OR: [
+        { lastAttemptAt: null },
+        { lastAttemptAt: { lt: new Date(Date.now() - LEG_RETRY_BACKOFF_MINUTES * 60_000) } },
+      ],
     },
     select: { placementId: true },
     distinct: ['placementId'],

@@ -47,6 +47,7 @@ const db = {
       amount: number;
       transactionId: string | null;
       attempts: number;
+      lastAttemptAt?: Date | null;
       lastError?: string | null;
       createdAt: Date;
     }
@@ -143,6 +144,16 @@ Object.assign(dbWriteMock, {
           if (where.kind?.in && !where.kind.in.includes(leg.kind)) return false;
           if (where.kind?.not && leg.kind === where.kind.not) return false;
           if (where.attempts?.lt !== undefined && leg.attempts >= where.attempts.lt) return false;
+          if (Array.isArray((where as Record<string, unknown>).OR)) {
+            const clauses = (where as unknown as { OR: { lastAttemptAt: null | { lt: Date } }[] })
+              .OR;
+            const ok = clauses.some((clause) =>
+              clause.lastAttemptAt === null
+                ? leg.lastAttemptAt == null
+                : !!leg.lastAttemptAt && leg.lastAttemptAt < clause.lastAttemptAt.lt
+            );
+            if (!ok) return false;
+          }
           if (where.amount?.gt !== undefined && leg.amount <= where.amount.gt) return false;
           if (where.transactionId === null && leg.transactionId !== null) return false;
           // `{ not: null }` means receipted-only. Ignoring it would let a
@@ -204,14 +215,21 @@ Object.assign(dbWriteMock, {
             transactionId?: string | null;
             lastError?: string | null;
             attempts?: { increment: number };
+            lastAttemptAt?: Date;
           };
         }) => {
           const row = db.legs.get(
             legKey(where.placementId_kind.placementId, where.placementId_kind.kind)
           );
           if (row) {
-            if (data.attempts && typeof data.attempts === 'object' && 'increment' in data.attempts)
+            if (
+              data.attempts &&
+              typeof data.attempts === 'object' &&
+              'increment' in data.attempts
+            ) {
               row.attempts += data.attempts.increment;
+              row.lastAttemptAt = new Date();
+            }
             if ('transactionId' in data) row.transactionId = data.transactionId ?? null;
             if ('lastError' in data) row.lastError = data.lastError ?? null;
           }
@@ -242,6 +260,7 @@ const {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
   MAX_LEG_ATTEMPTS,
+  LEG_RETRY_BACKOFF_MINUTES,
 } = await import('~/server/services/placement-escrow.service');
 
 const OWNER = 10;
@@ -267,6 +286,13 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
   };
   db.placements.set(placement.id as number, placement);
   return placement;
+};
+
+/** Moves a leg's last attempt outside the retry gap, standing in for elapsed time. */
+const ageLastAttempt = (key: string) => {
+  const leg = db.legs.get(key);
+  if (leg?.lastAttemptAt)
+    leg.lastAttemptAt = new Date(Date.now() - (LEG_RETRY_BACKOFF_MINUTES + 1) * 60_000);
 };
 
 const legsFor = (placementId: number) =>
@@ -526,6 +552,13 @@ describe('crashing between the legs', () => {
     expect(db.legs.get('1:principalToPlacer')?.transactionId).toBeNull();
 
     createBuzzTransaction.mockClear();
+    // The refund leg recorded a failed attempt, so it waits out the retry gap
+    // before being tried again — that is what stops a transient outage burning
+    // the whole budget in minutes.
+    const refundLeg = db.legs.get('1:principalToPlacer');
+    if (refundLeg)
+      refundLeg.lastAttemptAt = new Date(Date.now() - (LEG_RETRY_BACKOFF_MINUTES + 1) * 60_000);
+
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
     expect(swept.resumed).toBe(1);
@@ -879,6 +912,7 @@ describe('the sweeper converges', () => {
       settlePlacement({ placementId: 4, action: 'approve', actorId: OWNER })
     ).rejects.toThrow();
 
+    ageLastAttempt('4:toOwner');
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
 
     expect(swept.stranded).toBe(1);
@@ -1101,6 +1135,7 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
       settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER })
     ).rejects.toThrow();
 
+    ageLastAttempt('2:toOwner');
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0, limit: 1 });
 
     expect(swept.stranded).toBe(1);
@@ -1136,8 +1171,11 @@ describe('a leg that can never succeed', () => {
   it('stops being retried once it exhausts them', async () => {
     await givenPermanentlyFailingLeg();
 
-    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++)
+    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
+      const leg = db.legs.get('1:toOwner');
+      if (leg) leg.lastAttemptAt = null;
       await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
+    }
 
     const leg = db.legs.get('1:toOwner');
     expect(leg?.attempts).toBeLessThanOrEqual(MAX_LEG_ATTEMPTS);
@@ -1150,8 +1188,11 @@ describe('a leg that can never succeed', () => {
   // starving batch into an invisible one.
   it('is reported once it stops being retried', async () => {
     await givenPermanentlyFailingLeg();
-    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++)
+    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
+      const leg = db.legs.get('1:toOwner');
+      if (leg) leg.lastAttemptAt = null;
       await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
+    }
 
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
@@ -1161,6 +1202,7 @@ describe('a leg that can never succeed', () => {
   it('clears its error when a later attempt succeeds', async () => {
     await givenPermanentlyFailingLeg();
     createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
+    ageLastAttempt('1:toOwner');
 
     await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
@@ -1205,5 +1247,56 @@ describe('a settlement with no funded escrow behind it', () => {
     const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
 
     expect(swept).toMatchObject({ planned: 1, unfunded: 0 });
+  });
+});
+
+describe('the retry budget measures elapsed failure, not sweep frequency', () => {
+  // Without a gap between attempts the ceiling is a function of how often the
+  // cron runs: a ten-minute schedule would burn all five inside an hour, so a
+  // transient outage would permanently strand a leg that only needed waiting out.
+  it('skips a leg attempted too recently', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    createBuzzTransaction.mockClear();
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    // Untried legs on the same placement are still eligible; the one that just
+    // failed is not tried again until the gap has passed.
+    expect(db.legs.get('1:toOwner')?.attempts).toBe(1);
+    expect(createBuzzTransaction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountId: OWNER })
+    );
+  });
+
+  it('retries once the gap has passed', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    const leg = db.legs.get('1:toOwner');
+    if (leg) leg.lastAttemptAt = new Date(Date.now() - (LEG_RETRY_BACKOFF_MINUTES + 1) * 60_000);
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(swept.stranded).toBe(1);
+    expect(db.legs.get('1:toOwner')?.transactionId).toBe('buzz-tx');
   });
 });
