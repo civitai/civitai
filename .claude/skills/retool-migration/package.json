@@ -1,0 +1,10 @@
+{
+  "name": "retool-migration-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Decode Retool app exports so their functionality can be ported into apps/moderator",
+  "dependencies": {
+    "transit-js": "^0.8.874"
+  }
+}
