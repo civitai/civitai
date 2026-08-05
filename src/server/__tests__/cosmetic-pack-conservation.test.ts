@@ -191,12 +191,6 @@ const SHAPES: Shape[] = [
     ],
   },
   {
-    name: 'everything discountable or self-authored, so nothing is owed',
-    price: 3400,
-    members: [mkMember({ floorAmount: 1700 }), mkMember({ cosmeticId: 1002, floorAmount: 1700 })],
-    owned: [1001, 1002],
-  },
-  {
     // The buyer resells someone else's work. The seller share would be a
     // discount they fund for themselves, which the single purchase refuses.
     name: 'the buyer is a members reseller',
@@ -283,20 +277,6 @@ const SHAPES: Shape[] = [
         cosmeticId: 1002,
         createdById: THIRD_CREATOR,
         addedById: THIRD_CREATOR,
-        floorAmount: 2900,
-      }),
-    ],
-  },
-  {
-    name: 'the buyer is the pack creator',
-    price: 6300,
-    buyerId: PACK_CREATOR,
-    members: [
-      mkMember(),
-      mkMember({
-        cosmeticId: 1002,
-        createdById: OTHER_CREATOR,
-        addedById: OTHER_CREATOR,
         floorAmount: 2900,
       }),
     ],
@@ -416,12 +396,17 @@ describe.each(SHAPES)(
       const selfAuthored = members
         .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
         .reduce((sum, m) => sum + m.floorAmount, 0);
-      // The pack's own lister pays only what is owed to other people — the
-      // remainder is their own revenue, and round-tripping it would cost them
-      // the platform's cut to buy their own bundle.
-      if (buyerId === packCreatorId) return Math.min(price, foreignSum);
       return Math.max(0, price - discount - selfAuthored);
     };
+
+    // Nothing else in the suite requires a completed purchase to move money —
+    // every other property bounds outflow by inflow, and zero satisfies them all.
+    // A pack that completes for free is not a discount: each one grants another
+    // consumable balance and consumes a member's quantity.
+    it('either moves money or does not complete', async () => {
+      const { charged } = await setup();
+      expect(charged).toBeGreaterThan(0);
+    });
 
     it('charges exactly what the pricing rules say, independently computed', async () => {
       const { charged } = await setup();
@@ -471,11 +456,14 @@ describe.each(SHAPES)(
     });
 
     it('never pays out more blue than the buyer paid in blue', async () => {
-      const { payouts } = await setup();
+      const { charged, payouts } = await setup();
       const bluePaidOut = payouts
         .filter((p) => p.toAccountType === 'blue')
         .reduce((sum, p) => sum + p.amount, 0);
-      expect(bluePaidOut).toBeLessThanOrEqual(blueShare);
+      // Bounded by what the buyer actually paid in blue, which is capped by the
+      // charge — not by the fixture's constant, which goes slack the moment a
+      // shape charges less than it.
+      expect(bluePaidOut).toBeLessThanOrEqual(Math.min(blueShare, charged));
     });
 
     it('never grants a member the buyer already owned', async () => {
@@ -596,5 +584,145 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
     expect(pay).not.toHaveBeenCalled();
+  });
+});
+
+describe('purchaseCosmeticPack — purchases that must not complete', () => {
+  const buy = (over: {
+    price: number;
+    members: Member[];
+    buyerId?: number;
+    packCreatorId?: number | null;
+    owned?: number[];
+  }) => {
+    const { price, members, buyerId = BUYER, packCreatorId = PACK_CREATOR, owned } = over;
+    ownedFindMany.mockResolvedValue((owned ?? []).map((cosmeticId) => ({ cosmeticId })));
+    return purchaseCosmeticPack({
+      userId: buyerId,
+      shopItem: { ...shopItem(price, members.length), addedById: packCreatorId },
+      members,
+      stickersEnabled: true,
+    });
+  };
+
+  it('refuses the pack creator buying their own pack', async () => {
+    await expect(
+      buy({
+        price: 6300,
+        buyerId: PACK_CREATOR,
+        members: [
+          mkMember(),
+          mkMember({
+            cosmeticId: 1002,
+            createdById: OTHER_CREATOR,
+            addedById: OTHER_CREATOR,
+            floorAmount: 2900,
+          }),
+        ],
+      })
+    ).rejects.toThrow(/already own/i);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  // The sharp edge: free purchases were repeatable, and each one consumed a
+  // member's quantity — which is how a creator could make everyone else's packs
+  // containing their work refuse.
+  it('refuses an all-own pack, which would otherwise cost its creator nothing', async () => {
+    await expect(
+      buy({
+        price: 2000,
+        buyerId: PACK_CREATOR,
+        members: [mkMember(), mkMember({ cosmeticId: 1002, floorAmount: 1000 })],
+      })
+    ).rejects.toThrow();
+    expect(spend).not.toHaveBeenCalled();
+    expect(createManyUserCosmetic).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the discount covers the whole price', async () => {
+    await expect(
+      buy({
+        price: 3400,
+        members: [
+          mkMember({ floorAmount: 1700 }),
+          mkMember({ cosmeticId: 1002, floorAmount: 1700 }),
+        ],
+        owned: [1001, 1002],
+      })
+    ).rejects.toThrow(/already own/i);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('refuses a repeat of a free consumable pack rather than stacking uses', async () => {
+    await expect(
+      buy({
+        price: 3400,
+        members: [
+          mkMember({ type: CosmeticType.Sticker, floorAmount: 1700 }),
+          mkMember({ cosmeticId: 1002, floorAmount: 1700 }),
+        ],
+        buyerId: PACK_CREATOR,
+      })
+    ).rejects.toThrow();
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Generative rather than enumerated.
+ *
+ * Every defect found from round four onward lived at an INTERSECTION of two
+ * dimensions — buyer x reseller, buyer x pack creator, pack creator x
+ * null-creator member — and a hand-written table varies one dimension at a time.
+ * These packs are built from a cross-product instead, so the crossings exist
+ * without anyone having to think of them.
+ */
+describe('purchaseCosmeticPack — generated member combinations', () => {
+  const CREATORS = [
+    { label: 'own', createdById: PACK_CREATOR },
+    { label: 'foreign', createdById: OTHER_CREATOR },
+    { label: 'buyer-authored', createdById: BUYER },
+    { label: 'no-creator', createdById: null },
+  ];
+  const RESELLERS = [
+    { label: 'self-listed', addedBy: (createdById: number | null) => createdById },
+    { label: 'third-party', addedBy: () => RESELLER },
+    { label: 'buyer-listed', addedBy: () => BUYER },
+  ];
+  const TYPES = [CosmeticType.Badge, CosmeticType.Sticker];
+
+  const combos = CREATORS.flatMap((creator) =>
+    RESELLERS.flatMap((reseller) =>
+      TYPES.map((type) => ({
+        label: `${creator.label} / ${reseller.label} / ${type}`,
+        member: mkMember({
+          cosmeticId: 1002,
+          type,
+          createdById: creator.createdById,
+          addedById: reseller.addedBy(creator.createdById),
+          listingMeta: { purchases: 0, acceptsBlueBuzz: false, sellerShare: 25 },
+          floorAmount: 2900,
+        }),
+      }))
+    )
+  );
+
+  it.each(combos)('$label — pays out within the collected amount', async ({ member }) => {
+    const members = [mkMember(), member];
+    ownedFindMany.mockResolvedValue([]);
+    await purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(9100, members.length),
+      members,
+      stickersEnabled: true,
+    });
+    const charged: number = spend.mock.calls[0]?.[0]?.amount ?? 0;
+    const payouts = pay.mock.calls.map((c) => c[0] as { toAccountId: number; amount: number });
+    const paid = payouts.reduce((sum, p) => sum + p.amount, 0);
+    expect(paid).toBeLessThanOrEqual(Math.floor(charged * (1 - PLATFORM_KEEPS)));
+    // No role a buyer can hold — member creator, member reseller, pack lister —
+    // may make them a recipient of their own purchase.
+    expect(payouts.some((p) => p.toAccountId === BUYER)).toBe(false);
   });
 });

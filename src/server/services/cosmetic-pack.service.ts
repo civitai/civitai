@@ -155,14 +155,26 @@ export const assertPackPurchasable = async ({
   userId,
   members,
   memberCount,
+  packCreatorId,
   stickersEnabled,
 }: {
   userId: number;
   members: PackMemberListing[];
   /** How many members the pack was built with (`meta.packMemberCount`). */
   memberCount: number;
+  packCreatorId?: number | null;
   stickersEnabled?: boolean;
 }) => {
+  // The single purchase refuses a creator buying their own cosmetic; this is the
+  // same rule one level up. Pricing it instead — charging only what is owed to
+  // others — made an all-own pack free, and a free purchase is not merely a
+  // discount: each one grants another consumable balance and consumes a member's
+  // quantity, which is a way to make third-party packs containing that member
+  // refuse. Their own members are already theirs; foreign ones can be bought
+  // individually.
+  if (packCreatorId && packCreatorId === userId)
+    throw throwBadRequestError('You already own everything you put in this pack');
+
   // Compared against the count recorded when the pack was built, not against the
   // join rows themselves: a member Cosmetic being deleted cascades its join row
   // away, so a live count would shrink with the pack and agree with itself.
@@ -375,6 +387,7 @@ export const purchaseCosmeticPack = async ({
     userId,
     members,
     memberCount: shopItem.memberCount,
+    packCreatorId: shopItem.addedById,
     stickersEnabled,
   });
 
@@ -411,29 +424,28 @@ export const purchaseCosmeticPack = async ({
   // Random rather than a timestamp: a pack is repeatable (a consumable member
   // tops up), so two calls in the same millisecond would share an external id —
   // and a duplicate reads as "the money already moved".
+  // A pack can price to zero — own everything discountable and have authored the
+  // rest — and completing that is not a free gift, it is a repeatable one: each
+  // purchase grants another consumable balance and consumes a member's remaining
+  // quantity, which is what makes third-party packs containing that member
+  // refuse. Nothing to pay means nothing left to buy.
+  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+
   const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
-  // A pack CAN price to zero — own everything discountable and have authored the
-  // rest — and the single-item path never could, because list floors are
-  // positive. Moving 0 Buzz would come back as "no transaction", which reads as
-  // a failure, so there is nothing to charge and nothing to refund.
-  const bluePaid = amountCharged
-    ? await (async () => {
-        const transaction = await createMultiAccountBuzzTransaction({
-          fromAccountId: userId,
-          fromAccountTypes,
-          toAccountId: 0,
-          amount: amountCharged,
-          type: TransactionType.Purchase,
-          description: `Cosmetic pack purchase - ${shopItem.title}`,
-          externalTransactionIdPrefix: transactionId,
-        });
-        if (!transaction.transactionCount)
-          throw throwBadRequestError('There was an error creating the transaction');
-        return transaction.transactionIds
-          .filter((t) => t.accountType === 'blue')
-          .reduce((sum, t) => sum + t.amount, 0);
-      })()
-    : 0;
+  const transaction = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountTypes,
+    toAccountId: 0,
+    amount: amountCharged,
+    type: TransactionType.Purchase,
+    description: `Cosmetic pack purchase - ${shopItem.title}`,
+    externalTransactionIdPrefix: transactionId,
+  });
+  if (!transaction.transactionCount)
+    throw throwBadRequestError('There was an error creating the transaction');
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
 
   try {
     await dbWrite.$transaction(async (tx) => {
