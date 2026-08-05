@@ -145,8 +145,8 @@ describe('admin cache-clear namespace scoping — namespaced deployment', () => 
     mainFake.reset();
     sysFake.reset();
     for (const k of [...FOREIGN_KEYS, ...OWN_KEYS]) mainFake.store.add(k);
-    // The system keyspace is a separate per-deployment instance: its keys are UNPREFIXED even
-    // here. Seeded exactly as they arrive in reality.
+    // System keys are UNPREFIXED on every deployment — they are never run through
+    // `applyCacheKeyPrefix`. Seeded exactly as they appear anywhere.
     sysFake.store.add('device:accounts:1');
     sysFake.store.add('device:accounts:2');
   });
@@ -156,7 +156,9 @@ describe('admin cache-clear namespace scoping — namespaced deployment', () => 
 
     expect(scopeCachePatternToNamespace('packed:caches:*')).toBe('preview:packed:caches:*');
     expect(scopeCachePatternToNamespace('packed:caches:*', 'main')).toBe('preview:packed:caches:*');
-    // 🔴 Deliberate asymmetry — the sys keyspace is never namespaced.
+    // 🔴 Deliberate asymmetry: system keys are never namespaced, so prefixing one would match
+    // nothing. This pins the mechanism — it is NOT an assertion that the sys target is contained.
+    // See the `cacheNamespacePrefix` doc block: a sys clear can reach production data.
     expect(scopeCachePatternToNamespace('device:accounts:*', 'sys')).toBe('device:accounts:*');
   });
 
@@ -277,9 +279,114 @@ describe('admin cache-clear namespace scoping — namespaced deployment', () => 
     expect(mainFake.deleted).toEqual(['preview:packed:caches:user-cosmetics:1']);
   });
 
-  // 🔴 The sys target must behave EXACTLY as it does in production — its keys are unprefixed by
-  // construction, so any scoping here would make every sys clear match nothing.
-  it('leaves the sys target completely unaffected by the namespace', async () => {
+  // 🔴 THE SSE BRANCH IS A SEPARATE CALL SITE, and it is the one used for large clears. It reads
+  // `patterns` independently of the non-streaming branch below it, so scoping can regress on this
+  // path alone while every non-streaming case stays green. Covering it only in the production
+  // suite proves nothing about scoping, because there scoping is the identity function.
+  it('scopes the caller patterns on the SSE path and reports the scoped patterns', async () => {
+    const handler = await loadEndpoint();
+    const res = makeRes();
+
+    await handler(
+      {
+        query: {
+          patterns: 'packed:caches:user-cosmetics:*,packed:caches:tag-ids-for-images:*',
+          stream: '1',
+        },
+      },
+      res
+    );
+
+    const events = res.chunks
+      .filter((c) => c.startsWith('event: '))
+      .map((c) => {
+        const [eventLine, dataLine] = c.split('\n');
+        return { event: eventLine.slice('event: '.length), data: JSON.parse(dataLine.slice(6)) };
+      });
+
+    // 🔴 ASSERTION ORDER IS LOAD-BEARING — the SCOPING assertions come first, and events are
+    // looked up BY NAME rather than by index.
+    //
+    // An unscoped SSE branch matches nothing, and `clearCacheByPatterns` skips its `onProgress`
+    // callback on a batch that deletes nothing (`if (toDelete.length === 0) continue`), so the
+    // `progress` event disappears entirely. An event-sequence assertion placed first therefore
+    // fails on the SHAPE of the stream — a true failure, but one that says nothing about
+    // scoping — and an `events[2]` index would read `undefined` and throw instead of asserting.
+    // Verified: ordered that way, the mutant failed with
+    // `expected [ 'start', 'done' ] to deeply equal [ 'start', 'progress', 'done' ]`.
+    const byName = (name: string) => events.find((e) => e.event === name);
+
+    // The clear reports the SCOPED patterns, and the counts are NON-ZERO. Both halves matter: an
+    // unscoped glob reports the raw patterns and clears 0, and a bare "production survived" check
+    // cannot tell that apart from a clear that silently did nothing.
+    expect(byName('done')?.data).toEqual({
+      total: 2,
+      perPattern: [
+        { pattern: 'preview:packed:caches:user-cosmetics:*', cleared: 1 },
+        { pattern: 'preview:packed:caches:tag-ids-for-images:*', cleared: 1 },
+      ],
+    });
+
+    // The announced patterns are the SCOPED ones — what the clear will actually address.
+    expect(byName('start')?.data).toEqual({
+      patterns: [
+        'preview:packed:caches:user-cosmetics:*',
+        'preview:packed:caches:tag-ids-for-images:*',
+      ],
+      target: 'main',
+    });
+
+    expect(byName('progress')?.data).toEqual({
+      total: 2,
+      perPattern: [
+        { pattern: 'preview:packed:caches:user-cosmetics:*', cleared: 1 },
+        { pattern: 'preview:packed:caches:tag-ids-for-images:*', cleared: 1 },
+      ],
+    });
+
+    expect([...mainFake.deleted].sort()).toEqual([...OWN_KEYS].sort());
+    for (const k of FOREIGN_KEYS) expect(mainFake.store.has(k)).toBe(true);
+
+    // Stream shape last: a real property, but it must not be what a scoping regression trips on.
+    expect(events.map((e) => e.event)).toEqual(['start', 'progress', 'done']);
+  });
+
+  it('scopes a single caller pattern on the SSE path', async () => {
+    const handler = await loadEndpoint();
+    const res = makeRes();
+
+    await handler({ query: { pattern: 'packed:caches:*', stream: '1' } }, res);
+
+    const events = res.chunks
+      .filter((c) => c.startsWith('event: '))
+      .map((c) => {
+        const [eventLine, dataLine] = c.split('\n');
+        return { event: eventLine.slice('event: '.length), data: JSON.parse(dataLine.slice(6)) };
+      });
+
+    // Scoping first, by name — see the ordering note on the multi-pattern SSE case above.
+    const byName = (name: string) => events.find((e) => e.event === name);
+
+    expect(byName('done')?.data).toEqual({
+      total: 2,
+      perPattern: [{ pattern: 'preview:packed:caches:*', cleared: 2 }],
+    });
+    expect(byName('start')?.data).toEqual({
+      patterns: ['preview:packed:caches:*'],
+      target: 'main',
+    });
+    expect([...mainFake.deleted].sort()).toEqual([...OWN_KEYS].sort());
+    for (const k of FOREIGN_KEYS) expect(mainFake.store.has(k)).toBe(true);
+  });
+
+  // 🔴 The sys target must behave EXACTLY as it does in production, because system keys are
+  // unprefixed everywhere and scoping one would make the clear match nothing.
+  //
+  // 🔴 READ THIS AS A MECHANISM TEST, NOT A SAFETY TEST. It pins that the namespace does not
+  // reach the sys pattern. It does NOT show that a sys clear is confined to this deployment —
+  // a deployment's system-Redis instance is not guaranteed to be distinct from production's, so
+  // this call can delete production data. See `cacheNamespacePrefix`.
+  it('does not apply the namespace to a sys pattern (mechanism, not containment)', async () => {
     const handler = await loadEndpoint();
     const res = makeRes();
 

@@ -37,13 +37,22 @@ const log = createLogger('cache-helpers', 'cyan');
 /**
  * The prefix every key of `target`'s keyspace carries on this deployment — `''` in production.
  *
- * 🔴 THE ASYMMETRY IS DELIBERATE: `'sys'` is ALWAYS `''`, even on a namespaced deployment.
- * Environment namespacing is CACHE-ONLY (see packages/civitai-redis/src/cache-key-prefix.ts): the
- * main cache is one instance shared by every deployment, so its keys must be separated by a
- * prefix. The system keyspace is a SEPARATE per-deployment instance seeded by replication, so its
- * keys arrive UNPREFIXED by construction and `REDIS_SYS_KEYS` is never run through
- * `applyCacheKeyPrefix`. Prefixing a sys pattern would therefore match nothing at all. Do not
- * "fix" this into consistency.
+ * 🔴 THE ASYMMETRY IS DELIBERATE — AND IT IS NOT A SAFETY CLAIM. `'sys'` is ALWAYS `''`, even on
+ * a namespaced deployment. Environment namespacing is CACHE-ONLY (see
+ * packages/civitai-redis/src/cache-key-prefix.ts): `REDIS_SYS_KEYS` is never run through
+ * `applyCacheKeyPrefix`, so system keys are unprefixed on EVERY deployment. Prefixing a sys
+ * pattern would therefore match nothing at all. Do not "fix" this into consistency, and do not
+ * gate it on a namespace being set — the keys are unprefixed either way.
+ *
+ * 🔴 WHAT THIS DOES NOT MEAN. A deployment's system-Redis instance is NOT guaranteed to be
+ * distinct from production's; some non-production deployments share it. So `target: 'sys'` is
+ * exempt because its keys CANNOT be namespaced, not because the keyspace is isolated. A
+ * `target: 'sys'` clear issued from a non-production deployment can reach PRODUCTION data, and
+ * nothing in this file stands in its way.
+ *
+ * That makes sys the more dangerous of the two targets, not the safer one: cache entries are
+ * regenerable from the database, system values are not — a deleted one is simply gone. Treat any
+ * `target: 'sys'` clear as a production operation regardless of where it is run from.
  */
 function cacheNamespacePrefix(target: CacheTarget): string {
   return target === 'sys' ? '' : CACHE_KEY_PREFIX;
@@ -59,8 +68,9 @@ function cacheNamespacePrefix(target: CacheTarget): string {
  * `<namespace>:packed:caches:*`) — i.e. the one environment it can clear is the one it must never
  * touch. Scoping the glob inverts that: it can only ever address its own namespace.
  *
- * Identity in production (empty prefix) and identity for `target: 'sys'` — see
- * `cacheNamespacePrefix`.
+ * Identity in production (empty prefix). Also identity for `target: 'sys'`, which is a mechanical
+ * consequence of system keys never being namespaced — NOT a containment guarantee for that
+ * target. See `cacheNamespacePrefix`.
  *
  * 🔴 Call this ONLY on a pattern that was built from scratch by a caller. A pattern derived from
  * `REDIS_KEYS` already carries the prefix from the key table itself, and scoping it again yields
@@ -78,7 +88,8 @@ export function scopeCachePatternToNamespace(pattern: string, target: CacheTarge
  * prefix belongs to another environment (production, in the damaging case) and must never be
  * deleted from here, whatever pattern reached this function.
  *
- * Always true in production and for `target: 'sys'`, where the prefix is empty.
+ * Always true in production and for `target: 'sys'`, where the prefix is empty — so this provides
+ * NO containment on the sys target, which cannot be namespaced at all. See `cacheNamespacePrefix`.
  */
 function isInCacheNamespace(key: string, target: CacheTarget) {
   const prefix = cacheNamespacePrefix(target);

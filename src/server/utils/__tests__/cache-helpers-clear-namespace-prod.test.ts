@@ -234,6 +234,8 @@ describe('admin cache-clear namespace scoping — production (no namespace)', ()
     });
   });
 
+  // Mechanism only: system keys are unprefixed everywhere, so there is nothing for the namespace
+  // to do here. Not a containment claim for the sys target — see `cacheNamespacePrefix`.
   it('the endpoint leaves the sys target alone and hits the sys client', async () => {
     const handler = (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
       req: unknown,
