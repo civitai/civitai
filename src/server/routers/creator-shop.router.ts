@@ -95,9 +95,13 @@ export const creatorShopRouter = router({
       stickersEnabled: ctx.features.stickers,
     })
   ),
-  getPack: publicProcedure
-    .input(getByIdSchema)
-    .query(({ input, ctx }) => getPackDetail({ shopItemId: input.id, userId: ctx.user?.id })),
+  getPack: publicProcedure.input(getByIdSchema).query(({ input, ctx }) =>
+    getPackDetail({
+      shopItemId: input.id,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    })
+  ),
   getBundlable: creatorShopProcedure
     .input(
       z.object({

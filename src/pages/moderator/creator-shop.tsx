@@ -74,6 +74,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
@@ -263,7 +264,10 @@ function CreatorShopReviewPage() {
   const previewCosmetic = useMemo(() => {
     if (!selected) return null;
     if (!isDecoration) return selected.cosmetic as unknown as PreviewCosmetic;
-    const { offsets: _stored, ...rest } = (selected.cosmetic?.data ?? {}) as Record<string, unknown>;
+    const { offsets: _stored, ...rest } = (selected.cosmetic?.data ?? {}) as Record<
+      string,
+      unknown
+    >;
     return {
       ...selected.cosmetic,
       data: normalizedModOffsets ? { ...rest, offsets: normalizedModOffsets } : rest,
@@ -536,12 +540,15 @@ function CreatorShopReviewPage() {
                   <Group gap={10} align="center" wrap="wrap">
                     <Title order={3}>{selected.title}</Title>
                     <Badge variant="light" color="gray" radius="xl">
-                      {selected.cosmetic ? `Cosmetic · ${getDisplayName(selected.cosmetic.type)}` : 'Pack'}
+                      {selected.cosmetic
+                        ? `Cosmetic · ${getDisplayName(selected.cosmetic.type)}`
+                        : 'Pack'}
                     </Badge>
                     <Badge variant="light" radius="xl" color={statusMeta(selected.status).color}>
                       {statusMeta(selected.status).label}
                     </Badge>
                   </Group>
+                  {!selected.cosmetic && <PackContentsPanel shopItemId={selected.id} />}
                   <Group gap={6} align="center">
                     <Text size="sm" c="dimmed">
                       Submitted by

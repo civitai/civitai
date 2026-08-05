@@ -774,7 +774,9 @@ export const purchaseCosmeticShopItem = async ({
         unitAmount: shopItem.unitAmount,
         addedById: shopItem.addedById,
         meta: shopItemMeta,
-        memberCount: shopItem._count.members,
+        // The build-time snapshot, which the join rows cannot contradict without
+        // being noticed — deleting a member Cosmetic cascades its row away.
+        memberCount: shopItemMeta.packMemberCount ?? shopItem._count.members,
       },
       members,
       payWith,

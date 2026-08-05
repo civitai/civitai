@@ -355,14 +355,17 @@ export const delistPacksContaining = async (cosmeticId: number) => {
 export const getPackDetail = async ({
   shopItemId,
   userId,
+  isModerator,
 }: {
   shopItemId: number;
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
       id: true,
+      cosmeticId: true,
       title: true,
       description: true,
       unitAmount: true,
@@ -375,6 +378,15 @@ export const getPackDetail = async ({
     },
   });
   if (!item) throw throwNotFoundError('Pack not found');
+  if (item.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
+  // Every other read path in the shop gates on Published. Without this, an id is
+  // enough to read an unreviewed or rejected pack's contents and pricing.
+  if (
+    item.status !== CosmeticShopItemStatus.Published &&
+    !isModerator &&
+    (!userId || userId !== item.addedById)
+  )
+    throw throwNotFoundError('Pack not found');
 
   const snapshotByCosmetic = new Map(item.members.map((m) => [m.cosmeticId, m.floorAmount]));
   const resolved = await resolvePackMembers(item.members.map((m) => m.cosmeticId));
@@ -422,6 +434,11 @@ export const getPackDetail = async ({
       creatorUsername: m.creatorUsername,
       isOwn: m.isOwn,
       listPrice: m.listPrice,
+      // Today's list price, which is what an edit is re-checked against — the
+      // snapshot above is only what this pack charges.
+      currentListPrice:
+        resolved.find((r) => r.cosmeticId === m.cosmeticId)?.listPrice ?? m.listPrice,
+      acceptsBlueBuzz: m.acceptsBlueBuzz,
       owned: ownedCosmeticIds.includes(m.cosmeticId),
       // Owning a consumable means the purchase tops it up rather than
       // duplicating it (D23), which is also why it earns no discount.

@@ -86,7 +86,10 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
       existing.members.map((m) => ({
         cosmeticId: m.cosmeticId,
         type: m.type,
-        listPrice: m.listPrice,
+        // Today's price, which is what the floor is re-checked against on save.
+        // The snapshot is what the pack charges, and would show a floor the
+        // server rejects.
+        listPrice: m.currentListPrice,
         isOwn: m.isOwn,
         name: m.name,
         data: m.data,
@@ -94,7 +97,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         // which is what `isOwn` already carries.
         createdById: m.isOwn ? currentUser?.id ?? null : null,
         creatorUsername: m.creatorUsername,
-        acceptsBlueBuzz: true,
+        // From the server, not assumed: hydrating this as `true` showed the blue
+        // toggle as available on a pack the server would refuse to save.
+        acceptsBlueBuzz: m.acceptsBlueBuzz,
       }))
     );
     setAcceptsBlueBuzz(!!existing.meta.acceptsBlueBuzz);

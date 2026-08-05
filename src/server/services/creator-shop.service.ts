@@ -1648,16 +1648,21 @@ export const takedownCosmeticShopItem = async ({
         })
       ).map((m) => m.cosmeticId)
     : [item.cosmeticId as number];
+  // Empty is meaningful, and must not read as "unscoped": a pack that never
+  // sold (or whose only sale was already refunded) grants nothing, so there is
+  // nothing to revoke. Widening it here would strip every member cosmetic from
+  // everyone who ever obtained one, by any route, with no refund.
   const packClaimKeys = isPack ? purchases.map((p) => p.buzzTransactionId) : undefined;
-  const owners = memberIds.length
-    ? await dbWrite.userCosmetic.findMany({
-        where: {
-          cosmeticId: { in: memberIds },
-          ...(packClaimKeys?.length ? { claimKey: { in: packClaimKeys } } : {}),
-        },
-        select: { userId: true },
-      })
-    : [];
+  const owners =
+    memberIds.length && (!isPack || packClaimKeys?.length)
+      ? await dbWrite.userCosmetic.findMany({
+          where: {
+            cosmeticId: { in: memberIds },
+            ...(packClaimKeys ? { claimKey: { in: packClaimKeys } } : {}),
+          },
+          select: { userId: true },
+        })
+      : [];
   const ownerIds = [...new Set(owners.map((o) => o.userId))];
   const { revoked } =
     ownerIds.length && memberIds.length

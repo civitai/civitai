@@ -44,10 +44,15 @@ const member = (
   listingMeta: { purchases: 0, acceptsBlueBuzz: true },
   addedById: PACK_CREATOR,
   availableQuantity: null,
+  availableFrom: null,
+  availableTo: null,
   soldCount: 0,
   floorAmount: 1300,
   ...over,
 });
+
+const PAST = new Date('2020-01-01');
+const FUTURE = new Date('2099-01-01');
 
 const foreign = (over = {}) =>
   member({
@@ -99,6 +104,24 @@ describe('assertPackPurchasable', () => {
   it('refuses when the buyer has blocked any member creator, not just the first', async () => {
     getBlockedPairIds.mockResolvedValue([FOREIGN_CREATOR]);
     await expect(call([member(), foreign()])).rejects.toThrow(/not available/i);
+  });
+
+  it('refuses a member whose availability window has not opened', async () => {
+    await expect(call([member(), foreign({ availableFrom: FUTURE })])).rejects.toThrow(
+      /not available yet/i
+    );
+  });
+
+  it('refuses a member whose availability window has closed', async () => {
+    await expect(call([member(), foreign({ availableTo: PAST })])).rejects.toThrow(
+      /no longer available/i
+    );
+  });
+
+  it('allows a member whose window is open on both sides', async () => {
+    await expect(
+      call([member(), foreign({ availableFrom: PAST, availableTo: FUTURE })])
+    ).resolves.toBeUndefined();
   });
 
   it('refuses a pack containing a sticker while the flag is off', async () => {
@@ -185,6 +208,29 @@ describe('computePackPayouts', () => {
       members: [member(), member({ cosmeticId: 64, floorAmount: 800 })],
     });
     expect(components).toHaveLength(0);
+  });
+
+  it('does not pay the buyer for a member they created themselves', () => {
+    const { components, foreignTotal } = computePackPayouts({
+      packPrice: PACK_PRICE,
+      packCreatorId: PACK_CREATOR,
+      members: [member(), foreign()],
+      buyerId: FOREIGN_CREATOR,
+    });
+    expect(components).toHaveLength(0);
+    // Excluded from the covered total too, so the pack creator doesn't absorb
+    // the cost of a member nobody was paid for.
+    expect(foreignTotal).toBe(0);
+  });
+
+  it('still pays a foreign creator when someone else is buying', () => {
+    const { components } = computePackPayouts({
+      packPrice: PACK_PRICE,
+      packCreatorId: PACK_CREATOR,
+      members: [member(), foreign()],
+      buyerId: BUYER,
+    });
+    expect(components.map((c) => c.userId)).toEqual([FOREIGN_CREATOR]);
   });
 
   it('floors the remainder at zero when a member re-priced above the pack', () => {
