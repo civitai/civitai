@@ -13,11 +13,12 @@ detector does not need: ordinary (non-unique) indexes.
 # Plan offline against a captured catalog. Reads nothing, writes nothing.
 pnpm --filter @civitai/db-schema fk-remediate --catalog captured.json
 
-# Plan against the live database, with real orphan counts. Read-only.
-pnpm --filter @civitai/db-schema fk-remediate --measure
-
-# Plan one relation.
+# Plan one relation against the live database, with a real orphan count. Read-only.
 pnpm --filter @civitai/db-schema fk-remediate --measure --relation ImageTagForReview.imageId
+
+# The whole sweep. ~27 anti-joins, several over tables with millions of rows — has to be
+# asked for by name, and belongs on a clone rather than a database serving live reads.
+pnpm --filter @civitai/db-schema fk-remediate --measure --all-relations
 ```
 
 A relation is named `Model.column` — `Club.coverImageId`, not `Club.coverImage` — because
@@ -82,19 +83,36 @@ into a copy-pasteable plan.
 
 ### The never-add list (`exclusions.ts`)
 
-Nine relations must never receive a foreign key, for reasons that live outside the schema
-and that a purely action-derived planner cannot see:
+**Twelve** relations must never receive a foreign key, for reasons that live outside the
+schema and that a purely action-derived planner cannot see.
 
-- **`TagsOnImageNew.imageId`** — enforcement is the live `after_image_delete_trigger`, whose
-  body is `DELETE FROM "TagsOnImageNew" WHERE "imageId" = OLD.id`. The constraint was
-  dropped on purpose one day after that trigger took over.
-- **`Article.coverId`** — removed by `20250614053144_remove_article_cover_id_fkey`, a
-  migration whose entire content is that one `DROP CONSTRAINT`.
-- **all seven `*Rank` relations** — `recreateRankTable` rebuilds a rank table with
-  `CREATE TABLE "<X>Rank_New" AS SELECT * FROM "<X>Rank_Live"` → `DROP` → rename. A CTAS
-  copies no constraints, so a foreign key added there is gone at the next refresh, silently.
-  A constraint that can be added and cannot be kept is *recurring* drift — worse than
-  permanent drift.
+The set is **derived, not handed** — twice over a primary source, because a list someone
+gives you is not a population:
+
+- **A. Deliberately dropped by a committed migration.** All 688 files under
+  `prisma/migrations` scanned for `ADD`/`DROP CONSTRAINT` on each of the 37 expected
+  constraint names, keeping those whose *last* recorded operation is a `DROP`. Exactly
+  three: **`Article.coverId`** (`20250614053144_remove_article_cover_id_fkey`, a migration
+  whose entire content is that one drop), **`ImageConnection.imageId`** and
+  **`TagsOnImageNew.imageId`** (both dropped by `20240307231126_nsfw_level_update_queue` —
+  the same migration that drops the four `CollectionItem` keys and introduces `JobQueue`,
+  i.e. the deliberate replacement of FK-enforced cleanup with an application-level queue).
+- **B. Rebuilt by a CTAS.** `recreateRankTable` rebuilds a rank table with
+  `CREATE TABLE "<X>Rank_New" AS SELECT * FROM "<X>Rank_Live"` → `DROP` → rename, and a CTAS
+  copies no constraints — so a foreign key added there is gone at the next refresh,
+  silently. A constraint that can be added and cannot be kept is *recurring* drift, which is
+  worse than permanent drift. All **nine** `*Rank` relations.
+- **C. Enforced by a trigger instead.** `TagsOnImageNew.imageId` again, independently: the
+  live `after_image_delete_trigger` body is
+  `DELETE FROM "TagsOnImageNew" WHERE "imageId" = OLD.id`.
+
+Two of those went missing from earlier revisions of this list, both because it was taken as
+given rather than derived: `ArticleRank.articleId` (the brief named six rank relations; the
+mechanism is table-shaped, not action-shaped, and `ArticleRank` is one of only two whose
+refresh is still uncommented) and `ImageConnection.imageId`. `QuestionRank.questionId` and
+`AnswerRank.answerId` are listed as defence in depth — they are backed by views today, so
+the planner already refuses them three times over, but each of those protections is
+incidental and one of them, `NoAction`, is exactly what #3589 removed from the other seven.
 
 🔴 **`onDelete` used to carry some of this signal and no longer does.** Before
 `fix(schema): correct 8 referential actions that misdescribe the database` (#3589), the
@@ -114,11 +132,12 @@ silently reverted.
 
 ## Prerequisites (blocked, not refused)
 
-| code                     | meaning                                                              |
-| ------------------------ | -------------------------------------------------------------------- |
-| `missing-index`          | no index whose **leading** key columns are the referencing columns    |
-| `index-coverage-unknown` | the catalog carried no index list, so absence could not be established |
-| `orphan-count-not-measured` | orphans have not been counted                                      |
+| code                        | meaning                                                              |
+| --------------------------- | -------------------------------------------------------------------- |
+| `missing-index`             | no index whose **leading** key columns are the referencing columns    |
+| `index-coverage-unknown`    | the catalog carried no index list, so absence could not be established |
+| `orphan-count-not-measured` | orphans have not been counted                                        |
+| `constraint-validity-unknown` | a constraint exists but the catalog carried no `convalidated` data |
 
 Postgres does not index a foreign key for you, and it can only use an index for a predicate
 on its **leading** key columns — so an index on `(userId, imageId)` does nothing for a
@@ -148,17 +167,21 @@ CREATE TABLE IF NOT EXISTS "fk_remediation_backup"."T_c_orphans" (LIKE "T");
 -- 3. remediate, batched, repeat until it affects 0 rows
 WITH doomed AS (SELECT t.ctid FROM "T" t WHERE … LIMIT 5000),
      moved  AS (DELETE FROM "T" t USING doomed d WHERE t.ctid = d.ctid RETURNING t.*)
-INSERT INTO "fk_remediation_backup"."T_c_orphans" SELECT * FROM moved;
+INSERT INTO "fk_remediation_backup"."T_c_orphans" ("c1", "c2", …)
+SELECT "c1", "c2", … FROM moved;
 
--- 4. add without scanning
+-- 4. add without scanning, under a BOUNDED lock wait
+BEGIN;
+SET LOCAL lock_timeout = '3s';
 ALTER TABLE "T" ADD CONSTRAINT "T_c_fkey" FOREIGN KEY ("c") REFERENCES "R"("id")
   ON UPDATE CASCADE ON DELETE CASCADE NOT VALID;
+COMMIT;
 
 -- 5. validate, as a SEPARATE statement
 ALTER TABLE "T" VALIDATE CONSTRAINT "T_c_fkey";
 ```
 
-Four things about these are load-bearing:
+Six things about these are load-bearing:
 
 - **The backup is not a preceding statement.** The `DELETE … RETURNING` feeds the `INSERT`
   directly, so there is no interleaving in which rows are gone and not preserved — a crash
@@ -175,6 +198,52 @@ Four things about these are load-bearing:
 - **`IS NOT NULL` in the predicate.** A NULL reference is not an orphan, it is an absent
   one, and a foreign key permits it. Counting NULLs would inflate every count and make a
   `SetNull` remediation set columns that are already NULL.
+- **The lock wait on step 4 is bounded.** `ADD CONSTRAINT ... FOREIGN KEY` takes
+  `ACCESS EXCLUSIVE` on the referencing table and `SHARE ROW EXCLUSIVE` on the **referenced**
+  one. `NOT VALID` keeps the *scan* off the hot path, but the statement still has to
+  *acquire* those locks — so it queues behind any in-flight transaction on either table, and
+  every query arriving after it queues behind the ALTER. On `Image` (the most-referenced
+  table here, and 21 of these relations point at it) an unbounded wait is a site stall.
+  `SET LOCAL` keeps the setting from leaking onto a pooled connection. A `lock_timeout`
+  expiry is the *desired* failure — nothing changed, and the executor retries it (5 times by
+  default). Only SQLSTATE `55P03` is retried; every other error is re-raised untouched.
+- **The backup INSERT names its columns.** `IF NOT EXISTS` reuses a backup table an earlier
+  run created, so if the source table has since gained or lost a column, `SELECT t.*` either
+  errors on the count or writes each value into its neighbour's column. Naming them makes a
+  stale backup fail loudly on the missing name instead.
+
+## 🔴 An interrupted run, and why `convalidated` is read
+
+There is no `ADD CONSTRAINT ... IF NOT EXISTS` in Postgres, and these statements autocommit.
+A run that dies between step 4 and step 5 leaves a constraint that is **present and only
+half-enforcing**: it constrains new and changed rows and has never checked the ones already
+there.
+
+Any catalog read filtering on `contype = 'f'` alone — which is what the drift detector does
+— reports that as an ordinary foreign key. So the relation would come back `satisfied`,
+execution would refuse with "no actionable relation", and the campaign could never finish
+it, with the detector calling it clean the whole time.
+
+**This is the expected outcome, not an edge case.** `VALIDATE CONSTRAINT` scans the whole
+table and a statement-timeout ceiling applies, so validation will be killed on the large
+tables in this backlog (`Collection` 16.9M, `TagsOnImageVote` 12M, `ImageEngagement` 5.9M,
+`ImageTool` 5.7M). A pooler's `query_timeout` overrides anything a client `SET`s, so this
+tool **cannot raise that ceiling and does not try**.
+
+What it does instead is read `pg_constraint.convalidated` and treat "exists" as three states:
+
+| `constraintValidity` | outcome            | what runs                                    |
+| -------------------- | ------------------ | -------------------------------------------- |
+| `validated`          | `satisfied`        | nothing                                      |
+| `not-valid`          | `needs-validation` | `VALIDATE` alone — `ADD` is **not** reissued |
+| `unknown`            | `satisfied` + prerequisite | nothing, and it says the state is unestablished |
+| `absent`             | the ordinary path  | all five steps                               |
+
+`VALIDATE` is itself resumable: a failed or timed-out `VALIDATE` leaves the constraint
+`NOT VALID` and changes nothing else, so it can be retried as many times as needed. If it
+cannot complete inside the ceiling at all, the honest answer is that the constraint stays
+`NOT VALID` — enforcing going forward, never verified backwards — and that is visible in
+every subsequent plan rather than hidden.
 
 ## Tests
 

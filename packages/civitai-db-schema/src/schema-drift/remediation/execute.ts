@@ -21,11 +21,16 @@ export interface ExecuteOptions {
   /** Stop a batched statement after this many iterations. Guards against a batch that
    *  never drains because its predicate does not shrink. */
   maxBatches?: number;
+  /** How many times `ADD CONSTRAINT` may be re-attempted after a `lock_timeout` expiry. */
+  lockRetries?: number;
   /** Called before each statement, for logging. */
   onStatement?: (statement: PlannedStatement, relationKey: string) => void;
+  /** Called when `ADD CONSTRAINT` gave up waiting for its locks and will be retried. */
+  onLockTimeout?: (attempt: number, relationKey: string) => void;
 }
 
 export const DEFAULT_MAX_BATCHES = 10_000;
+export const DEFAULT_LOCK_RETRIES = 5;
 
 export interface RelationExecution {
   key: string;
@@ -34,6 +39,8 @@ export interface RelationExecution {
   /** Rows changed by the batched remediation step. */
   rowsRemediated: number;
   batches: number;
+  /** How many attempts `ADD CONSTRAINT` needed before it got its locks. */
+  lockAttempts?: number;
 }
 
 export interface ExecutionResult {
@@ -110,7 +117,13 @@ export async function executePlan(
   }
 
   const actionable = plan.relations.filter((r) => r.outcome !== 'satisfied');
-  const notReady = actionable.filter((r) => r.outcome !== 'ready');
+  // `needs-validation` is executable: the constraint is already there and only VALIDATE
+  // remains. Excluding it would make an interrupted run permanently unfinishable — there
+  // is no `ADD CONSTRAINT ... IF NOT EXISTS`, so the relation could never be replanned
+  // from scratch either.
+  const notReady = actionable.filter(
+    (r) => r.outcome !== 'ready' && r.outcome !== 'needs-validation'
+  );
   if (notReady.length > 0) {
     throw new RemediationRefused(
       `Refusing to execute: ${notReady.length} relation(s) are not ready — ` +
@@ -165,6 +178,14 @@ export async function executePlan(
             );
           }
         } while (affected > 0);
+      } else if (statement.kind === 'add-constraint') {
+        execution.lockAttempts = await runWithLockRetry(
+          runner,
+          statement.sql,
+          relation.key,
+          options.lockRetries ?? DEFAULT_LOCK_RETRIES,
+          options.onLockTimeout
+        );
       } else {
         await runner.query<unknown>(statement.sql);
       }
@@ -173,6 +194,54 @@ export async function executePlan(
   }
 
   return { applied: apply, relations };
+}
+
+/** Postgres raises this when `lock_timeout` expires while waiting for a lock. */
+export const LOCK_NOT_AVAILABLE = '55P03';
+
+function sqlState(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return null;
+  const code = (error as { code: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
+/**
+ * Run `ADD CONSTRAINT` under its bounded lock wait, retrying when the wait expires.
+ *
+ * A `lock_timeout` expiry is not a failure of the change — it means the table was busy and
+ * the attempt cost nothing, which is exactly the outcome the bounded wait was added to
+ * produce. Retrying is therefore correct, and it is what makes the short timeout usable:
+ * without a retry, bounding the wait would just convert a stall into a failed run.
+ *
+ * 🔴 ONLY 55P03 IS RETRIED. Every other error — a constraint violation, a missing table,
+ * a permissions problem — is rethrown untouched. Retrying an error whose cause has not
+ * gone away turns one clear failure into several confusing ones, and this statement runs
+ * after rows have already been deleted, so the operator needs the real error.
+ */
+async function runWithLockRetry(
+  runner: CatalogQueryRunner,
+  sql: string,
+  key: string,
+  maxAttempts: number,
+  onLockTimeout?: (attempt: number, key: string) => void
+): Promise<number> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await runner.query<unknown>(sql);
+      return attempt;
+    } catch (error) {
+      if (sqlState(error) !== LOCK_NOT_AVAILABLE) throw error;
+      if (attempt >= maxAttempts) {
+        throw new Error(
+          `${key}: ADD CONSTRAINT could not acquire its locks within the lock timeout after ` +
+            `${maxAttempts} attempts. The table is busy; nothing was changed by this ` +
+            'statement. Retry later — the orphan cleanup that ran before it is already ' +
+            'durable, and re-planning will pick up from here.'
+        );
+      }
+      onLockTimeout?.(attempt, key);
+    }
+  }
 }
 
 /**

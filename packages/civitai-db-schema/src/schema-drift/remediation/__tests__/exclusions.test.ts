@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parsePrismaSchema } from '../../parse-prisma-schema';
-import { EXCLUDED_RANK_KEYS, EXCLUSIONS, findExclusion } from '../exclusions';
+import {
+  EXCLUSIONS,
+  assertExclusionsResolve,
+  findExclusion,
+  isCtasRebuiltModel,
+} from '../exclusions';
 import { relationKey } from '../plan';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -25,28 +30,81 @@ const declaredKeys = new Set(
 describe('the exclusion list', () => {
   it('names the relations that must never receive a foreign key', () => {
     expect(EXCLUSIONS.map((e) => e.key).sort()).toEqual([
+      'AnswerRank.answerId',
       'Article.coverId',
       'ArticleRank.articleId',
       'BountyEntryRank.bountyEntryId',
       'BountyRank.bountyId',
       'ClubRank.clubId',
       'CollectionRank.collectionId',
+      'ImageConnection.imageId',
+      'QuestionRank.questionId',
       'TagRank.tagId',
       'TagsOnImageNew.imageId',
       'UserRank.userId',
     ]);
   });
 
-  it('covers SEVEN rank relations, not six', () => {
-    // The brief for this module listed six, from an audit that grouped them by declared
-    // referential action. The mechanism is not action-shaped: `recreateRankTable` rebuilds
-    // the TABLE, so every relation on a rank table loses its constraints. `ArticleRank` is
-    // one of only two rank tables whose refresh is still uncommented in
-    // `src/server/metrics/*.metrics.ts`, which makes it among the most exposed, not the
-    // least. Departing from the brief here is deliberate; this test is where it is
-    // recorded so it cannot be silently reverted.
-    expect(EXCLUDED_RANK_KEYS.length).toBe(7);
-    expect(EXCLUDED_RANK_KEYS).toContain('ArticleRank.articleId');
+  it('excludes EVERY rank relation the SCHEMA declares — enumerated from the schema', () => {
+    // 🔴 THIS ASSERTION USED TO BE A TAUTOLOGY. It read the rank keys back out of
+    // `EXCLUSIONS` by filtering for names ending in `Rank`, then asserted the length was
+    // 7 — so deleting an entry moved the actual and the expected number together and the
+    // test stayed green. It structurally could not detect the omission it was written to
+    // prevent.
+    //
+    // The population is now the SCHEMA, which is the thing that can grow behind the list.
+    // Adding a new `*Rank` model fails this until it is excluded; deleting an entry fails
+    // it immediately.
+    const declaredRankKeys = [...declaredKeys].filter((k) => isCtasRebuiltModel(k.split('.')[0]));
+    expect(declaredRankKeys.length).toBeGreaterThan(0); // positive control on the filter
+    for (const key of declaredRankKeys) {
+      expect(
+        findExclusion(key),
+        `${key} is a CTAS-rebuilt rank relation and must be excluded`
+      ).not.toBeNull();
+    }
+  });
+
+  it('excludes ArticleRank.articleId, which the original brief omitted', () => {
+    // The brief listed six rank relations, from an audit that grouped them by declared
+    // referential action. The mechanism is not action-shaped — `recreateRankTable` rebuilds
+    // the TABLE — and `ArticleRank` is one of only two rank tables whose refresh is still
+    // uncommented in `src/server/metrics/*.metrics.ts`, which makes it among the most
+    // exposed, not the least. Recorded here so the departure cannot be silently reverted.
+    expect(findExclusion('ArticleRank.articleId')).not.toBeNull();
+  });
+
+  it('excludes ImageConnection.imageId, dropped by the same migration as CollectionItem', () => {
+    // Category A of the audit's migration-history split, and the third of exactly three
+    // deliberate removals. Missed in the first revision because the list was taken as
+    // given rather than derived; `20240307231126_nsfw_level_update_queue` drops it in the
+    // same statement block as the four CollectionItem keys.
+    expect(findExclusion('ImageConnection.imageId')).not.toBeNull();
+  });
+
+  it('fails CLOSED when an @map moves a column out from under an excluded key', () => {
+    // The realistic break: the model is still declared, but the key no longer resolves
+    // because the column got a @map. Silently not applying is the wrong direction for a
+    // list whose whole job is to say "never".
+    expect(() =>
+      assertExclusionsResolve(new Set(['TagsOnImageNew.image_id']), new Set(['TagsOnImageNew']))
+    ).toThrow(/TagsOnImageNew\.imageId/);
+  });
+
+  it('POSITIVE control: the same guard passes against the real schema', () => {
+    // Without this, the throw above could be a function that always throws.
+    expect(() =>
+      assertExclusionsResolve(declaredKeys, new Set(schema.models.map((m) => m.name)))
+    ).not.toThrow();
+  });
+
+  it('stays quiet on a partial schema that declares none of the excluded models', () => {
+    // Deliberate scope limit, documented in exclusions.ts: without it the guard fires on
+    // every unit fixture and would have to be disabled in tests, which is the same as not
+    // having it. Model RENAMES are covered by the real-schema test above instead.
+    expect(() =>
+      assertExclusionsResolve(new Set(['Child.ownerId']), new Set(['Child']))
+    ).not.toThrow();
   });
 
   it('every entry is a relation the schema actually declares', () => {
@@ -72,7 +130,9 @@ describe('the exclusion list', () => {
     expect(findExclusion('Article.coverId')?.reason).toContain(
       '20250614053144_remove_article_cover_id_fkey'
     );
-    for (const key of EXCLUDED_RANK_KEYS) {
+    for (const key of EXCLUSIONS.map((e) => e.key).filter((k) =>
+      isCtasRebuiltModel(k.split('.')[0])
+    )) {
       expect(findExclusion(key)?.reason, key).toContain('CTAS');
     }
   });

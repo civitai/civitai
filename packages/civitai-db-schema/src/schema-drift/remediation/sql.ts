@@ -5,6 +5,7 @@
  * to execute is readable in one file. Nothing here runs anything.
  */
 import type { ReferentialAction } from '../types';
+import { DEFAULT_LOCK_TIMEOUT } from './types';
 
 /** Postgres truncates an identifier longer than this SILENTLY, at 63 bytes. */
 export const MAX_IDENTIFIER_BYTES = 63;
@@ -79,6 +80,11 @@ export interface RelationSqlContext {
   backupSchema: string;
   backupTable: string;
   batchSize: number;
+  /** Every column of the referencing table, in catalog order — the explicit INSERT target
+   *  list for the backup. Required by the remediation statements. */
+  allColumns?: readonly string[];
+  /** How long `ADD CONSTRAINT` waits for its locks before giving up. */
+  lockTimeout?: string;
 }
 
 /**
@@ -120,16 +126,36 @@ export function createBackupSchemaSql(backupSchema: string): string {
  * indexes, no constraints, no defaults. That is deliberate: the backup must accept rows the
  * live table would now reject, and it must be cheap to create on a hot table.
  *
- * The column list is identical to the source table's, which is what lets the remediation
- * statements below use a bare `SELECT t.*`. Adding a bookkeeping column here (a timestamp,
- * a batch id) would break that silently in the direction of "inserted into the wrong
- * columns", so it is not done.
+ * 🔴 `IF NOT EXISTS` means a backup table left by an EARLIER run is reused as-is. If the
+ * source table has gained or lost a column since, the two shapes no longer agree — and an
+ * `INSERT ... SELECT t.*` into a mismatched table either errors on the column count or,
+ * worse, succeeds having written each value into its neighbour's column. That is why the
+ * remediation statements below name their columns explicitly instead of using `t.*`:
+ * a stale backup then fails loudly on the missing name rather than silently misaligning.
  */
 export function createBackupTableSql(ctx: RelationSqlContext): string {
   return (
     `CREATE TABLE IF NOT EXISTS ${quoteQualified(ctx.backupSchema, ctx.backupTable)}\n` +
     `  (LIKE ${quoteIdent(ctx.table)});`
   );
+}
+
+/**
+ * The source table's full column list, for an explicit `INSERT` target list.
+ *
+ * Read from the catalog rather than assumed, and required: a context with no column list
+ * cannot produce a positionally-safe INSERT, so this throws rather than falling back to
+ * `*`. Callers construct the context from the same catalog the plan was built against.
+ */
+function backupColumnList(ctx: RelationSqlContext): string {
+  if (!ctx.allColumns || ctx.allColumns.length === 0) {
+    throw new Error(
+      `No column list for "${ctx.table}". The backup INSERT names its columns explicitly ` +
+        'to avoid positional misalignment against a stale backup table, so the catalog ' +
+        'columns are required.'
+    );
+  }
+  return ctx.allColumns.map(quoteIdent).join(', ');
 }
 
 /**
@@ -158,7 +184,9 @@ export function deleteOrphanBatchSql(ctx: RelationSqlContext): string {
     `  DELETE FROM ${quoteIdent(ctx.table)} t USING doomed d WHERE t.ctid = d.ctid\n` +
     `  RETURNING t.*\n` +
     `)\n` +
-    `INSERT INTO ${quoteQualified(ctx.backupSchema, ctx.backupTable)} SELECT * FROM moved;`
+    `INSERT INTO ${quoteQualified(ctx.backupSchema, ctx.backupTable)} ` +
+    `(${backupColumnList(ctx)})\n` +
+    `SELECT ${backupColumnList(ctx)} FROM moved;`
   );
 }
 
@@ -177,21 +205,53 @@ export function nullOrphanBatchSql(ctx: RelationSqlContext): string {
     `   WHERE ${orphanPredicate(ctx, 't')}\n` +
     `   LIMIT ${ctx.batchSize}\n` +
     `), saved AS (\n` +
-    `  INSERT INTO ${quoteQualified(ctx.backupSchema, ctx.backupTable)}\n` +
-    `  SELECT t.* FROM ${quoteIdent(ctx.table)} t JOIN doomed d ON t.ctid = d.ctid\n` +
+    `  INSERT INTO ${quoteQualified(ctx.backupSchema, ctx.backupTable)} ` +
+    `(${backupColumnList(ctx)})\n` +
+    `  SELECT ${ctx.allColumns!.map((c) => `t.${quoteIdent(c)}`).join(', ')}\n` +
+    `    FROM ${quoteIdent(ctx.table)} t JOIN doomed d ON t.ctid = d.ctid\n` +
     `)\n` +
     `UPDATE ${quoteIdent(ctx.table)} t SET ${assignments} FROM doomed d WHERE t.ctid = d.ctid;`
   );
 }
 
 /**
- * Add the constraint without validating it.
+ * A Postgres interval literal, for `SET LOCAL lock_timeout`.
  *
- * `NOT VALID` is what keeps this off the hot path: the statement takes a brief ACCESS
- * EXCLUSIVE lock to write the catalog row and returns, instead of holding it for a full
- * scan of the table. Note the lock is taken on the REFERENCED table too, so a
- * long-scanning form of this statement blocks writes to `Image` — not only to the
- * referencing table.
+ * Validated rather than interpolated: this value reaches a `SET` that cannot take a bound
+ * parameter, so it is the one place in this module where a caller's string would otherwise
+ * land in SQL unquoted.
+ */
+export function quoteInterval(value: string): string {
+  if (!/^\d{1,7}\s*(ms|s|min)$/.test(value)) {
+    throw new Error(
+      `Invalid lock timeout ${JSON.stringify(value)}. Expected something like '3s', ` +
+        "'500ms' or '1min' — it is interpolated into SET LOCAL, which takes no parameter."
+    );
+  }
+  return `'${value}'`;
+}
+
+/**
+ * Add the constraint without validating it, under a bounded lock wait.
+ *
+ * `NOT VALID` keeps the SCAN off the hot path: the statement writes a catalog row and
+ * returns instead of holding a lock for a full table scan.
+ *
+ * 🔴 That is not enough on its own, and the earlier version of this function stopped
+ * there. `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` takes `ACCESS EXCLUSIVE` on the
+ * referencing table AND `SHARE ROW EXCLUSIVE` on the REFERENCED one. Cheap as the
+ * statement is, it still has to ACQUIRE those locks — so it queues behind any in-flight
+ * transaction touching either table, and every query arriving after it queues behind the
+ * ALTER. On `Image`, the hottest table in the database, an unbounded wait is a site stall,
+ * and 21 of the relations in this campaign reference `Image`.
+ *
+ * `SET LOCAL lock_timeout` bounds the wait: the statement gives up with SQLSTATE 55P03
+ * rather than holding the queue open. `LOCAL` scopes it to this transaction, so it cannot
+ * leak onto a pooled connection and silently apply to somebody else's statement — which is
+ * also why the whole thing is wrapped in an explicit transaction block.
+ *
+ * Failing on a timeout is the DESIRED outcome, not an error to suppress: it means the
+ * table was busy and the attempt cost nothing. The executor retries it.
  */
 export function addConstraintNotValidSql(
   ctx: RelationSqlContext,
@@ -200,10 +260,14 @@ export function addConstraintNotValidSql(
 ): string {
   const cols = ctx.columns.map(quoteIdent).join(', ');
   const refCols = ctx.refColumns.map(quoteIdent).join(', ');
+  const timeout = quoteInterval(ctx.lockTimeout ?? DEFAULT_LOCK_TIMEOUT);
   return (
+    `BEGIN;\n` +
+    `SET LOCAL lock_timeout = ${timeout};\n` +
     `ALTER TABLE ${quoteIdent(ctx.table)} ADD CONSTRAINT ${quoteIdent(ctx.constraintName)}\n` +
     `  FOREIGN KEY (${cols}) REFERENCES ${quoteIdent(ctx.refTable)}(${refCols})\n` +
-    `  ON UPDATE ${sqlAction(onUpdate)} ON DELETE ${sqlAction(onDelete)} NOT VALID;`
+    `  ON UPDATE ${sqlAction(onUpdate)} ON DELETE ${sqlAction(onDelete)} NOT VALID;\n` +
+    `COMMIT;`
   );
 }
 
@@ -213,6 +277,18 @@ export function addConstraintNotValidSql(
  * This is the whole point of the split: `VALIDATE CONSTRAINT` takes SHARE UPDATE EXCLUSIVE,
  * which lets reads and writes continue while it scans. Combining the two — an ordinary
  * `ADD CONSTRAINT` — takes ACCESS EXCLUSIVE for the duration of the scan instead.
+ *
+ * 🔴 THIS STATEMENT CAN LEGITIMATELY FAIL TO COMPLETE, AND THE TOOL DOES NOT PRETEND
+ * OTHERWISE. It scans the whole table, so on a multi-million-row table it can exceed a
+ * server-side `statement_timeout` — and a pooler's `query_timeout` overrides anything the
+ * client SETs, so this tool cannot raise the ceiling and does not try. When it is killed,
+ * the constraint REMAINS, `NOT VALID`: it enforces new and changed rows and has never
+ * checked the pre-existing ones.
+ *
+ * That state is recoverable and the planner names it `resumable` — re-planning reads
+ * `convalidated = false` and emits this statement alone. What must never happen is the
+ * tool reading the half-applied constraint as finished, which is exactly what it did
+ * before `convalidated` was part of the catalog read.
  */
 export function validateConstraintSql(ctx: RelationSqlContext): string {
   return `ALTER TABLE ${quoteIdent(ctx.table)} VALIDATE CONSTRAINT ${quoteIdent(

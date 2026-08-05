@@ -139,6 +139,20 @@ export interface CatalogForeignKey {
    */
   onDelete: ReferentialAction | null;
   onUpdate: ReferentialAction | null;
+  /**
+   * `pg_constraint.convalidated`.
+   *
+   * 🔴 A foreign key added `NOT VALID` is PRESENT but only half-enforcing: it constrains
+   * new and changed rows and has never checked the ones already there. Every catalog read
+   * that filters on `contype = 'f'` alone reports it as an ordinary foreign key, so a run
+   * that died between `ADD CONSTRAINT` and `VALIDATE CONSTRAINT` looks, to the next run,
+   * exactly like a finished one. That is not a hypothetical: `VALIDATE CONSTRAINT` scans
+   * the whole table, and a statement timeout will end it on the large tables.
+   *
+   * `null` means the catalog snapshot did not carry the field, which is NOT the same as
+   * `true` — consumers must not read an absent value as validated.
+   */
+  validated: boolean | null;
 }
 
 export interface CatalogUniqueIndex {

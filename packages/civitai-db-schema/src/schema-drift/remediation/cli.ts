@@ -3,7 +3,7 @@
  *
  *   pnpm --filter @civitai/db-schema fk-remediate                     # plan, offline
  *   pnpm --filter @civitai/db-schema fk-remediate --catalog c.json    # plan from a snapshot
- *   pnpm --filter @civitai/db-schema fk-remediate --measure           # plan + count orphans
+ *   pnpm --filter @civitai/db-schema fk-remediate --relation X.y --measure   # + orphan count
  *   pnpm --filter @civitai/db-schema fk-remediate --relation X.y --measure --apply
  *
  * 🔴 THE DEFAULT IS A DRY RUN AND ISSUES NO STATEMENTS AT ALL. `--apply` is the only thing
@@ -32,7 +32,11 @@ const USAGE = `Usage: fk-remediate [options]
   --db-schema <name>  Postgres schema to introspect (default: ${DEFAULT_DB_SCHEMA})
   --relation <key>    Restrict to one relation, e.g. ImageTagForReview.imageId.
                       Repeatable when planning; exactly one is required with --apply.
-  --measure           Count orphans (read-only). Requires a connection.
+  --measure           Count orphans (read-only). Requires a connection, and either
+                      --relation or --all-relations.
+  --all-relations     Allow --measure to sweep every relation (~27 anti-joins, some
+                      over tables with millions of rows). Use a clone, not a
+                      database serving live reads.
   --batch-size <n>    Rows per remediation statement (default: ${DEFAULT_BATCH_SIZE})
   --backup-schema <s> Schema the orphan backups are written to (default: ${DEFAULT_BACKUP_SCHEMA})
   --apply             Execute. Requires exactly one --relation and --measure.
@@ -49,6 +53,7 @@ interface Options {
   dbSchema: string;
   only: string[];
   measure: boolean;
+  allRelations: boolean;
   batchSize: number;
   backupSchema: string;
   apply: boolean;
@@ -94,6 +99,7 @@ export function parseArgs(argv: string[]): Options {
     dbSchema: DEFAULT_DB_SCHEMA,
     only: [],
     measure: false,
+    allRelations: false,
     batchSize: DEFAULT_BATCH_SIZE,
     backupSchema: DEFAULT_BACKUP_SCHEMA,
     apply: false,
@@ -126,6 +132,9 @@ export function parseArgs(argv: string[]): Options {
       case '--measure':
         options.measure = true;
         break;
+      case '--all-relations':
+        options.allRelations = true;
+        break;
       case '--batch-size': {
         const raw = next();
         const value = Number(raw);
@@ -154,6 +163,24 @@ export function parseArgs(argv: string[]): Options {
       default:
         throw new Error(`Unknown argument: ${redact(arg)}\n\n${USAGE}`);
     }
+  }
+
+  // 🔴 A BARE `--measure` IS A LOAD DECISION, NOT A REPORTING ONE.
+  //
+  // Counting orphans is an anti-join per relation, and the un-narrowed set includes
+  // `Collection` (16.9M rows), `TagsOnImageVote` (12M), `ImageTechnique` (7.8M) and
+  // `ImageEngagement` (5.9M) — around 27 of them, against whatever `DATABASE_URL` happens
+  // to point at. Read-only is not the same as cheap, and the audit this work came from is
+  // explicit that these joins belong on a clone rather than on a replica serving live
+  // reads. So the wide sweep has to be asked for by name.
+  if (options.measure && options.only.length === 0 && !options.allRelations) {
+    throw new Error(
+      'Refusing a bare --measure: counting orphans for every relation runs ~27 anti-joins, ' +
+        'several over tables with millions of rows, against whatever DATABASE_URL points ' +
+        'at. Narrow it with --relation <Model.column>, or pass --all-relations if you ' +
+        'really mean the whole sweep and the target is a clone rather than a database ' +
+        'serving live reads.'
+    );
   }
 
   // Checked here rather than at the point of execution so that an --apply invocation that
@@ -185,6 +212,20 @@ function loadCatalogFile(path: string): RemediationCatalog {
   return JSON.parse(readFileSync(path, 'utf8')) as RemediationCatalog;
 }
 
+/**
+ * Open a connection, run `fn`, close it.
+ *
+ * 🔴 ONLY THE CONNECT ITSELF IS WRAPPED. An earlier revision wrapped the whole block, so
+ * every error raised by the WORK — a constraint violation, a lock timeout, a trigger
+ * failure — was replaced by "Could not read the database (<code>)" with the real message
+ * discarded. That is at its worst exactly where it matters most: a failure of the
+ * `ADD CONSTRAINT` step arrives AFTER the orphan rows have been deleted, and the operator
+ * would have had to reconstruct what happened from the server log.
+ *
+ * `pg` embeds the host and port in CONNECTION errors, which is why those are still
+ * redacted to their code — this repository and its CI logs are public. Errors from the
+ * work do not carry an address, and are re-raised untouched.
+ */
 async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -193,10 +234,12 @@ async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString });
   try {
     await client.connect();
-    return await fn(client);
   } catch (error) {
-    if (error instanceof RemediationRefused) throw error;
+    await client.end().catch(() => undefined);
     throw connectionFailure(error);
+  }
+  try {
+    return await fn(client);
   } finally {
     await client.end().catch(() => undefined);
   }
@@ -306,12 +349,27 @@ function verdict(plan: ReturnType<typeof buildRemediationPlan>): number {
   return plan.counts.refused > 0 || plan.counts.blocked > 0 ? 1 : 0;
 }
 
-main().then(
-  (code) => {
-    process.exitCode = code;
-  },
-  (error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
-  }
-);
+/**
+ * Run only when this file IS the program, not when something imports it.
+ *
+ * 🔴 Without this, `import { parseArgs } from './cli'` in a test EXECUTES `main()` —
+ * against `process.argv`, which in a test runner is the runner's own argv. That sets
+ * `process.exitCode` as a side effect of an import, and in an environment where
+ * `DATABASE_URL` is set and the stray argv happened to parse, it would OPEN A CONNECTION
+ * and start reading a database from inside a unit test. A tool whose whole contract is
+ * "the default does nothing" must not do anything merely by being imported.
+ */
+const invokedDirectly =
+  typeof process.argv[1] === 'string' && /remediation[/\\]cli\.[cm]?[jt]s$/.test(process.argv[1]);
+
+if (invokedDirectly) {
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 2;
+    }
+  );
+}

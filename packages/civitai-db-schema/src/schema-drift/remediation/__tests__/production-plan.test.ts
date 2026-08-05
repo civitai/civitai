@@ -58,9 +58,14 @@ const SET_NULL_RELATIONS = [
 ];
 
 /** Declared-Cascade relations with no foreign key, minus the exclusion list. */
+// NOTE `ImageConnection.imageId` was here and has been REMOVED. It is not a remediation
+// target: `20240307231126_nsfw_level_update_queue` drops its foreign key deliberately, in
+// the same statement block as the four `CollectionItem` keys whose restoration started
+// this campaign. Pinning it as an intended DELETE target meant the tests were blessing a
+// plan that would revert a 2024 architectural decision — precisely the error recorded
+// against the CollectionItem fix. It is now on the exclusion list.
 const CASCADE_RELATIONS = [
   'DownloadHistory.modelVersionId',
-  'ImageConnection.imageId',
   'ImageEngagement.imageId',
   'ImageRatingRequest.imageId',
   'ImageResourceNew.imageId',

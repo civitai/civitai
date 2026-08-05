@@ -66,6 +66,7 @@ model Parent {
         ['Parent', 'id', true],
       ],
       indexes: [['Child', 'ownerId']],
+      uniqueIndexes: [['Parent', 'id']],
     });
 
     it('POSITIVE control: a Cascade relation with orphans yields a non-empty DELETE', () => {

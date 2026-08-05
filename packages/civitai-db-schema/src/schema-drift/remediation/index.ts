@@ -7,7 +7,12 @@ export {
   DEFAULT_BACKUP_SCHEMA,
   DEFAULT_BATCH_SIZE,
 } from './plan';
-export { EXCLUSIONS, EXCLUDED_RANK_KEYS, findExclusion } from './exclusions';
+export {
+  EXCLUSIONS,
+  assertExclusionsResolve,
+  findExclusion,
+  isCtasRebuiltModel,
+} from './exclusions';
 export type { Exclusion } from './exclusions';
 export { RemediationRefused, countOrphans, executePlan, DEFAULT_MAX_BATCHES } from './execute';
 export type { ExecuteOptions, ExecutionResult, RelationExecution } from './execute';

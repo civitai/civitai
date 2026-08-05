@@ -18,7 +18,16 @@ export function schemaFrom(source: string): ParsedSchema {
 export interface CatalogSpec {
   tables?: string[];
   columns?: Array<[table: string, column: string, notNull: boolean]>;
-  foreignKeys?: Array<{ name: string; table: string; columns: string[]; refTable: string }>;
+  foreignKeys?: Array<{
+    name: string;
+    table: string;
+    columns: string[];
+    refTable: string;
+    /** `pg_constraint.convalidated`. Defaults to a VALIDATED constraint; pass `false` to
+     *  model a run that added the constraint and never finished validating it, and `null`
+     *  to model a catalog captured without the field. */
+    validated?: boolean | null;
+  }>;
   uniqueIndexes?: Array<[table: string, ...columns: string[]]>;
   /** Omit entirely to model a catalog captured without index data. */
   indexes?: Array<[table: string, ...columns: string[]]>;
@@ -36,6 +45,7 @@ export function catalogFrom(spec: CatalogSpec): RemediationCatalog {
       refColumns: ['id'],
       onDelete: null,
       onUpdate: null,
+      validated: fk.validated === undefined ? true : fk.validated,
     })),
     uniqueIndexes: (spec.uniqueIndexes ?? []).map(([table, ...columns]) => ({ table, columns })),
   };

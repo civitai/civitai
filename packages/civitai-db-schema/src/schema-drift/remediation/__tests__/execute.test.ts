@@ -54,6 +54,7 @@ function catalog() {
       ['Parent', 'id', true],
     ],
     indexes: [['Child', 'ownerId']],
+    uniqueIndexes: [['Parent', 'id']],
   });
 }
 
@@ -154,6 +155,7 @@ describe('execution refuses', () => {
           ['Parent', 'id', true],
         ],
         indexes: [['Child', 'id']],
+        uniqueIndexes: [['Parent', 'id']],
       }),
       { only: ['Child.ownerId'], orphanCounts: { 'Child.ownerId': 1 } }
     );
@@ -196,6 +198,7 @@ model P {
           ['A', 'pid'],
           ['B', 'pid'],
         ],
+        uniqueIndexes: [['P', 'id']],
       }),
       { orphanCounts: { 'A.pid': 1, 'B.pid': 1 } }
     );

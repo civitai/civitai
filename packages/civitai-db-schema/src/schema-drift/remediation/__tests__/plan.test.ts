@@ -52,6 +52,11 @@ function baseCatalog(overrides: Parameters<typeof catalogFrom>[0] = {}) {
       ['Parent', 'id', true],
     ],
     indexes: [['Child', 'ownerId']],
+    // `Parent(id)` is unique because it is a primary key. Postgres requires the REFERENCED
+    // columns to be unique and rejects the foreign key otherwise, so a fixture without
+    // this is not a catalog any real database could produce — and every case below would
+    // be refused for that reason instead of the one it is testing.
+    uniqueIndexes: [['Parent', 'id']],
     ...overrides,
   });
 }
@@ -245,9 +250,18 @@ describe('refusals — each asserted by its own code and message', () => {
       ],
     };
     const plan = buildRemediationPlan(schema, baseCatalog(), { orphanCounts: COUNTS });
-    expect(refusalCodes(plan, 'Child.ownerId')).toEqual(['unknown-action']);
+    // Two guards fire, for two different reasons, and both are wanted: there is no
+    // remediation strategy for it AND it has no SQL spelling. Asserted as a set so
+    // neither can be removed while the other keeps the test green.
+    expect(refusalCodes(plan, 'Child.ownerId').sort()).toEqual([
+      'unknown-action',
+      'unrepresentable-action',
+    ]);
     expect(refusalMessage(plan, 'Child.ownerId', 'unknown-action')).toContain(
       'not a Prisma referential action'
+    );
+    expect(refusalMessage(plan, 'Child.ownerId', 'unrepresentable-action')).toContain(
+      'no SQL spelling'
     );
     expect(writingSql(plan)).toBe('');
   });
@@ -263,6 +277,7 @@ describe('refusals — each asserted by its own code and message', () => {
           ['Parent', 'id', true],
         ],
         indexes: [['Child', 'ownerId']],
+        uniqueIndexes: [['Parent', 'id']],
       }),
       { orphanCounts: COUNTS }
     );
@@ -301,6 +316,7 @@ describe('refusals — each asserted by its own code and message', () => {
           ['Parent', 'id', true],
         ],
         indexes: [['Child', 'ownerId']],
+        uniqueIndexes: [['Parent', 'id']],
       }),
       { orphanCounts: COUNTS }
     );
@@ -345,6 +361,7 @@ describe('refusals — each asserted by its own code and message', () => {
           ['Parent', 'id', true],
         ],
         indexes: [[long, 'ownerId']],
+        uniqueIndexes: [['Parent', 'id']],
       }),
       { orphanCounts: { [`${long}.ownerId`]: 1 } }
     );
@@ -357,7 +374,13 @@ describe('refusals — each asserted by its own code and message', () => {
     // other guard unreachable for this input and therefore untestable.
     const plan = buildRemediationPlan(
       schemaFrom(CASCADE_SCHEMA.replace('onDelete: Cascade', 'onDelete: Restrict')),
-      catalogFrom({ tables: ['Parent'], columns: [['Parent', 'id', true]] }),
+      // Parent is present and properly unique, so the only things wrong are the ones this
+      // case is about: three independent guards, all of which must be reported.
+      catalogFrom({
+        tables: ['Parent'],
+        columns: [['Parent', 'id', true]],
+        uniqueIndexes: [['Parent', 'id']],
+      }),
       { orphanCounts: COUNTS }
     );
     expect(refusalCodes(plan, 'Child.ownerId').sort()).toEqual([
@@ -424,7 +447,10 @@ describe('the index prerequisite', () => {
           ['Child', 'ownerId', true],
           ['Parent', 'id', true],
         ],
-        uniqueIndexes: [['Child', 'ownerId', 'id']],
+        uniqueIndexes: [
+          ['Child', 'ownerId', 'id'],
+          ['Parent', 'id'],
+        ],
       }),
       { orphanCounts: COUNTS }
     );
@@ -444,6 +470,7 @@ describe('the index prerequisite', () => {
           ['Child', 'ownerId', true],
           ['Parent', 'id', true],
         ],
+        uniqueIndexes: [['Parent', 'id']],
       }),
       { orphanCounts: COUNTS }
     );

@@ -37,6 +37,16 @@ function formatRelation(relation: RelationPlan): string[] {
   );
   lines.push(`    orphans        : ${orphanText(relation)}`);
   lines.push(`    index coverage : ${relation.indexCoverage}`);
+  lines.push(`    constraint     : ${relation.constraintValidity}`);
+  if (relation.outcome === 'needs-validation') {
+    lines.push(
+      '    🔴 A previous run added this constraint and did not finish validating it. It is'
+    );
+    lines.push(
+      '       enforcing new and changed rows but has NEVER checked the rows that predate it.'
+    );
+    lines.push('       ADD CONSTRAINT is deliberately not reissued; only VALIDATE remains.');
+  }
 
   for (const refusal of relation.refusals) {
     lines.push(`    REFUSED [${refusal.code}]`);
@@ -86,6 +96,7 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
   lines.push(`  relations considered           : ${counts.relationsConsidered}`);
   lines.push(`  already enforced (no action)   : ${counts.satisfied}`);
   lines.push(`  READY                          : ${counts.ready}`);
+  lines.push(`  NEEDS VALIDATION (resume)      : ${counts.needsValidation}`);
   lines.push(`  blocked on a prerequisite      : ${counts.blocked}`);
   lines.push(`  REFUSED                        : ${counts.refused}`);
   lines.push('');
@@ -118,7 +129,13 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
   }
 
   const shown = plan.relations.filter((r) => options.verbose || r.outcome !== 'satisfied');
-  const order = { refused: 0, blocked: 1, ready: 2, satisfied: 3 } as const;
+  const order: Record<RelationPlan['outcome'], number> = {
+    refused: 0,
+    'needs-validation': 1,
+    blocked: 2,
+    ready: 3,
+    satisfied: 4,
+  };
   shown.sort((a, b) => order[a.outcome] - order[b.outcome] || a.key.localeCompare(b.key));
 
   for (const relation of shown) lines.push(...formatRelation(relation));

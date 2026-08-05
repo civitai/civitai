@@ -21,15 +21,32 @@ export type RemediationStrategy = 'delete-orphans' | 'null-orphans';
 /**
  * What the planner decided for one relation.
  *
- * `ready`    — every guard passed; the statements may be executed.
- * `blocked`  — nothing is semantically wrong, but a prerequisite is unmet (no index on the
- *              referencing column, orphan count not measured). The prerequisite statement
- *              is included so a human can clear it.
- * `refused`  — the planner will not remediate this relation at all, at any time, without a
- *              code change. Refusals are terminal and are never downgraded by a flag.
- * `satisfied`— the foreign key already exists on these columns. Nothing to do.
+ * `ready`     — every guard passed; the statements may be executed.
+ * `needs-validation` — 🔴 the constraint EXISTS but is `NOT VALID`: a previous run added it and
+ *               did not finish validating it. The orphans are already gone, so the only
+ *               remaining work is `VALIDATE CONSTRAINT`. Without this state such a
+ *               relation reads as `satisfied`, the campaign can never complete it, and
+ *               both this tool and the drift detector report it clean while the rows that
+ *               predate the constraint have never been checked.
+ * `blocked`   — nothing is semantically wrong, but a prerequisite is unmet (no index on
+ *               the referencing column, orphan count not measured). The prerequisite
+ *               statement is included so a human can clear it.
+ * `refused`   — the planner will not remediate this relation at all, at any time, without
+ *               a code change. Refusals are terminal and are never downgraded by a flag.
+ * `satisfied` — the foreign key exists AND is validated. Nothing to do.
  */
-export type PlanOutcome = 'ready' | 'blocked' | 'refused' | 'satisfied';
+export type PlanOutcome = 'ready' | 'needs-validation' | 'blocked' | 'refused' | 'satisfied';
+
+/**
+ * Whether a foreign key on the relation's columns exists, and whether it is enforcing.
+ *
+ * 🔴 "Exists" is THREE states, not two, and collapsing them is what strands a campaign.
+ * `unknown` is a first-class value for the same reason it is on index coverage: a catalog
+ * captured without `convalidated` cannot tell a validated constraint from a `NOT VALID`
+ * one, and reading absence of evidence as validated is how a half-applied constraint gets
+ * reported clean forever.
+ */
+export type ConstraintValidity = 'absent' | 'not-valid' | 'validated' | 'unknown';
 
 /**
  * Why the planner refused. Each code names ONE guard.
@@ -62,7 +79,23 @@ export type RefusalCode =
   | 'constraint-name-taken'
   /** A generated identifier exceeds Postgres's 63-byte limit. Postgres TRUNCATES rather
    *  than erroring, so two relations could quietly share one backup table. */
-  | 'identifier-too-long';
+  | 'identifier-too-long'
+  /**
+   * The referenced columns carry no unique constraint or unique index.
+   *
+   * Postgres requires one, and rejects `ADD CONSTRAINT` with SQLSTATE 42830. Without this
+   * check that rejection arrives at step 4 — AFTER the orphan rows have already been
+   * deleted, for a constraint that was never going to be creatable.
+   */
+  | 'referenced-columns-not-unique'
+  /**
+   * A declared referential action has no SQL spelling.
+   *
+   * Caught while planning rather than while emitting: an exception thrown during
+   * statement construction aborts the WHOLE plan, so one unrecognised action would hide
+   * the other 475 relations instead of refusing its own.
+   */
+  | 'unrepresentable-action';
 
 export interface Refusal {
   code: RefusalCode;
@@ -81,7 +114,10 @@ export type PrerequisiteCode =
    *  guesses here adds a constraint that turns a hot delete into a seq scan. */
   | 'index-coverage-unknown'
   /** Orphans have not been counted. `--plan` offline cannot count; execution must. */
-  | 'orphan-count-not-measured';
+  | 'orphan-count-not-measured'
+  /** A constraint exists on these columns but the catalog carried no `convalidated` data,
+   *  so whether it actually enforces the pre-existing rows could not be established. */
+  | 'constraint-validity-unknown';
 
 export interface Prerequisite {
   code: PrerequisiteCode;
@@ -107,6 +143,9 @@ export type StatementKind =
   | 'add-constraint'
   | 'validate-constraint'
   | 'create-index';
+
+/** Default bound on how long `ADD CONSTRAINT` waits for its locks before giving up. */
+export const DEFAULT_LOCK_TIMEOUT = '3s';
 
 export interface PlannedStatement {
   kind: StatementKind;
@@ -148,6 +187,8 @@ export interface RelationPlan {
   indexCoverage: IndexCoverage;
   /** Measured orphan count, or `null` when not measured. */
   orphanCount: number | null;
+  /** Whether a foreign key already exists on these columns, and whether it enforces. */
+  constraintValidity: ConstraintValidity;
   /** Everything the runner would execute, in order. Present even when refused, so the
    *  plan shows what was declined rather than an empty section. */
   statements: PlannedStatement[];
@@ -157,6 +198,8 @@ export interface PlanCounts {
   relationsConsidered: number;
   satisfied: number;
   ready: number;
+  /** Constraint present but `NOT VALID` — a previous run stopped half way. */
+  needsValidation: number;
   blocked: number;
   refused: number;
   /** Relations whose orphan remediation is a DELETE. The number the SetNull test pins. */
@@ -197,4 +240,6 @@ export interface PlanOptions {
   batchSize?: number;
   /** Schema the orphan backups are written to. */
   backupSchema?: string;
+  /** How long `ADD CONSTRAINT` waits for its locks before giving up. */
+  lockTimeout?: string;
 }

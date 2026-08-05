@@ -35,6 +35,9 @@ const CTX: RelationSqlContext = {
   backupSchema: 'fk_remediation_backup',
   backupTable: 'ImageTagForReview_imageId_orphans',
   batchSize: 5000,
+  // The backup INSERT names its columns rather than using `t.*`, so a backup table left by
+  // an earlier run with a different shape fails loudly instead of misaligning silently.
+  allColumns: ['imageId', 'tagId'],
 };
 
 describe('identifier handling', () => {
@@ -159,7 +162,9 @@ describe('the DELETE batch', () => {
         '  DELETE FROM "ImageTagForReview" t USING doomed d WHERE t.ctid = d.ctid\n' +
         '  RETURNING t.*\n' +
         ')\n' +
-        'INSERT INTO "fk_remediation_backup"."ImageTagForReview_imageId_orphans" SELECT * FROM moved;'
+        'INSERT INTO "fk_remediation_backup"."ImageTagForReview_imageId_orphans" ' +
+        '("imageId", "tagId")\n' +
+        'SELECT "imageId", "tagId" FROM moved;'
     );
   });
 
@@ -191,8 +196,10 @@ describe('the SET NULL batch', () => {
         '    AND NOT EXISTS (SELECT 1 FROM "Image" r WHERE r."id" = t."imageId")\n' +
         '   LIMIT 5000\n' +
         '), saved AS (\n' +
-        '  INSERT INTO "fk_remediation_backup"."ImageTagForReview_imageId_orphans"\n' +
-        '  SELECT t.* FROM "ImageTagForReview" t JOIN doomed d ON t.ctid = d.ctid\n' +
+        '  INSERT INTO "fk_remediation_backup"."ImageTagForReview_imageId_orphans" ' +
+        '("imageId", "tagId")\n' +
+        '  SELECT t."imageId", t."tagId"\n' +
+        '    FROM "ImageTagForReview" t JOIN doomed d ON t.ctid = d.ctid\n' +
         ')\n' +
         'UPDATE "ImageTagForReview" t SET "imageId" = NULL FROM doomed d WHERE t.ctid = d.ctid;'
     );
@@ -218,9 +225,12 @@ describe('the SET NULL batch', () => {
 describe('adding the constraint', () => {
   it('is NOT VALID, so it takes no scan-length lock', () => {
     expect(addConstraintNotValidSql(CTX, 'Cascade', 'Cascade')).toBe(
-      'ALTER TABLE "ImageTagForReview" ADD CONSTRAINT "ImageTagForReview_imageId_fkey"\n' +
+      'BEGIN;\n' +
+        "SET LOCAL lock_timeout = '3s';\n" +
+        'ALTER TABLE "ImageTagForReview" ADD CONSTRAINT "ImageTagForReview_imageId_fkey"\n' +
         '  FOREIGN KEY ("imageId") REFERENCES "Image"("id")\n' +
-        '  ON UPDATE CASCADE ON DELETE CASCADE NOT VALID;'
+        '  ON UPDATE CASCADE ON DELETE CASCADE NOT VALID;\n' +
+        'COMMIT;'
     );
   });
 
