@@ -262,3 +262,23 @@ if (!global.pgGaugeInitialized) {
 
   global.pgGaugeInitialized = true;
 }
+
+/**
+ * Buzz still parked in escrow because a payout leg gave up.
+ *
+ * A gauge rather than an error log, because this is "something is still broken"
+ * rather than "something just broke". The one-shot error at the moment a leg
+ * exhausts carries the event; a windowed error log cannot carry the state, since
+ * an exhausted leg stops being touched and so drops out of any window over its
+ * last attempt — reporting for a while and then going permanently silent with
+ * the money still parked.
+ */
+export const placementExhaustedLegsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_exhausted_legs',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_exhausted_legs',
+      help: 'Placement payout legs that have exhausted their retries and still hold Buzz in escrow',
+      registers: [instrumentationRegistry],
+    })
+);

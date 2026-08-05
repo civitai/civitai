@@ -181,6 +181,7 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  placementExhaustedLegsGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),
   loginCounter: promMetricStub(),

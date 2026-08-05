@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { placementExhaustedLegsGauge } from '~/server/prom/client';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -71,8 +72,6 @@ export const LEG_RETRY_BACKOFF_MINUTES = 30;
  * found through `listExhaustedLegs`, which is the deliberate query rather than
  * the alert.
  */
-export const EXHAUSTED_ALERT_WINDOW_MINUTES = 90;
-
 /**
  * Every leg that has given up, for an operator arriving from the placement side.
  *
@@ -226,10 +225,25 @@ async function runLeg(
       )
         return null;
 
-      await dbWrite.placementTransaction.update({
+      const attempted = await dbWrite.placementTransaction.update({
         where: { placementId_kind: { placementId, kind } },
         data: { attempts: { increment: 1 }, lastAttemptAt: new Date() },
       });
+
+      // Fired once, on the transition into exhausted. A windowed query over
+      // `lastAttemptAt` cannot do this job: the timestamp freezes at the final
+      // attempt, so such an alert reports for its window and then goes silent
+      // forever while the money is still parked. "Something just broke" is an
+      // event; "something is still broken" is the gauge below.
+      if (attempted.attempts >= MAX_LEG_ATTEMPTS)
+        logToAxiom({
+          name: 'placement-escrow',
+          type: 'error',
+          message: 'placement leg exhausted its retries and needs a human',
+          placementId,
+          kind,
+          amount: attempted.amount,
+        }).catch(() => null);
 
       let transactionId: string | null;
       try {
@@ -692,35 +706,20 @@ export async function sweepUnpaidLegs({
   // Legs past the ceiling are no longer retried, so they must be reported —
   // otherwise "stopped starving the batch" would just mean "stopped mentioning
   // it". This is the signal that something needs a human.
-  // Bounded to legs that gave up recently. An unbounded count would make every
-  // run after the first exhaustion emit an error forever, which gets muted
-  // within a week — and a permanently-firing alert is functionally identical to
-  // silence, which is the failure this whole mechanism exists to avoid.
-  const exhaustedRows = await dbWrite.placementTransaction.findMany({
+  // A count of what is still outstanding, not an error log. A gauge is allowed
+  // to be persistently non-zero — that is what gauges are for — and it moves
+  // "has this been non-zero for a week?" to the alerting layer, which owns it.
+  // The one-shot error on the transition above is the "just broke" signal.
+  const exhausted = await dbWrite.placementTransaction.count({
     where: {
       kind: { in: [...PAYOUT_KINDS] },
       transactionId: null,
       amount: { gt: 0 },
       attempts: { gte: MAX_LEG_ATTEMPTS },
-      lastAttemptAt: { gt: new Date(Date.now() - EXHAUSTED_ALERT_WINDOW_MINUTES * 60_000) },
     },
-    select: { placementId: true, kind: true, lastError: true },
-    take: 20,
   });
 
-  if (exhaustedRows.length)
-    logToAxiom({
-      name: 'placement-escrow',
-      type: 'error',
-      message: 'placement legs have exhausted their retries and need a human',
-      exhausted: exhaustedRows.length,
-      // The ids, so the page is actionable rather than telling someone that
-      // something somewhere needs attention.
-      legs: exhaustedRows.map((row) => `${row.placementId}:${row.kind}`),
-      lastError: exhaustedRows[0]?.lastError,
-    }).catch(() => null);
-
-  const exhausted = exhaustedRows.length;
+  placementExhaustedLegsGauge.set(exhausted);
 
   let resumed = 0;
   for (const { placementId } of stranded) {

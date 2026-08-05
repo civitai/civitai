@@ -47,6 +47,8 @@ export class BuzzApiError extends Error {
 export type BuzzLogFn = (message: string, ...args: unknown[]) => void;
 
 export type CreateBuzzClientOptions = Partial<BuzzConfig> & {
+  /** Default request timeout for write calls. Absent means unbounded, as before. */
+  transactionTimeoutMs?: number;
   /** Retry attempts on failure (default 3, matching the app's prior behaviour). */
   retries?: number;
   /** Debug logger (app-defined). Defaults to a no-op. */
@@ -134,7 +136,7 @@ export type BuzzClient = ReturnType<typeof createBuzzClient>;
 /** Build a buzz-service client. Endpoint defaults to the package env (BUZZ_ENDPOINT),
  *  overridable via options; resolved lazily per-request so a bare import never throws. */
 export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
-  const { retries = 3, log, mapError, ...envOverrides } = options;
+  const { retries = 3, log, mapError, transactionTimeoutMs, ...envOverrides } = options;
 
   function endpoint(): string {
     const value = envOverrides.endpoint ?? loadBuzzEnv().endpoint;
@@ -148,12 +150,18 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   async function request<T = unknown>(
     urlPart: string,
     init?: RequestInit,
-    opts?: { allow404?: boolean }
+    opts?: { allow404?: boolean; timeoutMs?: number }
   ): Promise<T> {
     try {
       return await withRetries(async () => {
         const url = `${endpoint()}${urlPart}`;
-        const response = await fetch(url, init);
+        // Opt-in, and absent by default: existing callers keep today's unbounded
+        // behaviour exactly. A caller that needs a bound — one holding a lock, or
+        // relying on "not in flight any more" — passes its own.
+        const response = await fetch(url, {
+          ...init,
+          ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
+        });
         if (!response.ok) {
           if (opts?.allow404 && response.status === 404) return null as T;
           log?.('request failed', {
@@ -183,8 +191,16 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     }
   }
 
+  // Writes carry the configured bound; reads stay as they were. A caller holding
+  // a lock needs "this request is no longer in flight" to be true at some point,
+  // and without a timeout there is no such point for a lock TTL to be sized
+  // against.
   function post(urlPart: string, body: unknown) {
-    return request(urlPart, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) });
+    return request(
+      urlPart,
+      { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { timeoutMs: transactionTimeoutMs }
+    );
   }
 
   // ---- Account reads -------------------------------------------------------

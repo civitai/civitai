@@ -265,7 +265,6 @@ const {
   sweepUnplannedSettlements,
   MAX_LEG_ATTEMPTS,
   LEG_RETRY_BACKOFF_MINUTES,
-  EXHAUSTED_ALERT_WINDOW_MINUTES,
   listExhaustedLegs,
 } = await import('~/server/services/placement-escrow.service');
 
@@ -1344,19 +1343,20 @@ describe('the exhausted-leg alert', () => {
     }
   };
 
-  // An alert that fires on every run forever is muted within a week, and then
-  // the next exhaustion is invisible - the same failure as reporting success
-  // while doing nothing, in the other direction.
-  it('stops firing once the exhaustion is no longer recent', async () => {
+  // The outstanding count is a gauge, not a windowed error log. An exhausted leg
+  // stops being touched, so its `lastAttemptAt` freezes — any window over that
+  // timestamp reports for a while and then goes permanently silent with the money
+  // still parked. "Something just broke" is the one-shot error on the transition;
+  // "something is still broken" has to keep being true.
+  it('keeps counting an exhausted leg however long ago it gave up', async () => {
     await exhaustLeg();
 
     const leg = db.legs.get('1:toOwner');
-    if (leg)
-      leg.lastAttemptAt = new Date(Date.now() - (EXHAUSTED_ALERT_WINDOW_MINUTES + 60) * 60_000);
+    if (leg) leg.lastAttemptAt = new Date(Date.now() - 30 * 24 * 60 * 60_000);
 
     const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
-    expect(swept.exhausted).toBe(0);
+    expect(swept.exhausted).toBe(1);
   });
 
   // ...but the leg is still findable by someone looking for it deliberately.
