@@ -21,18 +21,29 @@ import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
 /**
  * Upper bound on any `wait` we send, in seconds.
  *
- * Derived, not arbitrary. `submitWorkflow` only bounds an attempt with an
- * `AbortSignal.timeout` on the whatIf path, so a real submit has no
- * client-side abort — the practical ceiling is undici's ~300s default headers
- * timeout. A `wait` above that never gets to return its graceful 202: the
- * fetch throws first, `submitWorkflowWithRetry` scores that as transient, and
- * re-submits. Since these bodies carry no `externalId` the orchestrator cannot
- * dedupe, so exceeding this bound converts one billable job into up to three.
+ * Derived, not arbitrary: HALF the measured undici headers timeout.
  *
- * The repo's own debug endpoint already encodes a stricter version of this
- * (`src/pages/api/testing/xguard-test.ts` bounds wait with `.max(120)`).
+ * `submitWorkflow` only bounds an attempt with an `AbortSignal.timeout` on the
+ * whatIf path, so a real submit has no client-side abort — the practical
+ * ceiling is undici's default headers timeout, measured at 300.7s against a
+ * server that accepts and never responds. A `wait` at or above that never gets
+ * to return its graceful 202: the fetch throws first, and
+ * `submitWorkflowWithRetry` re-submits (it retries on ANY throw — it is not
+ * gated on an error allow-list). Since these bodies carry no `externalId` the
+ * orchestrator cannot dedupe, so exceeding the timeout converts one billable
+ * job into up to three.
+ *
+ * The bound is half of 300 rather than 300 itself because AT the timeout the
+ * two outcomes are a race — the graceful 202 and the billed retry storm are
+ * decided by jitter. A guard whose ceiling equals the hazard admits the
+ * boundary value: with this at 300, `CHAT_COMPLETION_WAIT_SECONDS = 300`
+ * passed every test in this file. Halving it makes that boundary fail while
+ * still leaving generous room above any real completion.
+ *
+ * The repo's own debug endpoint independently bounds its wait with `.max(120)`
+ * (`src/pages/api/testing/xguard-test.ts`), which sits under this.
  */
-const MAX_WAIT_SECONDS = 300;
+const MAX_WAIT_SECONDS = 150;
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
@@ -93,18 +104,35 @@ describe('orchestratorChatCompletion — the `wait` it sends is a SECONDS value'
 });
 
 /**
- * Repo-wide seam guard. The behavioural test above pins ONE call site; this
- * pins the RELATIONSHIP — the set of places that hand a `wait` to the v2
- * workflow API — so a new site cannot be added below the radar, and an existing
- * one cannot silently grow a millisecond value.
+ * Repo-wide seam guard.
+ *
+ * SCOPE, stated precisely, because a guard that claims coverage it does not
+ * have is worse than one that admits its limits: this bounds every `wait:`
+ * whose value is a NUMBER RESOLVABLE STATICALLY — a literal, or a same-file
+ * `const`. It is deliberately NOT scoped to `query: { … }`, because the two
+ * `orchestrator.service.ts` wrappers forward an externally-supplied
+ * `wait?: number` in via ES shorthand (`query: wait ? { wait } : undefined`),
+ * and their callers — `text-output-moderation.ts`, `scanner-policies-test`,
+ * `xguard-test`, and `submitTextModeration`, reachable from 5 modules — write
+ * the actual number at THEIR call site under a plain `wait:` key. A scan
+ * anchored on `query:` would miss all of them, so a new caller passing `60000`
+ * through `submitTextModeration` would sail straight past this file.
+ *
+ * What it CANNOT bound is a value only known at runtime. Those are enumerated
+ * separately below and pinned by ledger, not by value.
  */
-describe('every v2 `query: { wait }` site in src/ passes seconds', () => {
+describe('every statically-resolvable `wait:` in src/ is a seconds value', () => {
   const SRC = path.resolve(__dirname, '../../../..'); // -> src/
-  const QUERY_WAIT = /query:\s*\{\s*wait:\s*([A-Za-z0-9_]+)\s*\}/g;
+  // Any `wait:` property, wherever it appears — plus the ES-shorthand `{ wait }`
+  // forward, captured as the sentinel token `wait` so it lands in the runtime
+  // bucket rather than vanishing. Dots are allowed in the token so a forward
+  // like `wait: input.wait` is SEEN and classified, not silently unmatched.
+  const WAIT_SITE = /(?:\bwait:\s*([A-Za-z0-9_.]+)|\{\s*(wait)\s*\})/g;
 
-  /** Resolve a `query: { wait: X }` token: a numeric literal, or a same-file `const X = <number>`. */
+  /** Resolve a `wait` token: a numeric literal, or a same-file `const X = <number>`. */
   const resolveWait = (token: string, source: string): number | undefined => {
     if (/^\d+$/.test(token)) return Number(token);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) return undefined; // `input.wait` etc.
     const decl = new RegExp(`const\\s+${token}\\s*=\\s*(\\d[\\d_]*)\\s*;`).exec(source);
     return decl ? Number(decl[1].replace(/_/g, '')) : undefined;
   };
@@ -121,58 +149,118 @@ describe('every v2 `query: { wait }` site in src/ passes seconds', () => {
     return out;
   };
 
+  /**
+   * Strip comments before matching. Without this the scan reports prose: this
+   * repo documents waits IN comments (`// A \`wait: 30\` request …`) and keeps a
+   * commented-out `// wait: true,`, all of which were picked up as real sites.
+   * A ledger polluted by prose is one nobody trusts, and a commented example is
+   * exactly where a wrong value hides in plain sight.
+   *
+   * The line-comment rule ignores a `//` preceded by `:` so a URL inside a
+   * string is not mistaken for a comment.
+   */
+  const stripComments = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  /**
+   * A zod/schema builder in the value position declares the SHAPE of an inbound
+   * HTTP param on one of our own endpoints — it is not an outbound orchestrator
+   * wait. Excluded so the ledger tracks values we SEND. (The one such endpoint
+   * that does forward to the orchestrator, `xguard-test.ts`, is still tracked
+   * via its actual forward, `wait: input.wait`.)
+   */
+  const isSchemaDecl = (token: string) => /^z(\.|$)/.test(token) || /Schema/.test(token);
+
   const sites = walk(SRC).flatMap((file) => {
-    const source = fs.readFileSync(file, 'utf8');
-    return [...source.matchAll(QUERY_WAIT)].map((m) => ({
-      file: path.relative(SRC, file),
-      token: m[1],
-      seconds: resolveWait(m[1], source),
-    }));
+    const raw = fs.readFileSync(file, 'utf8');
+    const source = stripComments(raw);
+    return [...source.matchAll(WAIT_SITE)]
+      .map((m) => {
+        const token = m[1] ?? m[2];
+        return {
+          file: path.relative(SRC, file),
+          token,
+          seconds: resolveWait(token, source),
+        };
+      })
+      .filter((s) => !isSchemaDecl(s.token));
   });
+  const numeric = sites.filter((s) => s.seconds !== undefined);
+  const runtime = sites.filter((s) => s.seconds === undefined);
 
-  // POSITIVE CONTROL. A zero here would be indistinguishable from a scanner
-  // wired to nothing — the regex silently not matching would make every
-  // assertion below vacuously pass.
-  it('the scanner actually finds sites (positive control)', () => {
-    expect(sites.length).toBeGreaterThanOrEqual(5);
-  });
-
-  // A site whose value is only known at runtime cannot be bounded statically,
-  // so it must instead make the unit legible at the call site — which is the
-  // root cause this whole file guards. Both current such sites comply
-  // (`waitSeconds`, `PERCEPTUAL_HASH_WAIT_SECONDS`), and each is separately
-  // clamped in its own module (MAX_BLOCK_POLL_WAIT_SECONDS = 15; the perceptual
-  // hash pairs its 30 with a 45s AbortSignal).
-  it('a runtime-valued wait names its unit', () => {
-    const unresolved = sites.filter((s) => s.seconds === undefined);
-    expect(unresolved.filter((s) => !/seconds/i.test(s.token))).toEqual([]);
+  // POSITIVE CONTROL. A reassuring zero here would be indistinguishable from a
+  // scanner wired to nothing. This asserts BOTH buckets are non-empty and that
+  // the scanner reaches beyond this test's own neighbourhood — a bound that the
+  // ledger tests below cannot also satisfy trivially, so it carries independent
+  // signal rather than only failing alongside them.
+  it('the scanner actually finds sites in both buckets (positive control)', () => {
+    expect(numeric.length).toBeGreaterThan(0);
+    expect(runtime.length).toBeGreaterThan(0);
+    expect(new Set(sites.map((s) => s.file)).size).toBeGreaterThan(3);
+    // It must see the site this PR fixes, and the forwarding wrappers that the
+    // previous `query:`-anchored regex could not match at all.
+    expect(sites.map((s) => s.file)).toContain('server/services/comics/orchestrator-chat.ts');
+    expect(sites.map((s) => s.file)).toContain(
+      'server/services/orchestrator/orchestrator.service.ts'
+    );
   });
 
   // NEGATIVE CONTROL. Proves the resolver+bound can go red on a known-bad
-  // input, so the green verdict above is a fact about the code and not about a
-  // broken harness.
+  // input, so the green verdicts here are facts about the code and not about a
+  // broken harness. Covers both resolvable shapes.
   it('the resolver rejects a known-bad millisecond value (negative control)', () => {
     expect(resolveWait('60000', '')).toBe(60000);
     expect(resolveWait('60000', '') as number).toBeGreaterThan(MAX_WAIT_SECONDS);
     expect(resolveWait('X', 'const X = 60_000;')).toBe(60000);
+    // and it must NOT pretend to resolve a member expression
+    expect(resolveWait('input.wait', 'const wait = 5;')).toBeUndefined();
   });
 
-  it('no statically-known site exceeds the seconds envelope', () => {
-    const offenders = sites.filter((s) => s.seconds !== undefined && s.seconds > MAX_WAIT_SECONDS);
+  // The comment stripper is itself a harness component, so it gets its own
+  // controls: it must remove a commented site (else the ledger fills with
+  // prose) and must NOT eat a real one hiding behind a URL.
+  it('the comment stripper drops prose but keeps code (controls)', () => {
+    expect(stripComments('// wait: 60000,\nconst a = 1;')).not.toContain('60000');
+    expect(stripComments('/* wait: 60000 */ const a = 1;')).not.toContain('60000');
+    expect(stripComments('const u = "https://x.y"; f({ wait: 30 });')).toContain('wait: 30');
+  });
+
+  // THE bound. Any `wait:` anywhere in src/ that resolves to a number must be a
+  // plausible seconds value — including one written at a caller that forwards
+  // into the orchestrator wrappers rather than calling the client directly.
+  it('no statically-resolvable wait exceeds the seconds envelope', () => {
+    const offenders = numeric.filter((s) => (s.seconds as number) > MAX_WAIT_SECONDS);
     expect(offenders).toEqual([]);
   });
 
-  // Fails when the set GROWS or SHRINKS. A new v2 wait site is a deliberate
+  // Fails when the set GROWS or SHRINKS. A new wait site is a deliberate
   // decision about how long an api pod holds a socket, so it should land in a
   // diff that says so rather than arriving unnoticed.
-  it('matches the known ledger of v2 wait sites', () => {
-    expect(new Set(sites.map((s) => s.file))).toEqual(
+  it('matches the known ledger of numeric wait sites', () => {
+    expect(new Set(numeric.map((s) => `${s.file}:${s.token}`))).toEqual(
       new Set([
-        'server/routers/blocks.router.ts',
-        'server/services/comics/orchestrator-chat.ts',
-        'server/services/orchestrator/orchestrator.service.ts',
-        'server/services/product-badge.service.ts',
-        'server/services/training.service.ts',
+        'server/services/blocks/steps/text-output-moderation.ts:SCAN_WAIT_SECONDS',
+        'server/services/comics/orchestrator-chat.ts:CHAT_COMPLETION_WAIT_SECONDS',
+        'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
+        'server/services/product-badge.service.ts:30',
+        'server/services/training.service.ts:0',
+      ])
+    );
+  });
+
+  // The runtime bucket CANNOT be value-checked here — these forward a number
+  // supplied by a caller (or, for `training.service.ts`, the v1 jobs API's
+  // boolean `wait`, which is a different contract entirely and correctly not a
+  // number). So they are pinned by ledger: a NEW unbounded forwarding path has
+  // to be declared here, which is the point at which someone has to think about
+  // whether it needs a clamp of its own.
+  it('matches the known ledger of runtime-valued wait sites', () => {
+    expect(new Set(runtime.map((s) => `${s.file}:${s.token}`))).toEqual(
+      new Set([
+        'server/routers/blocks.router.ts:waitSeconds',
+        'server/services/orchestrator/orchestrator.service.ts:wait',
+        'server/services/training.service.ts:true',
+        'pages/api/testing/xguard-test.ts:input.wait',
       ])
     );
   });
