@@ -91,8 +91,26 @@ The creator's **submission fee is never refunded** — a takedown is a terms vio
 
 Money moves are best-effort per buyer: each is retried 3× (1s apart) before it's written off, and failures are collected in `failures` (stage + user + amount) instead of aborting the run. Everything lands in Axiom under `name: 'cosmetic-takedown'` — a start record, one `error` per written-off refund/clawback carrying the ids needed to finish it by hand, and a finish record with the run totals (`error` level if anything failed).
 
+## Review history
+
+An edit-triggered re-review clears `rejectionReason` / `reviewedById` / `reviewedAt`, so without a log a moderator opening a re-queued item can't tell what the creator changed or what was decided last time. `CosmeticShopItemMeta.history` is that log — a capped (25, oldest dropped first) append-only array on the existing JSON column, no migration:
+
+```ts
+{ at, userId, kind: 'submitted' | 'edited' | 'reviewed' | 'takedown', status?, action?, note?, changes?: [{ field, from?, to? }] }
+```
+
+Every writer appends inside the `cosmeticShopItem.update` it was already making (`appendItemHistory` in `creator-shop.data.ts`) — recording history never costs an extra round trip:
+
+- `submitCreatorShopItem` seeds a `submitted` entry.
+- `updateCreatorShopItem` appends `edited` with one `changes` row per moved field (name, description, artwork — carrying the **pre-swap `data.url`** — fit offsets, slug, uses, price-per-use, price, quantity), plus a `note` when the edit forced the item back into review and why. An edit that moves nothing appends nothing.
+- `reviewCreatorShopItem` appends `reviewed` with the action, the reviewer and the note — which is how the note **survives the next edit clearing `rejectionReason`**.
+- `takedownCosmeticShopItem` appends `takedown` alongside the `meta.takedown` record it already writes.
+
+`getCreatorShopReviewQueue` already selects `meta`, so the moderator detail pane renders it (`HistoryCard`, newest-first, previous-vs-current artwork thumbnails on a swap) with no query change. Items predating the feature show an explicit empty state. Moderator-only for now — the creator-facing manage view still shows only the current status + rejection reason.
+
 ## Changelog
 
+- **2026-08-05** — Per-item review history recorded on `CosmeticShopItem.meta.history` (submissions, creator edits with before → after per field, verdicts, takedowns) and surfaced in the moderator review queue.
 - **2026-08-03** — Purchases now record their payout split **and each payout's transaction id** (`UserCosmeticShopPurchases.meta`, migration `20260803220000_add_cosmetic_purchase_payout_meta` — **apply manually**), so takedowns refund those payouts directly.
 - **2026-08-03** — Takedown + refund + clawback path added (`creatorShop.takedownItem`, moderator review-queue "Take down" action).
 - **2026-08-03** — Cosmetic submissions now require (and record) a creator affirmation of the rights to sell the artwork.
