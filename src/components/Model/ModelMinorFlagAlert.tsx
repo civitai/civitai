@@ -14,8 +14,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export function ModelMinorFlagAlert({ model }: Props) {
-  const { id, name, minorAppeal } = model;
-  const { tone, showRequestButton, upheldAt, copyVariant } = getMinorFlagAlertState(minorAppeal);
+  const { id, minorAppeal } = model;
+  const { showRequestButton, upheldAt, copyVariant } = getMinorFlagAlertState(minorAppeal);
 
   const [opened, { open, close }] = useDisclosure(false);
   const [message, setMessage] = useState('');
@@ -62,17 +62,17 @@ export function ModelMinorFlagAlert({ model }: Props) {
 
   return (
     <>
-      <Alert color={tone}>
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          <ThemeIcon color={tone}>
+      <Alert color="yellow">
+        <Group gap="xs" wrap="nowrap" align="center">
+          <ThemeIcon color="yellow">
             <IconExclamationMark />
           </ThemeIcon>
           <Stack gap="xs">
-            <Text size="sm" mt={-3}>
-              Your model {name} has been marked as depicting a minor. {trailingCopy[copyVariant]}
+            <Text size="sm">
+              Your model has been marked as depicting a minor. {trailingCopy[copyVariant]}
             </Text>
             {showRequestButton && (
-              <Button color={tone} variant="light" size="xs" w="fit-content" onClick={open}>
+              <Button color="yellow" variant="light" size="xs" w="fit-content" onClick={open}>
                 Request a Review
               </Button>
             )}
@@ -112,7 +112,6 @@ export function ModelMinorFlagAlert({ model }: Props) {
 type Props = {
   model: {
     id: number;
-    name: string;
     minorAppeal: MinorFlagAppeal | null;
   };
 };
