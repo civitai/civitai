@@ -2,8 +2,10 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { uniq } from 'lodash-es';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import { uniq, uniqBy } from 'lodash-es';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import { firstDailyPostReward } from '~/server/rewards';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -21,11 +23,16 @@ type ScheduledEntity = {
   extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
+// Ceiling on how far back the standalone-post reward sweep will look. The stored
+// job date defaults to the epoch when the KeyValue row is missing (fresh env),
+// which would otherwise sweep every post ever published.
+const REWARD_LOOKBACK_LIMIT_MS = 60 * 60 * 1000;
+
 export const processScheduledPublishing = createJob(
   'process-scheduled-publishing',
   '*/1 * * * *',
   async () => {
-    const [, setLastRun] = await getJobDate('process-scheduled-publishing');
+    const [lastRun, setLastRun] = await getJobDate('process-scheduled-publishing');
     const now = new Date();
 
     // Get things to publish
@@ -76,6 +83,26 @@ export const processScheduledPublishing = createJob(
         (p."publishedAt" IS NULL)
       AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now}
       AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+    `;
+
+    // Standalone scheduled posts go live passively once feeds stop filtering on
+    // "publishedAt" — no status flips, so this window is the only publish-time hook.
+    // The createdAt offset can't exclude a scheduled post (it's enforced at schedule
+    // time); the instant publishes it lets through were already rewarded inline and
+    // dedup by postId makes those a no-op.
+    const rewardWindowStart = new Date(
+      Math.max(lastRun.getTime(), now.getTime() - REWARD_LOOKBACK_LIMIT_MS)
+    );
+    const newlyLivePosts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+      SELECT
+        p.id,
+        p."userId"
+      FROM "Post" p
+      WHERE p."publishedAt" > ${rewardWindowStart}
+        AND p."publishedAt" <= ${now}
+        AND p."publishedAt" >= p."createdAt" + ${Prisma.raw(
+          `make_interval(mins => ${POST_MINIMUM_SCHEDULE_MINUTES})`
+        )};
     `;
 
     // Get scheduled comic chapters
@@ -272,6 +299,17 @@ export const processScheduledPublishing = createJob(
         entityType: 'post',
         entityId: post.id,
       });
+    }
+
+    // Neither scheduled path reaches the inline reward in post.controller: the posts
+    // flipped above had no publishedAt for it to fire on, and standalone ones skip it
+    // at schedule time so the grant lands on the day they actually go live.
+    for (const post of uniqBy([...scheduledPosts, ...newlyLivePosts], 'id')) {
+      await firstDailyPostReward
+        .apply({ postId: post.id, posterId: post.userId })
+        .catch((error) =>
+          console.error(`Failed to apply first daily post reward for post ${post.id}:`, error)
+        );
     }
 
     // Reindex the just-published posts' images so the metrics_images feed picks
