@@ -42,23 +42,30 @@ type ChatMessage = {
  *     within 120s  99.3% - 99.9%
  *
  * (ranges, not points: 60 and 120 fall between OTel default histogram buckets
- * and were NOT interpolated.) 120s sits at the knee — beyond it you buy tenths
- * of a percent while holding a Node request open. Day-to-day variance is what
- * decides it: on the two worst of seven days the median moved from <5s into
- * (25,50] and the =<50s fraction fell to ~91%, so 60s degrades materially
- * exactly when the orchestrator is already struggling.
+ * and were NOT interpolated.) The curve is at its knee in here — past ~120s you
+ * buy tenths of a percent while holding a Node request open. Day-to-day
+ * variance is what argues against the low end: on the two worst of seven days
+ * the median moved from <5s into (25,50] and the =<50s fraction fell to ~91%,
+ * so 60s degrades materially exactly when the orchestrator is already
+ * struggling. 90 sits above that degradation and below the edge cut below.
  *
- * That duration INCLUDES time before the job was claimed — `JobGrain.cs` sets
- * `JobDuration = UtcNow - job.CreatedAt`, so the wait competes with scheduler
- * backlog, not just token generation. HOW MUCH of it is queue is deliberately
- * NOT quoted here, because it is not cleanly derivable from the metrics we
- * have: `ClaimDuration = UtcNow - claim.CreatedDate` measures how long a claim
- * LASTED, not how long the job waited for one, and `IsFinalClaimEvent` also
- * fires on Rejected/LateRejected/ClaimExpired, so ONE job emits SEVERAL claim
- * observations against a single duration observation. The two means are over
- * different populations; subtracting them gives ~5s, while dividing the claim
- * sum by the job count gives ~0s. A 260x spread between two defensible-looking
- * estimates is the tell that neither is a measurement.
+ * That duration INCLUDES time before the job was claimed (`JobGrain.cs`:
+ * `JobDuration = UtcNow - job.CreatedAt`), but queue is a SMALL part of it —
+ * so the number above is essentially execution time, not backlog.
+ * `orchestration_jobs_priority_delay_seconds_total` records exactly this
+ * per job (`JobDuration - ClaimDuration`, i.e. job creation -> start of the
+ * claim that finished it): 1166.63s over 1428 jobs = **0.82s mean**, ~6% of
+ * the 13.8s mean job duration, same window and selector.
+ *
+ * Do NOT compute this by subtracting the two duration histograms.
+ * `ClaimDuration = UtcNow - claim.CreatedDate` is how long a claim LASTED, not
+ * how long a job waited for one, and `IsFinalClaimEvent` also fires on
+ * Rejected/LateRejected/ClaimExpired — measured, 2294 claim observations
+ * against 1428 job observations (765 of them rejected claims). The two means
+ * are over different populations, and the two plausible subtractions give ~5s
+ * and ~0s. Use `priority_delay`. (It is time-to-FINAL-claim, so it still
+ * includes time burnt by earlier rejected attempts; pure first-claim queue wait
+ * is not exposed by any current metric.)
  *
  * 🔴 CAVEAT: that slice could not be confirmed as this code path. The job
  * metrics carry no `model` or `tags` label, so `gpt-4o-mini` / `tags:['comics']`
@@ -74,19 +81,36 @@ type ChatMessage = {
  * completion. Money is unchanged in that band (billed 1x either way), so it is
  * a quality/UX risk rather than a billing one.
  *
- * ❓ OPEN: civitai.com is Cloudflare-proxied, and CF's non-enterprise origin
- * read timeout is ~100s (524). If that applies to the browser-driven
- * `iterateGenerate` caller, it can never observe the last ~20s of a 120s hold,
- * making 120 worth no more than ~90 for that path. NOT a regression this
- * introduces — the previous value was strictly worse — and the origin side is
- * not the constraint (Traefik is configured `readTimeout: 1h`, `writeTimeout:
- * 0`). Unresolved because the CF plan tier is not recorded in the infra repo
- * and a 524 is generated at the edge, so it never reaches origin logs.
+ * 🔴 THE EDGE, which is why this is 90 and not 120. `iterateGenerate` is
+ * browser-driven, so its response crosses Cloudflare. The zone's plan is
+ * "Business Website" (read from the CF API) — NOT Enterprise, and
+ * `proxy_read_timeout` is Enterprise-only, so the ~100s default applies and
+ * cannot have been raised. A wait longer than that is not merely wasted: the
+ * browser gets a 524 while the origin keeps holding the socket AND the workflow
+ * keeps running and billing, so the user sees an error for a completion that
+ * was about to succeed. 90 keeps ~10s of margin under it. The cost is small —
+ * between the 60s and 120s rows above, i.e. a fraction of a percent — and it is
+ * a fraction that browser callers could never have collected anyway.
+ *
+ * Two honesty notes. The 100s is inferred from the plan tier, NOT read: the
+ * available token lacks Zone-Settings:Read, so `GET /zones/{id}/settings/
+ * proxy_read_timeout` returns Unauthorized. And origin logs neither confirm nor
+ * refute it — plenty of requests return 200 well past 100s, but CF can 524 the
+ * browser while leaving the origin connection open, which is invisible from
+ * this side. (There IS an unexplained hard abort at ~125.0s: 4,158 status-499s
+ * over 3d clustered at 125.006-125.011s across 256 client IPs. Not attributed —
+ * no evidence names the actor — but 90 sits under it too.)
+ *
+ * The robust fix, if this ever needs to be longer: CF's 524 clock is a READ
+ * timeout that resets on any byte from origin, so a long-poll that flushes
+ * headers early or emits a keepalive never accumulates toward it, and the plan
+ * tier stops mattering. That is a change to the orchestrator's response
+ * behaviour, not to this constant.
  *
  * 🔴 A long-poll can never be the ONLY path: ~1% of jobs run past any value
  * that is safe to hold here. Callers must tolerate the empty-content result.
  */
-const CHAT_COMPLETION_WAIT_SECONDS = 120;
+const CHAT_COMPLETION_WAIT_SECONDS = 90;
 
 /**
  * Submit a chat completion via the orchestrator workflow API.
