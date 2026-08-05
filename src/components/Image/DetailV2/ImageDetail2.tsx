@@ -65,6 +65,7 @@ import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -483,6 +484,11 @@ export function ImageDetail2() {
                           >
                             <ImageDetailReactions image={image} />
                           </ReactionSettingsProvider>
+                          <StickerPlacementBar
+                            imageId={image.id}
+                            imageUrl={image.url}
+                            className="ml-2"
+                          />
                         </div>
                         <CarouselIndicators {...carouselNavigation} />
                         {/* {viewportHeight >= 1050 && (
