@@ -158,9 +158,7 @@ describe('every v2 `query: { wait }` site in src/ passes seconds', () => {
   });
 
   it('no statically-known site exceeds the seconds envelope', () => {
-    const offenders = sites.filter(
-      (s) => s.seconds !== undefined && s.seconds > MAX_WAIT_SECONDS
-    );
+    const offenders = sites.filter((s) => s.seconds !== undefined && s.seconds > MAX_WAIT_SECONDS);
     expect(offenders).toEqual([]);
   });
 
