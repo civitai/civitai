@@ -1,27 +1,21 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  mockDbWrite,
-  mockApply,
-  mockSetLastRun,
-  mockLogToAxiom,
-  mockProcessEngagement,
-  jobDate,
-} = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-    image: { findMany: vi.fn() },
-    comicProject: { updateMany: vi.fn() },
-  },
-  mockApply: vi.fn(),
-  mockSetLastRun: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
-  mockProcessEngagement: vi.fn(),
-  jobDate: { lastRun: new Date(0) },
-}));
+const { mockDbWrite, mockApply, mockSetLastRun, mockLogToAxiom, mockProcessEngagement, jobDate } =
+  vi.hoisted(() => ({
+    mockDbWrite: {
+      $queryRaw: vi.fn(),
+      $executeRaw: vi.fn(),
+      $transaction: vi.fn(),
+      image: { findMany: vi.fn() },
+      comicProject: { updateMany: vi.fn() },
+    },
+    mockApply: vi.fn(),
+    mockSetLastRun: vi.fn(),
+    mockLogToAxiom: vi.fn(() => Promise.resolve()),
+    mockProcessEngagement: vi.fn(),
+    jobDate: { lastRun: new Date(0) },
+  }));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
@@ -53,7 +47,13 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 type Row = { id: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
-const stubReads = ({ scheduled = [], newlyLive = [] }: { scheduled?: Row[]; newlyLive?: Row[] }) => {
+const stubReads = ({
+  scheduled = [],
+  newlyLive = [],
+}: {
+  scheduled?: Row[];
+  newlyLive?: Row[];
+}) => {
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const sql = (args[0] as string[]).join(' ');
     if (sql.includes('"ComicChapter"')) return [];
