@@ -177,7 +177,13 @@ export const actions: Actions = {
     if (!fee.success) return fail(400, { versionId: versionId.data, error: firstError(fee.error) });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await setLicensingFee(locals.user.id, membership, versionId.data, fee.data);
+    const result = await setLicensingFee(
+      locals.user.id,
+      membership,
+      versionId.data,
+      fee.data,
+      checkbox.parse(form.get('rightsAffirmed'))
+    );
     if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
@@ -210,6 +216,7 @@ export const actions: Actions = {
       changes: result.changes,
       unchanged: result.unchanged,
       skipped,
+      needsRightsAffirmation: result.needsRightsAffirmation,
     };
   },
 
@@ -237,7 +244,12 @@ export const actions: Actions = {
     if (entries.length === 0) return fail(400, { apply: true, error: 'No changes to apply.' });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkSetLicensingFeeVaried(locals.user.id, membership, entries);
+    const result = await bulkSetLicensingFeeVaried(
+      locals.user.id,
+      membership,
+      entries,
+      checkbox.parse(form.get('rightsAffirmed'))
+    );
     if (result.ok)
       await bustVersionCache(
         request.headers.get('cookie') ?? '',
@@ -259,7 +271,13 @@ export const actions: Actions = {
     if (!fee.success) return fail(400, { bulk: true, error: firstError(fee.error) });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, fee.data);
+    const result = await bulkSetLicensingFee(
+      locals.user.id,
+      membership,
+      versionIds.data,
+      fee.data,
+      checkbox.parse(form.get('rightsAffirmed'))
+    );
     if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', versionIds.data);
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
 
@@ -314,7 +332,12 @@ export const actions: Actions = {
     }
 
     const cookie = request.headers.get('cookie') ?? '';
-    const result = await bulkSetPermanentAccess(cookie, versionIds.data, pricing.data);
+    const result = await bulkSetPermanentAccess(
+      cookie,
+      versionIds.data,
+      pricing.data,
+      checkbox.parse(form.get('rightsAffirmed'))
+    );
     if (!result.ok) return fail(result.status, { paidAccess: true, error: result.error });
 
     return { paidAccess: true, updated: result.updated, failed: result.failed };
@@ -442,7 +465,13 @@ export const actions: Actions = {
         });
     }
 
-    const result = await setPaidAccessConfig(cookie, versionId.data, config.data, genOnly);
+    const result = await setPaidAccessConfig(
+      cookie,
+      versionId.data,
+      config.data,
+      genOnly,
+      checkbox.parse(form.get('rightsAffirmed'))
+    );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
     return { versionId: versionId.data, paidAccessSaved: true };

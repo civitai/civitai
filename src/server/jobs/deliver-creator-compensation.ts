@@ -170,7 +170,12 @@ export async function runPayout(lastUpdate: Date) {
         // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
         // No-op for already-integer comp/tip amounts.
         amount: Math.floor(amount),
-        description: `Creator tip compensation (${formatDate(date, 'MMM D, YYYY', true)})`,
+        // Was "Creator tip compensation", which promised a merge that doesn't happen: no `tip`-source row
+        // has ever existed in resourceCompensations, so this bucket is compensation only. A creator whose
+        // Compensation payouts stopped (all versions now earning a licensing fee instead) read the old
+        // wording as proof his tips had gone missing too. Matches the "Generation compensation" channel
+        // label in Creator Studio. The externalTransactionId keeps its prefix — it's a dedup key.
+        description: `Generation compensation (${formatDate(date, 'MMM D, YYYY', true)})`,
         type: TransactionType.Compensation,
         externalTransactionId: `creator-tip-comp-${dateStr}-${userId}-${accountType}`,
         source: 'compensation' as const,

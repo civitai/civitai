@@ -188,16 +188,20 @@ export default PublicEndpoint(
 
         const now = new Date();
 
+        // An unpublished version is only reachable by its owner and by internal services — the scanner
+        // fetches the file minutes after upload, which was landing a Download event (userId -1,
+        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
         const tracker = new Tracker(req, res);
-        await tracker.modelVersionEvent({
-          type: 'Download',
-          modelId: fileResult.modelId,
-          modelVersionId,
-          fileId: fileResult.fileId,
-          nsfw: fileResult.nsfw,
-          earlyAccess: fileResult.inEarlyAccess,
-          time: now,
-        });
+        if (fileResult.published)
+          await tracker.modelVersionEvent({
+            type: 'Download',
+            modelId: fileResult.modelId,
+            modelVersionId,
+            fileId: fileResult.fileId,
+            nsfw: fileResult.nsfw,
+            earlyAccess: fileResult.inEarlyAccess,
+            time: now,
+          });
 
         // Bust the downloads cache so the user sees their download immediately
         if (session?.user?.id) {

@@ -252,6 +252,9 @@ export const unpublishModelSchema = z.object({
   id: z.number(),
   reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as string)).optional(),
   customMessage: z.string().optional(),
+  // Owner's explicit consent to refund all active early access purchases (debited from their
+  // account) as part of unpublishing. Ignored for moderator unpublishes.
+  refundEarlyAccess: z.boolean().optional(),
 });
 
 export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;

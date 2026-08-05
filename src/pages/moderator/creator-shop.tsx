@@ -18,10 +18,10 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
+  IconBan,
   IconBolt,
   IconBox,
   IconCheck,
@@ -29,6 +29,7 @@ import {
   IconEyeOff,
   IconFilter,
   IconPhotoOff,
+  IconRepeat,
   IconScan,
   IconSearch,
   IconShieldCheck,
@@ -48,6 +49,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopReviewQueue,
+  useQueryCreatorShopReviewQueueCreators,
 } from '~/components/CreatorShop/creator-shop.util';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
@@ -66,7 +68,8 @@ import {
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
-import { daysFromNow } from '~/utils/date-helpers';
+import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
+import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -171,32 +174,17 @@ function CreatorShopReviewPage() {
     CosmeticShopItemStatus.PendingReview
   );
   const [typeFilter, setTypeFilter] = useState<CosmeticType[]>([]);
-  // Creator filter: a searchable dropdown of real users — the queue filters by
-  // the selected user's id. Typing an all-digits term looks the user up by id.
-  const [creatorSearch, setCreatorSearch] = useState('');
-  const [debouncedCreatorSearch] = useDebouncedValue(creatorSearch, 300);
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
 
-  const creatorSearchTerm = debouncedCreatorSearch.trim();
-  const creatorSearchId = /^\d+$/.test(creatorSearchTerm) ? Number(creatorSearchTerm) : undefined;
-  const { data: userOptions, isFetching: searchingUsers } = trpc.user.getAll.useQuery(
-    creatorSearchId
-      ? { ids: [creatorSearchId], limit: 10 }
-      : { query: creatorSearchTerm, limit: 10 },
-    { enabled: !!currentUser?.isModerator && !!creatorSearchTerm }
+  const { creators, isLoading: loadingCreators } = useQueryCreatorShopReviewQueueCreators(
+    !!currentUser?.isModerator
   );
-  const creatorOptions = useMemo(() => {
-    const opts = (userOptions ?? [])
-      .filter((u) => !!u.username)
-      .map((u) => ({ value: String(u.id), label: u.username as string }));
-    // Keep the current selection in the option list so its label stays visible
-    // after the search results change.
-    if (selectedCreator && !opts.some((o) => o.value === String(selectedCreator.id)))
-      opts.unshift({ value: String(selectedCreator.id), label: selectedCreator.username });
-    return opts;
-  }, [userOptions, selectedCreator]);
+  const creatorOptions = useMemo(
+    () => creators.map((c) => ({ value: String(c.id), label: c.username })),
+    [creators]
+  );
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useQueryCreatorShopReviewQueue({
@@ -205,7 +193,7 @@ function CreatorShopReviewPage() {
       userId: selectedCreator?.id,
       cosmeticTypes: typeFilter,
     });
-  const { reviewItem, deleteItem } = useMutateCreatorShop();
+  const { reviewItem, deleteItem, takedownItem } = useMutateCreatorShop();
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -233,11 +221,31 @@ function CreatorShopReviewPage() {
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  const affirmation = selectedMeta.rightsAffirmation;
+  // The affirmer is normally the submitting creator, but a cross-listed item is
+  // sold by someone else — don't put the creator's name on their affirmation.
+  const affirmedBy =
+    affirmation && affirmation.userId === selected?.cosmetic.creator?.id
+      ? `@${selected?.cosmetic.creator?.username ?? 'unknown'}`
+      : `user #${affirmation?.userId}`;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
-  const stickerSlug =
-    selected?.cosmetic.type === CosmeticType.Sticker
-      ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+  const isSticker = selected?.cosmetic.type === CosmeticType.Sticker;
+  const stickerSlug = isSticker
+    ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+    : undefined;
+  // A sticker is priced twice — the listing buys a block of uses, and the
+  // per-use price is what a buyer pays to top up once they run dry. Reviewing
+  // the list price alone approves half the economics.
+  const stickerEconomics = isSticker
+    ? stickerEconomicsFromCosmeticData(selected?.cosmetic.data)
+    : undefined;
+  // What a use costs when bought in the listing, for comparison: a top-up
+  // priced far above the bulk rate is the thing worth questioning, and it can
+  // be changed after approval without re-entering review.
+  const bulkRatePerUse =
+    stickerEconomics?.uses && selected
+      ? Math.floor(selected.unitAmount / stickerEconomics.uses)
       : undefined;
 
   // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
@@ -347,6 +355,39 @@ function CreatorShopReviewPage() {
     });
   };
 
+  // Takedown is the IP/TOS path: unlike Delete it refunds every buyer, reverses
+  // the creator's earnings and strips the cosmetic from everyone who owns it.
+  const confirmTakedown = () => {
+    if (!selected) return;
+    if (!reason.trim())
+      return showErrorNotification({
+        title: 'A note is required',
+        error: new Error('Add the takedown reason — buyers and the creator both see it.'),
+      });
+    const purchases = selected._count?.purchases ?? 0;
+    openConfirmModal({
+      title: 'Take down shop item',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Remove <strong>{selected.title}</strong> from sale, refund all{' '}
+            <strong>{numberWithCommas(purchases)}</strong> buyer{purchases === 1 ? '' : 's'}, take
+            back the Buzz the seller was paid for those sales, and delete the cosmetic from every
+            account that owns or has it equipped.
+          </Text>
+          <Text size="sm" c="dimmed">
+            The creator&apos;s submission fee is not refunded. This can&apos;t be undone — the item
+            can&apos;t be restored to sale afterwards.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: 'Take down', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
+    });
+  };
+
   const pendingCount = statusFilter === CosmeticShopItemStatus.PendingReview ? items.length : null;
 
   return (
@@ -403,19 +444,8 @@ function CreatorShopReviewPage() {
               const opt = creatorOptions.find((o) => o.value === v);
               setSelectedCreator(opt ? { id: Number(v), username: opt.label } : null);
             }}
-            searchValue={creatorSearch}
-            onSearchChange={setCreatorSearch}
             data={creatorOptions}
-            // Options already come filtered from the search endpoint — and an
-            // id search would never match its username label.
-            filter={({ options }) => options}
-            nothingFoundMessage={
-              searchingUsers
-                ? 'Searching…'
-                : creatorSearchTerm
-                ? 'No users found'
-                : 'Type a username or user id'
-            }
+            nothingFoundMessage={loadingCreators ? 'Loading…' : 'No creators found'}
             leftSection={<IconSearch size={16} />}
             comboboxProps={{ withinPortal: true }}
           />
@@ -638,6 +668,11 @@ function CreatorShopReviewPage() {
 
                   {/* Meta */}
                   <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
+                    {/* One grid, ordered so the pricing reads as a sequence:
+                        what it costs, what that buys, what a refill costs, then
+                        who gets what. Splitting it into rows made the sticker
+                        fields look like a separate concern rather than the rest
+                        of the same price. */}
                     <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
                       <MoneyTile
                         label="List price"
@@ -645,6 +680,40 @@ function CreatorShopReviewPage() {
                         icon={<IconBolt size={14} />}
                         iconColor="var(--mantine-color-yellow-5)"
                       />
+                      {isSticker && (
+                        <>
+                          <MoneyTile
+                            label="Uses per purchase"
+                            value={
+                              stickerEconomics?.uses
+                                ? `${numberWithCommas(stickerEconomics.uses)} placements${
+                                    bulkRatePerUse
+                                      ? ` · ${numberWithCommas(bulkRatePerUse)} Buzz each`
+                                      : ''
+                                  }`
+                                : 'Not set — sells an unlimited balance'
+                            }
+                            icon={<IconRepeat size={14} />}
+                            iconColor="var(--mantine-color-indigo-5)"
+                          />
+                          <MoneyTile
+                            label="Price per extra use"
+                            value={
+                              stickerEconomics?.pricePerUse
+                                ? `${numberWithCommas(stickerEconomics.pricePerUse)} Buzz${
+                                    bulkRatePerUse && stickerEconomics.pricePerUse > bulkRatePerUse
+                                      ? ` · ${(
+                                          stickerEconomics.pricePerUse / bulkRatePerUse
+                                        ).toFixed(1)}x the bulk rate`
+                                      : ''
+                                  }`
+                                : 'Not set — cannot be topped up'
+                            }
+                            icon={<IconBolt size={14} />}
+                            iconColor="var(--mantine-color-orange-5)"
+                          />
+                        </>
+                      )}
                       <MoneyTile
                         label="Creator earns"
                         value={`${numberWithCommas(
@@ -659,9 +728,6 @@ function CreatorShopReviewPage() {
                         icon={<IconCheck size={14} />}
                         iconColor="var(--mantine-color-blue-5)"
                       />
-                    </SimpleGrid>
-
-                    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm">
                       <MoneyTile
                         label="Quantity"
                         value={
@@ -744,6 +810,25 @@ function CreatorShopReviewPage() {
                           />
                         )}
                         <DetailRow
+                          label="Rights affirmed"
+                          value={
+                            affirmation ? (
+                              <Stack gap={2}>
+                                <Text size="sm">“{affirmation.statement}”</Text>
+                                <Text size="xs" c="dimmed">
+                                  {affirmedBy} ·{' '}
+                                  {formatDate(affirmation.affirmedAt, 'MMM D, YYYY h:mm A')} · v
+                                  {affirmation.version}
+                                </Text>
+                              </Stack>
+                            ) : (
+                              <Text size="sm" c="dimmed">
+                                Not recorded — submitted before this confirmation was required.
+                              </Text>
+                            )
+                          }
+                        />
+                        <DetailRow
                           label="Description"
                           last
                           value={
@@ -819,6 +904,15 @@ function CreatorShopReviewPage() {
                             onClick={() => submitReview('revert')}
                           >
                             Revert to pending
+                          </Button>
+                          <Button
+                            color="red"
+                            variant="light"
+                            leftSection={<IconBan size={16} />}
+                            loading={takedownItem.isPending}
+                            onClick={confirmTakedown}
+                          >
+                            Take down
                           </Button>
                           <Button
                             color="red"

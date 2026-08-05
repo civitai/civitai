@@ -91,7 +91,7 @@ export function diffEntityChanges({
   reason?: string;
   /**
    * Fields whose change was made by an automated rule rather than the actor
-   * (profanity auto-NSFW, DisablePayout auto-flag). Their rows get
+   * (e.g. profanity auto-NSFW). Their rows get
    * actorRole='system' + the given reason; the rest of the batch keeps the
    * caller's attribution.
    */

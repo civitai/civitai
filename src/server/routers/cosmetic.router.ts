@@ -4,6 +4,7 @@ import {
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   grantCosmeticsToUsersSchema,
+  purchaseStickerUsesSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
@@ -14,8 +15,15 @@ import {
   revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
-import { getStickerBalances } from '~/server/services/sticker.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { getStickerBalances, purchaseStickerUses } from '~/server/services/sticker.service';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import {
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+  verifiedProcedure,
+} from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const cosmeticRouter = router({
@@ -36,6 +44,21 @@ export const cosmeticRouter = router({
   getStickerBalances: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .query(({ ctx }) => getStickerBalances(ctx.user.id)),
+  // Topping up a sticker the user already owns, offered where they run out.
+  // Money moves, so it matches the shop purchase's procedure: verified account,
+  // no API keys.
+  purchaseStickerUses: verifiedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })
+    .input(purchaseStickerUsesSchema)
+    .mutation(({ input, ctx }) => {
+      const [buzzType] = getAllowedAccountTypes(ctx.features);
+      return purchaseStickerUses({
+        ...input,
+        userId: ctx.user.id,
+        buzzType,
+        stickersEnabled: ctx.features.stickers,
+      });
+    }),
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),

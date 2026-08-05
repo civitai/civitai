@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import type { ModelVersionTerms } from '@civitai/buzz';
+import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import {
@@ -408,11 +408,20 @@ export type ModelVersionPaidAccessDto = {
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without
 // round-tripping the whole version. `id` is named for the `isOwnerOrModerator` middleware; a null
 // `paidAccess` clears the gate.
+/**
+ * The creator's affirmation that they hold the rights to monetize this version. Optional at the
+ * boundary because most writes don't monetize (publishing, moderation, metadata edits) and a version
+ * already carrying an affirmation never needs a second one — the service decides when it's required
+ * (see resolveRightsAffirmation) and records it on ModelVersion.meta.rightsAffirmation.
+ */
+const rightsAffirmedSchema = z.boolean().optional();
+
 export type UpdateModelVersionPaidAccessInput = z.infer<typeof updateModelVersionPaidAccessSchema>;
 export const updateModelVersionPaidAccessSchema = z.object({
   id: z.number(),
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
+  rightsAffirmed: rightsAffirmedSchema,
 });
 
 export const modelVersionUpsertSchema2 = z.object({
@@ -452,6 +461,7 @@ export const modelVersionUpsertSchema2 = z.object({
   bountyId: z.number().optional(),
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
+  rightsAffirmed: rightsAffirmedSchema,
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -521,6 +531,8 @@ export type ModelVersionMeta = ModelMeta & {
    * the target is deleted/unpublished/uncovered (fail-closed).
    */
   generationAlias?: GenerationAlias;
+  /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
+  rightsAffirmation?: RightsAffirmation;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

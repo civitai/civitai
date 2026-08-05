@@ -3,6 +3,7 @@
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteSet } from 'svelte/reactivity';
+  import { MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT } from '@civitai/buzz';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import {
     Card,
@@ -221,6 +222,20 @@
     for (const id of selected) if (!alreadyPermanentIds.has(id)) n++;
     return n;
   }
+  const affirmedIds = $derived(
+    new Set(
+      data.models
+        .flatMap((m) => m.versions)
+        .filter((v) => v.rightsAffirmed)
+        .map((v) => v.id)
+    )
+  );
+  // A "select all" spans pages, so ids outside the current page aren't in `affirmedIds` — treat those as
+  // needing an affirmation rather than assuming they have one. The server re-checks per version regardless.
+  function selectionNeedsAffirmation(): boolean {
+    for (const id of selected) if (!affirmedIds.has(id)) return true;
+    return false;
+  }
   // Whether a version may be added: no cap (fee mode), already permanent (free re-price), or a free slot left.
   function canSelect(id: number): boolean {
     if (!paidAccessMode) return true;
@@ -338,15 +353,19 @@
     changes: FeeChange[];
     unchanged: number;
     skipped: { row?: number; reason: string }[];
+    needsRightsAffirmation?: boolean;
   } | null>(null);
   let showPreview = $state(false);
   let applying = $state(false);
+  let importAffirmed = $state(false);
 
   // Upload → dry-run: show the diff + any skipped rows in a modal; nothing is written until the creator confirms.
   const previewEnhance = () => async (event: { result: any; update: () => Promise<void> }) => {
     if (fileInput) fileInput.value = '';
     if (event.result.type === 'success') {
       preview = event.result.data;
+      // Each import is affirmed on its own; a tick from a previous sheet must not carry over.
+      importAffirmed = false;
       showPreview = true;
     } else if (event.result.type === 'failure') {
       toast.error(String(event.result.data?.error ?? 'Could not read that file'));
@@ -392,11 +411,15 @@
   // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
   let feeBuzz = $state<number | undefined>();
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
+  let feeAffirmed = $state(false);
+  // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
+  const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
+    feeAffirmed = false;
     const r = feeToRatio(version.licensingFee);
     feeBuzz = r.buzz || undefined;
     feeImages = String(r.images);
@@ -682,6 +705,7 @@
     cancelHref={buildHref({ mode: null })}
     onSelectAll={selectAll}
     limits={bulkLimits}
+    selectionNeedsAffirmation={selectionNeedsAffirmation()}
   />
 {/if}
 
@@ -696,6 +720,7 @@
     onSetUsage={setBulkUsage}
     onSelectAll={selectAll}
     cancelHref={buildHref({ mode: null, usage: null })}
+    selectionNeedsAffirmation={selectionNeedsAffirmation()}
   />
 {/if}
 
@@ -944,11 +969,20 @@
           (preview?.changes ?? []).map((c) => ({ versionId: c.versionId, fee: c.next }))
         )}
       />
+      <input type="hidden" name="rightsAffirmed" value={importAffirmed ? 'on' : ''} />
     </form>
+    {#if preview?.needsRightsAffirmation}
+      <label class="flex items-start gap-2 text-sm text-dark-1">
+        <input type="checkbox" bind:checked={importAffirmed} class="mt-1 shrink-0" />
+        <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
+      </label>
+    {/if}
     <AlertDialogFooter>
       <AlertDialogCancel onclick={() => (preview = null)}>Cancel</AlertDialogCancel>
       <AlertDialogAction
-        disabled={(preview?.changes.length ?? 0) === 0 || applying}
+        disabled={(preview?.changes.length ?? 0) === 0 ||
+          applying ||
+          (preview?.needsRightsAffirmation && !importAffirmed)}
         onclick={(e: Event) => {
           e.preventDefault();
           applying = true;
@@ -1021,7 +1055,6 @@
               </Select.Content>
             </Select.Root>
             <span class="text-xs text-dark-2">generations</span>
-            <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
             <div class="w-full">
               <CapUpsell
                 value={feeBuzz}
@@ -1056,6 +1089,25 @@
               </button>
             </p>
             <span class="w-full text-xs text-dark-2">Leave empty to clear the fee.</span>
+            {#if feeNeedsAffirmation}
+              <label class="flex w-full items-start gap-2 text-xs text-dark-1">
+                <input
+                  type="checkbox"
+                  name="rightsAffirmed"
+                  bind:checked={feeAffirmed}
+                  class="mt-0.5 shrink-0"
+                />
+                <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
+              </label>
+            {/if}
+            <Button
+              type="submit"
+              size="sm"
+              class="w-full"
+              disabled={feeNeedsAffirmation && !feeAffirmed}
+            >
+              Save fee
+            </Button>
           </form>
         </section>
 

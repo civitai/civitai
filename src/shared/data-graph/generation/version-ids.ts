@@ -31,3 +31,8 @@ export const happyHorseVersionIds = {
   'v1.0': 2902378,
   'v1.1': 3063263,
 } as const;
+
+export const grokVersionIds = {
+  'v1.0': 2738377,
+  'v1.5': 3197990,
+} as const;

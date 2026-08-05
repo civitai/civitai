@@ -649,7 +649,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     );
 
     try {
-      return await upload(
+      const result = await upload(
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
@@ -705,6 +705,24 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           }
         }
       );
+
+      // The store resolves undefined when the transfer or its completion call failed —
+      // without this the row stays stuck mid-upload with no way back to retry.
+      if (!result) {
+        const failed =
+          useS3UploadStore.getState().items.find((x) => x.meta?.uuid === uuid)?.status === 'error';
+        setFiles((state) =>
+          state.map((x) => (x.uuid === uuid ? { ...x, isPending: true, isUploading: false } : x))
+        );
+        if (failed)
+          showErrorNotification({
+            title: 'Failed to upload file',
+            reason: 'The upload did not finish. Please retry this file.',
+            error: new Error(file.name),
+          });
+      }
+
+      return result;
     } catch (e) {
       showErrorNotification({
         title: 'Failed to upload file',

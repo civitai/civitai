@@ -11,6 +11,7 @@ import {
   type PreviewCosmetic,
 } from '~/components/CreatorShop/Submit/submit.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type {
   AutoCheck,
@@ -20,13 +21,17 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import {
   cosmeticPriceFloor,
-  STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
   isCreatorCosmeticType,
+  stickerPerUseFloor,
 } from '~/server/schema/creator-shop.schema';
-import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
+import {
+  STICKER_SLUG_ERROR,
+  isValidStickerSlug,
+  stickerEconomicsFromCosmeticData,
+} from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
@@ -43,6 +48,7 @@ export function useSubmitCreatorShopForm({
   onClose: () => void;
 }) {
   const isEdit = !!item;
+  const currentUser = useCurrentUser();
   const { submitItem, updateItem } = useMutateCreatorShop();
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
 
@@ -51,9 +57,14 @@ export function useSubmitCreatorShopForm({
       ? item.cosmetic.type
       : CosmeticType.Badge
   );
-  const [uses, setUses] = useState<number>(
-    ((item?.cosmetic.data as { uses?: number } | null)?.uses ?? STICKER_DEFAULT_USES) as number
-  );
+  const existingEconomics = stickerEconomicsFromCosmeticData(item?.cosmetic.data);
+  // Empty, never prefilled with a default. A prefilled field cannot express
+  // "unset": seeded to the floor it was indistinguishable from a creator who
+  // chose the floor, so an unrelated edit either wrote a price they never
+  // picked, or — gated on interaction instead — silently failed to write the
+  // one they agreed with. Undefined means unchosen, and unchosen blocks submit.
+  const [uses, setUses] = useState<number | undefined>(existingEconomics.uses);
+  const [pricePerUse, setPricePerUse] = useState<number | undefined>(existingEconomics.pricePerUse);
   const [slug, setSlug] = useState<string>(
     ((item?.cosmetic.data as { slug?: string } | null)?.slug ?? '') as string
   );
@@ -71,6 +82,7 @@ export function useSubmitCreatorShopForm({
   const [animated, setAnimated] = useState<boolean>(
     !!(item?.cosmetic.data as { animated?: boolean } | null)?.animated
   );
+  const [rightsAffirmed, setRightsAffirmed] = useState(false);
   const [sellableByOthers, setSellableByOthers] = useState(false);
   const [sellerShare, setSellerShare] = useState(0);
   const itemAcceptsBlueBuzz = !!(item?.meta as { acceptsBlueBuzz?: boolean } | null)
@@ -102,12 +114,60 @@ export function useSubmitCreatorShopForm({
   const priceFloor = cosmeticPriceFloor(type);
 
   const isSticker = type === CosmeticType.Sticker;
+  // Mirrors the server's rule verbatim (`isModerator || createdById === userId`,
+  // creator-shop.service.ts). Named for what it decides rather than for who the
+  // user is: the server has its own `isOriginalCreator` that counts moderators
+  // as one, and two predicates sharing that name across the boundary is how the
+  // client came to be stricter than the server — hiding fields from the very
+  // people who repair stickers the v1 artwork bug damaged.
+  //
+  // A cross-lister is excluded because the server refuses their economics edits
+  // outright; requiring the fields of them would disable their save over a field
+  // they may not touch. Published is deliberately NOT part of this: the server
+  // allows economics changes after publish, and a sticker predating per-use
+  // pricing can only be repaired if someone can still reach the field.
+  //
+  // "No creator" reads as "not yours", which is what it means on the server:
+  // `null === userId` is false there, so a cosmetic without a creator — an
+  // official one — is refused. Treating a missing creator as permission would
+  // demand a price the save then rejects.
+  const canEditEconomics =
+    !isEdit || !!currentUser?.isModerator || item?.cosmetic.createdById === currentUser?.id;
+  const economicsEditable = isSticker && canEditEconomics;
+  // Permission and obligation are different questions, and the server only ever
+  // answered the first: a moderator MAY change another creator's economics, but
+  // nothing says an unrelated edit should force them to invent values for a
+  // sticker that isn't theirs — which on a cross-listing would rewrite the
+  // original creator's top-up price for every buyer.
+  const economicsRequired =
+    economicsEditable && (!isEdit || item?.cosmetic.createdById === currentUser?.id);
   // Consumables must clear a per-use floor as well as the listing floor.
-  const usesFloor = isSticker ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
-  const usesError =
-    isSticker && price < usesFloor
-      ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
-      : null;
+  const usesFloor = isSticker && uses ? uses * STICKER_MIN_BUZZ_PER_USE : 0;
+  // An unset economic field is an error the creator can see, not a field that
+  // quietly stays unset. Stickers damaged by the v1 artwork-replace bug reach
+  // this form with no `uses` at all, and they are exactly the ones that need
+  // repairing here.
+  const usesError = !isSticker
+    ? null
+    : uses === undefined
+    ? economicsRequired
+      ? 'Set how many uses a purchase grants'
+      : null
+    : price < usesFloor
+    ? `${uses} uses needs at least ${usesFloor} Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    : null;
+  // The top-up price a buyer pays when they run dry. Its floor is per-use, not
+  // the listing floor — mirrors the server so the creator sees it before submit.
+  const perUseFloor = stickerPerUseFloor(type);
+  const pricePerUseError = !isSticker
+    ? null
+    : pricePerUse === undefined
+    ? economicsRequired
+      ? 'Set what one extra use costs'
+      : null
+    : pricePerUse < perUseFloor
+    ? `A single use must cost at least ${perUseFloor} Buzz`
+    : null;
   // Same normalization the server applies, so what's validated here is what's saved.
   const normalizedSlug = slug.trim().toLowerCase();
   // Matches the server rule: the slug is the token owners type, so it's fixed
@@ -200,12 +260,18 @@ export function useSubmitCreatorShopForm({
     resetFiles();
   };
 
+  // Mirrors the server rule: a new submission always affirms, and an edit that
+  // swaps the artwork re-affirms, since the stored record covers the art it was
+  // made against.
+  const requiresAffirmation = !isEdit || artReplaced;
+
   const canSubmit =
     artOk &&
     !!name.trim() &&
     price >= priceFloor &&
     canAffordFee &&
-    (!isSticker || (slugFormatOk && !slugTaken && !usesError));
+    (!requiresAffirmation || rightsAffirmed) &&
+    (!isSticker || (slugFormatOk && !slugTaken && !usesError && !pricePerUseError));
 
   const isDecoration = type === CosmeticType.ProfileDecoration;
   const hasOffsets = Object.values(offsets).some((v) => v !== 0);
@@ -220,7 +286,11 @@ export function useSubmitCreatorShopForm({
     if (!canSubmit || !imageId) {
       showErrorNotification({
         title: 'Not ready',
-        error: new Error('Add valid artwork, a title, and a price of at least 500 Buzz'),
+        error: new Error(
+          requiresAffirmation && !rightsAffirmed
+            ? 'Confirm you have the rights to sell this artwork'
+            : 'Add valid artwork, a title, and a price of at least 500 Buzz'
+        ),
       });
       return;
     }
@@ -239,6 +309,7 @@ export function useSubmitCreatorShopForm({
         if (artReplaced) {
           payload.imageUrl = imageId;
           payload.animated = animated;
+          payload.rightsAffirmed = true;
         }
         if (offsetsChanged) payload.offsets = normalizedOffsets;
         // Send the slug on any artwork swap too: the server rebuilds `data`
@@ -249,6 +320,15 @@ export function useSubmitCreatorShopForm({
             normalizedSlug !== ((item.cosmetic.data as { slug?: string } | null)?.slug ?? ''))
         )
           payload.slug = normalizedSlug;
+        // The economics were editable in this form but never sent, so changing
+        // them did nothing. Sent whenever the creator has a value that differs
+        // from what's stored — `undefined` is unchosen and blocks submit, so a
+        // value here was always chosen. Unlike the slug, the server carries the
+        // stored economics through an artwork rebuild on its own, so an artwork
+        // swap is not itself a reason to send them.
+        if (isSticker && uses !== undefined && uses !== existingEconomics.uses) payload.uses = uses;
+        if (isSticker && pricePerUse !== undefined && pricePerUse !== existingEconomics.pricePerUse)
+          payload.pricePerUse = pricePerUse;
         if (acceptsBlueBuzzChanged) payload.acceptsBlueBuzz = acceptsBlueBuzz;
         await updateItem.mutateAsync(payload);
       } else {
@@ -267,6 +347,8 @@ export function useSubmitCreatorShopForm({
           offsets: normalizedOffsets,
           slug: isSticker ? normalizedSlug : undefined,
           uses: isSticker ? uses : undefined,
+          pricePerUse: isSticker ? pricePerUse : undefined,
+          rightsAffirmed: true,
         });
       }
       resetFiles();
@@ -295,9 +377,20 @@ export function useSubmitCreatorShopForm({
     setType,
     priceFloor,
     isSticker,
+    economicsEditable,
+    economicsRequired,
+    // The two economics fields are now mandatory input on a sticker that never
+    // had them, so the discard guard has to know they changed — otherwise
+    // Cancel throws away the value the form just insisted on, with no prompt.
+    economicsChanged:
+      uses !== existingEconomics.uses || pricePerUse !== existingEconomics.pricePerUse,
     uses,
     setUses,
     usesError,
+    pricePerUse,
+    setPricePerUse,
+    pricePerUseError,
+    perUseFloor,
     slug,
     setSlug,
     slugError,
@@ -321,6 +414,9 @@ export function useSubmitCreatorShopForm({
     acceptsBlueBuzz,
     setAcceptsBlueBuzz,
     acceptsBlueBuzzChanged,
+    rightsAffirmed,
+    setRightsAffirmed,
+    requiresAffirmation,
     offsets,
     setOffset,
     offsetsChanged,

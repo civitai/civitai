@@ -15,6 +15,11 @@ import { currencyMeta } from '$lib/earnings';
 // `prev` = the same currency's total in the previous equal-length period (for delta chips); set by
 // getModelPerformance / getModelVersionAnalytics, left undefined by getModelEarnings.
 export type ModelCurrencyTotal = { currency: string; total: number; prev?: number };
+
+// deliver-creator-compensation buckets on exactly this rule: licenseFee mints its own transaction and
+// EVERY other source merges into one compensation payout. Match its `!== 'licenseFee'` rather than naming
+// known sources, so a new or one-off source value lands in a total instead of vanishing from the split.
+const payoutChannel = (source: string) => (source === 'licenseFee' ? 'licenseFee' : 'compensation');
 export type ModelEarning = {
   modelVersionId: number;
   versionName: string | null;
@@ -35,13 +40,58 @@ export type ModelEarning = {
 // `orchestration.daily_resource_generation_counts` (the live, full-volume table; the `default.*` MV copy
 // undercounts ~200x); downloads from `default.daily_downloads`. Both carry garbage future-dated rows, so the
 // window is capped at today().
+// The five ways a model earns, as separate columns on /analytics/models. `licenseFee` + `compensation`
+// come from resourceCompensations; the other three are buyer-funded and only exist in buzzTransactions.
+export const PERFORMANCE_CHANNELS = [
+  'licenseFee',
+  'compensation',
+  'earlyAccess',
+  'permanentAccess',
+  'donation',
+] as const;
+export type PerformanceChannel = (typeof PERFORMANCE_CHANNELS)[number];
+
+// `prev` is carried per currency, not just per channel, so the currency filter chips can recompute a
+// correct delta for the selected subset instead of showing a delta for the unfiltered total.
+export type ChannelCurrency = { currency: string; total: number; prev: number };
+export type ChannelTotals = {
+  // Buzz-family totals across every currency — the unfiltered column value.
+  total: number;
+  prev: number;
+  // What the CREATOR was credited, by account type. The filter chips sum a subset of this.
+  // NOTE: `createMultiAccountBuzzTransaction` defaults the credit to yellow, so on the buyer-funded
+  // channels (access sales, donations) this is always yellow whatever the buyer actually paid with.
+  received: ChannelCurrency[];
+};
+
 export type ModelPerformance = ModelEarning & {
   generations: number;
   prevGenerations: number;
   downloads: number;
   prevDownloads: number;
+  channels: Record<PerformanceChannel, ChannelTotals>;
   prevBuzzTotal: number;
 };
+
+const emptyChannel = (): ChannelTotals => ({ total: 0, prev: 0, received: [] });
+const emptyChannels = (): Record<PerformanceChannel, ChannelTotals> =>
+  Object.fromEntries(PERFORMANCE_CHANNELS.map((c) => [c, emptyChannel()])) as Record<
+    PerformanceChannel,
+    ChannelTotals
+  >;
+
+function addChannelCurrency(
+  list: ChannelCurrency[],
+  currency: string,
+  total: number,
+  prev: number
+) {
+  const existing = list.find((c) => c.currency === currency);
+  if (existing) {
+    existing.total += total;
+    existing.prev += prev;
+  } else list.push({ currency, total, prev });
+}
 
 // Cap on versions resolved + returned; bounds the Postgres enrichment and the table length.
 const TOP_N = 100;
@@ -51,6 +101,98 @@ const TOP_N = 100;
 const CORRUPT_FILTER = `match(accountType, '^[A-Za-z]+$') AND amount > 0 AND amount < 1e12`;
 
 const lowerFirst = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+
+// The buyer-funded folds add to a currency the compensation fold may already have created, and the access
+// query's `accessKind` dimension splits one currency across rows — so merge, never push.
+function addCurrency(
+  entry: { currencies: ModelCurrencyTotal[] },
+  currency: string,
+  total: number,
+  prev: number
+) {
+  const existing = entry.currencies.find((c) => c.currency === currency);
+  if (existing) {
+    existing.total += total;
+    existing.prev = (existing.prev ?? 0) + prev;
+  } else entry.currencies.push({ currency, total, prev });
+}
+
+type Window = { from: string; to: string; prev: { from: string; to: string } };
+type BuyerFundedRow = { accountType: string; cur: number | string; prev: number | string };
+type AccessRow = BuyerFundedRow & { modelVersionId: number | string; accessKind: string };
+type DonationRow = BuyerFundedRow & { goalId: number | string };
+
+// Half-open windows, unlike the resourceCompensations reads: `buzzTransactions.date` is a DateTime, so an
+// inclusive `toDate(to) + 1` upper bound would put midnight in both the current and previous window.
+const windowSums = (w: Window) =>
+  `sumIf(amount, date >= toDate('${w.from}') AND date < toDate('${w.to}') + 1) AS cur,
+     sumIf(amount, date >= toDate('${w.prev.from}') AND date < toDate('${w.prev.to}') + 1) AS prev`;
+
+const windowBounds = (w: Window) =>
+  `date >= toDate('${w.prev.from}') AND date < toDate('${w.to}') + 1`;
+
+// Access sales never reach resourceCompensations — the buyer pays the creator directly, so the
+// buzzTransactions row is the only record. Id shape:
+// `<early|permanent>-access-<versionId>-<download|generation>-<buyerId>-<accountType>`. Both prefixes must
+// be matched: rows predating the split are `early-access-` whichever product they were.
+function accessSalesQuery(uid: number, w: Window, versionIdList?: string) {
+  return `SELECT toUInt32OrNull(splitByChar('-', externalTransactionId)[3]) AS modelVersionId,
+       multiIf(
+         externalTransactionId LIKE 'permanent-access-%', 'permanentAccess',
+         description LIKE 'Gain access to model%', 'permanentAccess',
+         'earlyAccess'
+       ) AS accessKind,
+       toAccountType AS accountType,
+       ${windowSums(w)}
+     FROM buzzTransactions
+     WHERE toAccountId = ${uid}
+       AND type = 'purchase'
+       AND (externalTransactionId LIKE 'early-access-%'
+            OR externalTransactionId LIKE 'permanent-access-%')
+       AND ${windowBounds(w)}
+     GROUP BY modelVersionId, accessKind, accountType
+     HAVING modelVersionId IS NOT NULL${versionIdList ? ` AND modelVersionId IN (${versionIdList})` : ''}`;
+}
+
+// Donations are keyed by goal (`donation-<goalId>-<ts>`), so the goal→version map comes from Postgres.
+function donationsQuery(uid: number, w: Window, goalIds: number[]) {
+  return `SELECT toUInt32OrNull(splitByChar('-', externalTransactionId)[2]) AS goalId,
+       toAccountType AS accountType,
+       ${windowSums(w)}
+     FROM buzzTransactions
+     WHERE toAccountId = ${uid}
+       AND type = 'donation'
+       AND externalTransactionId LIKE 'donation-%'
+       AND ${windowBounds(w)}
+     GROUP BY goalId, accountType
+     HAVING goalId IN (${goalIds.join(',')})`;
+}
+
+// The goal target is the polymorphic (entityType, entityId) pair; `modelVersionId` is the legacy column
+// being dual-written until the re-key migration drops it, so it's only a fallback for older rows.
+async function donationGoalVersions(uid: number, versionIds?: number[]) {
+  const rows = await dbRead
+    .selectFrom('DonationGoal')
+    .where('userId', '=', uid)
+    .where((eb) =>
+      eb.or([
+        eb.and([eb('entityType', '=', 'ModelVersion'), eb('entityId', 'is not', null)]),
+        eb('modelVersionId', 'is not', null),
+      ])
+    )
+    .select(['id', 'entityType', 'entityId', 'modelVersionId'])
+    .execute();
+  const scope = versionIds ? new Set(versionIds) : null;
+  const byGoal = new Map<number, number>();
+  for (const g of rows) {
+    const versionId =
+      g.entityType === 'ModelVersion' && g.entityId != null ? Number(g.entityId) : g.modelVersionId;
+    if (versionId == null) continue;
+    if (scope && !scope.has(Number(versionId))) continue;
+    byGoal.set(Number(g.id), Number(versionId));
+  }
+  return byGoal;
+}
 
 async function fetchModelEarnings({
   userId,
@@ -74,7 +216,6 @@ async function fetchModelEarnings({
      GROUP BY modelVersionId, accountType`
   );
 
-  // Fold (version × currency) rows into one entry per version; buzzTotal drives the ranking.
   const byVersion = new Map<number, ModelEarning>();
   for (const r of rows) {
     const versionId = Number(r.modelVersionId);
@@ -183,27 +324,32 @@ async function fetchModelPerformance({
     ])
     .execute();
   if (!versions.length) return [];
+
+  const versionByGoal = await donationGoalVersions(uid);
+
   const idList = versions.map((v) => Number(v.versionId)).join(',');
   // daily_downloads is sorted by (modelId, modelVersionId, …) and unpartitioned, so filtering on modelVersionId
   // alone full-scans it. Also constrain modelId (the sort-key leader) so the read seeks straight to these models.
   const modelIdList = [...new Set(versions.map((v) => Number(v.modelId)))].join(',');
 
   const prev = { from: compareFrom, to: compareTo };
+  const w: Window = { from, to, prev };
   const ch = getClickhouse();
   // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
-  const [earnRows, genRows, dlRows] = await Promise.all([
+  const [earnRows, genRows, dlRows, accessRows, donationRows] = await Promise.all([
     ch.$query<{
       modelVersionId: number | string;
       accountType: string;
+      source: string;
       cur: number | string;
       prev: number | string;
     }>(
-      `SELECT modelVersionId, accountType,
+      `SELECT modelVersionId, accountType, source,
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
        WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
-       GROUP BY modelVersionId, accountType`
+       GROUP BY modelVersionId, accountType, source`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
@@ -221,6 +367,10 @@ async function fetchModelPerformance({
        WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
+    ch.$query<AccessRow>(accessSalesQuery(uid, w)),
+    versionByGoal.size === 0
+      ? Promise.resolve([] as DonationRow[])
+      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()])),
   ]);
 
   const byId = new Map<number, ModelPerformance>();
@@ -233,6 +383,7 @@ async function fetchModelPerformance({
       modelType: (v.modelType as string) ?? null,
       nsfw: !!v.nsfw,
       currencies: [],
+      channels: emptyChannels(),
       buzzTotal: 0,
       prevBuzzTotal: 0,
       generations: 0,
@@ -247,10 +398,14 @@ async function fetchModelPerformance({
     const currency = lowerFirst(r.accountType);
     const total = Number(r.cur);
     const prevTotal = Number(r.prev);
-    e.currencies.push({ currency, total, prev: prevTotal });
+    addCurrency(e, currency, total, prevTotal);
     if (currencyMeta(currency).family === 'buzz') {
       e.buzzTotal += total;
       e.prevBuzzTotal += prevTotal;
+      const bucket = e.channels[payoutChannel(r.source)];
+      bucket.total += total;
+      bucket.prev += prevTotal;
+      addChannelCurrency(bucket.received, currency, total, prevTotal);
     }
   }
   for (const r of genRows) {
@@ -267,6 +422,47 @@ async function fetchModelPerformance({
       e.prevDownloads = Number(r.prev);
     }
   }
+  // addCurrency runs BEFORE the buzz-family return: the `active` filter tests `currencies`, so a model
+  // that earned only via a sale or donation would otherwise be dropped from the table entirely.
+  const addBuyerFunded = (
+    versionId: number,
+    channel: PerformanceChannel,
+    accountType: string,
+    cur: number,
+    prev: number
+  ) => {
+    const e = byId.get(versionId);
+    if (!e) return;
+    const currency = lowerFirst(accountType);
+    addCurrency(e, currency, cur, prev);
+    if (currencyMeta(currency).family !== 'buzz') return;
+    e.buzzTotal += cur;
+    e.prevBuzzTotal += prev;
+    const bucket = e.channels[channel];
+    bucket.total += cur;
+    bucket.prev += prev;
+    addChannelCurrency(bucket.received, currency, cur, prev);
+  };
+
+  for (const r of accessRows)
+    addBuyerFunded(
+      Number(r.modelVersionId),
+      r.accessKind as PerformanceChannel,
+      r.accountType,
+      Number(r.cur),
+      Number(r.prev)
+    );
+  for (const r of donationRows) {
+    const versionId = versionByGoal.get(Number(r.goalId));
+    if (versionId === undefined) continue;
+    addBuyerFunded(versionId, 'donation', r.accountType, Number(r.cur), Number(r.prev));
+  }
+
+  for (const e of byId.values())
+    for (const c of PERFORMANCE_CHANNELS)
+      e.channels[c].received.sort(
+        (a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order
+      );
 
   const active = [...byId.values()].filter(
     (m) => m.generations > 0 || m.downloads > 0 || m.currencies.some((c) => c.total > 0)
@@ -286,7 +482,9 @@ async function fetchModelPerformance({
 // Per-model performance (earnings + usage) for the /analytics table. Earnings are owner-keyed; usage is scoped by
 // the creator's version ids (the usage tables have no owner column — Justin's recommendation).
 export const getModelPerformance = createCache({
-  name: 'models:performance',
+  // Keys derive from the args, not the payload shape, so a stored value outlives a change to what this
+  // returns. Bump the suffix whenever the returned shape changes.
+  name: 'models:performance:v2',
   fetch: fetchModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -304,6 +502,7 @@ export type VersionAnalytics = {
   downloads: number;
   prevDownloads: number;
   currencies: VersionCurrency[];
+  channels: Record<PerformanceChannel, ChannelTotals>;
   buzzTotal: number;
   prevBuzzTotal: number;
 };
@@ -361,6 +560,7 @@ async function fetchModelVersionAnalytics({
       downloads: 0,
       prevDownloads: 0,
       currencies: [],
+      channels: emptyChannels(),
       buzzTotal: 0,
       prevBuzzTotal: 0,
     })),
@@ -368,11 +568,14 @@ async function fetchModelVersionAnalytics({
   if (!versions.length) return base;
 
   const prev = { from: compareFrom, to: compareTo };
-  const idList = versions.map((v) => Number(v.id)).join(',');
+  const w: Window = { from, to, prev };
+  const versionIds = versions.map((v) => Number(v.id));
+  const idList = versionIds.join(',');
+  const versionByGoal = await donationGoalVersions(uid, versionIds);
   const ch = getClickhouse();
   // One query per source, each summing the current + previous window (for the delta chips). The upper bound `to`
   // also fences out the tables' garbage future-dated rows.
-  const [genRows, dlRows, earnRows] = await Promise.all([
+  const [genRows, dlRows, earnRows, accessRows, donationRows] = await Promise.all([
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
          sumIf(count, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
@@ -392,16 +595,21 @@ async function fetchModelVersionAnalytics({
     ch.$query<{
       modelVersionId: number | string;
       accountType: string;
+      source: string;
       cur: number | string;
       prev: number | string;
     }>(
-      `SELECT modelVersionId, accountType,
+      `SELECT modelVersionId, accountType, source,
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
        WHERE userId = ${uid} AND modelVersionId IN (${idList}) AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
-       GROUP BY modelVersionId, accountType`
+       GROUP BY modelVersionId, accountType, source`
     ),
+    ch.$query<AccessRow>(accessSalesQuery(uid, w, idList)),
+    versionByGoal.size === 0
+      ? Promise.resolve([] as DonationRow[])
+      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()])),
   ]);
 
   const byId = new Map(base.versions.map((v) => [v.versionId, v]));
@@ -425,20 +633,63 @@ async function fetchModelVersionAnalytics({
     const currency = lowerFirst(r.accountType);
     const total = Number(r.cur);
     const prevTotal = Number(r.prev);
-    v.currencies.push({ currency, total, prev: prevTotal });
+    addCurrency(v, currency, total, prevTotal);
     if (currencyMeta(currency).family === 'buzz') {
       v.buzzTotal += total;
       v.prevBuzzTotal += prevTotal;
+      const bucket = v.channels[payoutChannel(r.source)];
+      bucket.total += total;
+      bucket.prev += prevTotal;
+      addChannelCurrency(bucket.received, currency, total, prevTotal);
     }
   }
+  // addCurrency runs before the buzz-family guard so a version that earned only from a sale or donation
+  // still shows up in `currencies`.
+  const addBuyerFunded = (
+    versionId: number,
+    channel: PerformanceChannel,
+    accountType: string,
+    cur: number,
+    prevTotal: number
+  ) => {
+    const v = byId.get(versionId);
+    if (!v) return;
+    const currency = lowerFirst(accountType);
+    addCurrency(v, currency, cur, prevTotal);
+    if (currencyMeta(currency).family !== 'buzz') return;
+    v.buzzTotal += cur;
+    v.prevBuzzTotal += prevTotal;
+    const bucket = v.channels[channel];
+    bucket.total += cur;
+    bucket.prev += prevTotal;
+    addChannelCurrency(bucket.received, currency, cur, prevTotal);
+  };
+  for (const r of accessRows)
+    addBuyerFunded(
+      Number(r.modelVersionId),
+      r.accessKind as PerformanceChannel,
+      r.accountType,
+      Number(r.cur),
+      Number(r.prev)
+    );
+  for (const r of donationRows) {
+    const versionId = versionByGoal.get(Number(r.goalId));
+    if (versionId !== undefined)
+      addBuyerFunded(versionId, 'donation', r.accountType, Number(r.cur), Number(r.prev));
+  }
+
   for (const v of base.versions) {
     v.currencies.sort((a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order);
+    for (const c of PERFORMANCE_CHANNELS)
+      v.channels[c].received.sort(
+        (a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order
+      );
   }
   return base;
 }
 
 export const getModelVersionAnalytics = createCache({
-  name: 'analytics:model-versions',
+  name: 'analytics:model-versions:v3',
   fetch: fetchModelVersionAnalytics,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

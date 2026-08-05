@@ -2,12 +2,13 @@ import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '$lib/server/db';
 import {
+  buildRightsAffirmation,
   capMediaType,
+  hasCurrentRightsAffirmation,
   maxLicensingFee,
   maxLicensingFeeCeiling,
   raisesOverCap,
 } from '@civitai/buzz';
-import { ModelVersionFlag } from '@civitai/shared';
 import { cappedTier, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
@@ -70,7 +71,13 @@ function normalizeFee(raw: number | null): number | null | undefined {
   return rounded === 0 ? null : rounded; // 0 clears the fee
 }
 
-type OwnedVersion = { id: number; baseModel: string; modelType: string; currentFee: number };
+type OwnedVersion = {
+  id: number;
+  baseModel: string;
+  modelType: string;
+  currentFee: number;
+  affirmed: boolean;
+};
 
 // The user's own (non-deleted) versions among the given ids, with the fields the fee ops need: base model for
 // the non-commercial guard, model type for default-by-type. Doubles as the ownership check.
@@ -84,6 +91,7 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
       'ModelVersion.baseModel as baseModel',
       'Model.type as modelType',
       'ModelVersion.licensingFee as currentFee',
+      'ModelVersion.meta as meta',
     ])
     .where('ModelVersion.id', 'in', versionIds)
     .where('Model.userId', '=', userId)
@@ -94,27 +102,49 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     baseModel: r.baseModel,
     modelType: r.modelType,
     currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
+    affirmed: hasCurrentRightsAffirmation(r.meta),
   }));
+}
+
+export const RIGHTS_AFFIRMATION_REQUIRED_ERROR =
+  'You must confirm you hold the rights to monetize before setting a fee.';
+
+// Records the affirmation on versions that don't already carry one. Merged in SQL rather than
+// read-modify-write: `meta` is shared with the main app's keys, so rewriting the object would clobber a
+// concurrent change. Ownership is re-enforced in the WHERE, matching writeFee.
+async function stampRightsAffirmation(
+  db: typeof dbWrite,
+  userId: number,
+  versionIds: number[]
+): Promise<void> {
+  if (versionIds.length === 0) return;
+  const affirmation = JSON.stringify({ rightsAffirmation: buildRightsAffirmation(userId) });
+  await db
+    .updateTable('ModelVersion')
+    .set({ meta: sql`COALESCE("meta", '{}'::jsonb) || ${affirmation}::jsonb` })
+    .where('id', 'in', versionIds)
+    .where('modelId', 'in', (eb) =>
+      eb
+        .selectFrom('Model')
+        .select('id')
+        .where('userId', '=', userId)
+        .where('deletedAt', 'is', null)
+    )
+    .execute();
 }
 
 // Ownership re-enforced in the WHERE for defense in depth (the ids already come from an owner-scoped read).
 async function writeFee(
+  db: typeof dbWrite,
   userId: number,
   versionIds: number[],
   normalized: number | null
 ): Promise<number> {
   if (versionIds.length === 0) return 0;
-  const result = await dbWrite
+  const result = await db
     .updateTable('ModelVersion')
     .set({
       licensingFee: normalized == null ? null : normalized.toFixed(2),
-      // A fee-earning version opts out of tips + creator comp, and a cleared one opts back in. The main
-      // app maintains this bit alongside the fee (upsertModelVersion); writing the fee here without it
-      // would leave the two paths disagreeing about whether the version still earns (CU 868kk4j2k).
-      flags:
-        normalized == null
-          ? sql<number>`flags & ~${ModelVersionFlag.DisablePayout}`
-          : sql<number>`flags | ${ModelVersionFlag.DisablePayout}`,
       // Cleared alongside the fee, matching upsertModelVersion — a leftover type/currency describes a
       // fee that no longer exists.
       ...(normalized == null
@@ -137,7 +167,8 @@ export async function setLicensingFee(
   userId: number,
   membership: Membership,
   versionId: number,
-  fee: number | null
+  fee: number | null,
+  rightsAffirmed = false
 ): Promise<SetFeeResult> {
   const normalized = normalizeFee(fee);
   if (normalized === undefined)
@@ -170,7 +201,16 @@ export async function setLicensingFee(
       error: `Your membership allows up to ${cap} buzz per generation for this model type. Lower the fee or upgrade your membership.`,
     };
 
-  await writeFee(userId, [versionId], normalized);
+  const needsAffirmation = normalized != null && !owned[0].affirmed;
+  if (needsAffirmation && !rightsAffirmed)
+    return { ok: false, status: 400, error: RIGHTS_AFFIRMATION_REQUIRED_ERROR };
+
+  // One transaction: a fee that goes live without its affirmation record is the exact artifact this
+  // feature exists to produce.
+  await dbWrite.transaction().execute(async (trx) => {
+    await writeFee(trx, userId, [versionId], normalized);
+    if (needsAffirmation) await stampRightsAffirmation(trx, userId, [versionId]);
+  });
   return { ok: true };
 }
 
@@ -189,12 +229,20 @@ export type FeeChange = {
 };
 export type FeePreview =
   | { ok: false; status: 403; error: string }
-  | { ok: true; changes: FeeChange[]; unchanged: number; skipped: VariedFeeSkip[] };
+  | {
+      ok: true;
+      changes: FeeChange[];
+      unchanged: number;
+      skipped: VariedFeeSkip[];
+      /** Some row takes a fee on a version with no affirmation on record — the confirm step must collect one. */
+      needsRightsAffirmation: boolean;
+    };
 
 // Owned (non-deleted) versions among `ids`, with the current fee + names — the preview needs the before value and
 // display labels; doubles as the ownership check.
 async function ownedVersionsWithFee(userId: number, ids: number[]) {
-  if (ids.length === 0) return new Map<number, FeeChange & { modelType: string }>();
+  if (ids.length === 0)
+    return new Map<number, FeeChange & { modelType: string; affirmed: boolean }>();
   const rows = await dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
@@ -205,6 +253,7 @@ async function ownedVersionsWithFee(userId: number, ids: number[]) {
       'mv.baseModel as baseModel',
       'm.type as modelType',
       'mv.licensingFee as fee',
+      'mv.meta as meta',
     ])
     .where('mv.id', 'in', ids)
     .where('m.userId', '=', userId)
@@ -219,6 +268,7 @@ async function ownedVersionsWithFee(userId: number, ids: number[]) {
         versionName: r.versionName,
         baseModel: r.baseModel,
         modelType: r.modelType as string,
+        affirmed: hasCurrentRightsAffirmation(r.meta),
         current: r.fee == null ? null : Number(r.fee),
         next: null as number | null,
       },
@@ -254,6 +304,7 @@ export async function previewLicensingFeeChanges(
 
   const owned = await ownedVersionsWithFee(userId, [...normalized.keys()]);
   const changes: FeeChange[] = [];
+  let needsRightsAffirmation = false;
   let unchanged = 0;
   for (const [versionId, { fee, row }] of normalized) {
     const o = owned.get(versionId);
@@ -274,6 +325,7 @@ export async function previewLicensingFeeChanges(
       unchanged++;
       continue;
     }
+    if (fee != null && !o.affirmed) needsRightsAffirmation = true;
     changes.push({
       versionId,
       row,
@@ -284,11 +336,11 @@ export async function previewLicensingFeeChanges(
       next: fee,
     });
   }
-  return { ok: true, changes, unchanged, skipped };
+  return { ok: true, changes, unchanged, skipped, needsRightsAffirmation };
 }
 export type VariedFeeResult =
   | { ok: true; updated: number; skipped: VariedFeeSkip[] }
-  | { ok: false; status: 403; error: string };
+  | { ok: false; status: 400 | 403; error: string };
 
 // Apply a set of per-version fees at once (CSV import). Invalid/foreign/non-commercial rows are skipped with a
 // reason rather than failing the whole batch. Writes are grouped by fee value so each distinct value is one
@@ -296,7 +348,8 @@ export type VariedFeeResult =
 export async function bulkSetLicensingFeeVaried(
   userId: number,
   membership: Membership,
-  entries: VariedFeeEntry[]
+  entries: VariedFeeEntry[],
+  rightsAffirmed = false
 ): Promise<VariedFeeResult> {
   const tier = cappedTier(membership);
   const deduped = new Map<number, VariedFeeEntry>();
@@ -341,10 +394,22 @@ export async function bulkSetLicensingFeeVaried(
     (byFee.get(key) ?? byFee.set(key, []).get(key)!).push(versionId);
   }
 
+  // One affirmation covers the whole import, but only the rows that actually take a fee — and don't
+  // already carry one — get a record.
+  const toAffirm = [...byFee]
+    .filter(([key]) => key !== 'null')
+    .flatMap(([, ids]) => ids)
+    .filter((id) => owned.get(id)?.affirmed === false);
+  if (toAffirm.length > 0 && !rightsAffirmed)
+    return { ok: false, status: 400, error: RIGHTS_AFFIRMATION_REQUIRED_ERROR };
+
   let updated = 0;
-  for (const [key, ids] of byFee) {
-    updated += await writeFee(userId, ids, key === 'null' ? null : Number(key));
-  }
+  await dbWrite.transaction().execute(async (trx) => {
+    for (const [key, ids] of byFee) {
+      updated += await writeFee(trx, userId, ids, key === 'null' ? null : Number(key));
+    }
+    await stampRightsAffirmation(trx, userId, toAffirm);
+  });
   return { ok: true, updated, skipped };
 }
 
@@ -352,7 +417,8 @@ export async function bulkSetLicensingFee(
   userId: number,
   membership: Membership,
   versionIds: number[],
-  fee: number | null
+  fee: number | null,
+  rightsAffirmed = false
 ): Promise<BulkFeeResult> {
   const normalized = normalizeFee(fee);
   if (normalized === undefined)
@@ -398,10 +464,19 @@ export async function bulkSetLicensingFee(
     }
   }
 
-  const updated = await writeFee(
-    userId,
-    owned.map((v) => v.id),
-    normalized
-  );
+  const toAffirm = normalized == null ? [] : owned.filter((v) => !v.affirmed).map((v) => v.id);
+  if (toAffirm.length > 0 && !rightsAffirmed)
+    return { ok: false, status: 400, error: RIGHTS_AFFIRMATION_REQUIRED_ERROR };
+
+  const updated = await dbWrite.transaction().execute(async (trx) => {
+    const n = await writeFee(
+      trx,
+      userId,
+      owned.map((v) => v.id),
+      normalized
+    );
+    await stampRightsAffirmation(trx, userId, toAffirm);
+    return n;
+  });
   return { ok: true, updated };
 }

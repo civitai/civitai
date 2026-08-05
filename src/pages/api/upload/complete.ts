@@ -6,6 +6,7 @@ import {
   completeMultipartUpload,
   getUploadS3Client,
   getB2ImageS3Client,
+  objectExists,
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -21,13 +22,13 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const { bucket, key, type, uploadId, parts, backend } = req.body;
+  let s3;
+  if (backend === 'backblaze') {
+    s3 = getB2ImageS3Client();
+  } else if (backend === 'b2') {
+    s3 = getUploadS3Client('b2');
+  }
   try {
-    let s3;
-    if (backend === 'backblaze') {
-      s3 = getB2ImageS3Client();
-    } else if (backend === 'b2') {
-      s3 = getUploadS3Client('b2');
-    }
     const result = await completeMultipartUpload(bucket, key, uploadId, parts, s3);
     await logToAxiom({ name: 's3-upload-complete', userId, type, key, uploadId, backend });
 
@@ -49,9 +50,16 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // NOT mis-reported as a raw 500 (which the client then retries → amplification).
     const errorClass = classifyS3MultipartError(e);
     if (errorClass === 'not-found') {
-      // The multipart upload is already finalized or aborted (double-submit /
-      // retry-after-success). 409 Conflict = terminal state → tells the client to
-      // STOP retrying; there is no Location to return so we can't fake a 200.
+      // Already finalized or aborted (double-submit / retry-after-success). Which one
+      // decides the client's fate — a finalized upload whose 200 the client never saw
+      // must not be reported as a failure, or the bytes are stranded in the bucket with
+      // no DB row. Only a genuine miss is terminal.
+      const exists = await objectExists(bucket, key, s3);
+      if (exists === true) {
+        res.status(200).json(null);
+        return;
+      }
+      // 409 Conflict = terminal state → tells the client to STOP retrying.
       res.status(409).json({ error: 'Upload already finalized or aborted' });
       return;
     }

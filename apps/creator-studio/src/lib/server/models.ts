@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
-import type { ModelVersionTerms } from '@civitai/buzz';
+import { hasCurrentRightsAffirmation, type ModelVersionTerms } from '@civitai/buzz';
 import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
   type PaidAccessConfig,
@@ -57,6 +57,8 @@ export type CreatorModelVersion = {
   usageControl: string;
   hasPaidAccess: boolean;
   paidAccessConfig: PaidAccessConfig | null;
+  /** Already on record as cleared to monetize — the editors skip the affirmation checkbox for these. */
+  rightsAffirmed: boolean;
 };
 
 export type CreatorModel = {
@@ -240,9 +242,6 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         .on('pa.entityType', '=', 'ModelVersion')
         .on((eb) => eb.or([eb('pa.endsAt', 'is', null), eb('pa.endsAt', '>', new Date())]))
     )
-    .leftJoin('DonationGoal as dg', (join) =>
-      join.onRef('dg.entityId', '=', 'mv.id').on('dg.entityType', '=', 'ModelVersion')
-    )
     .select([
       'mv.id',
       'mv.modelId',
@@ -252,10 +251,23 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       'mv.publishedAt',
       'mv.licensingFee',
       'mv.usageControl',
+      'mv.meta as meta',
       'pa.timeframeDays as paTimeframeDays',
       'pa.terms as paTerms',
-      'dg.goalAmount as donationGoalAmount',
     ])
+    // Subquery, not a join: a join here multiplies the version row per goal, and duplicate
+    // versions blow up the keyed {#each} on the page with each_key_duplicate (blank page).
+    .select((eb) =>
+      eb
+        .selectFrom('DonationGoal as dg')
+        .select('dg.goalAmount')
+        .whereRef('dg.entityId', '=', 'mv.id')
+        .where('dg.entityType', '=', 'ModelVersion')
+        .orderBy('dg.active', 'desc')
+        .orderBy('dg.createdAt', 'desc')
+        .limit(1)
+        .as('donationGoalAmount')
+    )
     .where(
       'mv.modelId',
       'in',
@@ -316,6 +328,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       usageControl: v.usageControl,
       hasPaidAccess: paidAccessConfig !== null,
       paidAccessConfig,
+      rightsAffirmed: hasCurrentRightsAffirmation(v.meta),
     });
     byModel.set(v.modelId, list);
   }

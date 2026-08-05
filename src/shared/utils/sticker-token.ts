@@ -218,6 +218,45 @@ export const stickerUsesFromCosmeticData = (data: unknown) => {
   return typeof uses === 'number' && Number.isFinite(uses) && uses > 0 ? Math.floor(uses) : null;
 };
 
+/**
+ * `data.pricePerUse` when it is a usable positive integer, else null.
+ *
+ * null means the sticker cannot be topped up. It is never defaulted from the
+ * list price: a derived price would be a second source of truth that quietly
+ * disagrees with what the creator set.
+ */
+export const stickerPricePerUseFromCosmeticData = (data: unknown) => {
+  const price = (data as { pricePerUse?: unknown } | null | undefined)?.pricePerUse;
+  return typeof price === 'number' && Number.isFinite(price) && price > 0
+    ? Math.floor(price)
+    : null;
+};
+
+/**
+ * Every economic field carried on a sticker's `Cosmetic.data`, as one value.
+ *
+ * Replacing artwork rebuilds `data` wholesale, so anything read out field by
+ * field at that call site is one forgotten argument away from being dropped —
+ * which is how a finite sticker silently became unlimited for every future
+ * buyer. Reading and re-writing them as a single object is what makes "did I
+ * carry them all?" answerable.
+ */
+export type StickerEconomics = { uses?: number; pricePerUse?: number };
+export const stickerEconomicsFromCosmeticData = (data: unknown): StickerEconomics => ({
+  uses: stickerUsesFromCosmeticData(data) ?? undefined,
+  pricePerUse: stickerPricePerUseFromCosmeticData(data) ?? undefined,
+});
+
+/**
+ * The claimKey every top-up lands on, so repeat top-ups accumulate on one row
+ * rather than growing a row per purchase. Distinct from the purchase claim key
+ * so a top-up is never mistaken for an acquisition.
+ */
+export const STICKER_TOPUP_CLAIM_KEY = 'sticker-topup';
+
+/** How many uses one top-up may buy. Bounds the charge, not the balance. */
+export const STICKER_TOPUP_MAX_QUANTITY = 1000;
+
 /** How many uses of their own sticker a creator gets when it is approved. */
 export const CREATOR_GRANT_USES_MULTIPLIER = 10;
 

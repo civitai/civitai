@@ -187,4 +187,105 @@ describe('IframeInitController', () => {
       expect(controller.hasStarted()).toBe(true);
     });
   });
+
+  /**
+   * THE INVERTED HANDSHAKE — and its COMPATIBILITY MATRIX.
+   *
+   * The block now announces that its listener is attached (`BLOCK_HELLO`) and
+   * the host pushes BLOCK_INIT in response. These tests pin the property that
+   * makes that safe to ship against already-deployed third-party blocks: the
+   * announce is an ACCELERATOR layered on the existing schedule, never a gate.
+   * The two cells that matter here are the ones the SDK's own tests structurally
+   * cannot cover, because they are claims about the HOST:
+   *
+   *   - OLD SDK + NEW HOST — a deployed block that never sends BLOCK_HELLO.
+   *   - A BLOCK THAT NEVER ANNOUNCES AND NEVER ACKS — must not hang the host.
+   */
+  describe('BLOCK_HELLO: the inverted handshake is an accelerator, not a gate', () => {
+    it('OLD SDK + NEW HOST: a block that never announces gets the unchanged schedule', () => {
+      // The whole old-SDK compatibility claim in one assertion: with no
+      // BLOCK_HELLO ever delivered, the immediate post + every retry tick
+      // happen exactly as before this change.
+      const { controller, sendInit, onReadyTimeout } = makeController({ readyTimeoutMs: 10_000 });
+      controller.start();
+      expect(sendInit).toHaveBeenCalledTimes(1); // immediate post
+
+      vi.advanceTimersByTime(INIT_RETRY_INTERVAL_MS * 5);
+      expect(sendInit).toHaveBeenCalledTimes(6); // 1 + 5 retries
+      expect(onReadyTimeout).not.toHaveBeenCalled();
+    });
+
+    it('NEVER ANNOUNCES AND NEVER ACKS: the readiness timeout still fires — no hang', () => {
+      const { controller, sendInit, onReadyTimeout } = makeController({ readyTimeoutMs: 10_000 });
+      controller.start();
+      vi.advanceTimersByTime(60_000);
+      expect(onReadyTimeout).toHaveBeenCalledTimes(1);
+      // …and the retry loop stopped with it, rather than re-posting forever.
+      const atTimeout = sendInit.mock.calls.length;
+      vi.advanceTimersByTime(60_000);
+      expect(sendInit).toHaveBeenCalledTimes(atTimeout);
+    });
+
+    it('NEW SDK + NEW HOST: an announce posts BLOCK_INIT immediately, not at the next tick', () => {
+      const { controller, sendInit } = makeController();
+      controller.start();
+      expect(sendInit).toHaveBeenCalledTimes(1);
+
+      // Half a tick in — the retry loop would not have fired yet.
+      vi.advanceTimersByTime(INIT_RETRY_INTERVAL_MS / 2);
+      expect(sendInit).toHaveBeenCalledTimes(1);
+
+      controller.notifyHello();
+      expect(sendInit).toHaveBeenCalledTimes(2);
+    });
+
+    it('the announce does NOT cancel the retry loop or the readiness timeout', () => {
+      // 🔴 An announce means "I am listening", NOT "I got the payload". Only
+      // BLOCK_READY may stop the loop; treating hello as an ack would
+      // reintroduce the blank-iframe bug this controller exists to fix.
+      const { controller, sendInit, onReadyTimeout } = makeController({ readyTimeoutMs: 10_000 });
+      controller.start();
+      controller.notifyHello();
+      const afterHello = sendInit.mock.calls.length;
+
+      vi.advanceTimersByTime(INIT_RETRY_INTERVAL_MS * 3);
+      expect(sendInit.mock.calls.length).toBe(afterHello + 3);
+
+      vi.advanceTimersByTime(10_000);
+      expect(onReadyTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    it('is honored at most ONCE — a chatty block cannot amplify host work', () => {
+      const { controller, sendInit } = makeController();
+      controller.start();
+      for (let i = 0; i < 50; i += 1) controller.notifyHello();
+      expect(sendInit).toHaveBeenCalledTimes(2); // the immediate post + one hello
+    });
+
+    it('an announce BEFORE start() sends nothing, and start() still posts immediately', () => {
+      // The host registers its BLOCK_HELLO listener before the controller
+      // exists (token/checkpoint may still be resolving). A hello landing then
+      // must not post — there is no payload yet — and must not suppress the
+      // immediate post start() owes.
+      const { controller, sendInit } = makeController();
+      controller.notifyHello();
+      expect(sendInit).not.toHaveBeenCalled();
+      controller.start();
+      expect(sendInit).toHaveBeenCalledTimes(1);
+    });
+
+    it('an announce after notifyReady()/dispose() sends nothing', () => {
+      const { controller, sendInit } = makeController();
+      controller.start();
+      controller.notifyReady();
+      controller.notifyHello();
+      expect(sendInit).toHaveBeenCalledTimes(1);
+
+      const second = makeController();
+      second.controller.start();
+      second.controller.dispose();
+      second.controller.notifyHello();
+      expect(second.sendInit).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -162,12 +162,12 @@ export function DeleteCard() {
               <Radio
                 value="now"
                 label="Delete now"
-                description="Starts deleting right away; a large gallery can take a while to clear"
+                description="Queued right away and cleared in the background — it can take up to a day for them all to disappear"
               />
               <Radio
                 value="later"
                 label="Delete after 7 days"
-                description="Hides them immediately and deletes them automatically when the window closes"
+                description="Hidden in the background (up to a day), then deleted automatically when the window closes"
               />
             </Stack>
           </Radio.Group>
@@ -193,10 +193,14 @@ export function DeleteCard() {
             </List.Item>
             <List.Item>
               {imagesChoice === 'now'
-                ? 'Your images will be deleted now'
-                : 'Your images will be hidden now and deleted after 7 days'}
+                ? 'Your images will be deleted in the background, which can take up to a day'
+                : 'Your images will be hidden in the background within a day, then deleted after 7 days'}
             </List.Item>
           </List>
+          <Text size="sm" c="dimmed">
+            Your account closes right away. Images are removed by a background queue, so some may
+            still be visible for up to a day after you confirm.
+          </Text>
           <Text>
             Please type <b>DELETE</b> in the box below to confirm:
           </Text>

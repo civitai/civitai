@@ -1,6 +1,7 @@
 import { Button, Text } from '@mantine/core';
 import { IconArrowRight, IconShoppingBag } from '@tabler/icons-react';
 import React from 'react';
+import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -20,6 +21,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-shop-section' });
   const { shop, isLoading } = useQueryCreatorShop(features.creatorShop ? user.id : undefined);
   const ownedCosmeticIds = useOwnedCosmeticIds();
+  const { wishlistedIds } = useQueryWishlistedShopItems();
 
   if (!features.creatorShop) return null;
 
@@ -64,6 +66,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
                     item={item as unknown as CosmeticShopItemGetById}
                     sectionItemCreatedAt={item.createdAt}
                     alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+                    wishlisted={wishlistedIds.has(item.id)}
                     creator={item.cosmetic.creator}
                   />
                 </div>

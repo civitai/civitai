@@ -130,6 +130,7 @@ import {
   formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
+  resolveBlockPollWaitSeconds,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
@@ -148,6 +149,7 @@ import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/rec
 // runs; imported (not re-implemented) so the request-time re-assertion below can
 // never drift from the load-time one — one rule, one place.
 import {
+  AIR_URN_PREFIX,
   containsAirReference,
   estimateStepBuzz,
   getStep,
@@ -3045,6 +3047,33 @@ export const blocksRouter = router({
    * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
    * so the orchestrator returns 404/403 for workflows the user doesn't own.
    * That's the gate — we don't need a second client-side ownership check.
+   *
+   * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
+   * open until the workflow reaches a terminal status instead of answering with
+   * whatever it is right now (its `?wait=` parameter; see
+   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold).
+   * Omitted → byte-identical to the pre-existing request.
+   *
+   * 🔴 A 202 IS A NORMAL OUTCOME, NOT AN ERROR. When the hold elapses first the
+   * orchestrator answers 202 with the current, still-running workflow — which
+   * the generated client surfaces as an ordinary `data` result, so it flows
+   * through the exact same mapping below and reaches the block as a
+   * non-terminal snapshot. The caller re-arms. Nothing here needs to branch on
+   * the status code, and adding a branch that treated 202 as a failure would
+   * turn the normal timeout into a broken generation.
+   *
+   * 🔴 WHAT THIS DOES TO SCAN COST — the direction is FAVOURABLE, and it is
+   * worth stating because the moderation wrapper below runs on EVERY poll.
+   * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
+   * deliberately does NOT memoize an operational fault (scanner error, timeout,
+   * label drift, per-label error), so during such a fault the same text is
+   * re-scanned once per poll. A long poll REDUCES the poll rate — ~1 per 15s
+   * instead of ~1 per 2s — so it shrinks that blast radius by the same factor
+   * rather than enlarging it. The trade it makes is the other way round: a held
+   * request occupies an in-flight request slot for its whole duration, so
+   * concurrent in-flight polls rise even as total polls fall. That is why the
+   * hold is opt-in and capped, and why the SDK only requests it from a
+   * sequential, non-overlapping loop.
    */
   pollWorkflow: publicProcedure
     // No `enforceAppBlocksFlag` middleware here: block-token procs are
@@ -3054,6 +3083,14 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         workflowId: z.string().min(1).max(64),
+        /**
+         * Orchestrator-side hold, in SECONDS. Untrusted (it comes from a block
+         * via the host) — bounded here by the wire schema AND clamped again by
+         * `resolveBlockPollWaitSeconds`, which owns the real ceiling. The zod
+         * `.max()` is deliberately the LOOSER of the two: it rejects nonsense,
+         * the resolver decides policy, and the policy lives in one place.
+         */
+        waitSeconds: z.number().int().min(0).max(60).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -3073,7 +3110,14 @@ export const blocksRouter = router({
       await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
-      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
+      const workflow = await getWorkflow({
+        token,
+        path: { workflowId: input.workflowId },
+        // `undefined` when there is no hold, so the request is byte-identical
+        // to the pre-long-poll one rather than carrying a `?wait=0`.
+        ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+      });
       // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
       // generated text: it publishes `imageUrls` off `extractOutput`, which a
       // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
@@ -3105,7 +3149,12 @@ export const blocksRouter = router({
           // submit-phase prompt audit uses. Never a request-body field.
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // 🔴 `claims.appBlockId` (`AppBlock.id`, `apb_<ulid>`), NOT
+          // `claims.blockId` — which is `AppBlock.blockId`, the publish request's
+          // SLUG, and joins to nothing. The value is telemetry-only (no column, no
+          // FK), so the wrong claim fails silently. See the field's doc on
+          // `StepOutputModerationRequest`.
+          appBlockId: claims.appBlockId,
         }
       );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
@@ -3249,7 +3298,8 @@ export const blocksRouter = router({
           userId,
           isGreen: resolveBlockMaturity(claims).isGreen,
           appId: claims.appId,
-          appBlockId: claims.blockId,
+          // Same as `pollWorkflow`: the `apb_<ulid>` PK, never the slug.
+          appBlockId: claims.appBlockId,
         }
       );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
@@ -5192,6 +5242,13 @@ export const blocksRouter = router({
    * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
    * capability); no need to also assert ownership of the requested appBlockId
    * (the join filter does it).
+   *
+   * NO `.meta({ requiredScope })` — deliberate, and NOT an oversight left behind by
+   * the getMyAppAnalytics annotation below. No CLI command calls this proc (nor
+   * `getMyApps`), so it is reached only by the web panel, which is session-authed and
+   * therefore takes enforceTokenScope's Full early-return regardless. Annotate it the
+   * day something token-authed needs it — at which point AppBlocksSubmit is the
+   * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -5206,6 +5263,15 @@ export const blocksRouter = router({
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
       // marks the ctx → return the zeroed revenue shape WITHOUT running any
       // aggregate, so a flag-off moderator gets no live revenue data.
+      //
+      // `emptyRevenue()` carries `unavailable: 'notEntitled'`. It MUST, or the
+      // all-zero buckets are indistinguishable from a publisher who has simply
+      // earned nothing yet, and the dashboard renders fabricated zeros as
+      // earnings. This is reachable even though both revenue pages also guard on
+      // `features.appBlocks` client-side: that is a SEPARATE evaluation of the
+      // flag from this middleware's, and the page-level author gate is a
+      // DIFFERENT flag again (`appBlocksAuthor`) — so a caller can be entitled
+      // to render the page while this proc short-circuits.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return emptyRevenue();
       }
@@ -5235,6 +5301,61 @@ export const blocksRouter = router({
    * non-owned id, so an author can never read another author's metrics.
    */
   getMyAppAnalytics: appDeveloperProcedure
+    // 🔴 AppBlocksSubmit, NOT DevTunnel and NOT UserRead. With no `.meta` this proc
+    // implicitly required `TokenScope.Full` (enforceTokenScope defaults to it), so a
+    // personal API key worked but the `civitai login` OAuth token — the CLI's DEFAULT
+    // auth path — 403'd, which made `civitai app metrics` unusable for most users.
+    // Why this bit specifically:
+    //   - It is the same bit `GET /api/v1/blocks/submissions` already requires, and
+    //     `civitai app metrics <slug>` calls BOTH (submissions to resolve slug →
+    //     appBlockId, then this proc). Any other choice would leave one hop of one
+    //     command needing a scope the other does not.
+    //   - It keeps that route's established rule: the same credential that could
+    //     submit can read its own app data, and nothing weaker.
+    //   - NOT UserRead: UserRead is inside `Full`, i.e. what every third-party
+    //     "log in with Civitai" client asks for. This proc exposes install counts,
+    //     Buzz spend, endpoint names and active-user counts, so gating it on UserRead
+    //     would hand a developer's app economics to any such client. AppBlocksSubmit
+    //     is opt-in and deliberately EXCLUDED from `Full`.
+    //   - NOT AppBlocksDevTunnel: that bit means "open an on-site dev tunnel" (its
+    //     consent label is literally "Open on-site dev tunnels"). Reusing it would
+    //     force analytics readers to grant tunnel-opening, and vice versa.
+    // A Full personal API key still passes — enforceTokenScope early-returns on
+    // `ctx.tokenScope === TokenScope.Full` — and createContext defaults a session (the
+    // web /apps/revenue panel) to Full.
+    //
+    // 🔴 That early return is EXACT EQUALITY, so the no-regression claim is CONDITIONAL,
+    // not universal: a mask that is a strict SUPERSET of Full but lacks bit 25 (e.g.
+    // `Full|AppBlocksDevTunnel` = 100663295) passed before and is FORBIDDEN now.
+    //
+    // The invariant that makes this unreachable is: NO issuable credential holds a
+    // superset of Full that omits bit 25. Be precise about what enforces it, because
+    // it is NOT one uniform cap:
+    //   - Personal API keys: `api-key.schema.ts` caps `tokenScope` at `.max(Full)`.
+    //   - OAuth clients via tRPC: `oauth-client.schema.ts` caps `allowedScopes` at
+    //     `.max(Full)` on create AND update. Both of these are pinned by a test in
+    //     `blocks.router.getMyAppAnalytics.test.ts`.
+    //   - OAuth ACCESS TOKENS are NOT bounded by Full at all — the hub decodes the
+    //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
+    //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
+    //     `allowedScopes | UserRead`, not Full.
+    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
+    //     migration, which no zod schema governs.
+    //   - `appblk-*` clients get `allowedScopes` written directly by
+    //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
+    //     carry `grants: []` so they cannot mint an account bearer token at all.
+    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
+    // flip is unreachable — but that last part rests on INSPECTION of that migration,
+    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
+    // this gate flips for it and no test will catch it.
+    //
+    // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
+    // and the login token requests it, so no NEW migration is needed here. Note the
+    // repo cannot prove prod state — those migrations are manual-apply and the device
+    // flow lives on the auth hub. If bit 25 were somehow absent in prod the failure
+    // mode is "this fix does not take effect", never "a working path breaks".
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -5766,12 +5887,58 @@ export const blocksRouter = router({
    * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
    * read on the app's own civitai-apps/<slug> repo.
    *
-   * Distinct from getMyAppRepo only in intent (pull/sync vs push instructions);
-   * it returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles
-   * its git command from. The token is embedded in the returned cloneUrl exactly
-   * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
+   * Close to getMyAppRepo but no longer identical to it — three differences, and the
+   * first is easy to miss now that only one of them carries a scope annotation:
+   *   - TOKEN SCOPE: this proc is `.meta({ requiredScope: AppBlocksSubmit })` (below),
+   *     because the CLI drives it. getMyAppRepo is deliberately NOT annotated — it is
+   *     web-only (AuthorViaGit / git-access.ts), so it is session-authed and takes
+   *     enforceTokenScope's Full early-return regardless.
+   *   - INTENT: pull/sync here vs push instructions there.
+   *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
+   *     addCollaborator call below).
+   * Ownership gating IS identical (owner check + bannedAt + `approved`). It returns the
+   * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
+   * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
+   * documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
+    // Same SCOPE gate and same bit as getMyAppAnalytics above — but note the base
+    // procedures differ: that one is `appDeveloperProcedure` (author cohort), this one is
+    // `protectedProcedure` plus an inline appBlocks-feature check below, so its audience
+    // is any Apps-enabled logged-in owner. Relevant to the "who can trigger the mint"
+    // reasoning further down. Un-annotated meant an implicit
+    // `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token — and the CLI
+    // reports that failure as "not permitted (are you the app owner, and is Apps enabled
+    // for your account?)", which sends the developer looking for an ownership problem
+    // they do not have. A Full personal API key is unaffected (enforceTokenScope
+    // early-returns on Full).
+    //
+    // 🔴 But NOT the same STAKE, so the bit choice is argued separately here rather than
+    // inherited. Analytics is a pure read; this proc MINTS A CREDENTIAL — it lazily
+    // provisions a per-user Forgejo identity whose token carries `write:repository`
+    // (dev-git-access.service) and returns it embedded in `cloneUrl`. So annotating
+    // widens who can trigger that mint from {session, Full personal key} to also
+    // include the civitai-cli OAuth login token.
+    //
+    // Accepted, deliberately: AppBlocksSubmit is opt-in, excluded from `Full`, and
+    // carried only by the first-party civitai-cli client; the caller must still own the
+    // app, not be banned, and the app must be `approved`; the collaborator grant is
+    // `read` on that one repo; and this is already the established meaning of the bit
+    // for CLI-facing procs, several of which are outright mutations (see
+    // `listingMediaCliScope` in app-listings.router.ts). A dedicated bit would be
+    // stricter but would recreate the "one command needs two different scopes" problem
+    // the analytics note above argues against.
+    //
+    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
+    // review", which does not mention minting a git credential. That copy lives in
+    // @civitai/auth and is a product decision, not a drive-by edit.
+    //
+    // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
+    // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
+    // `GET /api/v1/blocks/submissions`: `civitai app metrics` calls both hops, so moving
+    // one alone recreates the very "two scopes for one command" problem the note on that
+    // proc argues against.
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
     // CLI `civitai app pull --app <slug|appBlockId>` lets a developer pass the
@@ -6816,13 +6983,39 @@ async function submitStepWorkflow(opts: {
   // too. That is a false positive, and it is the direction we want — refusing a
   // pathological url costs a caller one bounced request; forwarding an
   // unentitled AIR costs the entitlement belt.
+  //
+  // 🔴 THAT COST SENTENCE WAS WRITTEN WHEN EVERY SCANNED STRING WAS A URL THE
+  // APP CONSTRUCTS, AND IT NO LONGER DESCRIBES EVERY ENTRY. `chat-completion`
+  // (registered later) submits `messages[].content` — free prose an END USER
+  // typed — and that prose is the ONLY attacker-controlled string in its built
+  // input; `model` is `z.enum`-bounded and every key is a fixed literal. So for
+  // that entry this guard reduces exactly to "reject any chat message
+  // containing the literal `urn:air:`", and the bounced request is the user's
+  // message rather than the app's own url. The guard is KEPT anyway — see the
+  // FALSE-POSITIVE SURFACE section in `chat-completion.step.ts` for the
+  // orchestrator-side evidence that such prose is inert today, why that
+  // evidence is not sufficient to scope the scan, and the app-side workaround.
+  // What changed here is only the MESSAGE: it used to assert the submitted step
+  // "carries an AIR reference", which is FALSE for prose — the caller typed a
+  // fragment, not a reference — so the rejection read as a platform bug rather
+  // than as something the app can fix in its own payload.
+  //
+  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
+  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
+  // the scan used to recurse over `Object.values` only. See
+  // `containsAirReference` for the mechanism and the depth cap that keeps the
+  // scan total.
   if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message:
-        `step '${step.id}' declares resourcePolicy 'none' but the submitted step carries an ` +
-        'AIR reference — a step that reaches an AIR resource bypasses the generation-graph ' +
-        'entitlement belt',
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step contains the ` +
+        `literal text '${AIR_URN_PREFIX}' — a step that reaches an AIR resource bypasses the ` +
+        'generation-graph entitlement belt. The check is a case-insensitive SUBSTRING scan ' +
+        'over every string, array element, object value AND object key in the step input; it ' +
+        'does not parse, so a value that merely EMBEDS that literal — a url whose path ' +
+        'contains it, or free text a user typed — is rejected too. That is the deliberate ' +
+        'fail-closed direction: strip or escape the literal in the params you submit.',
     });
   }
 

@@ -5,43 +5,11 @@ import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider
 import type { UploadTypeUnion } from '~/server/common/enums';
 import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
+import type { UploadPartError } from '~/utils/upload-retry';
+import { getPartRetryDelay, MAX_PART_ATTEMPTS, shouldRetryPartError } from '~/utils/upload-retry';
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
-const MAX_PART_ATTEMPTS = 3;
-const MAX_BACKOFF_MS = 60_000;
-const MIN_RETRY_AFTER_MS = 1000;
-
-type UploadPartError = {
-  status: number | null;
-  retryAfter?: string | null;
-  networkError?: boolean;
-  aborted?: boolean;
-};
-
-function shouldRetryPartError(err: UploadPartError) {
-  if (err.aborted) return false;
-  if (err.networkError) return true;
-  if (err.status === 429) return true;
-  if (err.status !== null && err.status >= 500) return true;
-  return false;
-}
-
-function getRetryDelay(err: UploadPartError, attempt: number) {
-  if (err.retryAfter) {
-    const seconds = Number(err.retryAfter);
-    if (!isNaN(seconds) && seconds > 0) return Math.min(seconds * 1000, MAX_BACKOFF_MS);
-    const dateMs = Date.parse(err.retryAfter);
-    if (!isNaN(dateMs)) {
-      // Floor to avoid hammering the server when client clock is skewed.
-      const delta = Math.max(dateMs - Date.now(), MIN_RETRY_AFTER_MS);
-      return Math.min(delta, MAX_BACKOFF_MS);
-    }
-  }
-  // Exponential backoff with jitter: ~1s, 2s, 4s + up to 1s jitter
-  const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
-  return base + Math.random() * 1000;
-}
 
 // Abort-aware sleep so cancelling during a long Retry-After window
 // short-circuits the backoff instead of waiting it out.
@@ -196,6 +164,9 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       throw data.error;
     } else {
       const { bucket, key, uploadId, urls, backend } = data;
+      // The server sizes chunks against the file, so slicing by anything else would
+      // send parts that don't match what it signed.
+      const chunkSize: number = data.chunkSize ?? FILE_CHUNK_SIZE;
 
       const activeXhrs = new Set<XMLHttpRequest>();
       const abortController = new AbortController();
@@ -287,8 +258,8 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const uploadPart = (url: string, i: number) =>
         new Promise<void>((resolve, reject) => {
           let eTag: string;
-          const start = (i - 1) * FILE_CHUNK_SIZE;
-          const end = i * FILE_CHUNK_SIZE;
+          const start = (i - 1) * chunkSize;
+          const end = i * chunkSize;
           const part = i === partsCount ? file.slice(start) : file.slice(start, end);
           const xhr = new XMLHttpRequest();
           activeXhrs.add(xhr);
@@ -355,7 +326,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             } catch (err) {
               partError = err as UploadPartError;
               if (attempt === MAX_PART_ATTEMPTS - 1 || !shouldRetryPartError(partError)) break;
-              await cancellableSleep(getRetryDelay(partError, attempt), abortController.signal);
+              await cancellableSleep(getPartRetryDelay(partError, attempt), abortController.signal);
               if (abortController.signal.aborted) {
                 partError = { status: null, aborted: true };
                 break;

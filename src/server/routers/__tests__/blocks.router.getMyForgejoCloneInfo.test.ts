@@ -202,3 +202,81 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
     });
   });
 });
+
+/**
+ * OAuth token-scope gate. This proc was un-annotated, so `enforceTokenScope` fell back
+ * to its default of `TokenScope.Full` and the OAuth token minted by `civitai login`
+ * (the CLI's default auth path) was rejected — so `civitai app pull` 403'd. Worse, the
+ * CLI reports that as "not permitted (are you the app owner, and is Apps enabled for
+ * your account?)", pointing the developer at an ownership problem they do not have.
+ *
+ * Annotated with `AppBlocksSubmit` — the bit that token already carries, and the same
+ * one `GET /api/v1/blocks/submissions` and `getMyAppAnalytics` use.
+ *
+ * 🔴 Only the CLI-token case is REGRESSION coverage. The Full-key case passes on
+ * pre-change code too (exact-equality early-return) and is an invariant guard; the
+ * NO_SUBMIT case was already FORBIDDEN before, because an un-annotated proc implicitly
+ * required Full and that token lacks Full as well. Bitmasks are hard-coded so an enum
+ * drift trips a test rather than silently re-pointing the gate.
+ */
+const FULL = 33554431; // TokenScope.Full — a Full personal API key
+const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel
+const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel — lacks AppBlocksSubmit
+
+// A token-authenticated caller. The user stays the OWNER so the ownership check is
+// satisfied and the only variable under test is the scope.
+function tokenCtx(scope: number) {
+  return { ...fakeCtx(ownerUser), apiKeyId: 999, tokenScope: scope };
+}
+
+const APPROVED_OWNED = {
+  blockId: 'my-app',
+  status: 'approved',
+  app: { userId: ownerUser.id },
+};
+
+describe('blocks.getMyForgejoCloneInfo — OAuth scope gate', () => {
+  it('the hard-coded bitmasks match the enum', () => {
+    expect(TokenScope.Full).toBe(FULL);
+    expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
+      CLI
+    );
+    expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(NO_SUBMIT);
+    // Full EXCLUDES AppBlocksSubmit, so it is the early-return — not hasFlag — that
+    // preserves the personal-API-key path.
+    expect((TokenScope.Full & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(
+      false
+    );
+  });
+
+  it('CLI OAuth login token (carries AppBlocksSubmit) reaches the proc', async () => {
+    findFirst.mockResolvedValue(APPROVED_OWNED);
+    const res = await blocksRouter
+      .createCaller(tokenCtx(CLI) as never)
+      .getMyForgejoCloneInfo({ slug: 'my-app' });
+    expect(res.notYetAvailable).toBe(false);
+    expect(mockEnsureForgejoIdentity).toHaveBeenCalledWith(7);
+  });
+
+  it('Full personal API key still reaches the proc (no regression)', async () => {
+    findFirst.mockResolvedValue(APPROVED_OWNED);
+    const res = await blocksRouter
+      .createCaller(tokenCtx(FULL) as never)
+      .getMyForgejoCloneInfo({ slug: 'my-app' });
+    expect(res.notYetAvailable).toBe(false);
+    expect(mockEnsureForgejoIdentity).toHaveBeenCalledWith(7);
+  });
+
+  it('a scoped token WITHOUT AppBlocksSubmit is FORBIDDEN and provisions nothing', async () => {
+    findFirst.mockResolvedValue(APPROVED_OWNED);
+    await expect(
+      blocksRouter
+        .createCaller(tokenCtx(NO_SUBMIT) as never)
+        .getMyForgejoCloneInfo({ slug: 'my-app' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: expect.stringContaining('scope') });
+    // The denial must come from the SCOPE gate, before any Forgejo identity is minted —
+    // and this ctx IS the owner, so it cannot be the ownership check refusing.
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+});

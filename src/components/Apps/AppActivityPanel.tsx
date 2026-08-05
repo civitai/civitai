@@ -106,7 +106,15 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // Passive READS get a friendly label from the scope→label map (W13 — no
   // write-side change for reads). Fall through to the local write labels, then
   // the raw scope string for anything genuinely unknown.
-  return READ_SCOPE_LABELS[scope] ?? SCOPE_ACTION_LABELS[scope] ?? scope;
+  // `Object.hasOwn`, not a bare index: both maps are plain Records, so `scope` values like
+  // 'constructor' or 'toString' resolve off Object.prototype, and `??` does NOT reject a
+  // non-nullish hit — this returned `Object.prototype.constructor` (a function) and React
+  // throws on a non-string child. Unreachable from a real scope value; the guard is here
+  // because the same hazard was just fixed in analytics-bucket-labels.ts and this is its
+  // twin, sharing the same registry.
+  if (Object.hasOwn(READ_SCOPE_LABELS, scope)) return READ_SCOPE_LABELS[scope];
+  if (Object.hasOwn(SCOPE_ACTION_LABELS, scope)) return SCOPE_ACTION_LABELS[scope];
+  return scope;
 }
 
 /**
