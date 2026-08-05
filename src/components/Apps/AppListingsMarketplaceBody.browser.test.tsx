@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { act as reactAct } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -48,6 +49,29 @@ function generatedCssFor(el: HTMLElement): string {
     .join('\n')
     .replace(/\s+/g, '');
 }
+
+/**
+ * React 18.3 exposes `act` on the `react` export, but the pinned
+ * `@types/react` (18.0.x) does not declare it. The repo fills that gap with a
+ * `declare module 'react'` augmentation in
+ * `src/tests/components/TrackView/useTrackEvent.wiring.test.ts` — but it
+ * declares only the SYNC form, `(callback: () => void) => void`.
+ *
+ * That augmentation is global, so it is what an `import { act } from 'react'`
+ * resolves to here, and it under-describes the async form this file needs:
+ * with an async callback `act` really returns a thenable, and awaiting it is
+ * the whole point (it is what flushes the setState + effect the advanced timer
+ * schedules). Against the sync-only declaration TypeScript sees `await void`
+ * and reports "'await' has no effect on the type of this expression" — a real
+ * hint about a real typing gap, not a phantom.
+ *
+ * Rather than widen a module augmentation that another test owns, narrow the
+ * repair to this file: alias the async overload that React actually implements.
+ * Verified behaviourally, not just typed — removing the `advanceTimersByTime`
+ * call leaves ZERO writes recorded, which is only observable if the await here
+ * genuinely flushes.
+ */
+const act = reactAct as unknown as <T>(callback: () => T | Promise<T>) => Promise<T>;
 
 const mocks = vi.hoisted(() => ({
   items: [] as ListingCard[],
@@ -141,6 +165,13 @@ beforeEach(() => {
   clearRecentlyOpenedApps();
 });
 
+// Unconditional restore: the debounce test installs fake timers, and a throw
+// between install and restore would otherwise leak the fake clock into every
+// following test in this file (where an un-advanced `setTimeout` reads as a hang).
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 /** Open the collapsed Filters dropdown — kind/category live inside it now. */
 async function openFilters() {
   await userEvent.click(page.getByRole('button', { name: 'Filters' }));
@@ -202,30 +233,71 @@ describe('AppListingsMarketplaceBody', () => {
   test('🔴 the search box does NOT write the URL per keystroke — only the debounced value', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     const search = page.getByLabelText('Search');
+    // Anchor on a real mount before touching the clock — a locator query issued
+    // against an unmounted tree would burn its retry budget on a fake clock.
+    await expect.element(search).toBeInTheDocument();
 
     /**
-     * ⚠️ TWO fills, not six. The original version did six sequential
-     * `fill()`s and asserted ZERO writes afterwards — but each awaited `fill()`
-     * measured ~66ms, so the six took ~396ms against a 300ms debounce. It passed
-     * only because the assertion ran before the timer's callback; one slow fill
-     * and the debounce elapses mid-loop, a write lands, and the test goes red on
-     * a machine hiccup rather than on a regression. Two fills is well inside the
-     * window on any machine, and still distinguishes per-keystroke writes (which
-     * would be 2) from debounced ones (0 so far).
+     * ⚠️ THE CLOCK IS CONTROLLED, NOT RACED. Earlier revisions of this test
+     * asserted "zero writes so far" after N awaited `fill()`s and relied on the
+     * real 300ms debounce not having elapsed yet — first with six fills (~396ms
+     * of real time, i.e. already past the window and passing only because the
+     * assertion beat the timer callback), then with two. Both are the same bug:
+     * the assertion's truth depended on how fast the machine happened to be, so
+     * a loaded runner turned a machine hiccup into a red test. It duly failed in
+     * CI — a single `fill()` exceeded 300ms, the debounce fired between the two
+     * fills, and a write carrying the FIRST value ('mat') landed.
+     *
+     * Cutting the fill count only lowers the probability; it leaves the
+     * wall-clock dependency in place. So instead the debounce timer is driven
+     * explicitly: `setTimeout`/`clearTimeout` are faked, so NO amount of real
+     * elapsed time can fire the debounce, and `advanceTimersByTime(300)` is the
+     * only thing that can. The zero-writes assertion is then a statement about
+     * the component, not about the machine.
+     *
+     * `toFake` is scoped to just those two primitives on purpose: Playwright's
+     * real `fill()` interaction and the browser-runner channel still need real
+     * `queueMicrotask`/`requestAnimationFrame`/`Date`/`performance`, and faking
+     * the whole set wedges them. Real timers are restored in the `afterEach`
+     * below so a throw here can't leak the fake clock into the next test.
      */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
     await search.fill('mat');
     await search.fill('matrix');
 
-    // Nothing written yet — the debounce has not elapsed. This is the assertion
-    // that fails if the input is wired straight through to the URL.
+    // Nothing written yet — the debounce timer has NOT been advanced. This is
+    // the assertion that fails if the input is wired straight through to the
+    // URL, and it is now timing-independent: with `setTimeout` faked the
+    // debounce cannot fire on its own no matter how slow the fills were.
     expect(replacedQueries().filter((q) => 'query' in q)).toHaveLength(0);
 
-    // …and after it does, exactly ONE write, carrying the FINAL value.
-    await vi.waitFor(() => {
-      const writes = replacedQueries().filter((q) => 'query' in q);
-      expect(writes).toHaveLength(1);
-      expect(writes[0]).toMatchObject({ query: 'matrix' });
-    });
+    // Advance past the 300ms debounce window. `act` flushes the resulting
+    // setState + the URL-echo effect before the assertions below, so this stays
+    // a single deterministic step rather than a retry loop (a retried "expect
+    // exactly 1 write" would happily succeed in the window before a second,
+    // buggy write landed).
+    //
+    // `IS_REACT_ACT_ENVIRONMENT` is set for the duration: browser mode does not
+    // set it, and without it React 18 logs "The current testing environment is
+    // not configured to support act(...)" and falls back to a plain call —
+    // which happens to flush here via the `await`, but only incidentally. Set
+    // it, and the flush is the documented contract instead of a coincidence.
+    const priorActEnv = (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT;
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    try {
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+    } finally {
+      (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = priorActEnv;
+    }
+
+    // …exactly ONE write, carrying the FINAL value — not one per keystroke, and
+    // not the intermediate 'mat'.
+    const writes = replacedQueries().filter((q) => 'query' in q);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ query: 'matrix' });
   });
 
   test('a `?query=` param seeds the search box and filters the grid', async () => {
