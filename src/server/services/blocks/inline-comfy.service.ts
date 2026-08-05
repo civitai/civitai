@@ -36,24 +36,51 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 🔴 NODEPACK AIRs ARE ARBITRARY CODE EXECUTION, AND ARE OFF FOR THIS INCREMENT.
+ * Whether an inline `resources` array may name `comfy:nodepack` AIRs — e.g.
+ * `urn:air:comfy:nodepack:comfyregistry:<publisher>/<pack>@<version>` — which
+ * install third-party ComfyUI custom nodes into the worker's container.
  *
- * `CustomComfyInput.resources` accepts `comfy:nodepack` URNs (e.g.
- * `urn:air:comfy:nodepack:comfyregistry:<owner>/<pack>@<version>`), which install
- * third-party custom nodes into the ComfyUI container at runtime. Allowing an app
- * to name one is allowing an app to run code we have not reviewed, sandboxed only
- * by the worker container. That is a product/security decision with a named owner,
- * and it has NOT been made — so this ships CLOSED rather than shipping the
- * decision by default.
+ * 🔴 ON, BY AN OWNER DECISION. The previous revision shipped this CLOSED and said
+ * the decision had not been made. It has now been made, and the reasoning is
+ * recorded here rather than in a PR description that nobody reads at 3am:
  *
- * Consequence, stated plainly: inline graphs are limited to STOCK ComfyUI nodes
- * plus non-nodepack AIRs. An app needing a custom node pack is still blocked.
+ * Nodepacks are a FIRST-CLASS, OWNED ORCHESTRATOR CAPABILITY, not a hazard
+ * surface this bridge invents. Verified against `civitai-orchestration@main`:
+ *   - `Common/Clients/ComfyRegistry/ComfyRegistryApiClient.cs` resolves
+ *     `urn:air:comfy:nodepack:comfyregistry:<publisher>/<name>@<version>`, with
+ *     `Grains/Resources/ResourceProviders/ComfyRegistryResourceProvider.cs`
+ *     behind it.
+ *   - `Grains.Abstractions/Jobs/ComfyNodepackSnapshotJob.cs` installs a pack onto
+ *     a comfy image and captures a snapshot.
+ *   - `Grains.Abstractions/Jobs/CustomComfyJob.cs` documents carrying
+ *     `comfy:nodepack` URNs for runtime-installable custom nodes, with session
+ *     affinity for the install and a stable fingerprint of the installed
+ *     nodepack set.
+ * The block path is another door to that existing system, not a new one.
  *
- * Enabling it later is a one-line flip, and the tests for both states already
- * exist (`inline-comfy.service.test.ts` covers rejection now, and the
- * allowlist derivation below is keyed off this flag so nothing else moves).
+ * 🔴 BE PRECISE ABOUT WHAT THAT DOES AND DOES NOT BUY, BECAUSE THE SHORT VERSION
+ * OF THIS RATIONALE IS "SECURITY IS HANDLED ORCHESTRATOR-SIDE" AND THAT IS
+ * STRONGER THAN WHAT WAS MEASURED. Searching those files for an allowlist,
+ * blocklist, publisher-trust check or security scan found NONE — the resolver
+ * resolves any pack the public ComfyUI registry serves, and the comment at
+ * `ComfyRegistryResourceProvider.cs` notes it does not even validate that the
+ * publisher matches (a mismatch simply 404s). So the real trust boundary is
+ * **the public registry plus the worker's container sandbox**, and this flag
+ * inherits exactly that — no more. If a per-publisher or per-pack allowlist is
+ * wanted, it does not exist yet and this flag is not it.
+ *
+ * The two gates from the inline arm's own belt are UNAFFECTED and still run over
+ * every non-nodepack entry in `resources`: entitlement
+ * (`assertViewerEntitledToInlineResources`) and the prompt sweep
+ * (`collectInlineAuditText`). Enabling nodepacks widens what `resources` may
+ * NAME; it does not weaken what the rest of it must PASS.
+ *
+ * KEPT AS A CONSTANT DELIBERATELY — this is the one-line kill switch if the
+ * decision is revisited. Do not inline `true` and delete it. Both states are
+ * tested (`inline-comfy.service.test.ts`), and the source/type allowlists below
+ * are keyed off it so flipping it moves nothing else.
  */
-export const INLINE_NODEPACKS_ENABLED = false;
+export const INLINE_NODEPACKS_ENABLED = true;
 
 /**
  * AIR `source` values an inline `resources` entry may name. ALLOWLIST, not a

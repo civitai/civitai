@@ -170,25 +170,66 @@ describe('collectInlineAuditText — the moderation sweep', () => {
 // (@civitai/client 0.2.0-beta.84) that fails OPEN if the gate is naive.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('assertViewerEntitledToInlineResources — AIR shape', () => {
-  it('🔴 rejects a NODEPACK URN while nodepacks are gated off (arbitrary code execution)', async () => {
-    expect(INLINE_NODEPACKS_ENABLED).toBe(false);
+  // 🔴 INVERTED, NOT DELETED. These two used to assert a nodepack URN was
+  // REJECTED. The kill switch is now on, so they assert it is ACCEPTED and
+  // reaches the submit path intact. Keeping them inverted rather than removing
+  // them means flipping `INLINE_NODEPACKS_ENABLED` back is still a one-line
+  // change with live coverage on both sides of the decision.
+  it('🔴 ACCEPTS a comfyregistry NODEPACK URN now that the kill switch is on', async () => {
+    expect(INLINE_NODEPACKS_ENABLED).toBe(true);
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0'],
         user: VIEWER,
       })
-    ).rejects.toThrow(/nodepack resources are not permitted/);
+    ).resolves.toBeUndefined();
+    // A nodepack carries no civitai entitlement, so the belt is not consulted
+    // for it — the same exempt-by-construction path huggingface weights take.
+    expect(mockGetResourceData).not.toHaveBeenCalled();
   });
 
-  it('rejects a nodepack from ANY source, not just comfyregistry', async () => {
-    // The gate keys on the AIR `type`, not the source — a `civitai`-sourced
-    // nodepack is the same capability.
+  it('🔴 the flip opens COMFYREGISTRY nodepacks only — a civitai-sourced one is still rejected', async () => {
+    // MEASURED, and narrower than "nodepacks are on" implies. `type` and
+    // `source` are separate allowlists, and only `comfyregistry` was added to
+    // the source list. A `civitai`-sourced nodepack passes the TYPE check, then
+    // takes the civitai branch and is gated as a model version — which it is
+    // not, so it resolves to nothing and the anti-drop assert rejects it.
+    //
+    // That is fail-CLOSED and it is the behaviour we want: real nodepacks live
+    // in the ComfyUI registry, and no logic was added to carve out a path for a
+    // shape that does not exist. Recorded as a test so the narrowness is a
+    // known property rather than a surprise.
+    mockGetResourceData.mockResolvedValue([]);
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:other:nodepack:civitai:123@456'],
         user: VIEWER,
       })
-    ).rejects.toThrow(/nodepack resources are not permitted/);
+    ).rejects.toThrow(/not available for generation/);
+  });
+
+  it('🔴 enabling nodepacks did NOT widen anything else — a non-nodepack resource is still fully gated', async () => {
+    // The failure this pins: a flag flip that accidentally relaxes the belt for
+    // the rest of `resources`. A nodepack alongside a non-generatable civitai
+    // LoRA must still be rejected, on the LoRA.
+    mockGetResourceData.mockResolvedValue([resourceRow({ canGenerate: false })]);
+    await expect(
+      assertViewerEntitledToInlineResources({
+        airs: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0', LORA_AIR],
+        user: VIEWER,
+      })
+    ).rejects.toThrow(/not available for generation/);
+  });
+
+  it('🔴 an OCI container-image AIR is STILL rejected — the flip is nodepack-only', async () => {
+    // `image` was never keyed off the nodepack flag. This is the control that
+    // proves the flip widened one type, not the whole allowlist.
+    await expect(
+      assertViewerEntitledToInlineResources({
+        airs: ['urn:air:oci:image:ghcr:evil/comfy@v1'],
+        user: VIEWER,
+      })
+    ).rejects.toThrow(/is not permitted in an inline workflow/);
   });
 
   // ───────────────────────────────────────────────────────────────────────────
