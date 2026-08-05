@@ -19,6 +19,7 @@
     currencySelectionKind,
   } from '$lib/buzz-currency-filter';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
+  import { modelGroupingState } from '$lib/state/model-grouping.svelte';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import Pagination from '$lib/components/Pagination.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -60,6 +61,78 @@
   // Namespaced so a channel key can never collide with `generations` / `downloads` in sortValue.
   const CHANNEL_SORT_PREFIX = 'channel:';
   const CASH_SORT_PREFIX = 'cash:';
+
+  const grouping = modelGroupingState(() => data.grouping);
+
+  // Rolled up in the browser rather than by a second query: the payload already carries every version, and
+  // the currency filter has to apply to the same numbers either way. Versions whose model was deleted have
+  // no modelId to group by, so they stay individual rows.
+  const rows = $derived.by((): Row[] => {
+    const versions = data.modelPerformance ?? [];
+    if (grouping.value === 'version') return versions;
+
+    const byModel = new Map<number, Row>();
+    const out: Row[] = [];
+    for (const v of versions) {
+      if (v.modelId == null) {
+        out.push(v);
+        continue;
+      }
+      const existing = byModel.get(v.modelId);
+      if (!existing) {
+        // Deep-copied: the accumulators below mutate, and `data` is the load's payload.
+        const seed: Row = {
+          ...v,
+          versionName: null,
+          currencies: v.currencies.map((c) => ({ ...c })),
+          channels: Object.fromEntries(
+            CHANNELS.map((c) => [
+              c,
+              { ...v.channels[c], received: v.channels[c].received.map((r) => ({ ...r })) },
+            ])
+          ) as Row['channels'],
+        };
+        byModel.set(v.modelId, seed);
+        out.push(seed);
+        continue;
+      }
+      existing.generations += v.generations;
+      existing.prevGenerations += v.prevGenerations;
+      existing.downloads += v.downloads;
+      existing.prevDownloads += v.prevDownloads;
+      existing.buzzTotal += v.buzzTotal;
+      existing.prevBuzzTotal += v.prevBuzzTotal;
+      for (const c of v.currencies) {
+        const hit = existing.currencies.find((x) => x.currency === c.currency);
+        if (hit) {
+          hit.total += c.total;
+          hit.prev = (hit.prev ?? 0) + (c.prev ?? 0);
+        } else existing.currencies.push({ ...c });
+      }
+      for (const ch of CHANNELS) {
+        const target = existing.channels[ch];
+        const src = v.channels[ch];
+        target.total += src.total;
+        target.prev += src.prev;
+        for (const r of src.received) {
+          const hit = target.received.find((x) => x.currency === r.currency);
+          if (hit) {
+            hit.total += r.total;
+            hit.prev += r.prev;
+          } else target.received.push({ ...r });
+        }
+      }
+    }
+    return out;
+  });
+
+  // How many versions each model row folds up, so a rolled-up row says so rather than looking like one.
+  const versionCounts = $derived.by(() => {
+    const counts = new Map<number, number>();
+    for (const v of data.modelPerformance ?? [])
+      if (v.modelId != null) counts.set(v.modelId, (counts.get(v.modelId) ?? 0) + 1);
+    return counts;
+  });
 
   // Earnings-column currency filter. The payload carries per-currency totals for every channel, so this
   // is a local recompute; the cookie only persists the choice and lets SSR render filtered numbers.
@@ -126,9 +199,9 @@
             ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
             : m.generations;
   const sorted = $derived.by(() => {
-    const rows = data.modelPerformance ? [...data.modelPerformance] : [];
+    const list = [...rows];
     const dir = sortDir === 'desc' ? -1 : 1;
-    return rows.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
+    return list.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
   });
   const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
@@ -141,15 +214,31 @@
   <div class="cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
       <p class="text-sm font-medium text-white">
-        Per-version performance <span class="text-xs text-dark-3"
-          >{periodLabel} · click a column to sort</span
-        >
+        {grouping.value === 'model' ? 'Per-model' : 'Per-version'} performance
+        <span class="text-xs text-dark-3">{periodLabel} · click a column to sort</span>
         <span class="ml-2 rounded bg-dark-5 px-1.5 py-0.5 text-xs font-normal text-dark-2">
           {selectionLabel}
         </span>
       </p>
       <div class="flex items-center gap-2">
-        <span class="text-xs text-dark-3">Counting</span>
+        <span class="text-xs text-dark-3">View</span>
+        <ToggleGroup.Root
+          type="single"
+          variant="outline"
+          size="sm"
+          spacing={1}
+          value={grouping.value}
+          onValueChange={(v: string) => v && grouping.set(v as 'version' | 'model')}
+          aria-label="Group rows by version or by model"
+        >
+          <ToggleGroup.Item value="version" class="text-xs" title="One row per model version"
+            >Versions</ToggleGroup.Item
+          >
+          <ToggleGroup.Item value="model" class="text-xs" title="Roll versions up into their model"
+            >Models</ToggleGroup.Item
+          >
+        </ToggleGroup.Root>
+        <span class="ml-2 text-xs text-dark-3">Counting</span>
         <ToggleGroup.Root
           type="multiple"
           variant="outline"
@@ -200,12 +289,17 @@
       </button>
     {/snippet}
     <div class="mb-3">
-      <Pagination total={sorted.length} noun="version" {curPage} {totalPages} />
+      <Pagination
+        total={sorted.length}
+        noun={grouping.value === 'model' ? 'model' : 'version'}
+        {curPage}
+        {totalPages}
+      />
     </div>
     <Table.Root>
       <Table.Header>
         <Table.Row>
-          <Table.Head>Model · version</Table.Head>
+          <Table.Head>{grouping.value === 'model' ? 'Model' : 'Model · version'}</Table.Head>
           <Table.Head class="p-0">
             {@render sortButton('generations', 'Generations', 'Generations using this model')}
           </Table.Head>
@@ -256,7 +350,12 @@
                     >{/if}
                 </div>
               {/if}
-              <div class="truncate text-xs text-dark-3">{m.modelType ?? '—'}</div>
+              <div class="truncate text-xs text-dark-3">
+                {m.modelType ?? '—'}{#if grouping.value === 'model' && m.modelId != null}
+                  {@const n = versionCounts.get(m.modelId) ?? 1}
+                  · {n} version{n === 1 ? '' : 's'}
+                {/if}
+              </div>
             </Table.Cell>
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {m.generations ? 'text-white' : 'text-dark-4'}">
@@ -313,7 +412,12 @@
 
     {#if totalPages > 1}
       <div class="mt-3">
-        <Pagination total={sorted.length} noun="version" {curPage} {totalPages} />
+        <Pagination
+          total={sorted.length}
+          noun={grouping.value === 'model' ? 'model' : 'version'}
+          {curPage}
+          {totalPages}
+        />
       </div>
     {/if}
   </div>
