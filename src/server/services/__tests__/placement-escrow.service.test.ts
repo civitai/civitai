@@ -265,6 +265,7 @@ const {
   sweepUnplannedSettlements,
   MAX_LEG_ATTEMPTS,
   LEG_RETRY_BACKOFF_MINUTES,
+  BUZZ_CALL_TIMEOUT_MS,
   listExhaustedLegs,
 } = await import('~/server/services/placement-escrow.service');
 
@@ -1379,5 +1380,44 @@ describe('the exhausted-leg alert', () => {
     expect(legs).toHaveLength(1);
     expect(legs[0]).toMatchObject({ placementId: 1, kind: 'toOwner', amount: 700 });
     expect(legs[0].lastError).toContain('unknown account');
+  });
+});
+
+describe('the Buzz call bound', () => {
+  // An aborted request is not cancelled server-side, so retrying a timeout puts
+  // a second write on the wire with the same external id while the first may
+  // still be running. runLeg owns the retry; the client's must stay out of it.
+  it('disables the client retry on every write', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    const calls = [
+      ...createMultiAccountBuzzTransaction.mock.calls,
+      ...createBuzzTransaction.mock.calls,
+      ...refundMultiAccountTransaction.mock.calls,
+    ];
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call[1]).toMatchObject({ retries: 0 });
+  });
+
+  it('bounds every write, and inside the retry gap', () => {
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThan(0);
+    // The whole point of deriving it: the request must be over well before the
+    // leg becomes eligible again.
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
+  });
+
+  // "Make retries less aggressive" reaches for a bigger gap and "recover faster"
+  // for a smaller one; unclamped, both produce a timeout that cannot work.
+  it('stays usable at the extremes of the gap it derives from', () => {
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
   });
 });

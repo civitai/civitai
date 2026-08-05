@@ -78,7 +78,24 @@ export const LEG_RETRY_BACKOFF_MINUTES = 30;
  * Two independent constants cannot express that: shorten the gap next quarter
  * and the timeout stays put, and the hazard returns with nothing failing.
  */
-export const BUZZ_CALL_TIMEOUT_MS = (LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60;
+export const BUZZ_CALL_TIMEOUT_MS = Math.min(
+  Math.max((LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60, 10_000),
+  120_000
+);
+
+/**
+ * The Buzz client's own retry is disabled for these calls, and `runLeg` owns it
+ * instead.
+ *
+ * An aborted request is not cancelled server-side, so retrying a timeout puts a
+ * second write on the wire with the same external id while the first may still
+ * be running — four of them inside two minutes at the client's default. That is
+ * the double-payment shape the timeout exists to prevent, moved inside a single
+ * attempt. `runLeg` already has backoff, a ceiling, receipts, a lock and an
+ * alert; a second, dumber retry loop underneath it is a second path to a thing
+ * that already has rules.
+ */
+const BUZZ_CALL_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS, retries: 0 };
 
 /**
  * How recently a leg must have given up to be alerted on.
@@ -347,7 +364,7 @@ export async function holdPlacementEscrow({
           description: `Placement escrow (${kind}) for placement ${placementId}`,
           externalTransactionIdPrefix,
         },
-        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+        BUZZ_CALL_OPTIONS
       );
 
       if (result.transactionCount === 0)
@@ -586,7 +603,7 @@ async function payOutPlacement(placement: PlacementRow) {
           description: `Placement ${placement.id} (${kind})`,
           externalTransactionId,
         },
-        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+        BUZZ_CALL_OPTIONS
       );
 
       return transactionId;
@@ -605,7 +622,7 @@ async function payOutPlacement(placement: PlacementRow) {
           ),
           description: `Placement ${placement.id} refund (${holdKind})`,
         },
-        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+        BUZZ_CALL_OPTIONS
       );
 
       return result.externalTransactionIdPrefix;

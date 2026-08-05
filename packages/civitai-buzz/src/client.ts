@@ -95,7 +95,20 @@ export type BuzzRefundMultiTransactionInput = {
  * request is no longer in flight" to become true at some point; without a
  * timeout there is no such point, and no lock TTL can be sized against it.
  */
-export type BuzzWriteOptions = { timeoutMs?: number };
+export type BuzzWriteOptions = {
+  timeoutMs?: number;
+  /**
+   * Per-call retry override. `0` disables the client's internal retry.
+   *
+   * A client-side abort does not cancel the server side, so retrying a
+   * *timeout* on a non-idempotent write puts a second request on the wire while
+   * the first may still be executing — with the same external id. A retry is
+   * right for connection-refused, where you know nothing happened; it is wrong
+   * for a timeout, where the outcome is unknown by definition. A caller with its
+   * own retry loop, receipts and backoff should own this and pass `0`.
+   */
+  retries?: number;
+};
 
 /** Body for `refundTransaction`. */
 export type BuzzRefundTransactionInput = {
@@ -160,7 +173,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   async function request<T = unknown>(
     urlPart: string,
     init?: RequestInit,
-    opts?: { allow404?: boolean; timeoutMs?: number }
+    opts?: { allow404?: boolean; timeoutMs?: number; retries?: number }
   ): Promise<T> {
     try {
       return await withRetries(async () => {
@@ -182,7 +195,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
           throw new BuzzApiError(response.status, response.statusText);
         }
         return (await response.json()) as T;
-      }, retries);
+      }, opts?.retries ?? retries);
     } catch (error) {
       if (error instanceof BuzzApiError && mapError) throw mapError(error);
       throw error;
@@ -209,7 +222,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     return request(
       urlPart,
       { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) },
-      { timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs }
+      { timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs, retries: opts?.retries }
     );
   }
 
