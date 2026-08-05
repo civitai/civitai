@@ -233,6 +233,47 @@ describe('computePackPayouts', () => {
     expect(components.map((c) => c.userId)).toEqual([FOREIGN_CREATOR]);
   });
 
+  // The floor is checked against LIVE list prices; payouts run off SNAPSHOTS.
+  // A member re-priced down lets the pack be re-priced down with it while the
+  // snapshot still says the old number — so the cap has to hold here, not be
+  // inferred from the floor having passed at some point in the past.
+  it('never pays out more than 70% of what was collected, even on a stale snapshot', () => {
+    const { components, packCreatorAmount } = computePackPayouts({
+      packPrice: 1100,
+      packCreatorId: PACK_CREATOR,
+      members: [foreign({ floorAmount: 10000 }), member({ floorAmount: 1000 })],
+    });
+    const total = components.reduce((sum, c) => sum + c.amount, 0) + packCreatorAmount;
+    expect(total).toBeLessThanOrEqual(Math.floor(1100 * 0.7));
+    // And specifically NOT the snapshot's 7000, which is what minted Buzz.
+    expect(total).toBeLessThan(7000);
+  });
+
+  it('scales several stale members proportionally rather than paying the first in full', () => {
+    const { components } = computePackPayouts({
+      packPrice: 1000,
+      packCreatorId: PACK_CREATOR,
+      members: [
+        foreign({ cosmeticId: 71, floorAmount: 6000 }),
+        foreign({ cosmeticId: 72, createdById: RESELLER, addedById: RESELLER, floorAmount: 2000 }),
+      ],
+    });
+    const [big, small] = [71, 72].map(
+      (id) => components.find((c) => c.cosmeticId === id)?.amount ?? 0
+    );
+    expect(big).toBeGreaterThan(small);
+    expect(components.reduce((sum, c) => sum + c.amount, 0)).toBeLessThanOrEqual(700);
+  });
+
+  it('leaves payouts untouched when the snapshots still fit inside the price', () => {
+    const { components } = computePackPayouts({
+      packPrice: 6200,
+      packCreatorId: PACK_CREATOR,
+      members: [foreign()],
+    });
+    expect(components[0]?.amount).toBe(Math.floor(2100 * 0.7));
+  });
+
   it('floors the remainder at zero when a member re-priced above the pack', () => {
     const { remainder, packCreatorAmount } = computePackPayouts({
       packPrice: 1000,

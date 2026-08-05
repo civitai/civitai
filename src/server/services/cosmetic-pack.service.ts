@@ -92,29 +92,16 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
   // off one set of terms and then sell, pay out and stock-check it against
   // another, which is exactly what resale-by-reference makes possible.
   const listingByCosmetic = new Map<number, (typeof listings)[number]>();
-  // Stock, by contrast, is a property of the cosmetic's whole edition: a cap of
-  // 50 means 50 exist, not 50 per listing.
-  const soldByCosmetic = new Map<number, number>();
-  const quantityByCosmetic = new Map<number, number | null>();
+  // Stock stays a property of the ONE listing the pack is priced and paid
+  // against. Aggregating across listings sounds more correct and isn't: an
+  // unlimited listing's sales counted against a limited listing's cap would
+  // permanently sell out every pack containing that cosmetic, while neither
+  // listing had.
   for (const listing of listings) {
     if (listing.cosmeticId == null) continue;
     const current = listingByCosmetic.get(listing.cosmeticId);
     if (!current || listing.unitAmount > current.unitAmount)
       listingByCosmetic.set(listing.cosmeticId, listing);
-    soldByCosmetic.set(
-      listing.cosmeticId,
-      (soldByCosmetic.get(listing.cosmeticId) ?? 0) + listing._count.purchases
-    );
-    // The tightest cap any listing declares wins; an unlimited listing does not
-    // lift another listing's limit.
-    const cap = quantityByCosmetic.get(listing.cosmeticId);
-    if (listing.availableQuantity != null)
-      quantityByCosmetic.set(
-        listing.cosmeticId,
-        cap == null ? listing.availableQuantity : Math.min(cap, listing.availableQuantity)
-      );
-    else if (!quantityByCosmetic.has(listing.cosmeticId))
-      quantityByCosmetic.set(listing.cosmeticId, null);
   }
 
   return rows.flatMap((row) => {
@@ -129,11 +116,10 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
         listingId: listing.id,
         listingMeta: (listing.meta ?? {}) as CosmeticShopItemMeta,
         addedById: listing.addedById,
-        availableQuantity: quantityByCosmetic.get(row.cosmeticId) ?? null,
+        availableQuantity: listing.availableQuantity,
         availableFrom: listing.availableFrom,
         availableTo: listing.availableTo,
-        soldCount:
-          (soldByCosmetic.get(row.cosmeticId) ?? 0) + (packSoldByCosmetic.get(row.cosmeticId) ?? 0),
+        soldCount: listing._count.purchases + (packSoldByCosmetic.get(row.cosmeticId) ?? 0),
         floorAmount: row.floorAmount,
       },
     ];
@@ -260,9 +246,12 @@ export const grantPackMembers = async ({
  *
  * Foreign members pay their creator as if sold at the price snapshotted into the
  * pack, with their own listing's sellerShare. The pack creator is paid on the
- * remainder, so the platform's 30% comes out of every component and the total
- * paid can never exceed 70% of the price — a pack that paid out more than it
- * collected would mint Buzz.
+ * remainder, so the platform's 30% comes out of every component.
+ *
+ * The invariant this function owes the rest of the system: total payout is at
+ * most 70% of what was collected. It is enforced here rather than assumed from
+ * the price floor, because the floor is checked against live list prices and the
+ * payout runs off snapshots taken when the pack was built.
  */
 export const computePackPayouts = ({
   packPrice,
@@ -278,18 +267,35 @@ export const computePackPayouts = ({
 }) => {
   const components: { cosmeticId: number; userId: number; amount: number; unitAmount: number }[] =
     [];
+
+  const payable = members.filter(
+    (m) =>
+      m.createdById != null &&
+      m.createdById !== packCreatorId &&
+      // Paying the buyer for a member they created would round-trip their own
+      // Buzz through the bank and burn the platform's 30% on the way. They are
+      // not charged for it either — see the purchase path.
+      m.createdById !== buyerId
+  );
+  const snapshotTotal = payable.reduce((sum, m) => sum + m.floorAmount, 0);
+
+  // The floor is checked against LIVE list prices while payouts run off the
+  // SNAPSHOT, so the two can diverge: a member re-priced down lets the pack be
+  // re-priced down with it, while its component still pays the old, higher
+  // amount. Unbounded, that pays out more than the pack collected — a mint, and
+  // a repeatable one. Every component is therefore scaled into the collected
+  // amount rather than trusted to fit inside it.
+  const scale = snapshotTotal > packPrice && snapshotTotal > 0 ? packPrice / snapshotTotal : 1;
   let foreignTotal = 0;
 
-  for (const member of members) {
-    const isForeign = member.createdById != null && member.createdById !== packCreatorId;
-    if (!isForeign) continue;
-    // Paying the buyer for a member they created would round-trip their own Buzz
-    // through the bank and burn the platform's 30% on the way. They are not
-    // charged for it either — see `packOwnPortion` in the purchase path.
-    if (member.createdById === buyerId) continue;
-    foreignTotal += member.floorAmount;
+  for (const member of payable) {
+    // Floored per member, so scaling can only ever round in the platform's
+    // favour and the total stays inside the price.
+    const basis = scale === 1 ? member.floorAmount : Math.floor(member.floorAmount * scale);
+    if (basis <= 0) continue;
+    foreignTotal += basis;
     const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
-      member.floorAmount,
+      basis,
       member.listingMeta.sellerShare ?? 0
     );
     // The member's own reseller, if it has one, is paid out of that member's
@@ -302,26 +308,24 @@ export const computePackPayouts = ({
           cosmeticId: member.cosmeticId,
           userId: member.createdById as number,
           amount: creatorAmount,
-          unitAmount: member.floorAmount,
+          unitAmount: basis,
         });
       components.push({
         cosmeticId: member.cosmeticId,
         userId: resellerId,
         amount: sellerAmount,
-        unitAmount: member.floorAmount,
+        unitAmount: basis,
       });
     } else if (creatorPool > 0) {
       components.push({
         cosmeticId: member.cosmeticId,
         userId: member.createdById as number,
         amount: creatorPool,
-        unitAmount: member.floorAmount,
+        unitAmount: basis,
       });
     }
   }
 
-  // Never negative: the pack floor guarantees foreign members are covered, but a
-  // member re-priced upward after the pack was built could otherwise invert it.
   const remainder = Math.max(0, packPrice - foreignTotal);
   const packCreatorAmount = packCreatorId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
@@ -394,20 +398,28 @@ export const purchaseCosmeticPack = async ({
   // tops up), so two calls in the same millisecond would share an external id —
   // and a duplicate reads as "the money already moved".
   const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
-  const transaction = await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes,
-    toAccountId: 0,
-    amount: amountCharged,
-    type: TransactionType.Purchase,
-    description: `Cosmetic pack purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: transactionId,
-  });
-  if (!transaction.transactionCount)
-    throw throwBadRequestError('There was an error creating the transaction');
-  const bluePaid = transaction.transactionIds
-    .filter((t) => t.accountType === 'blue')
-    .reduce((sum, t) => sum + t.amount, 0);
+  // A pack CAN price to zero — own everything discountable and have authored the
+  // rest — and the single-item path never could, because list floors are
+  // positive. Moving 0 Buzz would come back as "no transaction", which reads as
+  // a failure, so there is nothing to charge and nothing to refund.
+  const bluePaid = amountCharged
+    ? await (async () => {
+        const transaction = await createMultiAccountBuzzTransaction({
+          fromAccountId: userId,
+          fromAccountTypes,
+          toAccountId: 0,
+          amount: amountCharged,
+          type: TransactionType.Purchase,
+          description: `Cosmetic pack purchase - ${shopItem.title}`,
+          externalTransactionIdPrefix: transactionId,
+        });
+        if (!transaction.transactionCount)
+          throw throwBadRequestError('There was an error creating the transaction');
+        return transaction.transactionIds
+          .filter((t) => t.accountType === 'blue')
+          .reduce((sum, t) => sum + t.amount, 0);
+      })()
+    : 0;
 
   try {
     await dbWrite.$transaction(async (tx) => {

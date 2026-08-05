@@ -280,8 +280,14 @@ export const updateCreatorShopPack = async ({
         .join(', ')}`
     );
 
+  // Re-snapshot whenever the price moves, not only when the contents do. The
+  // floor is checked against today's list prices; leaving yesterday's snapshots
+  // in place lets a lowered member price drag the pack's price down while its
+  // component still pays out the old, higher amount.
+  const reSnapshot = !!memberCosmeticIds || price !== undefined;
+
   return dbWrite.$transaction(async (tx) => {
-    if (memberCosmeticIds) {
+    if (reSnapshot) {
       await tx.cosmeticShopItemCosmetic.deleteMany({ where: { shopItemId: id } });
       await tx.cosmeticShopItemCosmetic.createMany({
         data: members.map((m, index) => ({
@@ -310,7 +316,10 @@ export const updateCreatorShopPack = async ({
         meta: {
           ...meta,
           ...(imageUrl ? { coverUrl: imageUrl } : {}),
-          packMemberCount: members.length,
+          // Only re-baselined when the contents were actually chosen. A member
+          // Cosmetic being deleted cascades its join row away, so rewriting this
+          // on a price-only edit would quietly ratify the shrunken pack.
+          ...(memberCosmeticIds ? { packMemberCount: members.length } : {}),
           acceptsBlueBuzz: nextAcceptsBlue,
         } as Prisma.InputJsonValue,
       },
@@ -412,6 +421,14 @@ export const getPackDetail = async ({
     ownedCosmeticIds,
   });
   const discountByCosmetic = new Map(perMember.map((m) => [m.cosmeticId, m.discount]));
+  // Mirrors the purchase path's `selfAuthored`. Without it the button quotes a
+  // price the server won't charge, and its balance check blocks a buyer who can
+  // actually afford the real one.
+  const selfAuthored = userId
+    ? members
+        .filter((m) => m.createdById === userId && m.createdById !== item.addedById)
+        .reduce((sum, m) => sum + m.listPrice, 0)
+    : 0;
 
   return {
     id: item.id,
@@ -426,6 +443,9 @@ export const getPackDetail = async ({
     // purchase refuses on the same condition, so say so before they try.
     unavailableCount: item.members.length - members.length,
     discount,
+    selfAuthored,
+    /** What this viewer will actually be charged. */
+    amountDue: Math.max(0, item.unitAmount - discount - selfAuthored),
     members: members.map((m) => ({
       cosmeticId: m.cosmeticId,
       name: m.name,

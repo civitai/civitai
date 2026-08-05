@@ -1462,6 +1462,7 @@ export const takedownCosmeticShopItem = async ({
     clawback.set(key, (clawback.get(key) ?? 0) + amount);
   };
 
+  const isPack = item.cosmeticId == null;
   // A pack's author is its lister; it has no cosmetic creator of its own.
   const creatorId = item.cosmetic?.createdById ?? item.addedById;
   let unrecoveredResellerShare = 0;
@@ -1526,6 +1527,20 @@ export const takedownCosmeticShopItem = async ({
           });
         else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
       }
+      continue;
+    }
+
+    // A pack has no single creator to re-derive a split from: its payout is
+    // spread across each member's creator and their resellers, in proportions
+    // only the recorded payouts know. Charging the pack's lister for the whole
+    // creator pool would bill the wrong person for money they never received —
+    // so it goes to `failures` for a moderator to settle by hand instead.
+    if (isPack) {
+      failures.push({
+        stage: 'clawback',
+        userId: item.addedById ?? 0,
+        error: `Pack purchase ${purchase.buzzTransactionId} has no recorded payouts; the split cannot be re-derived`,
+      });
       continue;
     }
 
@@ -1639,7 +1654,6 @@ export const takedownCosmeticShopItem = async ({
   // D14 again: a taken-down cosmetic can never be sold, in a pack or otherwise.
   if (item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
 
-  const isPack = item.cosmeticId == null;
   const memberIds = isPack
     ? (
         await dbRead.cosmeticShopItemCosmetic.findMany({

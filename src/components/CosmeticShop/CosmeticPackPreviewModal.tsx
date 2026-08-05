@@ -101,6 +101,12 @@ export const CosmeticPackPreviewModal = ({
                     it is discounted.
                   </Text>
                 )}
+                {pack.selfAuthored > 0 && (
+                  <Text size="xs" c="dimmed">
+                    You made {numberWithCommas(pack.selfAuthored)} Buzz worth of what&apos;s in
+                    here, so you aren&apos;t charged for it.
+                  </Text>
+                )}
                 {unavailable && (
                   <Text size="xs" c="yellow">
                     Something in this pack is no longer for sale, so it can&apos;t be bought right
@@ -113,7 +119,7 @@ export const CosmeticPackPreviewModal = ({
                 <BuzzTransactionButton
                   disabled={purchasingShopItem || unavailable}
                   loading={purchasingShopItem}
-                  buzzAmount={Math.max(0, pack.unitAmount - pack.discount)}
+                  buzzAmount={pack.amountDue}
                   radius="xl"
                   onPerformTransaction={handlePurchase}
                   label="Purchase pack"
