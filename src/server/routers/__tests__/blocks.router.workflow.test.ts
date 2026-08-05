@@ -42,6 +42,8 @@ const {
   mockLogToAxiom,
   mockSysRedis,
   mockResolveCanGenerateForVersions,
+  mockGetResourceData,
+  mockGetHighestTierSubscription,
   mockRecordSpendAttribution,
   mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
@@ -129,6 +131,10 @@ const {
   // out of the test and we can drive canGenerate per-test. Default = a Map
   // saying the version IS generatable; FORBIDDEN tests override to false / miss.
   mockResolveCanGenerateForVersions: vi.fn(),
+  // The customComfy INLINE arm's entitlement belt calls these two directly.
+  // Stubbed as the belt's DATA SOURCE only — the belt itself runs for real.
+  mockGetResourceData: vi.fn(),
+  mockGetHighestTierSubscription: vi.fn(),
   // W3 flow A — the spend-attribution write the submit path fires
   // best-effort after a resolved submit. Mocked at the module boundary so
   // the test asserts exact (server-derived) args + that a throw here never
@@ -434,8 +440,19 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
 }));
+// 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
+// BOUNDARY. The customComfy INLINE arm's entitlement belt
+// (`services/blocks/inline-comfy.service`) is deliberately left REAL in this
+// suite, with only its data source stubbed. Mocking the belt itself would reduce
+// every inline test below to "the router called a function I replaced", which is
+// exactly the seam a per-component test cannot see: the belt can be perfectly
+// correct in isolation and simply not wired in.
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
+  getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+}));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
@@ -617,6 +634,8 @@ beforeEach(() => {
     mockSysRedis.expire,
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
+    mockGetResourceData,
+    mockGetHighestTierSubscription,
     mockRecordSpendAttribution,
     mockDbWriteUserFindUnique,
     mockIsAppBlocksAuthorEnabled,
@@ -6154,6 +6173,241 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         workflowId: 'wf_cc_1',
         actualCost: 12,
       });
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE INLINE ARM, AT THE ROUTER SEAM.
+  //
+  // `inline-comfy.service.test.ts` proves the belt is CORRECT. These prove it is
+  // WIRED — a distinction that matters, because a belt can be hermetically
+  // tested, mutation-swept and audit-clean and simply never called. The belt runs
+  // FOR REAL here (only `getResourceData` / `getHighestTierSubscription` are
+  // stubbed), so a router that forgot to call it fails these.
+  //
+  // The other half is the money path: an inline body must be bounded by the SAME
+  // belt the recipe arm uses, with `maxBuzz` as the ceiling.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('INLINE arm (mode: inline)', () => {
+    const INLINE_LORA_AIR = 'urn:air:sdxl:lora:civitai:118025@136251';
+
+    function inlineBody(over: Record<string, unknown> = {}) {
+      return {
+        kind: 'customComfy' as const,
+        mode: 'inline' as const,
+        workflow: {
+          '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd_xl.safetensors' } },
+          '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a serene lake', clip: ['1', 1] } },
+        },
+        resources: [],
+        maxBuzz: 60,
+        ...over,
+      };
+    }
+
+    function happyInline() {
+      happyUser();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Public' },
+      ]);
+      mockGetHighestTierSubscription.mockResolvedValue(null);
+      happySubmit();
+    }
+
+    it('estimate quotes the declared maxBuzz as the ceiling, with no orchestrator round-trip', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyUser();
+      const result = await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ maxBuzz: 77 }),
+      });
+      expect(result.snapshot).toMatchObject({ status: 'pending', cost: { total: 77 } });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('happy path: reserves the declared maxBuzz as the CEILING and stamps it as the step timeout', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody({ maxBuzz: 90 }) });
+      // The whole post-paid spend belt is REUSED — same per-app reservation call
+      // the recipe arm makes, with the declared ceiling.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
+      expect(step.$type).toBe('customComfy');
+      // maxBuzz === stepTimeoutSeconds, BY CONSTRUCTION: 90s → '00:01:30'.
+      expect(step.timeout).toBe('00:01:30');
+    });
+
+    it('🔴 the emitted step input carries ONLY resources/trace/workflow — the body is never spread', async () => {
+      // If the router ever spreads the app's body into the step input, an app
+      // gets `sessionOwnerApiToken` (a Civitai API token forwarded to the
+      // claiming worker) and `comfyImage` (an arbitrary container). The wire
+      // schema's `.strict()` is the first belt; this is the second.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() });
+      const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+      expect(Object.keys(input).sort()).toEqual(['resources', 'trace', 'workflow']);
+      expect(input.trace).toBe('binary');
+    });
+
+    it('🔴 GATE 1 IS WIRED: an undeclared AIR in the graph is rejected, with NO reserve and NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            workflow: {
+              '1': { class_type: 'LoraLoader', inputs: { lora_name: INLINE_LORA_AIR } },
+            },
+            resources: [],
+          }),
+        })
+      ).rejects.toThrow(/not declared in resources/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 GATE 1 IS WIRED: entitlement runs over the app-supplied resources — a non-generatable version is FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: false, availability: 'Public' },
+      ]);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ resources: [INLINE_LORA_AIR] }),
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // The REAL belt ran, with the version id parsed out of the app's AIR.
+      expect(mockGetResourceData).toHaveBeenCalledWith([136251], expect.anything());
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // 🔴 THE PRIVATE-SUBSCRIPTION BRANCH IS NOT REACHABLE AT THIS SEAM TODAY, AND
+    // THAT IS RECORDED RATHER THAN FORCED. App Blocks is moderator-only
+    // pre-GA (`assertViewerIsModerator` — see the "NON-MOD token → 401" tests
+    // above), so every viewer who can reach a submit is a moderator; and the
+    // belt deliberately exempts moderators from the subscription requirement,
+    // matching the onsite belt it is ported from. A router-level test for it
+    // would therefore be green for the wrong reason (the mod exemption), not
+    // because the gate fired. It IS exercised, over both a subscriber and a
+    // non-subscriber, in `inline-comfy.service.test.ts`.
+    //
+    // This becomes reachable the moment App Blocks opens past mod-only; add the
+    // router-level case then, with a non-moderator subject.
+    it('the belt exempts a MODERATOR from the Private subscription requirement (the live path)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockGetResourceData.mockResolvedValue([
+        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Private' },
+      ]);
+      mockGetHighestTierSubscription.mockResolvedValue(null);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ resources: [INLINE_LORA_AIR] }),
+      });
+      expect(mockSubmitWorkflow).toHaveBeenCalled();
+      // The exemption is what made it pass — the subscription was never queried.
+      expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
+    });
+
+    it('🔴 GATE 1 IS WIRED: a nodepack URN is rejected (arbitrary code execution, gated off)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            resources: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0'],
+          }),
+        })
+      ).rejects.toThrow(/nodepack resources are not permitted/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 GATE 2 IS WIRED: the audited text is the SWEPT GRAPH, not the declared prompt', async () => {
+      // The failure this pins is silent: audit the declared field only, and an
+      // inline graph's real prompt is never moderated while every gate stays
+      // green. Assert the audit was handed the graph's leaf text.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({
+          prompt: 'a clean declared prompt',
+          workflow: {
+            '2': { class_type: 'CLIPTextEncode', inputs: { text: 'GRAPH_PROMPT_XYZ' } },
+          },
+        }),
+      });
+      expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+      const audited = mockAuditPromptServer.mock.calls[0][0].prompt as string;
+      expect(audited).toContain('GRAPH_PROMPT_XYZ');
+      expect(audited).toContain('a clean declared prompt');
+    });
+
+    it('🔴 GATE 2 IS WIRED: a flagged GRAPH prompt blocks the submit even when the declared prompt is clean', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      mockAuditPromptServer.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged' })
+      );
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            prompt: 'a clean declared prompt',
+            workflow: { '2': { class_type: 'CLIPTextEncode', inputs: { text: 'bad' } } },
+          }),
+        })
+      ).rejects.toThrow(/flagged/);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the static budget gate still bounds an inline body against the token budget', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 }));
+      happyInline();
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ maxBuzz: 200 }),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('the settle record carries the constant inline labels, not an app-derived one', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody({ maxBuzz: 42 }) });
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({ ceiling: 42, engine: 'inline', recipe: '__inline__' })
+      );
+    });
+
+    it('an inline body is still PAGE-ONLY and still developer-gated', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token
+      happyInline();
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('REGRESSION: the RECIPE arm is unaffected — it still runs the recipe entitlement gate', async () => {
+      // The inline belt must not have displaced the recipe path's own gate.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
+      // …and the inline belt was NOT consulted for a recipe body.
+      expect(mockGetResourceData).not.toHaveBeenCalled();
     });
   });
 });

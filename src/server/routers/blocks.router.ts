@@ -136,6 +136,11 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import {
+  assertInlineGraphAirsDeclared,
+  assertViewerEntitledToInlineResources,
+  collectInlineAuditText,
+} from '~/server/services/blocks/inline-comfy.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
@@ -458,12 +463,30 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 //
 // SCOPE — what this gate does NOT cover: early-access `hasAccess` and the
 // availability=Private subscription requirement are NOT checked here.
-// `resolveCanGenerateForVersions` deliberately omits both. They are enforced
-// downstream by the orchestrator resource belt in `getGenerationResourceData`
-// (server/services/orchestrator/common.ts): `getResourceData` folds
-// `canGenerate = hasAccess && canGenerate` and the Private-resource path
-// throws without an active subscription — and BOTH the whatIf (estimate) and
-// the real (submit) steps run through that belt BEFORE any Buzz reservation.
+// `resolveCanGenerateForVersions` deliberately omits both.
+//
+// 🔴 NAMES CORRECTED. This paragraph used to point at "the orchestrator resource
+// belt in `getGenerationResourceData` (server/services/orchestrator/common.ts)".
+// MEASURED: that file does not exist and that function does not exist anywhere
+// in `src` — the name appeared only in this comment and two copies of it. The
+// belt IS real, so the instruction below still stands; only the address was
+// wrong, and a wrong address on a "DO NOT remove that belt" note is how a
+// maintainer concludes there is no belt to preserve.
+//
+// The belt, by its real names: `validateAndEnrichResources`
+// (server/services/orchestrator/orchestration-new.service) calls
+// `getResourceData` (server/services/generation/generation.service), which folds
+// `applyPaidAccessGating` internally — and that sets
+// `canGenerate = hasAccess && canGenerate` — then throws without an active
+// subscription for a Private/epoch resource. BOTH the whatIf (estimate) and the
+// real (submit) steps run through it BEFORE any Buzz reservation.
+//
+// 🔴 THAT BELT IS ON THE GENERATION-GRAPH PATH ONLY. It runs for `textToImage`,
+// which is what this gate serves. It does NOT run for a raw `customComfy` step,
+// whose `resources` AIR array goes to the orchestrator directly — see
+// `services/blocks/inline-comfy.service`, which is the equivalent belt for the
+// inline arm, and `services/blocks/recipes/index.ts` for the recipe arm.
+//
 // DO NOT remove that belt assuming this pre-spend gate already covers
 // early-access / Private — it does not.
 //
@@ -6130,6 +6153,34 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 
 type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
 type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
+/** The INLINE arm (`mode:'inline'`) — carries the ComfyUI graph itself. */
+type CustomComfyInlineBody = Extract<CustomComfyBody, { mode: 'inline' }>;
+/** The RECIPE arm — names a server-authored graph. Unchanged from v1. */
+type CustomComfyRecipeBody = Exclude<CustomComfyBody, CustomComfyInlineBody>;
+
+/**
+ * Narrow a `customComfy` body to its INLINE arm, or `null` for the recipe arm.
+ *
+ * Keyed on the PRESENCE of `mode` rather than its value: the recipe arm has no
+ * `mode` property at all, so `body.mode` is not a legal read across the union and
+ * `'mode' in body` is what actually narrows. The schema's `mode: z.literal('inline')`
+ * means presence and value are the same test at runtime.
+ */
+function isInlineComfyBody(body: CustomComfyBody): body is CustomComfyInlineBody {
+  return 'mode' in body;
+}
+
+/**
+ * The settle-time observability labels for an inline submit.
+ *
+ * Constant, NOT derived from the app or the block — `civitai_app_block_customcomfy_*`
+ * is labelled by these, and labelling by `appBlockId` would make the metric's
+ * cardinality grow with the app catalogue. An inline graph has no engine and no
+ * recipe, so both read as the same constant and every inline job aggregates
+ * together, which is the only honest grouping available.
+ */
+const INLINE_RECIPE_LABEL = '__inline__';
+const INLINE_ENGINE_LABEL = 'inline';
 
 /**
  * Resolve the recipe from the (schema-gated) `recipe` id. The wire schema's
@@ -6137,7 +6188,7 @@ type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
  * union, so this never returns undefined for a schema-valid body — the guard is
  * defense-in-depth against a registry/schema desync. Fail closed.
  */
-function resolveCustomComfyRecipe(body: CustomComfyBody) {
+function resolveCustomComfyRecipe(body: CustomComfyRecipeBody) {
   const recipe = getRecipe(body.recipe);
   if (!recipe) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown recipe' });
@@ -6168,6 +6219,30 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   }
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
+
+  // ── INLINE arm. There is NO honest per-graph number to quote and no way to
+  // derive one: the orchestrator forwards the graph opaquely and cannot price
+  // it, and a real whatIf returns 0 for customComfy anyway. The declared
+  // `maxBuzz` ceiling IS the honest answer, because it is PHYSICALLY enforced —
+  // the server stamps `stepTimeoutSeconds = maxBuzz` as the step timeout, the
+  // job is cancelled there, and settle-to-actual refunds the difference. The
+  // user is quoted a true upper bound and charged the real cost.
+  //
+  // 🔴 SURFACE THIS AS "UP TO N BUZZ", NOT AS A PRICE. `cost.total` is the same
+  // field the txt2img path fills with a whatIf estimate, so a UI that renders it
+  // as a definite price will overstate an inline job's cost. That is a copy
+  // change in `@civitai/app-sdk` / the block, tracked separately — nothing here
+  // edits another repo.
+  if (isInlineComfyBody(body)) {
+    return {
+      snapshot: {
+        workflowId: 'wf_estimate',
+        status: 'pending' as const,
+        cost: { total: body.maxBuzz },
+      },
+    };
+  }
+
   const recipe = resolveCustomComfyRecipe(body);
   // Parse through the recipe's OWN `.strict()` schema so the engine (which drives
   // the per-engine display estimate) is validated/bounded; an invalid param
@@ -6230,16 +6305,49 @@ async function submitCustomComfyWorkflow(opts: {
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
 
-  const recipe = resolveCustomComfyRecipe(body);
+  // Narrow ONCE, into two mutually-exclusive locals. Exactly one is non-null for
+  // any schema-valid body, which is what lets the shared belt below stay a single
+  // code path instead of two forked copies of the spend logic.
+  const inlineBody = isInlineComfyBody(body) ? body : null;
+  const recipeBody = isInlineComfyBody(body) ? null : body;
+  const recipe = recipeBody ? resolveCustomComfyRecipe(recipeBody) : null;
   // The recipe's OWN `.strict()` schema is the real param contract (the wire
   // schema only gated `recipe`); an invalid param throws → fail-closed.
-  const params = recipe.paramSchema.parse(body.params);
+  const params = recipe && recipeBody ? recipe.paramSchema.parse(recipeBody.params) : null;
 
   const user = await getBlockSessionUser(userId);
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // Honor a money-page account pick (preferred-first, domain-clamped) as txt2img;
-  // absent → Auto.
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, params.accountType);
+  // absent → Auto. An inline body carries no account pick (its `.strict()` wire
+  // schema has no `accountType`), so it always resolves to Auto.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, params?.accountType);
+
+  // ── INLINE arm: replace CODE REVIEW with three mechanical gates, in the same
+  // slots the recipe arm uses. Order matters and matches the recipe arm exactly:
+  // every one of these runs BEFORE the orchestrator token, before any spend
+  // reservation and before the submit, so a rejection costs nothing and has
+  // nothing to refund. All three THROW; none returns a verdict a caller can
+  // forget to read. Full reasoning in `services/blocks/inline-comfy.service`.
+  let inlineAuditText = '';
+  if (inlineBody) {
+    // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
+    //     which is what makes gating that flat array sufficient.
+    assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
+    //     subscription + anti-drop + anti-substitute) over the declared AIRs.
+    await assertViewerEntitledToInlineResources({
+      airs: inlineBody.resources,
+      user: { id: userId, isModerator: !!user.isModerator },
+    });
+    // (c) The MODERATION SWEEP — collected here, audited in the shared audit call
+    //     below. An inline graph carries its prompts inside `CLIPTextEncode`
+    //     nodes, so auditing a declared field alone would make moderation a
+    //     silent no-op.
+    inlineAuditText = collectInlineAuditText({
+      prompt: inlineBody.prompt,
+      graph: inlineBody.workflow,
+    });
+  }
 
   // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
   // AIR array DIRECTLY, bypassing the generation-graph path's automatic
@@ -6249,8 +6357,8 @@ async function submitCustomComfyWorkflow(opts: {
   // point at a gated / early-access / Private / unpublished version without the
   // belt catching it. The huggingface staticAirs carry no civitai entitlement
   // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
-  const versionIds = recipeCivitaiVersionIds(recipe);
-  if (versionIds.length > 0) {
+  const versionIds = recipe ? recipeCivitaiVersionIds(recipe) : [];
+  if (recipe && versionIds.length > 0) {
     const gates: ReturnType<typeof buildGateVersion>[] = [];
     for (const versionId of versionIds) {
       const resolvedVersion = await resolvePageResourceContext(versionId);
@@ -6271,9 +6379,19 @@ async function submitCustomComfyWorkflow(opts: {
   // quality suffix only INSIDE the builder, AFTER this read) with the
   // domain-derived isGreen strictness, exactly like txt2img, before any
   // orchestrator call.
+  //
+  // 🔴 ON THE INLINE ARM `prompt` IS THE SWEPT GRAPH TEXT, NOT A DECLARED FIELD.
+  // `auditPromptServer` reads exactly one string, and on the recipe arm that
+  // string is guaranteed to be what generates because the recipe's `.strict()`
+  // schema owns the prompt. An inline graph carries its prompts as leaf strings
+  // inside `CLIPTextEncode` nodes, so a declared-field-only audit would scan a
+  // value the generation never uses and moderation would silently become a
+  // no-op — with every gate green. `collectInlineAuditText` (above) joins the
+  // declared prompt AND every distinct string leaf in the graph, so a clean
+  // declared prompt cannot launder a graph prompt.
   await auditPromptServer({
-    prompt: params.prompt,
-    negativePrompt: recipe.negativePrompt,
+    prompt: inlineBody ? inlineAuditText : params!.prompt,
+    negativePrompt: inlineBody ? inlineBody.negativePrompt : recipe!.negativePrompt,
     userId,
     isGreen,
     isModerator: !!user.isModerator,
@@ -6285,7 +6403,17 @@ async function submitCustomComfyWorkflow(opts: {
   // stepTimeoutSeconds)` (enforced per-engine at registry load): the step
   // `timeout` physically caps the job at this many Buzz, so the reservation below
   // and the timeout stamped on the step MUST come from the same budget.
-  const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
+  //
+  // 🔴 THE INLINE ARM PRESERVES THAT INVARIANT BY CONSTRUCTION. There is no
+  // recipe to declare a per-engine budget, so the app declares ONE number and
+  // the server derives the timeout from it: `stepTimeoutSeconds = maxBuzz`.
+  // `maxBuzz === ceil(stepTimeoutSeconds)` therefore cannot be violated — not
+  // "is asserted at load", but "there is only one number". Everything downstream
+  // (static gate, both reservations, dev-session backstop, settle-to-actual) only
+  // ever consumed `ceiling`, so the entire spend belt is reused UNTOUCHED.
+  const { maxBuzz: ceiling, stepTimeoutSeconds } = inlineBody
+    ? { maxBuzz: inlineBody.maxBuzz, stepTimeoutSeconds: inlineBody.maxBuzz }
+    : recipe!.budgetFor(params);
 
   // Resolve the engine + recipe id purely for per-engine settle-time
   // OBSERVABILITY (persisted in the settle record, read at terminal to emit
@@ -6297,8 +6425,13 @@ async function submitCustomComfyWorkflow(opts: {
   // (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend. The
   // `?? 'unknown'` stays as truly-unreachable defense (resolveEngine always
   // returns a bounded engine id).
-  const engine: string = recipe.resolveEngine(params) ?? 'unknown';
-  const recipeId: string = recipe.id;
+  // An inline graph has no engine and no recipe, so both labels are the same
+  // CONSTANT for every inline job — never derived from the app or the block, so
+  // the metric's cardinality cannot grow with the app catalogue.
+  const engine: string = inlineBody
+    ? INLINE_ENGINE_LABEL
+    : recipe!.resolveEngine(params) ?? 'unknown';
+  const recipeId: string = inlineBody ? INLINE_RECIPE_LABEL : recipe!.id;
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
@@ -6478,13 +6611,29 @@ async function submitCustomComfyWorkflow(opts: {
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
   const submittedAt = Date.now();
   try {
-    const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
+    // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
+    // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
+    // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
+    // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
+    // (changes the worker tier, and therefore the Buzz/second rate the whole
+    // ceiling argument rests on), `sessionId`, `useSageAttention` and
+    // `minimumDurationSeconds`. A spread would hand every one of those to the
+    // app. Only these three keys are ever emitted; the wire schema's `.strict()`
+    // is the second belt, rejecting a body that names any of them at all.
+    const stepInput = inlineBody
+      ? {
+          resources: inlineBody.resources,
+          trace: 'binary' as const,
+          workflow: inlineBody.workflow,
+        }
+      : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
-    // the timeout is the physical cap for that reservation (v1.1).
+    // the timeout is the physical cap for that reservation (v1.1). For an inline
+    // body that timeout IS the declared `maxBuzz`.
     const step = createBlockCustomComfyStep(stepInput, stepTimeoutSeconds);
     // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
     // preserving the `app-block:*` provenance tags the subqueue read depends on.
-    const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');
+    const tags = buildWorkflowTags(claims, recipeId, 'customComfy');
     const submitted = await submitWorkflow({
       token,
       body: {

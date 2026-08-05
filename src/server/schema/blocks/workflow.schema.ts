@@ -246,13 +246,137 @@ const blockTextToImageBodySchemaChecked = blockTextToImageBodySchema.refine(
 //    in the translator (`buildCustomComfyWorkflowInput`), which is the single
 //    place a recipe's real param contract lives.
 //  - `.strict()` rejects any extra top-level field on the body.
+//  - `mode` is the ARM discriminator, and on this arm it is an OPTIONAL literal
+//    so an existing body that omits it (every deployed app, every published
+//    `@civitai/app-sdk` body) still lands here. See the union at the bottom of
+//    this file for why `.optional()` and not `.default()` — the difference is
+//    load-bearing and was measured, not assumed.
 export const blockCustomComfyBodySchema = z
   .object({
     kind: z.literal('customComfy'),
+    mode: z.literal('recipe').optional(),
     recipe: z.enum(REGISTERED_RECIPE_IDS),
     params: z.record(z.string(), z.unknown()),
   })
   .strict();
+
+// ── App Blocks customComfy INLINE-GRAPH arm (`kind:'customComfy'`, `mode:'inline'`) ──
+//
+// The SECOND arm of the `customComfy` member. Where the recipe arm names one of
+// two server-authored graphs, this one carries the ComfyUI graph ITSELF, so an
+// app can ship a workflow the registry does not contain. The recipe arm above is
+// UNCHANGED and stays the default: a body with no `mode` is a recipe body and
+// parses byte-identically to before.
+//
+// 🔴 WHAT THE RECIPE ARM PROVIDED THAT THIS ONE MUST REPLACE. A recipe is a
+// CODE-REVIEWED in-repo artifact, and that review was the trust root for three
+// separate things. An inline graph has no review, so each is replaced by a
+// mechanical gate — see `services/blocks/inline-comfy.service`:
+//   1. `resourceAllowlist` (only fully-public pinned versions) → a real
+//      entitlement belt over the app-supplied `resources` array, which folds
+//      early-access `hasAccess` and Private-subscription.
+//   2. `paramSchema.prompt` (the field `auditPromptServer` reads) → a sweep of
+//      every string leaf in the graph, audited alongside the declared prompt. An
+//      inline graph carries its prompts inside `CLIPTextEncode` nodes, so
+//      auditing a declared field ALONE would make moderation a silent no-op.
+//   3. `budgetFor()` (the `maxBuzz === ceil(stepTimeoutSeconds)` ceiling) → the
+//      app declares `maxBuzz` and the server derives
+//      `stepTimeoutSeconds = maxBuzz`. The invariant then holds BY CONSTRUCTION
+//      — there is only one number — and the whole post-paid spend belt (static
+//      gate, both reservations, settle-to-actual) is reused untouched.
+//
+// 🔴 `.strict()` IS LOAD-BEARING HERE, NOT HYGIENE. The orchestrator's
+// `CustomComfyInput` carries fields an app must NEVER set — `sessionOwnerApiToken`
+// (a Civitai API token forwarded to the claiming worker), `comfyImage` (an OCI
+// image AIR, i.e. an arbitrary container), `minVramGb` (changes the worker tier
+// and therefore the Buzz/second rate the whole ceiling argument rests on),
+// `sessionId`, `useSageAttention`, `minimumDurationSeconds`. The step input is
+// CONSTRUCTED SERVER-SIDE from an allowlisted set of fields; the app's body is
+// never spread into it. `.strict()` is the second belt: an app that sends one of
+// those names is rejected at the wire rather than silently ignored.
+
+/**
+ * Hard per-job Buzz ceiling an inline body may declare.
+ *
+ * DERIVED, not invented. This surface is developer-only (`assertViewerIsAppDeveloper`
+ * gates every customComfy submit), and the developer path's own per-call budget
+ * ceiling is `DEV_BUZZ_BUDGET_CAP` (250) in `services/blocks/dev-scoped-mint.service`
+ * — a declared `maxBuzz` above that is unreachable through a dev token anyway,
+ * because the router's static gate fail-snapshots on `ceiling > claims.buzzBudget`.
+ * It also sits comfortably above the largest shipped recipe ceiling (180, the
+ * `qwen-image` engine of `seamless-pano-360`) so an inline graph is not more
+ * constrained than a recipe.
+ *
+ * Deliberately a LITERAL here rather than an import: this module is imported by
+ * the wire layer and must stay import-light, while `dev-scoped-mint.service`
+ * pulls in the block-token service. `inline-comfy-budget.test.ts` imports both
+ * and pins them equal, so the derivation cannot drift silently.
+ */
+export const INLINE_MAX_BUZZ = 250;
+
+/** Max AIR URNs an inline body may declare. Bounds the entitlement fan-out. */
+export const INLINE_RESOURCES_MAX = 24;
+/** Max characters in a single declared AIR URN. */
+const INLINE_AIR_MAX_LEN = 512;
+/** Max nodes in an inline graph. */
+export const INLINE_GRAPH_NODES_MAX = 300;
+/**
+ * Max serialized bytes of an inline graph.
+ *
+ * Two jobs. (1) Payload DoS: `workflow` is an unbounded `Record<string, unknown>`
+ * on a submit path, so without this a single request can be arbitrarily large.
+ * (2) It is what BOUNDS THE MODERATION SWEEP — the prompt audit walks every
+ * string leaf in the graph, so an unbounded graph would be an unbounded audit
+ * payload. Real ComfyUI graphs are single-digit to low-tens of KB; 256 KB is
+ * generous for a graph and still a hard bound.
+ */
+export const INLINE_GRAPH_BYTES_MAX = 256 * 1024;
+
+/** A ComfyUI `/prompt` graph node on the wire: `class_type` + `inputs`. */
+const inlineComfyNodeSchema = z
+  .object({
+    class_type: z.string().min(1).max(128),
+    inputs: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export const blockInlineComfyBodySchema = z
+  .object({
+    kind: z.literal('customComfy'),
+    // The arm discriminator. A LITERAL rather than "has a `workflow` key" so the
+    // two arms can never both match, the rejection names the arm, and a future
+    // field addition to either arm cannot silently change which one a body hits.
+    mode: z.literal('inline'),
+    workflow: z.record(z.string(), inlineComfyNodeSchema),
+    // The orchestrator's DECLARED DOWNLOAD MANIFEST. The graph itself is opaque
+    // to the orchestrator ("Forwarded opaquely to the worker; the orchestrator
+    // does not inspect or validate node contents" — `CustomComfyInput.workflow`),
+    // so this flat array is the entire untrusted entitlement surface. Gated by
+    // `assertViewerEntitledToInlineResources`; ALSO cross-checked for containment
+    // against AIRs appearing in the graph, so the "opaque" claim is not
+    // load-bearing.
+    resources: z.array(z.string().min(1).max(INLINE_AIR_MAX_LEN)).max(INLINE_RESOURCES_MAX),
+    // Declared so an app can surface what it asked for. NOT trusted as the
+    // complete moderation surface — the graph is swept too (see above).
+    prompt: z.string().max(PROMPT_MAX).default(''),
+    negativePrompt: z.string().max(NEG_PROMPT_MAX).default(''),
+    // The ONLY spend knob. The server derives `stepTimeoutSeconds = maxBuzz` and
+    // stamps it as the step timeout, which is the PHYSICAL cap.
+    maxBuzz: z.number().int().min(1).max(INLINE_MAX_BUZZ),
+  })
+  .strict()
+  .refine((b) => Object.keys(b.workflow).length > 0, {
+    path: ['workflow'],
+    message: 'inline workflow must contain at least one node',
+  })
+  .refine((b) => Object.keys(b.workflow).length <= INLINE_GRAPH_NODES_MAX, {
+    path: ['workflow'],
+    message: `inline workflow may contain at most ${INLINE_GRAPH_NODES_MAX} nodes`,
+  })
+  .refine((b) => JSON.stringify(b.workflow).length <= INLINE_GRAPH_BYTES_MAX, {
+    path: ['workflow'],
+    message: `inline workflow exceeds the ${INLINE_GRAPH_BYTES_MAX}-byte limit`,
+  });
 
 // ── App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1 ──
 //
@@ -301,9 +425,52 @@ export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
 export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
+
+// 🔴 THE `customComfy` MEMBER IS A NESTED DISCRIMINATED UNION ON `mode`, AND THE
+// RECIPE ARM'S `mode` IS `.optional()` — NOT `.default('recipe')`. That
+// distinction is the whole reason this comment exists. MEASURED against zod
+// 4.0.17; each of the three obvious spellings was run, not reasoned about:
+//
+//   1. `blockInlineComfyBodySchema` as a FOURTH option of the outer union throws
+//      at parse time: `Duplicate discriminator value "customComfy"`. zod's
+//      discriminated union is a value→schema MAP, so two members cannot share a
+//      `kind`.
+//   2. Nesting on `mode` with the recipe arm declaring
+//      `mode: z.literal('recipe').default('recipe')` CONSTRUCTS fine — and then
+//      REJECTS EVERY DEPLOYED RECIPE BODY with `No matching discriminator`. zod
+//      reads the discriminator value off the SCHEMA and does not see it through
+//      a `.default()`, so `{kind:'customComfy', recipe, params}` (no `mode` key
+//      — what every shipped app and every published `@civitai/app-sdk` sends)
+//      fails. 🔴 THIS IS THE DANGEROUS ONE: it type-checks, it builds, its own
+//      tests pass, and it breaks production.
+//   3. Wrapping the whole thing in a plain `z.union([discriminatedUnion, inlineArm])`
+//      parses every body correctly, but DEGRADES THE ERROR SHAPE: a rejected body
+//      reports a single top-level `invalid_union` issue with `path: []` instead of
+//      the precise `path: ['step']` / `path: ['recipe']` the discriminated union
+//      produces. That is the diagnostic an app author gets for a bounced submit,
+//      and `workflow.schema.step.test.ts` already pins it.
+//
+// `.optional()` works where `.default()` does not: zod treats `undefined` as a
+// legitimate discriminator value for the arm, so a body with no `mode` key lands
+// on the recipe arm, and the outer union stays a real discriminated union with
+// its per-field error paths intact.
+//
+// Both arms are `.strict()`, so a body naming BOTH `recipe` and `workflow` is
+// rejected by both and there is no ambiguity to resolve.
+//
+// Pinned by `workflow.schema.inline-comfy.test.ts` (recipe / textToImage / step
+// bodies parse unchanged, output byte-identical) and by the existing
+// `workflow.schema.step.test.ts` error-path assertion. Failure mode 2 above is
+// covered by a mutation in the sweep: swapping `.optional()` for `.default()`
+// turns the back-compat test red.
+const blockCustomComfyMemberSchema = z.discriminatedUnion('mode', [
+  blockCustomComfyBodySchema,
+  blockInlineComfyBodySchema,
+]);
+
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockTextToImageBodySchemaChecked,
-  blockCustomComfyBodySchema,
+  blockCustomComfyMemberSchema,
   blockStepBodySchema,
 ]);
 
