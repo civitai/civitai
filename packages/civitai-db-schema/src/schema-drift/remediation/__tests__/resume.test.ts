@@ -140,6 +140,101 @@ describe('a constraint that exists is THREE states, not two', () => {
   });
 });
 
+describe('🔴 the resume path does not bypass the refusals that still apply', () => {
+  // The resume branch returns before the main refusal block, so anything that still
+  // matters once a constraint exists has to be re-checked there. Found while re-reading
+  // the branch after the audit round, not by the audit.
+
+  it('refuses to validate a NOT VALID constraint on an EXCLUDED relation', () => {
+    const excluded = `
+model TagsOnImageNew {
+  imageId Int
+  tagId   Int
+  image   Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+}
+model Image {
+  id Int @id
+}
+`;
+    const plan = buildRemediationPlan(
+      schemaFrom(excluded),
+      catalogFrom({
+        tables: ['TagsOnImageNew', 'Image'],
+        columns: [
+          ['TagsOnImageNew', 'imageId', true],
+          ['TagsOnImageNew', 'tagId', true],
+          ['Image', 'id', true],
+        ],
+        indexes: [['TagsOnImageNew', 'imageId']],
+        uniqueIndexes: [['Image', 'id']],
+        foreignKeys: [
+          {
+            name: 'TagsOnImageNew_imageId_fkey',
+            table: 'TagsOnImageNew',
+            columns: ['imageId'],
+            refTable: 'Image',
+            validated: false,
+          },
+        ],
+      }),
+      { orphanCounts: { 'TagsOnImageNew.imageId': 3 } }
+    );
+    const target = relation(plan, 'TagsOnImageNew.imageId');
+    expect(target.outcome).toBe('refused');
+    expect(target.refusals.map((r) => r.code)).toContain('excluded');
+    // Finishing the validation would complete a constraint the list says must not exist.
+    expect(target.statements.every((s) => s.writes === false)).toBe(true);
+  });
+
+  it('refuses to resume a SetNull relation whose column is NOT NULL', () => {
+    // Reachable on real data: `ChallengeEvent.createdById` declares SetNull over a NOT
+    // NULL column, so a resume would emit an UPDATE ... SET NULL that cannot succeed —
+    // part-way through a campaign, after rows had already been touched.
+    const setNull = `
+model Child {
+  id      Int     @id
+  ownerId Int?
+  owner   Parent? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+}
+model Parent {
+  id Int @id
+}
+`;
+    const plan = buildRemediationPlan(
+      schemaFrom(setNull),
+      catalogFrom({
+        tables: ['Child', 'Parent'],
+        columns: [
+          ['Child', 'id', true],
+          ['Child', 'ownerId', true], // NOT NULL, contradicting the declaration
+          ['Parent', 'id', true],
+        ],
+        indexes: [['Child', 'ownerId']],
+        uniqueIndexes: [['Parent', 'id']],
+        foreignKeys: [
+          {
+            name: 'Child_ownerId_fkey',
+            table: 'Child',
+            columns: ['ownerId'],
+            refTable: 'Parent',
+            validated: false,
+          },
+        ],
+      }),
+      { orphanCounts: { 'Child.ownerId': 5 } }
+    );
+    const target = relation(plan, 'Child.ownerId');
+    expect(target.outcome).toBe('refused');
+    expect(target.refusals.map((r) => r.code)).toContain('set-null-on-not-null-column');
+    expect(target.statements.every((s) => s.writes === false)).toBe(true);
+  });
+
+  it('POSITIVE control: an ordinary relation still resumes', () => {
+    // Without this, the two refusals above could be a resume path that refuses everything.
+    expect(relation(planWith(false), 'Child.ownerId').outcome).toBe('needs-validation');
+  });
+});
+
 describe('the bounded lock wait on ADD CONSTRAINT', () => {
   const plan = buildRemediationPlan(
     schemaFrom(SCHEMA),

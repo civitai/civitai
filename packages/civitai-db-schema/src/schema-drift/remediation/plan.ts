@@ -307,6 +307,58 @@ function planRelation(
   }
 
   if (constraintValidity === 'not-valid') {
+    // The resume path returns before the refusal block below, so the two refusals that can
+    // still apply once a constraint exists are evaluated HERE. Without this, a relation
+    // carrying a half-applied constraint bypasses them entirely — and the SetNull case is
+    // not theoretical: `ChallengeEvent.createdById` declares SetNull over a NOT NULL
+    // column, so a resume would have emitted `UPDATE ... SET "createdById" = NULL` and
+    // failed part-way through a campaign.
+    //
+    // The other refusals cannot apply here by construction: the tables and columns exist
+    // (the catalog has a constraint on them), the referenced columns must already be
+    // unique (Postgres would not have accepted the constraint otherwise), and the name is
+    // this relation's own.
+    const resumeRefusals: Refusal[] = [];
+    const resumeExclusion = findExclusion(key);
+    if (resumeExclusion) {
+      resumeRefusals.push({
+        code: 'excluded',
+        message:
+          `${resumeExclusion.reason}\n\n🔴 A NOT VALID foreign key exists on these columns ` +
+          'anyway. This runner will not validate it — that would finish applying a ' +
+          'constraint the list says must never exist. Investigate how it was created; ' +
+          'dropping it is probably the right answer, but that is a decision with an owner.',
+      });
+    }
+    const resumeStrategy = strategyForAction(relation.onDelete);
+    if (resumeStrategy === 'null-orphans') {
+      const notNull = columns.filter((c) => live.columns.get(tupleKey([model.table, c])));
+      if (notNull.length > 0) {
+        resumeRefusals.push({
+          code: 'set-null-on-not-null-column',
+          message:
+            `onDelete is SetNull but ${notNull
+              .map((c) => `"${model.table}"."${c}"`)
+              .join(', ')} is NOT NULL. Resuming would emit an UPDATE ... SET NULL that ` +
+            'cannot succeed. The declaration is wrong, not the data.',
+        });
+      }
+    }
+    if (resumeRefusals.length > 0) {
+      return {
+        ...base,
+        outcome: 'refused',
+        strategy: null,
+        refusals: resumeRefusals,
+        constraintValidity,
+        prerequisites: [],
+        indexCoverage: coverageFor(live, model.table, columns),
+        statements: [
+          { kind: 'count-orphans', sql: countOrphansSql(ctx), writes: false, note: 'read-only' },
+        ],
+      };
+    }
+
     // The resume path. The constraint is already there, so ADD must NOT be reissued — it
     // would fail. Orphan remediation IS reissued: it is idempotent (its predicate matches
     // only rows that are still orphaned) and a validation that failed for any reason other
@@ -314,7 +366,7 @@ function planRelation(
     const resumeStatements: PlannedStatement[] = [
       { kind: 'count-orphans', sql: countOrphansSql(ctx), writes: false, note: 'read-only' },
     ];
-    const strategy = strategyForAction(relation.onDelete);
+    const strategy = resumeStrategy;
     if (strategy !== null && (orphanCount === null || orphanCount > 0)) {
       resumeStatements.push(
         {
