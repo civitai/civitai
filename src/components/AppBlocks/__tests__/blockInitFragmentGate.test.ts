@@ -89,6 +89,37 @@ describe('blockInitFragmentEnabledWith — the dev tunnel is refused BY CONSTRUC
   });
 });
 
+describe('blockInitFragmentEnabledWith — review-preview is refused too', () => {
+  it('🔴 refuses review-preview even for a block that IS allowlisted', () => {
+    // Same argument as the dev tunnel, and it transfers wholesale: the review
+    // surface mints `page_<pubreq_…>` for a PENDING, UN-APPROVED submission, so
+    // allowlisting a PUBLISHED app would enable the fragment on a moderator's
+    // preview of that app's next unreviewed code. The sibling assertion is what
+    // gives this teeth — the same id on page-run returns TRUE.
+    expect(
+      blockInitFragmentEnabledWith(
+        { surface: 'review-preview', blockId: 'apb_allowed' },
+        TEST_ALLOW,
+        TEST_DENY
+      )
+    ).toBe(false);
+    expect(
+      blockInitFragmentEnabledWith(
+        { surface: 'page-run', blockId: 'apb_allowed' },
+        TEST_ALLOW,
+        TEST_DENY
+      )
+    ).toBe(true);
+  });
+
+  it('leaves exactly two eligible surfaces: model-slot and page-run', () => {
+    const eligible = ALL_SURFACES.filter((surface) =>
+      blockInitFragmentEnabledWith({ surface, blockId: 'apb_allowed' }, TEST_ALLOW, TEST_DENY)
+    );
+    expect(eligible).toEqual(['model-slot', 'page-run']);
+  });
+});
+
 describe('blockInitFragmentEnabledWith — the denylist beats the allowlist', () => {
   it('🔴 refuses a block present in BOTH lists', () => {
     // `playable-collections` is deliberately in TEST_ALLOW as well as
@@ -162,6 +193,29 @@ describe('blockInitFragmentEnabled — the PRODUCTION binding is OFF', () => {
         false
       );
     }
+  });
+
+  it('🔴 the PRODUCTION binding passes allow/deny in the RIGHT ORDER', () => {
+    // The gap the injectable form leaves, and one the COMPILER CANNOT CATCH:
+    // `blockInitFragmentEnabledWith(args, allowlist, denylist)` takes two
+    // arguments of the SAME type, so swapping them type-checks cleanly. An
+    // audit swapped them at the binding and ALL NINE of the tests above stayed
+    // green, because they drive the injectable form directly — while
+    // `blockInitFragmentEnabled({surface:'page-run', slug:'playable-collections'})`
+    // started returning TRUE. The one block named as must-never-receive would
+    // have received it.
+    //
+    // Neither `ALLOWLIST.size === 0` nor `DENYLIST.has(...)` nor a lookup of an
+    // unknown id can see that swap: with the lists exchanged, the (empty)
+    // allowlist becomes the denylist and the denylist becomes the allowlist, so
+    // a denylisted slug is "allowed". Only asserting a DENYLISTED id through the
+    // production binding distinguishes the two wirings.
+    expect(blockInitFragmentEnabled({ surface: 'page-run', slug: 'playable-collections' })).toBe(
+      false
+    );
+    expect(
+      blockInitFragmentEnabled({ surface: 'model-slot', blockId: 'playable-collections' })
+    ).toBe(false);
   });
 
   it('pins playable-collections in the real denylist', () => {

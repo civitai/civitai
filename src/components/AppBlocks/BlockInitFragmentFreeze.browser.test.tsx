@@ -64,6 +64,17 @@ function FreezeProbe({ enabled = true }: { enabled?: boolean }) {
       <button data-testid="change-base" onClick={() => setBaseSrc('https://demo.civit.ai/other')}>
         change base
       </button>
+      {/* Soft-nav appA -> appB: BOTH the src and the instance id change, with no
+          remount — the real `/apps/run` "Recently run" path. */}
+      <button
+        data-testid="soft-nav"
+        onClick={() => {
+          setBaseSrc('https://appb.civit.ai/');
+          setInstanceId('bi_second');
+        }}
+      >
+        soft nav
+      </button>
     </div>
   );
 }
@@ -116,15 +127,67 @@ describe('useBlockIframeSrc — the mount-time FREEZE', () => {
     expect(await readSrc()).toBe(before);
   });
 
-  test('🔴 a blockInstanceId change also leaves the src byte-identical', async () => {
+  test('🔴 a blockInstanceId change RE-CAPTURES — the freeze is per-INSTANCE, not per-mount', async () => {
+    // ⚠️ THIS TEST WAS INVERTED. It previously asserted that changing
+    // `blockInstanceId` left the src byte-identical — i.e. it pinned the LEAK
+    // as intended behaviour. A per-mount freeze is wrong precisely because
+    // `PageBlockHost` outlives a block instance (soft nav, no `key`), so the
+    // correct invariant is: frozen WITHIN an instance, re-captured ACROSS one.
     renderWithProviders(<FreezeProbe />);
     const before = await readSrc();
     expect(before).toContain('blockInstanceId=bi_first');
 
     await page.getByTestId('change-instance').click();
 
-    expect(await readSrc()).toBe(before);
-    expect(await readSrc()).not.toContain('bi_second');
+    const after = await readSrc();
+    expect(after).not.toBe(before);
+    expect(after).toContain('blockInstanceId=bi_second');
+    expect(after).not.toContain('bi_first');
+  });
+
+  test('🔴 THE DISCRIMINATING CASE: toggle theme, THEN move baseSrc — theme must not follow', async () => {
+    // This is the case that actually pins the REF, and it exists because the
+    // earlier mutation table overstated its row 1. That row's mutant changed
+    // BOTH `frozenFields.current` -> `fields` AND the dep array; the dep-array
+    // half is what the other tests detect. The SINGLE mutant — live `fields`
+    // with the deps left alone — passes every other test in this file, because
+    // nothing else forces a recompute AFTER a theme change.
+    //
+    // Moving `baseSrc` forces exactly that recompute. At head it re-reads the
+    // FROZEN fields; under the single mutant it re-reads the LIVE ones and the
+    // new theme leaks in.
+    renderWithProviders(<FreezeProbe />);
+    expect(await readSrc()).toContain('theme=light');
+
+    await page.getByTestId('toggle-theme').click(); // now dark, src unmoved
+    await page.getByTestId('change-base').click(); // forces a recompute
+
+    const after = await readSrc();
+    expect(after).toContain('https://demo.civit.ai/other#');
+    expect(after).toContain('theme=light'); // the FROZEN theme, not the live one
+    expect(after).not.toContain('theme=dark');
+  });
+
+  test('🔴 SOFT-NAV appA→appB re-captures — no leak of the previous app’s identity', async () => {
+    // `PageBlockHost` is rendered with NO `key`, and `_app.tsx` renders
+    // `<Component>` with none either, so a soft navigation between two apps
+    // reuses the component instance: same mount, different `blockInstanceId`.
+    // A per-MOUNT freeze leaked app A's id (and mount-time theme) into app B's
+    // document while BLOCK_INIT delivered B's — two contradicting identities.
+    // The freeze is scoped to the block INSTANCE for this reason.
+    renderWithProviders(<FreezeProbe />);
+    expect(await readSrc()).toContain('blockInstanceId=bi_first');
+
+    await page.getByTestId('toggle-theme').click(); // dark, while still on app A
+    await page.getByTestId('soft-nav').click();
+
+    const after = await readSrc();
+    expect(after).toContain('https://appb.civit.ai/#');
+    // App B gets its OWN id…
+    expect(after).toContain('blockInstanceId=bi_second');
+    expect(after).not.toContain('bi_first');
+    // …and the CURRENT theme, because it is a fresh capture for a new instance.
+    expect(after).toContain('theme=dark');
   });
 
   test('baseSrc is deliberately NOT frozen — it still re-navigates', async () => {
@@ -132,6 +195,13 @@ describe('useBlockIframeSrc — the mount-time FREEZE', () => {
     // stale manifest src, which is a behaviour CHANGE, not a safety property.
     // The audit noted that freezing it also survives the suites; this is the
     // test that stops it.
+    //
+    // 🔴 SCOPE OF THE `bi_first` ASSERTION BELOW: it holds because ONLY the src
+    // moved — the block INSTANCE is unchanged, so carrying its captured fields
+    // is correct. Do NOT read it as "the id is always carried onto a new base":
+    // when the instance changes too (a soft nav), the capture is REDONE — see
+    // the soft-nav test above. An earlier revision of this file asserted the
+    // carry without that boundary case, which read as blessing the leak.
     renderWithProviders(<FreezeProbe />);
     const before = await readSrc();
     expect(before).toContain('https://demo.civit.ai/#');

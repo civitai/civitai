@@ -36,14 +36,42 @@ export function useBlockIframeSrc(
   fields: BlockInitFragmentFields,
   enabled: boolean
 ): string {
-  // First-render capture. A ref (not state) because there is no update path —
-  // the value is written once, at mount, and read forever after.
+  // The captured fields, and WHICH block instance they describe.
   const frozenFields = useRef<BlockInitFragmentFields>(fields);
+  const frozenFor = useRef<string>(fields.blockInstanceId);
+
+  // 🔴 SCOPED TO THE BLOCK INSTANCE, NOT TO THE MOUNT.
+  //
+  // A per-MOUNT ref is wrong here, and `PageBlockHost` says so itself: it is
+  // rendered with no `key`, and `_app.tsx` renders `<Component>` with no key
+  // either, so a SOFT navigation between two apps (appA → appB via the
+  // "Recently run" menu) REUSES the component instance — same mount, different
+  // `blockInstanceId`. Every other per-mount latch in that file was
+  // deliberately re-scoped to the instance for exactly this reason (see its
+  // `launchInstanceRef` / `shouldResetLaunchMarks` pair); this one was not, and
+  // the measured result was app B's document receiving app A's id and app A's
+  // mount-time theme while `BLOCK_INIT` delivered B's — a block seeing two
+  // contradicting identities.
+  //
+  // Re-capturing on an instance change keeps BOTH properties: within one block
+  // instance the fields are frozen (so a theme toggle cannot move the `src`
+  // attribute of a live third-party iframe), and across a soft-nav the new app
+  // gets its OWN id and the CURRENT theme.
+  //
+  // Assigning a ref during render is safe here because it is idempotent and
+  // derived purely from props — the same "reset derived state when a prop
+  // changes" pattern the sibling latch uses.
+  if (frozenFor.current !== fields.blockInstanceId) {
+    frozenFor.current = fields.blockInstanceId;
+    frozenFields.current = fields;
+  }
 
   return useMemo(
     () => (enabled ? buildBlockIframeSrc(baseSrc, frozenFields.current) : baseSrc),
-    // frozenFields.current is stable for the component's lifetime, so baseSrc
-    // and the gate are the only real inputs. Listed explicitly for the linter.
-    [baseSrc, enabled]
+    // `blockInstanceId` IS a dependency: on a soft-nav the capture above
+    // changes, and the memo must recompute to publish the new instance's
+    // fragment. `theme` and `renderMode` are deliberately absent — that
+    // absence is the freeze.
+    [baseSrc, enabled, fields.blockInstanceId]
   );
 }

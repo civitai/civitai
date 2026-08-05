@@ -32,8 +32,12 @@
 
 /**
  * The surfaces that can mount an iframe block host. Passed explicitly by each
- * call site rather than inferred, so that adding a new surface is a
- * type error until someone decides what it should do.
+ * `PageBlockHost` call site rather than inferred, so that adding a new PAGE
+ * host is a type error until someone decides what it should do.
+ *
+ * ⚠️ That type-error guarantee covers `PageBlockHost` ONLY. `IframeHost`
+ * hard-codes `surface: 'model-slot'` internally, so a new MODEL-slot host would
+ * inherit that literal silently rather than being forced to choose.
  */
 export type BlockHostSurface =
   /** `IframeHost` in a model-page slot (`model.sidebar_top`, …). */
@@ -89,7 +93,20 @@ export const BLOCK_INIT_FRAGMENT_DENYLIST: ReadonlySet<string> = new Set<string>
  *   3. Otherwise, the block must be explicitly allowlisted.
  * Anything unrecognised falls through to `false`.
  *
- * 🔴 WHY `dev-tunnel` IS REFUSED BY CONSTRUCTION AND NOT BY OMISSION.
+ * 🔴 WHY `dev-tunnel` AND `review-preview` ARE REFUSED BY CONSTRUCTION.
+ *
+ * Both mount code that has NOT been reviewed, under an identity an allowlist
+ * cannot distinguish from the reviewed one:
+ *
+ *   - `review-preview` mints `page_<pubreq_…>` for a PENDING, UN-APPROVED
+ *     publish request (`publish-request.service.ts`), i.e. a moderator opening
+ *     the next unreviewed submission of an app — with a moderator's session, on
+ *     a surface every other layer treats as maximum-hazard. And on page-run
+ *     `slug === blockId`, so allowlisting a PUBLISHED app would necessarily
+ *     enable the fragment on the moderator's preview of that same app's next
+ *     unreviewed submission. The dev-tunnel argument transfers wholesale; there
+ *     is no version of it that stops at the tunnel.
+ *
  * `resolveDevPageBlockForAuthor` applies NO status filter at all — deliberately,
  * so an author can iterate on a draft. The repo says so itself in
  * `src/pages/api/v1/block-tokens/index.ts`: the SSR dev route "mounts an OWNED
@@ -116,8 +133,10 @@ export function blockInitFragmentEnabledWith(
 ): boolean {
   const { surface, blockId, slug } = args;
 
-  // (1) Unconditional: no allowlist entry can enable the dev tunnel.
-  if (surface === 'dev-tunnel') return false;
+  // (1) Unconditional: no allowlist entry can enable a surface that mounts
+  //     UNREVIEWED code. See the doc comment above for why identity-keying
+  //     cannot express this.
+  if (surface === 'dev-tunnel' || surface === 'review-preview') return false;
 
   // (2) Denylist beats everything below it.
   if (blockId && denylist.has(blockId)) return false;
