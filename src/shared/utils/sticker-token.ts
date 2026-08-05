@@ -75,7 +75,7 @@ export function parseStickerContent(content: string): StickerContentPart[] {
 
 export const STICKER_SIZE = {
   /** A line of nothing but sticker. */
-  jumbo: 64,
+  jumbo: 160,
   /** Sticker sitting alongside text, aligned to the line. */
   inline: 22,
   /** Reply quotes and list previews — a summary surface, never jumbo. */
@@ -93,6 +93,14 @@ export const STICKER_JUMBO_LIMIT = 6;
  */
 export const STICKER_MAX_ASPECT_RATIO = 2;
 
+/**
+ * The rendered width cap for a given sticker height. The aspect cap governs at
+ * inline sizes; at jumbo the sticker is boxed square instead, so a 2:1 sticker
+ * fits inside the box rather than doubling its footprint.
+ */
+export const stickerMaxWidth = (size: number) =>
+  Math.min(size * STICKER_MAX_ASPECT_RATIO, STICKER_SIZE.jumbo);
+
 export type StickerLine = { parts: StickerContentPart[]; jumbo: boolean };
 
 /**
@@ -107,6 +115,17 @@ export function parseStickerLines(content: string): StickerLine[] {
 
     return { parts, jumbo: textIsBlank && stickerCount > 0 && stickerCount <= STICKER_JUMBO_LIMIT };
   });
+}
+
+/** Content that is nothing but sticker, so chat can drop the message bubble. */
+export function isStickerOnlyContent(content: string) {
+  const lines = parseStickerLines(content);
+  return (
+    lines.some((line) => line.jumbo) &&
+    lines.every(
+      (line) => line.jumbo || line.parts.every((p) => p.type === 'text' && !p.value.trim())
+    )
+  );
 }
 
 export function parseStickerIds(content: string) {

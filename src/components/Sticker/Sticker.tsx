@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useStickerContext } from '~/components/Sticker/StickerProvider';
-import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 export function Sticker({
   cosmeticId,
@@ -37,7 +37,7 @@ export function Sticker({
       style={{
         height: size,
         width: 'auto',
-        maxWidth: size * STICKER_MAX_ASPECT_RATIO,
+        maxWidth: stickerMaxWidth(size),
         objectFit: 'contain',
       }}
     />
