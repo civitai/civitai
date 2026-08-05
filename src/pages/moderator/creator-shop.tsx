@@ -54,6 +54,7 @@ import {
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
+import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
@@ -785,6 +786,11 @@ function CreatorShopReviewPage() {
                         </Group>
                       )}
                     </ChecksCard>
+
+                    <HistoryCard
+                      history={selectedMeta.history}
+                      creator={selected.cosmetic.creator}
+                    />
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>

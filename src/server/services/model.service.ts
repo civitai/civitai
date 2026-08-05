@@ -147,6 +147,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
+import { stripMinorHashMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -1650,6 +1651,14 @@ export const getModelVersionsMicro = async ({
   });
 };
 
+// Mutations hand their updated row straight back to the caller, so the moderation-only
+// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
+// these rows feed many callers, and the keys are only ever read back through the
+// minor-hash service's own raw SQL.
+function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
+  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+}
+
 export const updateModelById = async ({
   id,
   data,
@@ -1689,7 +1698,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return model;
+  return withoutMinorHashMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -2138,11 +2147,62 @@ export async function applyModelFlagSideEffects({
 // fields the "Set as Minor" quick action locks against creator edits.
 export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
 
+export type ModelMinorActivity =
+  | 'setMinor'
+  | 'unsetMinor'
+  | 'setMinorAutoHash'
+  | 'rollbackMinorAutoHash';
+
+export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
+
+// Flagging minor overwrites nsfw/sfwOnly/gallerySettings.level and propagates
+// `minor` to every image, keeping no record of what was there before — so without
+// this the change is unrecoverable, whether a job or a moderator made it.
+// `source` is what lets a bulk rollback undo only the automated flags and leave
+// deliberate moderator decisions alone.
+// Idempotent via the WHERE guard: a re-flag can never clobber the original
+// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// the flag itself, so failures are logged rather than thrown.
+async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
+          'at', now(),
+          'source', ${source},
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+          'prevMinorImageIds', COALESCE((
+            SELECT jsonb_agg(i.id)
+            FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            JOIN "Image" i ON i."postId" = p.id
+            WHERE mv."modelId" = m.id AND i.minor
+          ), '[]'::jsonb)
+        )
+      )
+      WHERE m.id = ${modelId}
+        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'minor-flag-snapshot',
+      message: error instanceof Error ? error.message : String(error),
+      modelId,
+    }).catch(() => null);
+  }
+}
+
 export async function setModelMinor({
   id,
   minor,
   userId,
-}: SetModelMinorInput & { userId: number }) {
+  activity,
+}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2155,6 +2215,11 @@ export async function setModelMinor({
     },
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Must run before the update below and before side effects propagate `minor`
+  // to images, or the snapshot records post-flag state.
+  if (minor)
+    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2200,7 +2265,7 @@ export async function setModelMinor({
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: minor ? 'setMinor' : 'unsetMinor',
+    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2373,7 +2438,7 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
-    return { ...result, meta: modelMeta };
+    return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -2515,7 +2580,7 @@ export const upsertModel = async (
     // errors); the only post-commit write left in this branch.
     await bustPublicModelResponseCache(result.id);
 
-    return result;
+    return withoutMinorHashMeta(result);
   }
 };
 
@@ -4419,7 +4484,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    return result;
+    return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
       where: { id },
@@ -4844,7 +4909,7 @@ export const getTrainingModelsForModerators = async ({
   const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
 
   return {
-    items,
+    items: items.map(withoutMinorHashMeta),
     nextCursor,
   };
 };

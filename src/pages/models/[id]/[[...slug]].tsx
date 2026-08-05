@@ -96,6 +96,7 @@ import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockMo
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
+import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -1419,6 +1420,7 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
