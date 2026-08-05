@@ -902,7 +902,7 @@ enum ContentType {
 model Model {
   id                  Int             @id @default(autoincrement())
   name                String          @db.Citext
-  description         String?
+  description         String 
   type                ModelType
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
@@ -921,7 +921,7 @@ model Model {
   deletedAt           DateTime?
   deletedBy           Int?
   deletedByUser       User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
-  checkpointType      CheckpointType?
+  checkpointType      CheckpointType? @unique
   uploadType          ModelUploadType @default(Created)
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
