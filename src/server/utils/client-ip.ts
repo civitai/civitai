@@ -1,11 +1,21 @@
 import { isIP } from 'node:net';
 
 /**
- * Client-IP derivation for security controls (abuse blocklists, per-client
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ MERGE NOTE — this module is created concurrently by two PRs.            │
+ * │ #3658 adds `resolveClientIp` here (moved out of public-api-rate-limit); │
+ * │ this PR adds `getTrustedClientIp` + `isIpAddress`. They are DIFFERENT   │
+ * │ predicates for DIFFERENT surfaces and both are wanted — resolve the     │
+ * │ add/add conflict by KEEPING BOTH, not by picking one. See               │
+ * │ "Choosing between the two" below.                                      │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * Client-IP derivation for ENFORCEMENT controls (abuse blocklists, per-client
  * quotas).
  *
  * A control that keys on a client IP is only as strong as the provenance of
- * that IP. This module derives it from the two sources the origin can attest:
+ * that IP. This predicate derives it from the two sources the origin can
+ * attest:
  *
  *  1. The Cloudflare edge — `cf-connecting-ip`, accepted ONLY when `cf-ray` is
  *     also present. Cloudflare stamps `cf-ray` on every request it proxies and
@@ -22,13 +32,34 @@ import { isIP } from 'node:net';
  * The trade this makes deliberately: traffic that reaches the origin without
  * edge transit is attributed to the connection peer (in this deployment, the
  * load balancer) rather than to a self-declared address. That collapses such
- * traffic into one bucket, which is the correct direction to fail for an
- * enforcement control. Full rationale and threat model live in the internal
- * infra security report (same one PR #3627's comment points at); they are
- * deliberately not restated in this public repo.
+ * traffic into one bucket.
  *
- * This is the SINGLE predicate for that derivation. Do not re-derive a client
- * IP inline at a call site; import from here.
+ * CHOOSING BETWEEN THE TWO PREDICATES IN THIS FILE:
+ *
+ *   `resolveClientIp`     — for RATE LIMITERS spanning many procedures. Keeps a
+ *                           header-derived fallback so that non-edge callers
+ *                           (internal services, dev) keep distinct buckets
+ *                           rather than collapsing together and 429-ing each
+ *                           other. Returns an opaque label, NOT a validated IP.
+ *
+ *   `getTrustedClientIp`  — for ENFORCEMENT controls: a blocklist, or a quota
+ *                           that is the control rather than a convenience.
+ *                           Fail-closed; the bucket-collapse above is accepted
+ *                           precisely because over-attributing is the safe
+ *                           direction when the alternative is a control that
+ *                           can be re-pointed. Always a validated address or
+ *                           `null`.
+ *
+ * The distinction is the SURFACE, not a disagreement about which is better. A
+ * limiter guarding ~33 procedures and a blocklist guarding four download routes
+ * fail in opposite directions, so they want opposite defaults.
+ *
+ * Full rationale and threat model live in the internal infra security report
+ * (the same one PR #3627's comment points at); they are deliberately not
+ * restated in this public repo.
+ *
+ * Whichever you pick: import it. Do not re-derive a client IP inline at a call
+ * site.
  */
 
 type IpSourceRequest = {
