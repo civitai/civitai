@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isPreview, isProd } from '~/env/other';
+import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
+import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
@@ -155,13 +156,20 @@ export function recordStickerUsage({
   // must not be "fixed" by logging uncharged placements.
   if (!track || !charged.size) return;
 
-  // Preview deploys share CLICKHOUSE_TRACKER_URL with production but run against
-  // the DEV database, so their `entityId`s are ids from a different database —
-  // they'd land in the prod table pointing at unrelated comments, with no column
-  // to tell them apart afterwards. Skipping the emit is deliberate: consumption
-  // still happens, so stickers are fully testable in preview; only the history
-  // is withheld. `isProd` alone is not enough — a preview IS NODE_ENV=production.
-  if (!isProd || isPreview) return;
+  // A deployment that shares the analytics sink with production but runs against a
+  // NON-PRODUCTION database emits `entityId`s from a different database — they'd land
+  // in the shared table pointing at unrelated comments, with no column to tell them
+  // apart afterwards. Skipping the emit is deliberate: consumption still happens, so
+  // stickers stay fully testable there; only the history is withheld. `isProd` alone
+  // is not enough — those deployments are also NODE_ENV=production.
+  //
+  // 🔴 THE TEST IS THE DATABASE, NOT THE ENVIRONMENT. This used to read `isPreview`,
+  // which is a claim about environment identity and NOT about which database is behind
+  // it. A non-production deployment that runs against the PRODUCTION database was
+  // therefore dropping REAL usage history — silently, while still charging for the
+  // placements. See src/env/database-target.ts for why the two cannot be conflated.
+  warnIfDatabaseEnvironmentUnset();
+  if (!isProd || isNonProductionDatabase()) return;
 
   const rows: StickerUsageRow[] = [];
   for (const [cosmeticId, count] of charged)
