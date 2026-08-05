@@ -1380,6 +1380,9 @@ model DownloadHistory {
   @@index([userId, downloadAt])
 }
 
+/// Append-only moderator action trail. Deliberately NOT unique on (activity, entityType, entityId): the
+/// same action on the same entity happening twice is two events, and collapsing them loses the history the
+/// "who did what, when" panels are built on.
 model ModActivity {
   id         Int      @id @default(autoincrement())
   userId     Int?
@@ -1388,7 +1391,8 @@ model ModActivity {
   entityId   Int?
   createdAt  DateTime @default(now())
 
-  @@unique([activity, entityType, entityId])
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
   @@index([createdAt])
 }
 

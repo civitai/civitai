@@ -13,7 +13,7 @@
  *                  via existing addTagVotes / removeTagVotes services.
  *   setNsfwLevel - { items: [{ imageId, nsfwLevel }] }
  *                  Composite write per item: Image update (with nsfwLevelLocked=true)
- *                  + ModActivity upsert ('setNsfwLevel'). Replaces the old single-row
+ *                  + ModActivity insert ('setNsfwLevel'). Replaces the old single-row
  *                  /api/mod/set-image-nsfw-level endpoint with a bulk-friendly path.
  *                  Note: the deprecated `research_ratings` insert from the original
  *                  Retool query is intentionally dropped (Knights of New Order
