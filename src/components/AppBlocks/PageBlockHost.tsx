@@ -859,6 +859,23 @@ export function PageBlockHost({
     return off;
   }, [token, expiresAt, grantedScopes, send, onMessage]);
 
+  // INVERTED HANDSHAKE: the block announces that its message listener is
+  // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
+  // waiting out the current retry tick.
+  //
+  // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
+  // post on start(), the retry interval and the readiness timeout are all
+  // unchanged, so a block that never announces (older SDK) behaves exactly as
+  // today and a block that announces but never acks still times out. The retry
+  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
+  // so it is still doing all of the work.
+  useEffect(() => {
+    const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      controllerRef.current?.notifyHello();
+    });
+    return off;
+  }, [onMessage]);
+
   // BLOCK_READY → ready.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', () => {

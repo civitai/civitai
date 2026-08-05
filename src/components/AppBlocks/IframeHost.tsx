@@ -885,6 +885,32 @@ export function IframeHost({
     return () => clearTimeout(t);
   }, [status, token]);
 
+  // INVERTED HANDSHAKE: the block announces that its message listener is
+  // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response, instead of
+  // relying purely on the blind retry tick to eventually land after the
+  // listener exists.
+  //
+  // 🔴 PURELY ADDITIVE. `IframeInitController` still posts init immediately on
+  // start() and re-posts every INIT_RETRY_INTERVAL_MS until BLOCK_READY, and
+  // still arms the readiness timeout. A block on an older SDK never sends this
+  // message and is served exactly as it is today; a block that announces but
+  // never acks still times out. `notifyHello()` is a once-per-controller
+  // accelerator (see its doc comment), and a hello arriving before the
+  // controller exists is a no-op because `start()` posts init immediately
+  // anyway.
+  //
+  // 🔴 THE RETRY LOOP IS NOT REMOVED AND MUST NOT BE. As of 2026-08-05 NO
+  // deployed block sends BLOCK_HELLO (a full enumeration of the 20 live bundles
+  // found `BLOCK_HELLO` x0) because the SDK half is merged but unpublished, so
+  // the retry loop is currently doing 100% of the work. It stays as the bounded
+  // fallback for every block that never announces.
+  useEffect(() => {
+    const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      controllerRef.current?.notifyHello();
+    });
+    return off;
+  }, [onMessage]);
+
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', (raw) => {
       // Validate the shape — payload comes from cross-origin iframe code and
