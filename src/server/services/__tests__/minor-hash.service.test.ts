@@ -737,11 +737,16 @@ describe('getAutoFlaggedMinorModels', () => {
 
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain(`now() - make_interval(days =>`);
     expect(text).toContain(`->>'at')::timestamptz >`);
     expect(text).toContain('AND NOT (m.meta ? ');
     expect(values).toContain(MINOR_HASH_ACCEPTED_KEY);
-    expect(values).toContain(AUTO_FLAG_REVIEW_WINDOW_DAYS);
+    // The day count must be inlined: bound as a parameter it arrives as int8 and
+    // make_interval only takes int4, so the query fails to resolve the function.
+    const rendered = values
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain(`make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})`);
+    expect(values).not.toContain(AUTO_FLAG_REVIEW_WINDOW_DAYS);
   });
 });
 

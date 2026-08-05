@@ -51,6 +51,13 @@ export const MINOR_HASH_ACCEPTED_KEY = 'minorHashAccepted';
 // added 290 rows.
 export const AUTO_FLAG_REVIEW_WINDOW_DAYS = 30;
 
+// Inlined as a literal: Prisma binds a JS number as int8 and `make_interval`
+// only takes int4, so an interpolated parameter fails to resolve the function
+// (42883) and every query using it 500s.
+const reviewWindowCutoff = Prisma.sql`now() - make_interval(days => ${Prisma.raw(
+  String(AUTO_FLAG_REVIEW_WINDOW_DAYS)
+)})`;
+
 // A rollback is a human deciding the model is NOT minor, and the rollback deletes
 // the snapshot — so without a separate record of it the model drops straight back
 // into the candidate set and the next unattended run flags it again. Verified on
@@ -553,8 +560,7 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
       AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
       AND NOT ${humanConfirmedPredicate}
       AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
-      AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz >
-          now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
+      AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
     ORDER BY (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz DESC, m.id DESC
     LIMIT ${limit + 1}
   `;
@@ -982,8 +988,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
         AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
         AND m.minor
-        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <=
-            now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
+        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <= ${reviewWindowCutoff}
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
@@ -1002,8 +1007,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
         AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
         AND m.minor
-        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <=
-            now() - make_interval(days => ${AUTO_FLAG_REVIEW_WINDOW_DAYS})
+        AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz <= ${reviewWindowCutoff}
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
