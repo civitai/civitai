@@ -24,6 +24,10 @@ const h = vi.hoisted(() => ({
   queryWithTimeout: vi.fn(),
   prismaQueryRaw: vi.fn(),
   checkQueryScope: vi.fn(),
+  // Captured from the mock factory so `beforeEach` can rebuild the pass-through
+  // after draining the spy. Typed loosely because it is assigned inside the
+  // hoisted factory, before the module type is in scope.
+  actualCheckQueryScope: undefined as undefined | ((sql: string) => unknown),
 }));
 
 // Narrow overrides that keep every other export real. A hand-written
@@ -47,14 +51,14 @@ vi.mock('~/server/db/client', async (importOriginal) => ({
 }));
 
 // A pass-through spy, NOT a stub: it delegates to the real scope check and
-// exists only to record the text that check was handed. The tool rewrites the
-// statement before executing it, and the scope check has to keep reading the
-// model's ORIGINAL SQL — otherwise it audits our own wrapper. That the
-// delegation is real is not asserted by inspection: the "refuses a relation
-// outside the allowed set" case below only passes if the genuine check ran.
+// exists only to record WHICH text each call was handed — the tool validates
+// the model's original and the rewritten statement, and those are different
+// strings. That the delegation is real is not asserted by inspection: the
+// "refuses a relation outside the allowed set" case below only passes if the
+// genuine check ran.
 vi.mock('~/server/freshdesk-agent/freshdesk-query-scope', async (importOriginal) => {
   const actual = await importOriginal<typeof QueryScopeModule>();
-  h.checkQueryScope.mockImplementation(actual.checkQueryScope);
+  h.actualCheckQueryScope = actual.checkQueryScope as (sql: string) => unknown;
   return { ...actual, checkQueryScope: h.checkQueryScope };
 });
 
@@ -84,6 +88,15 @@ const rowsOfLength = (n: number) =>
 describe('query_database', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // `clearAllMocks` resets recorded calls but does NOT drain a
+    // `mockReturnValueOnce` queue. One test below queues two once-values to
+    // reach an internal guard; if a change makes the code consume only one of
+    // them, the leftover leaks into the NEXT test and attributes a failure to
+    // the wrong cause — observed while mutation-testing this file. `mockReset`
+    // empties the queue, so the pass-through has to be reinstalled here rather
+    // than only in the mock factory.
+    h.checkQueryScope.mockReset();
+    h.checkQueryScope.mockImplementation(h.actualCheckQueryScope!);
   });
 
   it('runs an allowed query through the read-only / statement-timeout helper', async () => {
