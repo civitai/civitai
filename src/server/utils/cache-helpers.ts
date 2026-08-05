@@ -3,7 +3,7 @@ import { chunk } from 'lodash-es';
 // `prefixCacheKey` comes from the package rather than the `~/server/redis/client` shim on
 // purpose: it is a pure helper with no client state, and importing it through the shim would
 // force every suite that mocks the shim to add it to its mock factory.
-import { createCacheBuilders, prefixCacheKey } from '@civitai/redis';
+import { CACHE_KEY_PREFIX, createCacheBuilders, prefixCacheKey } from '@civitai/redis';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -26,12 +26,64 @@ export type CacheTarget = 'main' | 'sys';
 function getCacheClient(target: CacheTarget = 'main'): any {
   return target === 'sys' ? sysRedis : redis;
 }
+
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('cache-helpers', 'cyan');
+
+/**
+ * The prefix every key of `target`'s keyspace carries on this deployment — `''` in production.
+ *
+ * 🔴 THE ASYMMETRY IS DELIBERATE: `'sys'` is ALWAYS `''`, even on a namespaced deployment.
+ * Environment namespacing is CACHE-ONLY (see packages/civitai-redis/src/cache-key-prefix.ts): the
+ * main cache is one instance shared by every deployment, so its keys must be separated by a
+ * prefix. The system keyspace is a SEPARATE per-deployment instance seeded by replication, so its
+ * keys arrive UNPREFIXED by construction and `REDIS_SYS_KEYS` is never run through
+ * `applyCacheKeyPrefix`. Prefixing a sys pattern would therefore match nothing at all. Do not
+ * "fix" this into consistency.
+ */
+function cacheNamespacePrefix(target: CacheTarget): string {
+  return target === 'sys' ? '' : CACHE_KEY_PREFIX;
+}
+
+/**
+ * Scope a caller-supplied cache-key GLOB (or exact key) to this deployment's cache namespace.
+ *
+ * 🔴 WHY THIS EXISTS. The admin cache-clear endpoint takes a glob from its caller and hands it to
+ * `clearCacheByPattern*`, which SCAN the shared cache instance with it. That glob is written by
+ * hand against the PRODUCTION key shape (`packed:caches:*`). Run from a namespaced deployment,
+ * an unscoped glob matches production's keys and NOTHING of the caller's own (whose keys live at
+ * `<namespace>:packed:caches:*`) — i.e. the one environment it can clear is the one it must never
+ * touch. Scoping the glob inverts that: it can only ever address its own namespace.
+ *
+ * Identity in production (empty prefix) and identity for `target: 'sys'` — see
+ * `cacheNamespacePrefix`.
+ *
+ * 🔴 Call this ONLY on a pattern that was built from scratch by a caller. A pattern derived from
+ * `REDIS_KEYS` already carries the prefix from the key table itself, and scoping it again yields
+ * `<namespace>:<namespace>:…` — the same rule that governs `prefixCacheKey`.
+ */
+export function scopeCachePatternToNamespace(pattern: string, target: CacheTarget = 'main') {
+  const prefix = cacheNamespacePrefix(target);
+  return prefix ? `${prefix}${pattern}` : pattern;
+}
+
+/**
+ * Containment invariant for the clear helpers: on a namespaced deployment EVERY key of the main
+ * cache carries the namespace prefix — the key table is prefixed wholesale by
+ * `applyCacheKeyPrefix`, and on-the-fly keys go through `prefixCacheKey`. So a key without the
+ * prefix belongs to another environment (production, in the damaging case) and must never be
+ * deleted from here, whatever pattern reached this function.
+ *
+ * Always true in production and for `target: 'sys'`, where the prefix is empty.
+ */
+function isInCacheNamespace(key: string, target: CacheTarget) {
+  const prefix = cacheNamespacePrefix(target);
+  return !prefix || key.startsWith(prefix);
+}
 
 type cachedQueryOptions = {
   ttl: number;
@@ -382,6 +434,13 @@ export async function clearCacheByPattern(
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
+    // Namespace containment (see `isInCacheNamespace`). No scan happens on this path, so this is
+    // the only thing standing between an out-of-namespace exact key and a `del` of another
+    // environment's entry. No-op in production and for `target: 'sys'`.
+    if (!isInCacheNamespace(pattern, target)) {
+      log('Skipping out-of-namespace key:', pattern, 'target:', target);
+      return cleared;
+    }
     await client.del(pattern);
     cleared.push(pattern);
     onProgress?.(cleared.length);
@@ -393,7 +452,12 @@ export async function clearCacheByPattern(
   const stream = client.scanIterator({ MATCH: pattern, COUNT: 10000 });
 
   for await (const keys of stream) {
-    const newKeys = (keys as RedisKeyTemplates[]).filter((key) => !cleared.includes(key));
+    // Namespace containment. A scoped pattern already confines the SCAN server-side; this filter
+    // is what makes the confinement structural rather than a property of the call site, so a
+    // caller that forgets to scope its glob clears NOTHING instead of another environment's keys.
+    const newKeys = (keys as RedisKeyTemplates[]).filter(
+      (key) => isInCacheNamespace(key, target) && !cleared.includes(key)
+    );
     log('Total keys:', cleared.length, 'Adding:', newKeys.length);
     if (newKeys.length === 0) continue;
 
@@ -446,13 +510,26 @@ export async function clearCacheByPatterns(
 
   // Fast path for exact keys — no scan needed.
   for (const p of exact) {
+    // Namespace containment (see `isInCacheNamespace`) — same reasoning as the exact-key path of
+    // `clearCacheByPattern`: nothing else guards a bare `del` here.
+    if (!isInCacheNamespace(p.pattern, target)) {
+      log('Skipping out-of-namespace key:', p.pattern, 'target:', target);
+      continue;
+    }
     await client.del(p.pattern as RedisKeyTemplates);
     p.cleared.push(p.pattern);
   }
 
   if (globbed.length > 0) {
     log('Scanning cache for', globbed.length, 'patterns in a single pass, target:', target);
-    const stream = client.scanIterator({ MATCH: '*', COUNT: 10000 });
+    // 🔴 This path enumerates the keyspace itself and regex-tests each key, so scoping the
+    // caller's patterns is NOT enough on its own — with `MATCH: '*'` it would walk every other
+    // environment's keys (production's included) and rely entirely on the regexes to spare them.
+    // Confining the SCAN to the namespace makes that structural: on a namespaced deployment a
+    // foreign key is never even enumerated, so no pattern — scoped, unscoped or malformed — can
+    // reach one. `'*'` in production and for `target: 'sys'`, i.e. byte-identical to before.
+    const scanPrefix = cacheNamespacePrefix(target);
+    const stream = client.scanIterator({ MATCH: `${scanPrefix}*`, COUNT: 10000 });
 
     for await (const keys of stream) {
       const toDelete: RedisKeyTemplates[] = [];
