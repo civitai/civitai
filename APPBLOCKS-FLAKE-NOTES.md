@@ -305,6 +305,98 @@ Mutation checks required before shipping:
 - `loaderCeilingMs={200}` in the test was temporarily edited to `{20}` for variant B —
   **must be restored** (or replaced wholesale by the fix).
 
+## 7b. SESSION 2 — sibling sweep for the self-deleting-state CLASS (final)
+
+Two sweeps, because the first one (grep for `CeilingMs`) only finds the *ceiling-prop*
+spelling of the hazard and would have missed the real siblings.
+
+**Sweep 1 — ceiling props:** hits in `AppsSubmitEditView.browser.test.tsx` only. Lines 160
+and 239/255 await absorbing states (alert / form stub) and are safe.
+
+**Sweep 2 — the general shape** (assert a transient-by-nature state — loading / spinner /
+pending / skeleton — right after a `.click()`), across all 125 `*.browser.test.tsx`:
+4 further instances, all `click Retry` → `await expect.element(app-page-loading)`:
+- `src/components/AppBlocks/PageBlockHost.browser.test.tsx:616, 641, 773`
+- `src/components/AppBlocks/PageBlockHostAutoRetry.browser.test.tsx:728`
+
+🔴 **These are the same class but NOT the same risk, and the discriminating number is the
+MARGIN, not the shape.** Their state is bounded by `BLOCK_READY_TIMEOUT_MS = 10_000`
+(`src/components/AppBlocks/pageBlockHostLogic.ts:571`) — a **~128× margin** over the
+measured 40–78ms first poll — versus AppsSubmitEditView's 200ms, a **~2.6× margin**, which
+is the one that actually lost. **Deliberately NOT changed**: no evidence of failure, and
+touching them is speculative churn. If one ever does flake, this is the first place to look
+and the fix is the same (make the awaited state absorbing).
+
+## 7c. SESSION 2 — MySubmissionsList status: DIFFERENT CLASS, still unreproduced
+
+`ownerListingModals.tsx:148-188` — the history modal renders `items` from a query the test
+mocks to return synchronously (`isLoading: false`), and **nothing removes the rendered
+entries**. So the awaited `getByText('Reported for policy')` is an **ABSORBING** state and
+the H1 mechanism *cannot* apply. Whatever breaks it is a different defect.
+
+Also corrected: the probe's `apps-onsite-history-{list,empty,entry}` testids DO exist — they
+are built from a `${testIdPrefix}` template in `ownerListingModals.tsx`, so a literal grep in
+`MySubmissionsList.tsx` finds nothing and wrongly suggests the probe is inert.
+
+🔴 **RED-HUNT RESULT: 14 runs, 64 synthetic burners, load 152–186 → 14/14 GREEN, 0 reds.**
+Wall 38–88s per run. **NOT REPRODUCED**, so the discriminator below was never read and
+PROBE-B never fired. No fix shipped for it; the probe has been reverted out of the tree
+(its diff survives in Appendix B). This matches session 1's result — it has now resisted
+reproduction across two sessions. **Next step is CI-side evidence, not more local load:**
+capture the task-pod log for the next `MySubmissionsList` failure while it still exists
+(see §7d — two of three recent failures were unattributable purely because the pods aged out).
+
+Original refutation criteria, retained for whoever catches it: **Refutation criteria for
+"it is the same class": any red whose failing test wall time is ~15.0s AND whose PROBE-B
+shows the modal open (`list>=1`) would mean the content appeared and left — i.e. absorbing
+is wrong.** A red with `historyBtn=1, list=0, empty=0` means the modal never opened (the
+click path), which is the H2a branch and a genuinely different fix.
+
+## 7d. 🔴 SESSION 2 — THE GATE HAS AT LEAST THREE DISTINCT DEFECTS, NOT ONE
+
+Measured the gate's real health instead of assuming: **3 fails / 19 recent PRs carrying a
+`preview / component-tests` check (~16%)**. That is a LOWER bound on the per-run rate —
+it reads each PR's LATEST run, so a PR retried until green counts as a pass.
+
+Attribution (CI task-pod logs; only the most recent failure's pod still existed — the other
+two had been garbage-collected, so this is **1 of 3 attributed, not a survey**):
+
+**PR #3636 — a THIRD failing test, previously unknown to this investigation:**
+`src/components/Apps/AppListingsMarketplaceBody.browser.test.tsx:221`
+*"🔴 the search box does NOT write the URL per keystroke — only the debounced value"*
+```
+AssertionError: expected [ { query: 'mat' } ] to have a length of +0 but got 1
+```
+Wall time **1521ms**, NOT ~15s — so the "~15.0s = unwinnable matcher race" triage heuristic
+correctly classifies this as a *different* failure shape.
+
+🔴 **But it is the SAME ROOT-CAUSE FAMILY, inverted.** My test asserted a state was *still
+present* (racing a deletion). This one asserts a state is *not yet present* (racing an
+arrival): line 221 asserts the 300ms debounce has NOT elapsed yet. On a slow box the first
+`fill()` alone exceeds 300ms, the debounce fires, a write lands, and the assertion fails.
+**Both are assertions whose correctness depends on wall-clock timing against a component
+timer.**
+
+🔴 **And it has ALREADY been "fixed" once by widening the margin** — see its own comment at
+lines 206-215: six sequential `fill()`s (~396ms against a 300ms debounce) were reduced to
+two "well inside the window on any machine". That is the knob, not the cause, and CI just
+proved "any machine" false. This is the strongest available evidence for the no-papering-over
+rule: the widening bought time and lost anyway.
+
+**Deliberately NOT fixed in this PR**, because a fix for it cannot be verified to the same
+bar (N>=10 matrix + mutation) in the remaining budget, and shipping an unverified fix for a
+race is exactly what the brief forbids. Diagnosis for the immediate follow-up:
+- The timing-independent intent is the END state: after the debounce settles there is
+  **exactly one** write carrying the **final** value — already asserted at lines 224-228.
+- Line 221 is the racing assertion. Deleting it keeps the per-keystroke mutation killed:
+  straight-through wiring produces TWO writes, so `toHaveLength(1)` never passes and the
+  `vi.waitFor` times out red.
+- ⚠️ Before shipping that, close one vacuity: `toHaveLength(1)` can be satisfied
+  *transiently* on the way to 2, so a "debounce fires twice" bug could slip through. Re-assert
+  the count after the waitFor settles, or use fake timers to drive the debounce deterministically.
+- Verify with the same instrument as this PR: shrink the debounce (accelerated control),
+  N>=10 each side, plus a mutation that wires the input straight through.
+
 ## 8. APPENDIX A — proposed `CLAUDE.md` addition (NOT applied; awaiting review)
 
 Reverted from the working tree pending a decision. Recorded here so it survives.
