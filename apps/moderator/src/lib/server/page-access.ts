@@ -40,8 +40,20 @@ export async function setPageRoles(input: {
   userId: number;
 }): Promise<void> {
   await setPageAccessRoles(dbWrite, { app: APP, ...input });
-  memo = await publish(await getPageAccessGrants(dbWrite, APP));
-  memoUntil = Date.now() + MEMO_TTL_MS;
+
+  // Postgres is the source of truth and the rows are already committed, so everything below is
+  // best-effort: a cache failure must not report the save as failed. `memo` is set before the Redis
+  // write so this server is correct even if Redis is down, and the memo is expired on failure so the
+  // next request re-reads rather than serving a map we are no longer sure about.
+  try {
+    const grants = await getPageAccessGrants(dbWrite, APP);
+    memo = grants;
+    memoUntil = Date.now() + MEMO_TTL_MS;
+    await publish(grants);
+  } catch (e) {
+    memoUntil = 0;
+    console.error('[page-access] saved, but refreshing the cache failed', e);
+  }
 }
 
 async function publish(grants: PageAccessGrants): Promise<PageAccessGrants> {
