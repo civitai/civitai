@@ -53,6 +53,10 @@ export const CosmeticPackPreviewModal = ({
   const accountTypes: BuzzSpendType[] =
     !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
   const unavailable = (pack?.unavailableCount ?? 0) > 0;
+  // The server refuses a purchase that costs nothing — a free pack is
+  // repeatable, and each one stacks another consumable balance. Say so here
+  // rather than letting the button fail.
+  const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
 
   const handlePurchase = async () => {
     if (!pack) return;
@@ -116,8 +120,13 @@ export const CosmeticPackPreviewModal = ({
                 {acceptsBlue && (
                   <PayWithSelector value={payWith} onChange={setPayWith} domainType={domainType} />
                 )}
+                {nothingLeftToBuy && (
+                  <Text size="xs" c="dimmed">
+                    You already own everything in this pack.
+                  </Text>
+                )}
                 <BuzzTransactionButton
-                  disabled={purchasingShopItem || unavailable}
+                  disabled={purchasingShopItem || unavailable || nothingLeftToBuy}
                   loading={purchasingShopItem}
                   buzzAmount={pack.amountDue}
                   radius="xl"
