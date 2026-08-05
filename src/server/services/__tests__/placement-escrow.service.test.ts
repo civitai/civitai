@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+// Stubbed globally in src/__tests__/setup.ts.
+import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -1246,9 +1248,10 @@ describe('a leg that can never succeed', () => {
 });
 
 describe('a settlement with no funded escrow behind it', () => {
-  // It plans nothing, so the sweep would otherwise count it as resumed on every
-  // run forever — the same false-healthy signal as a counter that measures work
-  // attempted rather than work landed. It is terminal, not resumable.
+  // Reached here by forcing the id into the loop, since the candidate query that
+  // would now exclude it is SQL and this harness has no database. The branch is
+  // still worth holding: it is the canary for a funded settlement that produced
+  // no legs, which should be unreachable.
   it('is reported as unfunded rather than counted as resumed', async () => {
     givenPlacement({ status: 'approved', resolvedAt: new Date(0) });
     db.legs.set('1:holdFee', {
@@ -1281,6 +1284,52 @@ describe('a settlement with no funded escrow behind it', () => {
     const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
 
     expect(swept).toMatchObject({ planned: 1, unfunded: 0 });
+  });
+});
+
+/**
+ * The exclusion is a SQL predicate and this harness has no database, so these
+ * assert the query the sweep sends rather than the rows it gets back. Stated
+ * plainly because that is weaker provenance than the tests around them: they
+ * prove the predicate is asked for, not that Postgres answers it as intended.
+ *
+ * They are still the assertions that matter here — the predicate's absence is
+ * the whole defect, and both fail when it is removed.
+ */
+describe('the unplanned sweep only considers settlements it could actually finish', () => {
+  const rawCalls = () => queryRaw.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][];
+  const sqlOf = (call: [TemplateStringsArray, ...unknown[]]) => call[0].join(' ? ');
+
+  it('requires a receipted hold, so an unfunded settlement never enters the batch', async () => {
+    await sweepUnplannedSettlements({ olderThanMinutes: 0 });
+
+    const [candidates] = rawCalls();
+    // The hold kinds reach the query as a parameter, which a removed predicate
+    // cannot leave behind — unlike prose in the SQL, which a rewrite could keep.
+    expect(candidates.slice(1)).toContainEqual(['holdFee', 'holdPrincipal']);
+    expect(sqlOf(candidates)).toMatch(/EXISTS[\s\S]*"transactionId" IS NOT NULL/);
+  });
+
+  it('counts the excluded population into the gauge rather than dropping it', async () => {
+    vi.mocked(placementUnfundedSettlementsGauge.set).mockClear();
+    // The candidate query first, then the count. Distinct values, so a sweep
+    // reading the wrong result cannot pass by coincidence.
+    queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ count: 7 }] as never);
+
+    const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
+
+    expect(swept.unfundedOutstanding).toBe(7);
+    expect(vi.mocked(placementUnfundedSettlementsGauge.set)).toHaveBeenCalledWith(7);
+  });
+
+  it('reports zero rather than undefined when the count comes back empty', async () => {
+    vi.mocked(placementUnfundedSettlementsGauge.set).mockClear();
+    queryRaw.mockResolvedValue([]);
+
+    const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
+
+    expect(swept.unfundedOutstanding).toBe(0);
+    expect(vi.mocked(placementUnfundedSettlementsGauge.set)).toHaveBeenCalledWith(0);
   });
 });
 

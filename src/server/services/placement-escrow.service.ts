@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { placementExhaustedLegsGauge } from '~/server/prom/client';
+import {
+  placementExhaustedLegsGauge,
+  placementUnfundedSettlementsGauge,
+} from '~/server/prom/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   createBuzzTransaction,
@@ -151,6 +154,9 @@ export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
   });
 
 const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
+
+/** Where the unfunded-settlement gauge stops counting. See the gauge's own note. */
+const UNFUNDED_GAUGE_CEILING = 1_000;
 const PAYOUT_KINDS = [
   'toOwner',
   'toSeller',
@@ -819,12 +825,47 @@ export async function sweepUnplannedSettlements({
     SELECT p.id FROM "Placement" p
     WHERE p.status <> 'pending'
       AND p."resolvedAt" < ${before}
+      -- Only settlements that *should* have a plan. A placement whose escrow
+      -- never landed plans nothing and never will, so without this it matches
+      -- forever and consumes a slot in every bounded batch — the starvation
+      -- shape this sweep exists to be the recovery from. That population is
+      -- terminal rather than silent: it is counted into the gauge below.
+      AND EXISTS (
+        SELECT 1 FROM "PlacementTransaction" h
+        WHERE h."placementId" = p.id
+          AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+          AND h."transactionId" IS NOT NULL
+      )
       AND NOT EXISTS (
         SELECT 1 FROM "PlacementTransaction" t
         WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
       )
     LIMIT ${limit}
   `;
+
+  // Bounded, so the count cannot become a sequential scan of every settled
+  // placement as the table grows. It saturates rather than lying upward, and a
+  // gauge pinned at its ceiling is itself the signal that a human is overdue.
+  const unfundedRows = await dbWrite.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM (
+      SELECT 1 FROM "Placement" p
+      WHERE p.status <> 'pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM "PlacementTransaction" t
+          WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "PlacementTransaction" h
+          WHERE h."placementId" = p.id
+            AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+            AND h."transactionId" IS NOT NULL
+        )
+      LIMIT ${UNFUNDED_GAUGE_CEILING}
+    ) capped
+  `;
+
+  const unfundedOutstanding = unfundedRows[0]?.count ?? 0;
+  placementUnfundedSettlementsGauge.set(unfundedOutstanding);
 
   let planned = 0;
   let unfunded = 0;
@@ -835,10 +876,10 @@ export async function sweepUnplannedSettlements({
     try {
       await payOutPlacement(placement);
 
-      // A settlement whose holds never landed plans nothing, so this loop would
-      // otherwise count it as resumed on every run forever — the same
-      // false-healthy signal as a sweep reporting the work it attempted rather
-      // than the work that landed. It is terminal, not resumable.
+      // Counts what landed, not what was attempted. The query above already
+      // excludes settlements with no escrow behind them, so reaching this branch
+      // means a funded placement produced no legs — which should be impossible
+      // and is worth a page rather than a silent increment.
       const planExists = await dbWrite.placementTransaction.count({
         where: { placementId: id, kind: { in: [...PAYOUT_KINDS] } },
       });
@@ -864,5 +905,5 @@ export async function sweepUnplannedSettlements({
     }
   }
 
-  return { unplanned: rows.length, planned, unfunded };
+  return { unplanned: rows.length, planned, unfunded, unfundedOutstanding };
 }

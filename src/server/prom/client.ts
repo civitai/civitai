@@ -282,3 +282,27 @@ export const placementExhaustedLegsGauge = registerInstrumentationMetric(
       registers: [instrumentationRegistry],
     })
 );
+
+/**
+ * Settled placements with no payout plan and no escrow behind them.
+ *
+ * These are terminal rather than recoverable, so `sweepUnplannedSettlements`
+ * excludes them from its batch — otherwise they match its query forever and,
+ * past the batch limit, crowd out settlements that can still be resolved. A
+ * gauge is what keeps that exclusion from meaning silence.
+ *
+ * The population is mostly benign: a placement whose escrow could not be taken
+ * is expired immediately and lands here. It also contains the one case nothing
+ * can recover — a hold charged whose receipt was lost to a crash — which is
+ * indistinguishable from a hold that never charged, and is the reason this is
+ * reported at all rather than filtered away.
+ */
+export const placementUnfundedSettlementsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_unfunded_settlements',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_unfunded_settlements',
+      help: 'Settled placements with no payout plan and no receipted escrow behind them',
+      registers: [instrumentationRegistry],
+    })
+);
