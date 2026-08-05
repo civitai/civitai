@@ -40,16 +40,19 @@ export type ContentAnalytics = {
 export type AllTimeTotals = { reactions: number; comments: number };
 
 // Cached read-through wrappers. The named args double as the cache key; the TTL scales with the range span
-// (span-based, capped at 30 min) so reloads/back-nav hit Redis, not ClickHouse (fail-open).
+// (span-based, capped at 30 min) so reloads/back-nav hit Redis, not ClickHouse (fail-open). The `name` carries a
+// version suffix because the args alone don't distinguish a change in what the numbers *mean* — bump it whenever one
+// of these queries changes, or warm keys keep serving the old shape past the deploy. These four expire independently,
+// so a stale one next to a fresh one puts contradictory reaction totals on /dashboard and /analytics at once.
 export const getContentAnalytics = createCache({
-  name: 'analytics:content',
+  name: 'analytics:content:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentAnalytics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getContentTotals = createCache({
-  name: 'analytics:totals',
+  name: 'analytics:totals:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentTotals(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -57,14 +60,14 @@ export const getContentTotals = createCache({
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
 export const getTopMedia = createCache({
-  name: 'analytics:top-media',
+  name: 'analytics:top-media:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getAllTimeTotals = createCache({
-  name: 'analytics:alltime',
+  name: 'analytics:alltime:v2',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
     const uid = Number(userId);
     const ch = getClickhouse();

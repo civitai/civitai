@@ -147,10 +147,11 @@ export function resolveCompareMonth(cmp: string | null, range: DateRange): Compa
   return { key, label: cmpMonthFmt.format(Date.UTC(y, m - 1, 1)), range: monthKeyToRange(key) };
 }
 
-/** Percent change of `current` vs `previous`; null when there's no baseline (previous = 0) — "% of zero" is
- *  undefined, so callers show a "new" badge instead. */
+/** Percent change of `current` vs `previous`; null when there's no usable baseline — "% of zero" is undefined, and a
+ *  negative baseline inverts the sign, so a period that improved renders as a decline. Reaction totals are a net of
+ *  creates and deletes and do go negative. Callers show a "new" badge instead. */
 export function pctChange(current: number, previous: number): number | null {
-  if (previous === 0) return null;
+  if (previous <= 0) return null;
   return ((current - previous) / previous) * 100;
 }
 
