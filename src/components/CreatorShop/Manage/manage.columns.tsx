@@ -41,13 +41,13 @@ export type ManageColumn = {
 function ItemCell({ item }: { item: CreatorShopManageItem }) {
   return (
     <Group gap="sm" wrap="nowrap" align="center">
-      <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+      <CosmeticThumb data={item.cosmetic?.data} name={item.title} bare />
       <Stack gap={0} className="min-w-0">
         <Text size="sm" fw={600} lineClamp={1}>
           {item.title}
         </Text>
         <Text size="xs" c="dimmed">
-          {getDisplayName(item.cosmetic.type)}
+          {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
         </Text>
         {item.rejectionReason &&
           (item.status === CosmeticShopItemStatus.Rejected ||

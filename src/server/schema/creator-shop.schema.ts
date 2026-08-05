@@ -117,6 +117,82 @@ export const stickerPerUseFloor = (type: CosmeticType): number => {
   }
 };
 
+// Consumables grant a balance rather than a thing, so buying one you already
+// hold gives you more uses (D23). That makes them ineligible for the ownership
+// discount and immune to the already-own check.
+export const isConsumableCosmeticType = (type: CosmeticType): boolean =>
+  type === CosmeticType.Sticker;
+
+/**
+ * A pack is a listing with no cosmetic of its own — its contents live in
+ * `CosmeticShopItemCosmetic`. Nullable rather than pointed at a primary member
+ * so an unmigrated read path fails loudly instead of silently rendering (and
+ * granting) one cosmetic.
+ */
+export const isPackShopItem = (item: { cosmeticId: number | null }): boolean =>
+  item.cosmeticId == null;
+
+export type PackMemberPricing = {
+  cosmeticId: number;
+  type: CosmeticType;
+  /** The member's authoritative individual list price. */
+  listPrice: number;
+  /** Whether the pack's creator also created this member. */
+  isOwn: boolean;
+};
+
+/**
+ * Minimum a pack may be listed for. Foreign members must be covered at their
+ * own list price so bundling can't undercut their creators; every member must
+ * additionally clear its type's pack floor, summed rather than multiplied so a
+ * mixed-type pack prices correctly once the per-type floors diverge.
+ */
+export const packPriceFloor = (members: PackMemberPricing[]): number => {
+  const foreignSum = members.reduce((sum, m) => (m.isOwn ? sum : sum + m.listPrice), 0);
+  const typeSum = members.reduce((sum, m) => sum + packItemFloor(m.type), 0);
+  return Math.max(foreignSum, typeSum);
+};
+
+/**
+ * Per-member discount shown to a buyer who already owns part of a pack (D16).
+ * Only the pack creator's own portion is discountable — foreign members are
+ * already covered at their list price, and discounting them would pay their
+ * creator less than they listed for.
+ *
+ * Consumable members still carry weight in the split but earn no discount
+ * (D23): owning one means the purchase tops it up, which is not a lesser good.
+ * The weight they hold therefore stays with the pack creator rather than
+ * inflating the discount on the rest.
+ */
+export const computePackOwnershipDiscount = ({
+  packPrice,
+  members,
+  ownedCosmeticIds,
+}: {
+  packPrice: number;
+  members: PackMemberPricing[];
+  ownedCosmeticIds: number[];
+}): { discount: number; perMember: { cosmeticId: number; discount: number }[] } => {
+  const owned = new Set(ownedCosmeticIds);
+  const foreignSum = members.reduce((sum, m) => (m.isOwn ? sum : sum + m.listPrice), 0);
+  const ownPortion = Math.max(0, packPrice - foreignSum);
+  const ownMembers = members.filter((m) => m.isOwn);
+  const weightTotal = ownMembers.reduce((sum, m) => sum + m.listPrice, 0);
+
+  const perMember = ownMembers.map((m) => {
+    const eligible =
+      weightTotal > 0 && owned.has(m.cosmeticId) && !isConsumableCosmeticType(m.type);
+    // Floored individually (D18) so rounding favours the creator rather than
+    // accumulating into a larger discount.
+    return {
+      cosmeticId: m.cosmeticId,
+      discount: eligible ? Math.floor((m.listPrice / weightTotal) * ownPortion) : 0,
+    };
+  });
+
+  return { discount: perMember.reduce((sum, m) => sum + m.discount, 0), perMember };
+};
+
 export type CreatorCosmeticType = (typeof creatorCosmeticTypes)[number];
 export const isCreatorCosmeticType = (type: CosmeticType): type is CreatorCosmeticType =>
   (creatorCosmeticTypes as readonly CosmeticType[]).includes(type);
@@ -302,6 +378,62 @@ export const submitCreatorShopItemSchema = z
         message: 'Stickers must specify what one additional use costs',
       });
   });
+
+// A pack is flat by construction (D15): a member is always a cosmetic, never
+// another pack, so the floor is a sum rather than a recursion and the delist
+// cascade is one level deep.
+export const PACK_MIN_MEMBERS = 2;
+export const PACK_MAX_MEMBERS = 20;
+
+export type SubmitCreatorShopPackInput = z.infer<typeof submitCreatorShopPackSchema>;
+export const submitCreatorShopPackSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().max(1000).nullish(),
+  // Members are named by cosmetic, not by listing: resale-by-reference means one
+  // cosmetic can be reachable through several listings, and bundling must not
+  // let the builder pick whichever of them is cheapest.
+  memberCosmeticIds: z
+    .array(z.number())
+    .min(PACK_MIN_MEMBERS)
+    .max(PACK_MAX_MEMBERS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'A pack cannot contain the same cosmetic twice',
+    }),
+  // Authoritative floor is per-member and type-dependent, so the real check runs
+  // in the service; this only rejects what no pack could ever clear.
+  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN * PACK_MIN_MEMBERS),
+  availableQuantity: z.number().int().positive().nullish(),
+  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
+  // Requested, not granted: the service clears it unless every member's own
+  // listing accepts blue, since paying blue for a pack pays each member's
+  // creator in blue.
+  acceptsBlueBuzz: z.boolean().default(false),
+  // The pack's own cover artwork. Members keep their own art.
+  imageUrl: z.string().min(1),
+  rightsAffirmed: rightsAffirmedSchema,
+});
+
+export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
+export const updateCreatorShopPackSchema = z.object({
+  id: z.number(),
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(1000).nullish(),
+  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN).optional(),
+  availableQuantity: z.number().int().positive().nullish(),
+  acceptsBlueBuzz: z.boolean().optional(),
+  imageUrl: z.string().optional(),
+  // Re-snapshots every member's floor, so changing contents re-prices the pack
+  // against today's list prices rather than the ones it was built against.
+  memberCosmeticIds: z
+    .array(z.number())
+    .min(PACK_MIN_MEMBERS)
+    .max(PACK_MAX_MEMBERS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'A pack cannot contain the same cosmetic twice',
+    })
+    .optional(),
+  rightsAffirmed: rightsAffirmedSchema.optional(),
+});
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
 export const updateCreatorShopItemSchema = z.object({

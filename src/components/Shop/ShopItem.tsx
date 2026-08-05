@@ -21,12 +21,14 @@ import {
   useToggleWishlistShopItem,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
+import { CosmeticPackPreviewModal } from '~/components/CosmeticShop/CosmeticPackPreviewModal';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
@@ -169,21 +171,35 @@ export const ShopItem = ({
             onClick={() => {
               if (!currentUser) return;
 
-              dialogStore.trigger({
-                component: CosmeticShopItemPreviewModal,
-                props: { shopItem: item, viaShopUserId },
-              });
+              if (cosmetic)
+                dialogStore.trigger({
+                  component: CosmeticShopItemPreviewModal,
+                  props: { shopItem: item, viaShopUserId },
+                });
+              else
+                dialogStore.trigger({
+                  component: CosmeticPackPreviewModal,
+                  props: { shopItemId: item.id, viaShopUserId },
+                });
             }}
             disabled={!isAvailable || outOfStock}
           >
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
-                <CosmeticSample cosmetic={cosmetic} size="lg" />
+                {cosmetic ? (
+                  <CosmeticSample cosmetic={cosmetic} size="lg" />
+                ) : (
+                  itemMeta.coverUrl && (
+                    <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
+                  )
+                )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
-                {getDisplayName(item.cosmetic.type)}
+                {cosmetic
+                  ? getDisplayName(cosmetic.type)
+                  : `Pack of ${itemMeta.packMemberCount ?? 0}`}
               </Text>
-              {cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
+              {cosmetic && cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
                 <Overlay center>
                   <Text className="flex items-center gap-1" size="xl" fw="bold" c="gray.1">
                     <IconCheck stroke={2.5} />

@@ -211,7 +211,7 @@ function CreatorShopReviewPage() {
     setReason(item?.rejectionReason ?? '');
     setActiveFlags(new Set());
     setModOffsets(
-      (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? ZERO_OFFSETS
+      (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? ZERO_OFFSETS
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
@@ -220,25 +220,25 @@ function CreatorShopReviewPage() {
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
-  const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+  const isAnimated = !!(selected?.cosmetic?.data as { animated?: boolean } | null)?.animated;
   const affirmation = selectedMeta.rightsAffirmation;
   // The affirmer is normally the submitting creator, but a cross-listed item is
   // sold by someone else — don't put the creator's name on their affirmation.
   const affirmedBy =
-    affirmation && affirmation.userId === selected?.cosmetic.creator?.id
-      ? `@${selected?.cosmetic.creator?.username ?? 'unknown'}`
+    affirmation && affirmation.userId === selected?.cosmetic?.creator?.id
+      ? `@${selected?.cosmetic?.creator?.username ?? 'unknown'}`
       : `user #${affirmation?.userId}`;
   // The slug is user-visible text in its own right, so it needs reviewing
   // alongside the artwork — not just the image.
-  const isSticker = selected?.cosmetic.type === CosmeticType.Sticker;
+  const isSticker = selected?.cosmetic?.type === CosmeticType.Sticker;
   const stickerSlug = isSticker
-    ? (selected?.cosmetic.data as { slug?: string } | null)?.slug
+    ? (selected?.cosmetic?.data as { slug?: string } | null)?.slug
     : undefined;
   // A sticker is priced twice — the listing buys a block of uses, and the
   // per-use price is what a buyer pays to top up once they run dry. Reviewing
   // the list price alone approves half the economics.
   const stickerEconomics = isSticker
-    ? stickerEconomicsFromCosmeticData(selected?.cosmetic.data)
+    ? stickerEconomicsFromCosmeticData(selected?.cosmetic?.data)
     : undefined;
   // What a use costs when bought in the listing, for comparison: a top-up
   // priced far above the bulk rate is the thing worth questioning, and it can
@@ -250,9 +250,9 @@ function CreatorShopReviewPage() {
 
   // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
   // offsets and see the in-context preview update live before saving.
-  const isDecoration = selected?.cosmetic.type === CosmeticType.ProfileDecoration;
+  const isDecoration = selected?.cosmetic?.type === CosmeticType.ProfileDecoration;
   const storedOffsets =
-    (selected?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+    (selected?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
   const normalizedModOffsets = Object.values(modOffsets).some((v) => v !== 0) ? modOffsets : null;
   const fitChanged =
     isDecoration && JSON.stringify(normalizedModOffsets) !== JSON.stringify(storedOffsets);
@@ -263,7 +263,7 @@ function CreatorShopReviewPage() {
   const previewCosmetic = useMemo(() => {
     if (!selected) return null;
     if (!isDecoration) return selected.cosmetic as unknown as PreviewCosmetic;
-    const { offsets: _stored, ...rest } = (selected.cosmetic.data ?? {}) as Record<string, unknown>;
+    const { offsets: _stored, ...rest } = (selected.cosmetic?.data ?? {}) as Record<string, unknown>;
     return {
       ...selected.cosmetic,
       data: normalizedModOffsets ? { ...rest, offsets: normalizedModOffsets } : rest,
@@ -491,14 +491,14 @@ function CreatorShopReviewPage() {
                       }}
                     >
                       <Group gap={10} wrap="nowrap" align="center">
-                        <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+                        <CosmeticThumb data={item.cosmetic?.data} name={item.title} bare />
                         <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
                           </Text>
                           <Text size="xs" c="dimmed" lineClamp={1}>
-                            @{item.cosmetic.creator?.username ?? 'unknown'} ·{' '}
-                            {getDisplayName(item.cosmetic.type)}
+                            @{item.cosmetic?.creator?.username ?? 'unknown'} ·{' '}
+                            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
                           </Text>
                         </Stack>
                         {statusFilter === 'all' && (
@@ -536,7 +536,7 @@ function CreatorShopReviewPage() {
                   <Group gap={10} align="center" wrap="wrap">
                     <Title order={3}>{selected.title}</Title>
                     <Badge variant="light" color="gray" radius="xl">
-                      Cosmetic · {getDisplayName(selected.cosmetic.type)}
+                      {selected.cosmetic ? `Cosmetic · ${getDisplayName(selected.cosmetic.type)}` : 'Pack'}
                     </Badge>
                     <Badge variant="light" radius="xl" color={statusMeta(selected.status).color}>
                       {statusMeta(selected.status).label}
@@ -546,15 +546,15 @@ function CreatorShopReviewPage() {
                     <Text size="sm" c="dimmed">
                       Submitted by
                     </Text>
-                    {selected.cosmetic.creator?.username ? (
+                    {selected.cosmetic?.creator?.username ? (
                       <Anchor
                         component={NextLink}
-                        href={`/user/${selected.cosmetic.creator.username}`}
+                        href={`/user/${selected.cosmetic?.creator.username}`}
                         target="_blank"
                         size="sm"
                         fw={600}
                       >
-                        @{selected.cosmetic.creator.username}
+                        @{selected.cosmetic?.creator.username}
                       </Anchor>
                     ) : (
                       <Text size="sm" fw={600}>
@@ -579,9 +579,9 @@ function CreatorShopReviewPage() {
                         background: 'linear-gradient(135deg, #1A1B1E, #101113)',
                       }}
                     >
-                      {artUrl(selected.cosmetic.data) ? (
+                      {artUrl(selected.cosmetic?.data) ? (
                         <EdgeMedia
-                          src={artUrl(selected.cosmetic.data)!}
+                          src={artUrl(selected.cosmetic?.data)!}
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
@@ -746,7 +746,7 @@ function CreatorShopReviewPage() {
                       />
                       <MoneyTile
                         label="Type"
-                        value={getDisplayName(selected.cosmetic.type)}
+                        value={selected.cosmetic ? getDisplayName(selected.cosmetic.type) : 'Pack'}
                         icon={<IconTag size={14} />}
                         iconColor="var(--mantine-color-cyan-5)"
                       />
@@ -795,7 +795,7 @@ function CreatorShopReviewPage() {
                           label="Cosmetic name"
                           value={
                             <Text size="sm" fw={500}>
-                              {selected.cosmetic.name}
+                              {selected.cosmetic?.name}
                             </Text>
                           }
                         />

@@ -164,13 +164,13 @@ export default function CosmeticStoreProducts() {
                       </Table.Td>
                       <Table.Td>
                         <Stack gap={0} maw={350} align="flex-start">
-                          <Text>{shopItem.cosmetic.name}</Text>
+                          <Text>{shopItem.cosmetic?.name ?? shopItem.title}</Text>
                         </Stack>
                       </Table.Td>
-                      <Table.Td>{getDisplayName(shopItem.cosmetic.type)}</Table.Td>
+                      <Table.Td>{shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}</Table.Td>
                       <Table.Td>
                         <Center>
-                          <CosmeticSample cosmetic={shopItem.cosmetic} />
+                          {shopItem.cosmetic && <CosmeticSample cosmetic={shopItem.cosmetic} />}
                         </Center>
                       </Table.Td>
                       <Table.Td>

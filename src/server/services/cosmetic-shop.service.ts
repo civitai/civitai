@@ -38,6 +38,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -234,7 +235,7 @@ export const upsertCosmeticShopItem = async ({
         select: cosmeticShopItemSelect,
       });
 
-  if (videoUrl) {
+  if (videoUrl && item.cosmeticId != null) {
     await upsertCosmetic({
       id: item.cosmeticId,
       videoUrl,
@@ -679,6 +680,7 @@ export const purchaseCosmeticShopItem = async ({
       _count: {
         select: {
           purchases: true,
+          members: true,
         },
       },
     },
@@ -701,30 +703,34 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic is not available');
   }
 
-  // Every listing path filters stickers out when the flag is off, but filtered
-  // from a list is not the same as refused: with an item id in hand a buyer
-  // could otherwise pay for a sticker they can't place, since the picker is
-  // gated too. Refuse at the mutation, where the cosmetic is already loaded.
-  if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
-    throw new Error('Cosmetic is not available');
-  }
-
-  // Creators can't buy their own cosmetic — they're granted it on approval.
-  if (shopItem.cosmetic.createdById === userId) {
-    throw new Error('You already own this cosmetic');
-  }
-
-  // A block between the buyer and the item's creator or lister (either
-  // direction) makes the item unpurchasable no matter where it surfaced — the
-  // generic error keeps the block from being revealed. Official items (no
-  // creator) are unaffected.
-  if (shopItem.cosmetic.createdById) {
-    const blockedPairIds = await getBlockedPairIds(userId);
-    const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
-      (id): id is number => id != null
-    );
-    if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+  // A pack carries no cosmetic of its own; the guards below are answered per
+  // member instead, in assertPackPurchasable.
+  if (shopItem.cosmetic) {
+    // Every listing path filters stickers out when the flag is off, but filtered
+    // from a list is not the same as refused: with an item id in hand a buyer
+    // could otherwise pay for a sticker they can't place, since the picker is
+    // gated too. Refuse at the mutation, where the cosmetic is already loaded.
+    if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
       throw new Error('Cosmetic is not available');
+    }
+
+    // Creators can't buy their own cosmetic — they're granted it on approval.
+    if (shopItem.cosmetic.createdById === userId) {
+      throw new Error('You already own this cosmetic');
+    }
+
+    // A block between the buyer and the item's creator or lister (either
+    // direction) makes the item unpurchasable no matter where it surfaced — the
+    // generic error keeps the block from being revealed. Official items (no
+    // creator) are unaffected.
+    if (shopItem.cosmetic.createdById) {
+      const blockedPairIds = await getBlockedPairIds(userId);
+      const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
+        (id): id is number => id != null
+      );
+      if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+        throw new Error('Cosmetic is not available');
+      }
     }
   }
 
@@ -755,6 +761,30 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic is no longer available');
   }
 
+  // Packs diverge here: the money path, the grant and the payout are all
+  // per-member. Everything above is a property of the listing itself and applies
+  // to both.
+  if (shopItem.cosmeticId == null || !shopItem.cosmetic) {
+    const members = await getPackMembers(shopItemId);
+    return purchaseCosmeticPack({
+      userId,
+      shopItem: {
+        id: shopItem.id,
+        title: shopItem.title,
+        unitAmount: shopItem.unitAmount,
+        addedById: shopItem.addedById,
+        meta: shopItemMeta,
+        memberCount: shopItem._count.members,
+      },
+      members,
+      payWith,
+      buzzType,
+      stickersEnabled,
+    });
+  }
+
+  const singleCosmeticId = shopItem.cosmeticId;
+  const singleCosmetic = shopItem.cosmetic;
   const onlySupportsSinglePurchase =
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
@@ -767,7 +797,7 @@ export const purchaseCosmeticShopItem = async ({
     const userCosmetic = await dbWrite.userCosmetic.findFirst({
       where: {
         userId,
-        cosmeticId: shopItem.cosmeticId,
+        cosmeticId: singleCosmeticId,
       },
     });
 
@@ -826,11 +856,11 @@ export const purchaseCosmeticShopItem = async ({
       const userCosmetic = await tx.userCosmetic.create({
         data: {
           userId,
-          cosmeticId: shopItem.cosmeticId,
+          cosmeticId: singleCosmeticId,
           claimKey: transactionId,
           // Consumables grant a finite balance; everything else stays NULL,
           // which reads as unlimited.
-          remaining: stickerUsesFromCosmeticData(shopItem.cosmetic.data),
+          remaining: stickerUsesFromCosmeticData(singleCosmetic.data),
         },
       });
 
@@ -860,7 +890,7 @@ export const purchaseCosmeticShopItem = async ({
         // cosmetic's sellerShare (% of price the seller keeps; creator gets the
         // rest). Official items keep the legacy meta.paidToUserIds distribution.
         const price = shopItem.unitAmount;
-        const creatorId = shopItem.cosmetic.createdById;
+        const creatorId = singleCosmetic.createdById;
         const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
           price,
           meta?.sellerShare ?? 0

@@ -51,6 +51,11 @@ export const cosmeticShopItemMeta = z.object({
     .optional(),
   // sha256 of the submitted artwork bytes — used to block duplicate submissions.
   imageHash: z.string().optional(),
+  // Packs only. A pack has no Cosmetic of its own, so its cover art and size
+  // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
+  // convenience; the join table stays authoritative for what's in the pack.
+  coverUrl: z.string().optional(),
+  packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),

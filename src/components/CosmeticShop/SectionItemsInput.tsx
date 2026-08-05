@@ -57,15 +57,15 @@ const CosmeticShopItemOption = ({ item }: { item: CosmeticShopItemGetById }) => 
       {/* Fixed-width well — profile-background samples render at width 100% and
           would otherwise crush the text column. */}
       <Box w={72} miw={72} style={{ display: 'flex', justifyContent: 'center' }}>
-        <CosmeticSample cosmetic={item.cosmetic} size="sm" />
+        {item.cosmetic && <CosmeticSample cosmetic={item.cosmetic} size="sm" />}
       </Box>
       <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
         <Text size="sm" fw={500} lineClamp={1}>
           {item.title}
         </Text>
         <Text size="xs" c="dimmed" lineClamp={1}>
-          {getDisplayName(item.cosmetic.type)}
-          {item.cosmetic.creator?.username ? ` · by @${item.cosmetic.creator.username}` : ''}
+          {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
+          {item.cosmetic?.creator?.username ? ` · by @${item.cosmetic.creator.username}` : ''}
         </Text>
         {share !== undefined && <CutLabel share={share} />}
       </Stack>
@@ -237,7 +237,7 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                                     overflow: 'hidden',
                                   }}
                                 >
-                                  <CosmeticSample cosmetic={details.cosmetic} size="md" />
+                                  {details.cosmetic && <CosmeticSample cosmetic={details.cosmetic} size="md" />}
                                 </Box>
                               )}
                               <Text fw="bold" size="sm" ta="center" lineClamp={1}>
@@ -245,12 +245,12 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                               </Text>
                               {details && (
                                 <Text size="xs" c="dimmed">
-                                  {getDisplayName(details.cosmetic.type)}
+                                  {details.cosmetic ? getDisplayName(details.cosmetic.type) : 'Pack'}
                                 </Text>
                               )}
-                              {details?.cosmetic.creator && (
+                              {details?.cosmetic?.creator && (
                                 <UserAvatar
-                                  user={details.cosmetic.creator}
+                                  user={details.cosmetic!.creator}
                                   withUsername
                                   size="xs"
                                   linkToProfile

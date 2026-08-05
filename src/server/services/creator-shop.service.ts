@@ -44,6 +44,7 @@ import type {
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
@@ -402,6 +403,9 @@ export const updateCreatorShopItem = async ({
   rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // A pack has no cosmetic of its own; everything below edits one.
+  if (existing.cosmeticId == null || existing.cosmetic == null)
+    throw throwBadRequestError('Packs are edited through the pack editor');
   // Rejected is terminal; archived items must be restored before editing.
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError('Rejected items cannot be edited');
@@ -647,6 +651,10 @@ export const archiveCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+
+  // D14: withdrawing a cosmetic delists every pack that bundles it. `listed`,
+  // not Archived, so the pack's creator can swap the member out and relist.
+  if (existing.cosmeticId != null) await delistPacksContaining(existing.cosmeticId);
 
   // An archived item can't be featured — free up its featured slot (owner must
   // re-feature it after unarchiving).
@@ -1033,6 +1041,9 @@ export const getPublicShopItemsForResale = async ({
     where: {
       status: CosmeticShopItemStatus.Published,
       meta: { path: ['sellableByOthers'], equals: true },
+      // Packs are not resellable by reference: the resale split is computed from
+      // one cosmetic's creator, and a pack has several.
+      cosmeticId: { not: null },
       addedById: {
         not: userId,
         ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
@@ -1290,8 +1301,9 @@ export const reviewCreatorShopItem = async ({
           select: creatorShopItemSelect,
         });
 
-  // On approval, grant the creator their own cosmetic (idempotent).
-  if (action === 'approve' && item.cosmetic.createdById) {
+  // On approval, grant the creator their own cosmetic (idempotent). A pack has
+  // none of its own, and its members were granted when they were approved.
+  if (action === 'approve' && item.cosmeticId != null && item.cosmetic?.createdById) {
     await dbWrite.userCosmetic.createMany({
       data: [
         {
@@ -1306,6 +1318,11 @@ export const reviewCreatorShopItem = async ({
     await refreshOwnedStickerCache([item.cosmetic.createdById]);
   }
 
+  // D14: an item leaving Published is no longer bundlable, so packs holding it
+  // have to come off sale too.
+  if (action !== 'approve' && item.cosmeticId != null)
+    await delistPacksContaining(item.cosmeticId);
+
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {
     const settings = await getCreatorShopSettings({ userId: item.addedById });
@@ -1318,9 +1335,10 @@ export const reviewCreatorShopItem = async ({
   }
 
   // Let the creator know the review outcome (best-effort).
-  const creatorId = item.cosmetic.createdById;
+  // A pack is authored by its lister, not by any one member's creator.
+  const creatorId = item.cosmetic?.createdById ?? item.addedById;
   if (creatorId) {
-    const username = item.cosmetic.creator?.username ?? undefined;
+    const username = item.cosmetic?.creator?.username ?? undefined;
     const type =
       action === 'approve'
         ? 'creator-shop-item-approved'
@@ -1445,7 +1463,8 @@ export const takedownCosmeticShopItem = async ({
     clawback.set(key, (clawback.get(key) ?? 0) + amount);
   };
 
-  const creatorId = item.cosmetic.createdById;
+  // A pack's author is its lister; it has no cosmetic creator of its own.
+  const creatorId = item.cosmetic?.createdById ?? item.addedById;
   let unrecoveredResellerShare = 0;
   let refundedValue = 0;
   const refundedUserIds: number[] = [];
@@ -1614,14 +1633,41 @@ export const takedownCosmeticShopItem = async ({
 
   // Everyone loses the cosmetic — buyers, the creator's own grant, and anyone it
   // was gifted to. Equipped placements are cleaned up by the revoke helper.
-  const owners = await dbWrite.userCosmetic.findMany({
-    where: { cosmeticId: item.cosmeticId },
-    select: { userId: true },
-  });
+  //
+  // A pack revokes only what it granted, keyed by the purchase transactions it
+  // was bought through. Its members are sold individually too, and taking down
+  // the bundle is not grounds for stripping a member someone bought on its own.
+  // D14 again: a taken-down cosmetic can never be sold, in a pack or otherwise.
+  if (item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+
+  const isPack = item.cosmeticId == null;
+  const memberIds = isPack
+    ? (
+        await dbRead.cosmeticShopItemCosmetic.findMany({
+          where: { shopItemId: id },
+          select: { cosmeticId: true },
+        })
+      ).map((m) => m.cosmeticId)
+    : [item.cosmeticId as number];
+  const packClaimKeys = isPack ? purchases.map((p) => p.buzzTransactionId) : undefined;
+  const owners = memberIds.length
+    ? await dbWrite.userCosmetic.findMany({
+        where: {
+          cosmeticId: { in: memberIds },
+          ...(packClaimKeys?.length ? { claimKey: { in: packClaimKeys } } : {}),
+        },
+        select: { userId: true },
+      })
+    : [];
   const ownerIds = [...new Set(owners.map((o) => o.userId))];
-  const { revoked } = ownerIds.length
-    ? await revokeCosmeticsFromUsers({ userIds: ownerIds, cosmeticIds: [item.cosmeticId] })
-    : { revoked: 0 };
+  const { revoked } =
+    ownerIds.length && memberIds.length
+      ? await revokeCosmeticsFromUsers({
+          userIds: ownerIds,
+          cosmeticIds: memberIds,
+          claimKeys: packClaimKeys,
+        })
+      : { revoked: 0 };
 
   if (creatorId) {
     await createNotification({

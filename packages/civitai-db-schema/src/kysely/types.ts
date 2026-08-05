@@ -1925,7 +1925,7 @@ export type Cosmetic = {
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
-  cosmeticId: number;
+  cosmeticId: number | null;
   unitAmount: number;
   addedById: number | null;
   createdAt: Generated<Timestamp>;
@@ -1941,6 +1941,12 @@ export type CosmeticShopItem = {
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
   listed: Generated<boolean>;
+};
+export type CosmeticShopItemCosmetic = {
+  shopItemId: number;
+  cosmeticId: number;
+  index: Generated<number>;
+  floorAmount: number;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -3634,9 +3640,15 @@ export type UserCosmeticShopItemWishlist = {
   shopItemId: number;
   createdAt: Generated<Timestamp>;
 };
+export type UserCosmeticShopPurchaseCosmetic = {
+  buzzTransactionId: string;
+  cosmeticId: number;
+  unitAmount: number;
+  meta: unknown | null;
+};
 export type UserCosmeticShopPurchases = {
   userId: number;
-  cosmeticId: number;
+  cosmeticId: number | null;
   shopItemId: number;
   unitAmount: number;
   purchasedAt: Generated<Timestamp>;
@@ -4041,6 +4053,7 @@ export type DB = {
   CommentV2Report: CommentV2Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
+  CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -4198,6 +4211,7 @@ export type DB = {
   User: User;
   UserCosmetic: UserCosmetic;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
+  UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
   UserLink: UserLink;

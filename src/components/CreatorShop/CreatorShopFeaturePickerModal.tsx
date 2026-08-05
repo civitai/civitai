@@ -80,7 +80,7 @@ function FeaturePickerCard({
           {item.title}
         </Text>
         <Text size="xs" c="dimmed" lineClamp={1}>
-          {getDisplayName(item.cosmetic.type)}
+          {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
         </Text>
       </Stack>
     </Paper>

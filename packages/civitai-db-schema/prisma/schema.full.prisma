@@ -3958,7 +3958,9 @@ model Cosmetic {
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
+  purchaseComponents  UserCosmeticShopPurchaseCosmetic[]
   cosmeticShopItems   CosmeticShopItem[]
+  packMemberships     CosmeticShopItemCosmetic[]
 
   @@index([createdById])
 }
@@ -4005,8 +4007,11 @@ model CosmeticShopSection {
 
 model CosmeticShopItem {
   id                Int       @id @default(autoincrement())
-  cosmeticId        Int
-  cosmetic          Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // NULL on a pack, whose contents live in `members`. Deliberately nullable
+  // rather than pointed at a primary member: an unmigrated read path fails
+  // loudly instead of silently rendering and granting one cosmetic.
+  cosmeticId        Int?
+  cosmetic          Cosmetic? @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   unitAmount        Int
   addedById         Int?
   addedBy           User?     @relation(fields: [addedById], references: [id], onDelete: SetNull)
@@ -4027,6 +4032,21 @@ model CosmeticShopItem {
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
   wishlists UserCosmeticShopItemWishlist[]
+  members   CosmeticShopItemCosmetic[]
+}
+
+model CosmeticShopItemCosmetic {
+  shopItemId  Int
+  shopItem    CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  cosmeticId  Int
+  cosmetic    Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  index       Int              @default(0)
+  // Snapshot of the member's list price when the pack was built. Live lookup
+  // would let a member's creator re-price every pack containing them.
+  floorAmount Int
+
+  @@id([shopItemId, cosmeticId])
+  @@index([cosmeticId])
 }
 
 model UserCosmeticShopItemWishlist {
@@ -4054,8 +4074,10 @@ model CosmeticShopSectionItem {
 model UserCosmeticShopPurchases {
   userId            Int
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cosmeticId        Int
-  cosmetic          Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // NULL on a pack purchase: N cosmetics cannot share one transaction-keyed
+  // row, so the components live in `components`.
+  cosmeticId        Int?
+  cosmetic          Cosmetic?        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   shopItemId        Int
   shopItem          CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
   unitAmount        Int
@@ -4066,6 +4088,23 @@ model UserCosmeticShopPurchases {
   // depends on the storefront it was bought through, so a takedown can't
   // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
   meta              Json?
+  components        UserCosmeticShopPurchaseCosmetic[]
+}
+
+model UserCosmeticShopPurchaseCosmetic {
+  buzzTransactionId String
+  purchase          UserCosmeticShopPurchases @relation(fields: [buzzTransactionId], references: [buzzTransactionId], onDelete: Cascade)
+  cosmeticId        Int
+  cosmetic          Cosmetic                  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // The member's snapshotted list price this component was attributed at; the
+  // pack creator's share is the remainder, so these need not sum to the price.
+  unitAmount        Int
+  // Per-member payout record: each component pays a different creator, so the
+  // parent's meta cannot describe the split. See UserCosmeticShopPurchaseMeta.
+  meta              Json?
+
+  @@id([buzzTransactionId, cosmeticId])
+  @@index([cosmeticId])
 }
 
 enum BuzzAccountType {

@@ -69,12 +69,12 @@ export function CommunityCosmeticsSection({
                   key={item.id}
                   item={item as unknown as CosmeticShopItemGetById}
                   sectionItemCreatedAt={item.createdAt}
-                  alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+                  alreadyOwned={item.cosmeticId != null && ownedCosmeticIds.has(item.cosmeticId)}
                   wishlisted={wishlistedIds.has(item.id)}
                   // Attribute the purchase to the owner's shop so the creator
                   // keeps their full pool (never the platform-reseller split).
                   viaShopUserId={item.addedById ?? undefined}
-                  creator={item.cosmetic.creator}
+                  creator={item.cosmetic?.creator}
                 />
               ))}
             </div>

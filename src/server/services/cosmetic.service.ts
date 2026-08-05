@@ -303,21 +303,31 @@ export async function grantCosmeticsToUsers({ userIds, cosmeticIds }: GrantCosme
 export async function revokeCosmeticsFromUsers({
   userIds,
   cosmeticIds,
-}: GrantCosmeticsToUsersInput) {
+  claimKeys,
+}: GrantCosmeticsToUsersInput & {
+  /**
+   * Restricts the revoke to holdings obtained through specific grants. A pack
+   * takedown needs this: the same cosmetic may also have been bought on its own,
+   * and that purchase is not what was taken down.
+   */
+  claimKeys?: string[];
+}) {
   const uniqueUserIds = [...new Set(userIds)];
   const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+  const claimKeyFilter = claimKeys?.length ? { claimKey: { in: [...new Set(claimKeys)] } } : {};
 
   const equipped = await dbWrite.userCosmetic.findMany({
     where: {
       userId: { in: uniqueUserIds },
       cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
       equippedToId: { not: null },
     },
     select: { equippedToId: true, equippedToType: true },
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
-    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds } },
+    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds }, ...claimKeyFilter },
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);

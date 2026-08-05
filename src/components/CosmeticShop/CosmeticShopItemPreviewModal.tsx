@@ -55,7 +55,9 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
   userCosmetic,
 }: Props & { userCosmetic: { cosmeticId: number; claimKey: string } }) => {
   const dialog = useDialogContext();
-  const { cosmetic } = shopItem;
+  // Packs never reach this modal — ShopItem routes them to their own, which is
+  // why the assertion is safe rather than optimistic.
+  const cosmetic = shopItem.cosmetic as NonNullable<CosmeticShopItemGetById['cosmetic']>;
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const { equip, isLoading } = useEquipProfileDecoration();
@@ -136,7 +138,8 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
 
 export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props) => {
   const dialog = useDialogContext();
-  const { cosmetic } = shopItem;
+  // See CosmeticShopItemPurchaseCompleteModal: packs have their own modal.
+  const cosmetic = shopItem.cosmetic as NonNullable<CosmeticShopItemGetById['cosmetic']>;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
@@ -162,7 +165,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // The split note only shows for cross-creator resale — not on the official
   // Civitai shop, and not when buying the creator's own item on their own
   // storefront (the creator keeps the full pool there).
-  const isOwnShopListing = viaShopUserId != null && viaShopUserId === shopItem.cosmetic.creator?.id;
+  const isOwnShopListing = viaShopUserId != null && viaShopUserId === cosmetic.creator?.id;
   const isResale =
     viaShopUserId != null &&
     viaShopUserId !== CIVITAI_SHOP_ATTRIBUTION &&
@@ -185,10 +188,13 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
         message: 'Your purchase has been completed and your cosmetic is now available to equip',
       });
       dialog.onClose();
-      dialogStore.trigger({
-        component: CosmeticShopItemPurchaseCompleteModal,
-        props: { shopItem, userCosmetic },
-      });
+      // The mutation also serves packs, which return a grant summary rather than
+      // a single holding. This modal is only ever reached for a single item.
+      if (userCosmetic && 'claimKey' in userCosmetic)
+        dialogStore.trigger({
+          component: CosmeticShopItemPurchaseCompleteModal,
+          props: { shopItem, userCosmetic },
+        });
     } catch (error) {
       // Do nothing, handled within the hook
     }

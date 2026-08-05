@@ -26,7 +26,10 @@ export function CosmeticsSection({
   const cosmetics = useMemo(() => {
     let list = [...items];
     const types = filters.cosmeticTypes;
-    if (types?.length) list = list.filter((c) => types.includes(c.cosmetic.type));
+    // A pack has no type of its own, so a type filter excludes it rather than
+    // matching everything.
+    if (types?.length)
+      list = list.filter((c) => !!c.cosmetic && types.includes(c.cosmetic.type));
     switch (sort) {
       case 'price-asc':
         list.sort((a, b) => a.unitAmount - b.unitAmount);

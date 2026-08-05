@@ -61,10 +61,10 @@ function PublicShopItemCard({
   return (
     <Paper withBorder radius="md" p="xs">
       <Group gap="xs" wrap="nowrap" align="flex-start">
-        <CosmeticThumb data={item.cosmetic.data} name={item.cosmetic.name} />
+        <CosmeticThumb data={item.cosmetic?.data} name={item.cosmetic?.name ?? 'Pack'} />
         <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
           <Text size="sm" fw={600} lineClamp={1}>
-            {item.cosmetic.name}
+            {item.cosmetic?.name ?? 'Pack'}
           </Text>
           {!item.listed && (
             <Badge size="xs" variant="light" color="gray" w="fit-content">
@@ -72,7 +72,7 @@ function PublicShopItemCard({
             </Badge>
           )}
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {getDisplayName(item.cosmetic.type)}
+            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
             {item.addedBy?.username ? ` · by @${item.addedBy.username}` : ''}
           </Text>
           <Text size="xs">
@@ -111,13 +111,13 @@ function ResoldListRow({
     <Paper withBorder radius="md" p="xs">
       <Group gap="xs" wrap="nowrap">
         <IconArrowsMove size={18} className="shrink-0 cursor-grab text-gray-6 dark:text-dark-2" />
-        <CosmeticThumb data={item.cosmetic.data} name={item.cosmetic.name} />
+        <CosmeticThumb data={item.cosmetic?.data} name={item.cosmetic?.name ?? 'Pack'} />
         <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
           <Text size="sm" fw={600} lineClamp={1}>
-            {item.cosmetic.name}
+            {item.cosmetic?.name ?? 'Pack'}
           </Text>
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {getDisplayName(item.cosmetic.type)}
+            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
             {item.addedBy?.username ? ` · by @${item.addedBy.username}` : ''}
           </Text>
         </Stack>
@@ -126,7 +126,7 @@ function ResoldListRow({
           variant="subtle"
           loading={removing}
           onClick={onRemove}
-          aria-label={`Remove ${item.cosmetic.name}`}
+          aria-label={`Remove ${item.cosmetic?.name ?? 'Pack'}`}
         >
           <IconX size={16} />
         </ActionIcon>

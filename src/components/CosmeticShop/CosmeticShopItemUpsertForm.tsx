@@ -443,6 +443,8 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     schema: formSchema,
     defaultValues: {
       ...shopItem,
+      // Null on a pack; this form only builds single-cosmetic products.
+      cosmeticId: shopItem?.cosmeticId ?? undefined,
       meta: {
         paidToUserIds: [],
         ...((shopItem?.meta as MixedObject) ?? {}),

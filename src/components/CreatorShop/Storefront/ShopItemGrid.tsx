@@ -31,13 +31,13 @@ export function ShopItemGrid({
   return (
     <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
       {items.map((item) => {
-        const creator = item.cosmetic.creator;
+        const creator = item.cosmetic?.creator;
         return (
           <ShopItem
             key={item.id}
             item={item as unknown as CosmeticShopItemGetById}
             sectionItemCreatedAt={item.createdAt}
-            alreadyOwned={ownedCosmeticIds.has(item.cosmeticId)}
+            alreadyOwned={item.cosmeticId != null && ownedCosmeticIds.has(item.cosmeticId)}
             wishlisted={wishlistedIds.has(item.id)}
             viaShopUserId={viaShopUserId}
             creator={creator?.id === ownerUserId ? null : creator}

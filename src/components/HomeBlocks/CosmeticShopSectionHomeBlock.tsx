@@ -66,7 +66,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
               <ShopItem
                 item={shopItem}
                 sectionItemCreatedAt={item.createdAt}
-                creator={shopItem.cosmetic.creator}
+                creator={shopItem.cosmetic?.creator}
                 viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
               />
             </div>
