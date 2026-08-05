@@ -125,6 +125,49 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     expect(result.error).toContain('cannot read "ApiKey"');
   });
 
+  /**
+   * The negative counterpart to the ALLOWED sub-select-then-relation fixtures
+   * above. Those only pin that a legal statement of this shape is accepted, and
+   * "accepted" is also what a broken walk returns — so on their own they cannot
+   * tell a working FROM-list tracker from one that has stopped tracking.
+   *
+   * Concretely this pins the ORDER of `fromListAtDepth[depth] = false` and
+   * `depth -= 1` when a sub-select closes: the flag has to be cleared at the
+   * INNER depth, because the list that just ended is the sub-select's. Clearing
+   * it after the decrement wipes the OUTER list's flag instead, and the comma
+   * that follows stops being read as a relation position — so the relation after
+   * it is never audited at all.
+   *
+   * These are balanced, valid SQL, so the paren-balance guard cannot catch them;
+   * they have to assert on the RELATION name, not merely on rejection, or they
+   * would pass by dying to that guard for the wrong reason.
+   *
+   * Depths vary deliberately: the flag is stored per depth index, so a fix that
+   * happened to be right at one nesting level and wrong at another would slip a
+   * single-depth fixture.
+   */
+  it.each([
+    [
+      'a sub-select in the FROM list followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM "User") x, "Session" s',
+    ],
+    [
+      'a relation, then a sub-select, then an out-of-scope relation',
+      'SELECT * FROM "User" u, (SELECT id FROM "Post") y, "Session" s',
+    ],
+    [
+      'a twice-nested sub-select followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM (SELECT id FROM "Post") y) x, "Session" s',
+    ],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+    // Not rejected for being malformed — these are well-formed statements.
+    expect(result.error).not.toContain('unbalanced parentheses');
+  });
+
   it('refuses a disallowed table inside a nested sub-select', () => {
     const result = checkQueryScope(
       'SELECT * FROM "User" WHERE id IN (SELECT "userId" FROM (SELECT "userId" FROM "Session") s)'
