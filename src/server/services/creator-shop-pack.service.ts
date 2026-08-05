@@ -42,7 +42,12 @@ type ResolvedMember = PackMemberPricing & {
 export const resolvePackMembers = async (cosmeticIds: number[]): Promise<ResolvedMember[]> => {
   if (!cosmeticIds.length) return [];
   const listings = await dbRead.cosmeticShopItem.findMany({
-    where: { cosmeticId: { in: cosmeticIds }, status: CosmeticShopItemStatus.Published },
+    where: {
+      cosmeticId: { in: cosmeticIds },
+      status: CosmeticShopItemStatus.Published,
+      // See getPackMembers: a mod archive stamps the date without moving status.
+      archivedAt: null,
+    },
     select: {
       cosmeticId: true,
       unitAmount: true,
@@ -338,7 +343,7 @@ export const delistPacksContaining = async (cosmeticId: number) => {
   // bundlable while any Published listing survives, so one listing going away
   // is not grounds for delisting anyone's pack.
   const stillListed = await dbRead.cosmeticShopItem.findFirst({
-    where: { cosmeticId, status: CosmeticShopItemStatus.Published },
+    where: { cosmeticId, status: CosmeticShopItemStatus.Published, archivedAt: null },
     select: { id: true },
   });
   if (stillListed) return { delisted: 0 };

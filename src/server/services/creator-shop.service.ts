@@ -1478,6 +1478,18 @@ export const takedownCosmeticShopItem = async ({
 
   for (const purchase of purchases) {
     const price = purchase.unitAmount;
+    // A pack can price to zero (own everything discountable, author the rest),
+    // and that path deliberately moves no Buzz — so its transaction id was never
+    // seen by the Buzz service. Asking to refund it would fail forever on every
+    // re-run while the buyer's cosmetics were already revoked.
+    if (price === 0) {
+      await dbWrite.userCosmeticShopPurchases.update({
+        where: { buzzTransactionId: purchase.buzzTransactionId },
+        data: { refunded: true },
+      });
+      refundedUserIds.push(purchase.userId);
+      continue;
+    }
     let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
     try {
       refund = await takedownMoneyMove(() =>
@@ -1536,9 +1548,15 @@ export const takedownCosmeticShopItem = async ({
     // creator pool would bill the wrong person for money they never received —
     // so it goes to `failures` for a moderator to settle by hand instead.
     if (isPack) {
+      const { creatorPool } = computeCreatorShopSplit(price, meta.sellerShare ?? 0);
+      // Counted as unrecovered rather than left out of the summary: the whole
+      // pool really is unrecovered, and a report that only says so in `failures`
+      // reads as a smaller loss than it was.
+      unrecoveredResellerShare += creatorPool;
       failures.push({
         stage: 'clawback',
         userId: item.addedById ?? 0,
+        amount: creatorPool,
         error: `Pack purchase ${purchase.buzzTransactionId} has no recorded payouts; the split cannot be re-derived`,
       });
       continue;

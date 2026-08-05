@@ -63,7 +63,14 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
 
   const cosmeticIds = rows.map((r) => r.cosmeticId);
   const listings = await dbRead.cosmeticShopItem.findMany({
-    where: { cosmeticId: { in: cosmeticIds }, status: CosmeticShopItemStatus.Published },
+    // `archivedAt` as well as `status`: a moderator archiving a listing through
+    // the product editor stamps the date and leaves `status` alone, so a
+    // status-only filter keeps selling it inside every pack that contains it.
+    where: {
+      cosmeticId: { in: cosmeticIds },
+      status: CosmeticShopItemStatus.Published,
+      archivedAt: null,
+    },
     orderBy: { id: 'asc' },
     select: {
       id: true,
@@ -286,6 +293,16 @@ export const computePackPayouts = ({
   // a repeatable one. Every component is therefore scaled into the collected
   // amount rather than trusted to fit inside it.
   const scale = snapshotTotal > packPrice && snapshotTotal > 0 ? packPrice / snapshotTotal : 1;
+  // Reaching here means a pack was sold for less than its members' snapshots,
+  // which the floor and the re-snapshot are both supposed to prevent. Everyone
+  // is paid proportionally less, so the shortfall is real money and silence
+  // would make it invisible until a creator counted it themselves.
+  if (scale !== 1)
+    logToAxiom({
+      level: 'error',
+      message: 'Pack payouts scaled down to fit the collected amount',
+      data: { packPrice, snapshotTotal, packCreatorId, members: payable.length },
+    });
   let foreignTotal = 0;
 
   for (const member of payable) {

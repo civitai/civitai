@@ -187,6 +187,7 @@ export const upsertCosmeticShopItem = async ({
         where: { id },
         select: {
           id: true,
+          cosmeticId: true,
           _count: {
             select: {
               purchases: true,
@@ -208,6 +209,13 @@ export const upsertCosmeticShopItem = async ({
   ) {
     throw new Error('Cannot set available quantity to less than the amount of purchases');
   }
+
+  // A pack has no cosmetic and none of this form's economics — no price floor
+  // over its members, no snapshot to re-take. Today a required `cosmeticId`
+  // happens to reject it; that is an accident of the schema, and the moment
+  // anyone widens that field this becomes a floor-bypassing pack price editor.
+  if (existingItem && existingItem.cosmeticId == null)
+    throw new Error('Packs are edited through the pack editor');
 
   const data = {
     ...cosmeticShopItem,
