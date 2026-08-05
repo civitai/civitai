@@ -294,6 +294,12 @@ const featureFlags = createFeatureFlags({
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
   stickers: { availability: ['mod'], fliptKey: 'stickers' },
+  // Placing a sticker on someone else's work, gated apart from owning one. The
+  // harassment surface is different in kind — a sticker in a comment is a
+  // comment; a sticker on an image is on the creator's work — so this stays with
+  // testers while stickers themselves open up. Required *in addition to*
+  // `stickers`, so placement cannot outlive the feature it belongs to.
+  stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
