@@ -205,20 +205,98 @@ describe('query_database', () => {
       expect(JSON.parse(result)).toHaveLength(50);
     });
 
-    // Invariant guard, not regression coverage: the scope check already read the
-    // original SQL before this change. It is pinned here because the change
-    // introduced a rewrite that a later edit could easily hoist above it.
-    it("scope-checks the model's original SQL, never the rewritten statement", async () => {
+    // The rewrite means the string that is VALIDATED and the string that is
+    // EXECUTED are not the same object. Both must go through the scope check,
+    // in that order: the original owns the model-facing error message, the
+    // executed one is what actually has to be proven in scope.
+    it('scope-checks the original AND the statement it actually executes', async () => {
       h.queryWithTimeout.mockResolvedValue({ rows: [] });
 
       await executeToolCall('query_database', { sql: ALLOWED_SQL });
 
-      expect(h.checkQueryScope).toHaveBeenCalledTimes(1);
-      expect(h.checkQueryScope).toHaveBeenCalledWith(ALLOWED_SQL);
-      expect(h.checkQueryScope).not.toHaveBeenCalledWith(ALLOWED_SQL_BOUNDED);
-      // ...and the rewrite still happened, so this is not passing because the
-      // wrapping was skipped.
+      expect(h.checkQueryScope).toHaveBeenCalledTimes(2);
+      expect(h.checkQueryScope.mock.calls[0][0]).toBe(ALLOWED_SQL);
+      expect(h.checkQueryScope.mock.calls[1][0]).toBe(ALLOWED_SQL_BOUNDED);
+      // The string handed to the driver is byte-identical to the one the second
+      // check cleared — otherwise the check is of a string nobody runs.
       expect(h.queryWithTimeout).toHaveBeenCalledWith(h.readPool, 30000, ALLOWED_SQL_BOUNDED);
+    });
+
+    it('refuses to execute if the rewritten statement fails the scope check', async () => {
+      // Reachability: with the paren-balance fix no real input gets here, so the
+      // branch is driven directly. Without this the guard would be dead code
+      // that no mutation could kill.
+      h.checkQueryScope
+        .mockReturnValueOnce({ ok: true })
+        .mockReturnValueOnce({ ok: false, error: 'Error: synthetic rewrite failure' });
+
+      const result = await executeToolCall('query_database', { sql: ALLOWED_SQL });
+
+      expect(h.queryWithTimeout).not.toHaveBeenCalled();
+      expect(result).toBe(
+        'Error: query_database could not verify this statement stays within its allowed tables. Rewrite it as a simple SELECT over the allowed tables.'
+      );
+      // The internal failure is not described to the model.
+      expect(result).not.toContain('synthetic');
+    });
+  });
+
+  /**
+   * The seam the row-bound wrap created: `checkQueryScope` reasons about the
+   * model's text, the driver runs the WRAPPED text, and a wrapper supplies
+   * parentheses. Text that is a syntax error standing alone can therefore be a
+   * valid statement once wrapped — reaching a relation the scope walk never
+   * audited, because a stray ")" desynchronised its depth bookkeeping.
+   *
+   * Every other fixture in this file is well-formed balanced SQL. That is
+   * exactly why a 5-mutant sweep and 35 Postgres probes did not find this: the
+   * bug lives in text none of them contained.
+   */
+  describe('paren-unbalanced input never reaches the driver', () => {
+    const EVASION =
+      'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1';
+
+    it('refuses a statement that would only become valid once wrapped', async () => {
+      const result = await executeToolCall('query_database', { sql: EVASION });
+
+      // The load-bearing assertion: nothing was executed. Asserting only on the
+      // returned string would pass even if the query had run and returned rows.
+      expect(h.queryWithTimeout).not.toHaveBeenCalled();
+      expect(h.prismaQueryRaw).not.toHaveBeenCalled();
+      expect(result).toContain('unbalanced parentheses');
+    });
+
+    it('never hands the driver a statement naming an out-of-scope relation', async () => {
+      // Independent of WHY it was refused: whatever this tool executes must not
+      // mention a relation outside the allowlist. Stated over the whole call
+      // record rather than one argument, so a second execution path added later
+      // is covered too.
+      for (const sql of [
+        EVASION,
+        'SELECT 1) x, "Account" a',
+        'SELECT * FROM (SELECT id FROM "User")) x, "ApiKey" k',
+      ]) {
+        await executeToolCall('query_database', { sql });
+      }
+
+      const executed = JSON.stringify(h.queryWithTimeout.mock.calls);
+      expect(h.queryWithTimeout).not.toHaveBeenCalled();
+      for (const forbidden of ['Session', 'Account', 'ApiKey']) {
+        expect(executed).not.toContain(forbidden);
+      }
+    });
+
+    it('positive control: the same assertion CAN see a relation name', async () => {
+      // Proves the previous test's `not.toContain` is capable of failing. A
+      // never-called mock makes any `not.toContain` over its calls vacuously
+      // true, so the matcher has to be shown observing a real relation name.
+      h.queryWithTimeout.mockResolvedValue({ rows: [] });
+
+      await executeToolCall('query_database', { sql: 'SELECT id FROM "User" LIMIT 1' });
+
+      const executed = JSON.stringify(h.queryWithTimeout.mock.calls);
+      expect(h.queryWithTimeout).toHaveBeenCalledTimes(1);
+      expect(executed).toContain('User');
     });
   });
 

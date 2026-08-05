@@ -276,6 +276,28 @@ export type QueryScopeResult = { ok: true } | { ok: false; error: string };
  *   - relations inside sub-selects in the target list, `WHERE`, `IN (...)`
  *   - each branch of a `UNION` / `INTERSECT` / `EXCEPT`
  *   - text hidden in comments or a second statement — refused outright
+ *   - parentheses that do not balance — refused outright, in BOTH directions
+ *
+ * 🔴 The paren-balance refusal is load-bearing, not tidiness. Every relation
+ * decision in the walk is keyed on `depth`: which `FROM` list a comma continues,
+ * and therefore which tokens sit in relation position. An unbalanced statement
+ * is one whose real nesting the walk cannot model, so a verdict on it is not a
+ * verdict about the SQL a database would parse.
+ *
+ * This used to clamp (`depth = Math.max(0, depth - 1)`) with no closing
+ * assertion, which was inert only because Postgres rejected such text outright.
+ * The moment a caller WRAPPED the statement that stopped being true: a wrapper
+ * supplies parentheses, so text carrying a stray `)` early and a matching
+ * unclosed `(` late can be a syntax error standing alone and a VALID statement
+ * once wrapped. Such text slipped this walk because the stray `)` reset the
+ * depth bookkeeping, leaving a later comma outside any `FROM` list this walk
+ * believed was open — so the relation after it was never audited, and the
+ * wrapped statement read a table outside the allowlist. Confirmed end to end
+ * against Postgres, inside a READ ONLY transaction, before the fix.
+ *
+ * So the balance requirement is what makes this walk's verdict robust to a
+ * caller that rewrites the statement, and it must not be relaxed to accommodate
+ * one. The regression fixtures live in the scope test suite.
  *
  * What it does NOT do, and rejects rather than guesses at:
  *   - CTEs. `WITH` cannot lead (the caller's `SELECT` check already refuses
@@ -318,8 +340,19 @@ export function checkQueryScope(sql: string): QueryScopeResult {
     }
 
     if (token.kind === 'punct' && token.value === ')') {
+      // A `)` with nothing open is REFUSED, never clamped. Clamping made the
+      // walk's depth model diverge from the text's real nesting, and every
+      // decision below — which `FROM` list a comma belongs to, therefore which
+      // tokens are relation positions — is keyed on `depth`. See the
+      // paren-balance note in this function's docblock for the concrete escape
+      // that made this reachable.
+      if (depth === 0) {
+        return reject(
+          'Error: unbalanced parentheses in query — a ")" here closes nothing. query_database only runs statements whose parentheses balance.'
+        );
+      }
       fromListAtDepth[depth] = false;
-      depth = Math.max(0, depth - 1);
+      depth -= 1;
       expectRelation = false;
       continue;
     }
@@ -368,6 +401,16 @@ export function checkQueryScope(sql: string): QueryScopeResult {
       expectRelation = true;
       continue;
     }
+  }
+
+  // An unclosed `(` is the other half of the balance requirement. Left
+  // unchecked, the walk ends believing it is nested inside a sub-select that
+  // the text never opened — and a caller that appends a `)` turns the statement
+  // into something whose relations this walk never audited.
+  if (depth !== 0) {
+    return reject(
+      'Error: unbalanced parentheses in query — a "(" was never closed. query_database only runs statements whose parentheses balance.'
+    );
   }
 
   if (expectRelation) {

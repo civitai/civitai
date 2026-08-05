@@ -260,3 +260,81 @@ describe('checkQueryScope — shapes it cannot read, and therefore refuses', () 
     );
   });
 });
+
+/**
+ * Paren-unbalanced input — the fixture class every other case in this file
+ * lacks.
+ *
+ * Everything above is well-formed SQL, which is why the walk's depth bookkeeping
+ * was never exercised against text whose real nesting it could not model. The
+ * walk keys EVERY relation decision on `depth` — which `FROM` list a comma
+ * continues, and therefore which tokens sit in relation position — so text that
+ * desynchronises `depth` from the truth gets a verdict that is not about the SQL
+ * a database would parse.
+ *
+ * These used to be accepted. Standing alone they are syntax errors, so that was
+ * inert; it stopped being inert once a caller began WRAPPING the statement in a
+ * bounding subquery, because a wrapper supplies the parentheses the text is
+ * missing. A statement with a stray `)` early and an unclosed `(` late can be
+ * rejected by Postgres on its own and valid once wrapped — and the relation it
+ * reaches through the desynchronised comma was never audited.
+ *
+ * The mechanism is independent of which table is targeted; these fixtures use
+ * relations this file already exercises as out-of-scope.
+ */
+describe('checkQueryScope — paren-unbalanced input', () => {
+  it.each([
+    // The exploit shape: stray `)` at depth 0 leaves the later comma outside any
+    // FROM list the walk thinks is open, so the relation after it is not read as
+    // a relation at all. The trailing unclosed `(` is what makes the WRAPPED
+    // form balance, i.e. valid SQL.
+    [
+      'a stray ")" early and an unclosed "(" late — valid only once wrapped',
+      'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1',
+    ],
+    ['a bare stray ")"', 'SELECT 1)'],
+    ['a stray ")" in the target list', 'SELECT (1)) FROM "User"'],
+    ['an extra ")" after a balanced sub-select', 'SELECT * FROM (SELECT id FROM "User")) x'],
+    ['an unclosed "(" around a sub-select', 'SELECT * FROM (SELECT id FROM "User"'],
+    ['two unclosed "("', 'SELECT * FROM (SELECT (id FROM "User"'],
+    [
+      'a stray ")" that hides an out-of-scope relation behind a comma',
+      'SELECT 1) x, "Account" a',
+    ],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('unbalanced parentheses');
+  });
+
+  // The two directions are separate guards and must be shown to be separately
+  // reachable — a single balance check that only caught one direction would
+  // leave the other half of the class open.
+  it('names the direction: a ")" that closes nothing', () => {
+    expect(checkQueryScope('SELECT 1)')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a ")" here closes nothing. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  it('names the direction: a "(" that was never closed', () => {
+    expect(checkQueryScope('SELECT * FROM (SELECT id FROM "User"')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a "(" was never closed. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  // Positive control for the fixture class: parentheses inside string literals
+  // and quoted identifiers are CONTENT, not structure. If the balance check
+  // counted those it would reject legitimate statements, and the corpus above
+  // would not catch it because none of those fixtures carry a quoted paren.
+  it('does not count parentheses inside string literals or quoted identifiers', () => {
+    expect(checkQueryScope(`SELECT id FROM "User" WHERE username = ')('`)).toEqual({ ok: true });
+    expect(checkQueryScope(`SELECT count(*) FROM "User" WHERE email = '(a@b.c)'`)).toEqual({
+      ok: true,
+    });
+  });
+});

@@ -69,6 +69,13 @@ const ROW_BOUND_ALIAS = '__civitai_row_bound';
  *
  * The trailing `;` that `checkQueryScope` permits has to go first, or the wrap
  * is a syntax error.
+ *
+ * 🔴 This rewrite CHANGES THE PARSE of the model's text — it supplies a `(` and
+ * a `)`, so it can turn text that Postgres would reject outright into a valid
+ * statement. That is only safe because two things hold at the call site, and it
+ * must not be called anywhere they do not: `checkQueryScope` refuses
+ * paren-unbalanced input, and the caller re-runs that check on the string this
+ * returns. Skipping either one reopens a scope escape, not a syntax error.
  */
 function boundRowCount(sql: string): string {
   const trimmed = sql.trim();
@@ -463,11 +470,45 @@ async function executeQueryDatabase(sql: string): Promise<string> {
   }
 
   // Bound WHICH relations the statement can reach before it touches a
-  // connection. This reads the model's ORIGINAL text — `boundRowCount` below
-  // rewrites the statement, and a scope check run against the rewrite would be
-  // auditing our own wrapper rather than the model's query.
+  // connection. The model's ORIGINAL text is checked first so the rejection the
+  // model reads is about the SQL it actually wrote.
   const scope = checkQueryScope(sql);
   if (!scope.ok) return scope.error;
+
+  // ...and then the statement that will actually EXECUTE is checked too.
+  //
+  // These are two different strings, and only the second one reaches Postgres.
+  // An earlier revision of this function checked the original alone, arguing
+  // that checking the rewrite would "audit our own wrapper". That conflated two
+  // questions: which text should produce the model-facing error message (the
+  // original — still true), and which text must be PROVEN in scope (the one
+  // that runs — this was wrong). It was wrong in an exploitable way: a
+  // paren-unbalanced statement could pass the check as written and become a
+  // valid query over an out-of-scope table once `boundRowCount` supplied the
+  // missing parenthesis.
+  //
+  // `checkQueryScope` now refuses unbalanced parentheses, which closes that
+  // specific escape at its source. This second call is the structural version
+  // of the same guarantee: whatever string we hand the driver has been through
+  // the scope check itself, so no future edit to `boundRowCount` — or any
+  // rewriter added later — can widen what the statement reads without this
+  // check seeing it. The wrapper's own tokens are a fixed prefix and suffix that
+  // pass the walk, so this cannot reject a statement the first check accepted;
+  // that is asserted over the whole allowlist corpus in the scope test suite.
+  //
+  // Reaching this branch therefore means an internal invariant broke, not that
+  // the model wrote something bad — so it gets a generic refusal rather than a
+  // description of our rewriting.
+  const boundedSql = boundRowCount(sql);
+  const boundedScope = checkQueryScope(boundedSql);
+  if (!boundedScope.ok) {
+    agentLog('QUERY_DATABASE REWRITE FAILED SCOPE', {
+      sql,
+      boundedSql,
+      error: boundedScope.error,
+    });
+    return 'Error: query_database could not verify this statement stays within its allowed tables. Rewrite it as a simple SELECT over the allowed tables.';
+  }
 
   try {
     // `queryWithTimeout` wraps the statement in BEGIN READ ONLY + SET LOCAL
@@ -480,7 +521,7 @@ async function executeQueryDatabase(sql: string): Promise<string> {
     const { rows } = await queryWithTimeout<Record<string, unknown>>(
       pgDbRead,
       DB_QUERY_TIMEOUT_MS,
-      boundRowCount(sql)
+      boundedSql
     );
     if (rows.length === 0) return 'No results found.';
     if (rows.length > MAX_RESULT_ROWS) {
