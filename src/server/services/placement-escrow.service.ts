@@ -44,11 +44,31 @@ const PAYOUT_KINDS = [
   'forfeit',
 ] as const;
 
-type SettleAction = 'approve' | 'decline' | 'expire' | 'removeByOwner' | 'removeByModerator';
+type SettleAction =
+  | 'approve'
+  | 'decline'
+  /**
+   * A block declines every pending placement from that user at once. The fee is
+   * the price of the owner's *attention* to a submission, and a block is the
+   * owner refusing to give attention to anyone — so no fee is taken.
+   *
+   * It also closes a farming vector the spec's toll-booth reasoning missed:
+   * accepting submissions at a high price and then blocking everyone is one
+   * action that collects N fees, and the "declined users will say so publicly"
+   * mitigation inverts when the blocked can no longer see or contact the blocker.
+   *
+   * ⚠️ Provisional pending Justin. Waiving is the reversible direction: adding a
+   * fee later is additive, refunding one taken wrongly is not.
+   */
+  | 'declineByBlock'
+  | 'expire'
+  | 'removeByOwner'
+  | 'removeByModerator';
 
 const STATUS_FOR_ACTION: Record<SettleAction, 'approved' | 'declined' | 'expired' | 'removed'> = {
   approve: 'approved',
   decline: 'declined',
+  declineByBlock: 'declined',
   expire: 'expired',
   removeByOwner: 'removed',
   removeByModerator: 'removed',
@@ -243,7 +263,13 @@ export async function settlePlacement({
 
   const { count } = await dbWrite.placement.updateMany({
     where: { id: placementId, status: 'pending' },
-    data: { status, removedBy, resolvedAt: new Date(), resolvedById: actorId ?? null },
+    data: {
+      status,
+      removedBy,
+      resolvedAt: new Date(),
+      resolvedById: actorId ?? null,
+      ...(action === 'declineByBlock' ? { feeWaived: true } : {}),
+    },
   });
 
   const placement = await dbWrite.placement.findUnique({ where: { id: placementId } });
@@ -337,10 +363,16 @@ async function computePayoutLegs(
     // The fee that was held is the fee that is paid. Recomputing it here is what
     // let a rate change mint the difference.
     case 'declined':
-      return [
-        { kind: 'feeToOwner', amount: fee },
-        { kind: 'principalToPlacer', amount: principal },
-      ];
+      // A waived fee returns the whole escrow, both holds, to the placer.
+      return placement.feeWaived
+        ? [
+            { kind: 'principalToPlacer', amount: principal },
+            { kind: 'feeToPlacer', amount: fee },
+          ]
+        : [
+            { kind: 'feeToOwner', amount: fee },
+            { kind: 'principalToPlacer', amount: principal },
+          ];
     case 'expired':
     case 'removedByOwner':
       return [

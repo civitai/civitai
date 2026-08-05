@@ -656,6 +656,7 @@ export interface User {
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
   targetedAnnouncements?: AnnouncementUser[];
+  placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
   placementsMade?: Placement[];
 }
@@ -5161,6 +5162,7 @@ export interface Placement {
   removedBy: string | null;
   amount: number;
   sellerId: number | null;
+  feeWaived: boolean;
   createdAt: Date;
   expiresAt: Date | null;
   resolvedAt: Date | null;
@@ -5176,6 +5178,14 @@ export interface PlacementTransaction {
   transactionId: string | null;
   amount: number;
   createdAt: Date;
+}
+
+export interface PlacementSuspension {
+  userId: number;
+  user?: User;
+  reason: string | null;
+  createdAt: Date;
+  createdById: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

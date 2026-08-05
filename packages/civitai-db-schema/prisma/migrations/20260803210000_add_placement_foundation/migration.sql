@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS "Placement" (
   -- never saw the argument would strand the seller's share with no record it was
   -- ever owed.
   "sellerId"          INTEGER,
+  -- A block is the owner refusing attention to anyone, and the fee is the price
+  -- of that attention, so a block-decline takes none. Stored, not inferred:
+  -- settlement is resumable and has to replay the same decision.
+  "feeWaived"         BOOLEAN NOT NULL DEFAULT false,
   "createdAt"         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "expiresAt"         TIMESTAMP(3),
   "resolvedAt"        TIMESTAMP(3),
@@ -120,3 +124,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PlacementTransaction_placementId_kind_key"
 -- Drives the sweeper over legs that were claimed but never paid.
 CREATE INDEX IF NOT EXISTS "PlacementTransaction_kind_createdAt_idx"
   ON "PlacementTransaction" ("kind", "createdAt");
+
+-- Sitewide suspension of a user's placement privileges. Not a block from a system
+-- account: that would inherit the block cache's staleness and pollute the block
+-- lists real users see.
+CREATE TABLE IF NOT EXISTS "PlacementSuspension" (
+  "userId"      INTEGER PRIMARY KEY,
+  "reason"      TEXT,
+  "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdById" INTEGER
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PlacementSuspension_userId_fkey') THEN
+    ALTER TABLE "PlacementSuspension"
+      ADD CONSTRAINT "PlacementSuspension_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS "PlacementSuspension_createdAt_idx" ON "PlacementSuspension" ("createdAt");

@@ -603,6 +603,7 @@ model User {
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
   targetedAnnouncements              AnnouncementUser[]
+  placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
   placementsMade                     Placement[]                @relation("PlacementPlacer")
 
@@ -7529,6 +7530,11 @@ model Placement {
   /// On the row rather than passed in, because the settlement is resumable and a
   /// sweeper that never saw the argument would strand the seller's share.
   sellerId              Int?
+  /// Set when a block declined this placement. A block is the owner refusing to
+  /// give attention to anyone, and the decline fee is the price of that attention,
+  /// so no fee is taken. Stored rather than inferred: settlement is resumable and
+  /// must replay the same decision.
+  feeWaived             Boolean   @default(false)
   createdAt             DateTime  @default(now())
   expiresAt             DateTime?
   resolvedAt            DateTime?
@@ -7557,4 +7563,18 @@ model PlacementTransaction {
 
   @@unique([placementId, kind])
   @@index([kind, createdAt])
+}
+
+
+/// A moderator suspending a user's placement privileges sitewide. Deliberately not
+/// modelled as a block from a system account: that would inherit the block cache's
+/// staleness and pollute the block lists real users see.
+model PlacementSuspension {
+  userId      Int      @id
+  user        User     @relation("PlacementSuspensionUser", fields: [userId], references: [id], onDelete: Cascade)
+  reason      String?
+  createdAt   DateTime @default(now())
+  createdById Int?
+
+  @@index([createdAt])
 }

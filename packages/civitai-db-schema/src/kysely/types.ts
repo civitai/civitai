@@ -2899,6 +2899,13 @@ export type Placement = {
    * sweeper that never saw the argument would strand the seller's share.
    */
   sellerId: number | null;
+  /**
+   * Set when a block declined this placement. A block is the owner refusing to
+   * give attention to anyone, and the decline fee is the price of that attention,
+   * so no fee is taken. Stored rather than inferred: settlement is resumable and
+   * must replay the same decision.
+   */
+  feeWaived: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   expiresAt: Timestamp | null;
   resolvedAt: Timestamp | null;
@@ -2917,6 +2924,12 @@ export type PlacementSpace = {
   price: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type PlacementSuspension = {
+  userId: number;
+  reason: string | null;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
 };
 export type PlacementTransaction = {
   id: Generated<number>;
@@ -4181,6 +4194,7 @@ export type DB = {
   Partner: Partner;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
+  PlacementSuspension: PlacementSuspension;
   PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
