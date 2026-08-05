@@ -22,7 +22,9 @@ import { relative, resolve } from 'node:path';
 import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from './compare';
 import {
   assertMeasuredSomething,
+  blocking,
   buildBaseline,
+  snapshotAge,
   evaluateGate,
   formatGateResult,
   type Baseline,
@@ -185,7 +187,10 @@ function main(): number {
   }
 
   const result = evaluateGate(report, catalog, baseline);
-  process.stdout.write(`${formatGateResult(result, baseline)}\n`);
+  // Advisory, never fatal: a gate that reddened because a date passed would be red for
+  // everyone at once for a reason no PR author can fix. The age is printed on every run.
+  const age = snapshotAge(catalog.capturedAt, new Date());
+  process.stdout.write(`${formatGateResult(result, baseline, age)}\n`);
 
   const untrustworthy = assertMeasuredSomething(result, baseline);
   if (untrustworthy.length > 0) {
@@ -195,10 +200,12 @@ function main(): number {
     return 2;
   }
 
-  if (result.newEnforced.length > 0) {
+  const blocked = blocking(result);
+  if (blocked.length > 0) {
     process.stderr.write(
-      `\nBLOCKED: this change introduces ${result.newEnforced.length} drift finding(s) on ` +
-        'columns the database already has.\n\n' +
+      `\nBLOCKED: ${blocked.length} drift finding(s) on columns the database already has ` +
+        `(${result.newEnforced.length} newly declared, ${result.escalated.length} escalated ` +
+        'from pending).\n\n' +
         'If the declaration is wrong, fix the schema. If the database is wrong, write the ' +
         'migration\n(`pnpm run db:migrate:empty "..."`) — and because migrations here are ' +
         'applied by hand, also\nget it applied, then recapture the catalog snapshot.\n\n' +

@@ -1,16 +1,20 @@
 import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { compareSchemaToCatalog } from '../compare';
 import {
   assertMeasuredSomething,
+  blocking,
   buildBaseline,
   evaluateGate,
   fingerprint,
+  referencedTarget,
+  snapshotAge,
+  STALE_AFTER_DAYS,
   tierOf,
   type Baseline,
 } from '../gate';
@@ -73,6 +77,38 @@ describe('fingerprint', () => {
     expect(fingerprint(required)).not.toBe(fingerprint(optional));
   });
 
+  it('DOES fold the referenced table into a missing-FK fingerprint', () => {
+    // Repointing a relation keeps the model, the field and the constrained column identical,
+    // so without the target the fingerprint is unchanged and the edit inherits the old
+    // entry's baseline pass with no mention in the output.
+    const toImage = finding({
+      kind: 'missing-foreign-key',
+      columns: ['imageId'],
+      field: 'image',
+      declared: 'FOREIGN KEY -> Image(id) ON DELETE Cascade ON UPDATE Cascade',
+    });
+    const toPost = {
+      ...toImage,
+      declared: 'FOREIGN KEY -> Post(id) ON DELETE Cascade ON UPDATE Cascade',
+    };
+    expect(fingerprint(toPost)).not.toBe(fingerprint(toImage));
+  });
+
+  it('still ignores the ACTION prose, which is what #3589 changed', () => {
+    // The two rules have to coexist: target IN, actions OUT.
+    const restrict = finding({
+      kind: 'missing-foreign-key',
+      columns: ['imageId'],
+      field: 'image',
+      declared: 'FOREIGN KEY -> Image(id) ON DELETE Restrict ON UPDATE Cascade',
+    });
+    const cascade = {
+      ...restrict,
+      declared: 'FOREIGN KEY -> Image(id) ON DELETE Cascade ON UPDATE Cascade',
+    };
+    expect(fingerprint(cascade)).toBe(fingerprint(restrict));
+  });
+
   it('separates findings that differ only in column order', () => {
     const ab = finding({ kind: 'uniqueness', columns: ['a', 'b'], field: undefined });
     const ba = finding({ kind: 'uniqueness', columns: ['b', 'a'], field: undefined });
@@ -100,6 +136,34 @@ describe('tierOf', () => {
     const onNewColumns = finding({ kind: 'missing-foreign-key', columns: ['noSuchColumnHere'] });
     expect(tierOf(onLiveColumns, catalog)).toBe('enforced');
     expect(tierOf(onNewColumns, catalog)).toBe('pending');
+  });
+
+  it('a COMPOSITE foreign key is pending unless EVERY column exists', () => {
+    // Distinguishes `.every` from `.some`, which are identical on the single-column keys the
+    // rest of this file uses — so `.every -> .some` was a surviving mutant, on the one tier
+    // decided at runtime. A composite key half-migrated (one column landed, one did not) is
+    // not enforceable: there is nothing to put a constraint on yet.
+    const bothPresent = finding({
+      kind: 'missing-foreign-key',
+      table: 'ImageResource',
+      columns: ['imageId', 'modelVersionId'],
+      model: 'ImageResource',
+      field: 'image',
+      declared: 'FOREIGN KEY -> Image(id) ON DELETE Cascade ON UPDATE Cascade',
+    });
+    const onePresent = { ...bothPresent, columns: ['imageId', 'noSuchColumnHere'] };
+    const noneMissing = { ...bothPresent, columns: ['noSuchColumnHere', 'alsoNotAColumn'] };
+
+    expect(tierOf(bothPresent, catalog)).toBe('enforced');
+    expect(tierOf(onePresent, catalog)).toBe('pending'); // `.some` would say 'enforced'
+    expect(tierOf(noneMissing, catalog)).toBe('pending');
+  });
+
+  it('the composite column names above are what that test claims (positive control)', () => {
+    const columns = new Set(catalog.columns.map((c) => `${c.table} ${c.column}`));
+    expect(columns.has('ImageResource imageId')).toBe(true);
+    expect(columns.has('ImageResource modelVersionId')).toBe(true);
+    expect(columns.has('ImageResource noSuchColumnHere')).toBe(false);
   });
 
   it('the two column names above are what this test claims they are', () => {
@@ -184,6 +248,119 @@ describe('evaluateGate against the real schema and snapshot', () => {
     const result = evaluateGate(report, catalog, withGhost);
     expect(result.resolved.map((e) => e.table)).toEqual(['NoSuchTable']);
     expect(result.newEnforced).toEqual([]);
+  });
+});
+
+describe('referencedTarget parses compare.ts output', () => {
+  // PINS A CROSS-MODULE COUPLING. `referencedTarget` reads the referenced table out of the
+  // `declared` string that compare.ts formats. If that format ever changes, the parse returns
+  // null, every missing-FK fingerprint collapses to `?`, and distinct findings silently merge
+  // into one. This makes that a red suite instead of a silent degradation.
+  const missingFks = report.findings.filter((f) => f.kind === 'missing-foreign-key');
+
+  it('resolves a target for EVERY missing foreign key in the real report', () => {
+    expect(missingFks.length).toBeGreaterThanOrEqual(37); // positive control on the loop below
+    const unparsed = missingFks.filter((f) => !referencedTarget(f));
+    expect(unparsed.map((f) => f.declared)).toEqual([]);
+  });
+
+  it('resolves targets that are real model tables, not fragments', () => {
+    const tables = new Set(catalog.tables);
+    const targets = new Set(missingFks.map((f) => referencedTarget(f) as string));
+    expect(targets.size).toBeGreaterThan(1);
+    // Every parsed target should name a real table; a regex that grabbed the wrong span
+    // would produce fragments that match nothing.
+    expect([...targets].filter((t) => !tables.has(t))).toEqual([]);
+  });
+
+  it('returns null for kinds that have no referenced table', () => {
+    expect(referencedTarget(finding({ kind: 'nullability' }))).toBeNull();
+    expect(referencedTarget(finding({ kind: 'missing-column' }))).toBeNull();
+  });
+});
+
+describe('tier escalation', () => {
+  const baseline = buildBaseline(report, catalog, snapshotRelative);
+
+  it('blocks a baseline finding whose tier rose from pending to enforced', () => {
+    // The migration-landed-without-its-constraint case: the finding was accepted while its
+    // column did not exist, the column exists now, and the fingerprint never changed. Before
+    // this it was absorbed into `matched` and the run exited 0.
+    const enforcedEntry = baseline.entries.find((e) => e.tier === 'enforced');
+    expect(enforcedEntry).toBeDefined();
+    const downgraded = {
+      catalog: snapshotRelative,
+      entries: baseline.entries.map((e) =>
+        e.fingerprint === enforcedEntry?.fingerprint ? { ...e, tier: 'pending' as const } : e
+      ),
+    };
+
+    const result = evaluateGate(report, catalog, downgraded);
+    expect(result.escalated).toHaveLength(1);
+    expect(result.escalated[0].from).toBe('pending');
+    expect(result.escalated[0].to).toBe('enforced');
+    // It still counts as reproduced — the trust control must not be weakened by this...
+    expect(result.matched).toBe(baseline.entries.length);
+    // ...but it must block.
+    expect(blocking(result)).toHaveLength(1);
+    expect(result.newEnforced).toEqual([]);
+  });
+
+  it('does not treat an unchanged tier as an escalation', () => {
+    const result = evaluateGate(report, catalog, baseline);
+    expect(result.escalated).toEqual([]);
+    expect(blocking(result)).toEqual([]);
+  });
+
+  it('does not treat enforced -> pending as a regression', () => {
+    const pendingEntry = baseline.entries.find((e) => e.tier === 'pending');
+    expect(pendingEntry).toBeDefined();
+    const upgraded = {
+      catalog: snapshotRelative,
+      entries: baseline.entries.map((e) =>
+        e.fingerprint === pendingEntry?.fingerprint ? { ...e, tier: 'enforced' as const } : e
+      ),
+    };
+    expect(evaluateGate(report, catalog, upgraded).escalated).toEqual([]);
+  });
+});
+
+describe('snapshotAge', () => {
+  const now = new Date('2026-08-05T12:00:00.000Z');
+
+  it('reports a fresh snapshot without warning', () => {
+    const age = snapshotAge('2026-08-03T00:00:00.000Z', now);
+    expect(age.ageDays).toBe(2);
+    expect(age.warnings).toEqual([]);
+    expect(age.label).toMatch(/2026-08-03/);
+  });
+
+  it('warns once the snapshot is older than the threshold', () => {
+    const old = new Date(now.getTime() - (STALE_AFTER_DAYS + 1) * 86_400_000).toISOString();
+    const age = snapshotAge(old, now);
+    expect(age.ageDays).toBe(STALE_AFTER_DAYS + 1);
+    expect(age.warnings).toHaveLength(1);
+    expect(age.warnings[0]).toMatch(/pending\/warn/);
+  });
+
+  it('treats a MISSING capture date as a problem, not as a default', () => {
+    // A frozen catalog with no date cannot have its decay assessed at all.
+    const age = snapshotAge(undefined, now);
+    expect(age.ageDays).toBeNull();
+    expect(age.warnings).toHaveLength(1);
+    expect(age.label).toMatch(/UNKNOWN/);
+  });
+
+  it('does not silently accept an unreadable date', () => {
+    const age = snapshotAge('last tuesday', now);
+    expect(age.ageDays).toBeNull();
+    expect(age.warnings).toHaveLength(1);
+  });
+
+  it('the committed snapshot carries a capture date', () => {
+    // The whole staleness signal is inert if the artefact has no stamp.
+    expect(catalog.capturedAt).toBeTruthy();
+    expect(snapshotAge(catalog.capturedAt, now).ageDays).not.toBeNull();
   });
 });
 
@@ -315,6 +492,76 @@ describe('drift-gate CLI', () => {
     // Not 0. Every finding reads as new, so a pass here would be a fact about the baseline.
     expect(result.code).toBe(2);
     expect(result.stderr).toMatch(/baseline is empty/);
+  });
+
+  it('exits 2 on a catalog whose nullability read answered uniformly', async () => {
+    // Wires up `assertCatalogSanity`, which was TESTED but not WIRED — deleting the call from
+    // gate-cli.ts survived the whole suite, because the only exit-2 CLI case used an EMPTY
+    // catalog, which trips `assessCoverage` instead and would keep passing with sanity gone.
+    // This is the isolation seam: a function can be hermetically correct and never called.
+    //
+    // The motivating bug: `SELECT a.attnotnull notnull` parses as the postfix IS NOT NULL
+    // operator and returns constant true, fabricating one-directional nullability drift.
+    const uniform = join(dir, 'uniform-notnull.json');
+    const broken = JSON.parse(JSON.stringify(catalog)) as DbCatalog;
+    for (const column of broken.columns) column.notNull = true;
+    writeFileSync(uniform, JSON.stringify(broken));
+
+    const result = await gate(['--catalog', uniform]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/all \d+ columns report notNull=true/);
+  });
+
+  it('exits 1 when a baseline finding escalates from pending to enforced', async () => {
+    // End-to-end for the escalation path: the schema is untouched and every fingerprint
+    // matches, so only the tier comparison can produce this verdict.
+    const committed = JSON.parse(
+      readFileSync(join(packageRoot, baselineRelative), 'utf8')
+    ) as Baseline;
+    const target = committed.entries.find((e) => e.tier === 'enforced');
+    expect(target).toBeDefined();
+    const downgraded = join(dir, 'downgraded-baseline.json');
+    writeFileSync(
+      downgraded,
+      JSON.stringify({
+        ...committed,
+        entries: committed.entries.map((e) =>
+          e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' } : e
+        ),
+      })
+    );
+
+    const result = await gate(['--baseline', downgraded]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toMatch(/escalated pending -> enforced\s+: 1/);
+    expect(result.stdout).toMatch(/ROSE from pending to enforced/);
+    expect(result.stderr).toMatch(/1 escalated/);
+  });
+
+  it('prints the snapshot capture date on every run, not only when it is stale', async () => {
+    const result = await gate([]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-08-03 \(\d+ day\(s\) old\)/);
+  });
+
+  it('warns loudly when the snapshot carries no capture date', async () => {
+    const undated = join(dir, 'undated-catalog.json');
+    const stripped = JSON.parse(JSON.stringify(catalog)) as DbCatalog;
+    delete stripped.capturedAt;
+    writeFileSync(undated, JSON.stringify(stripped));
+    // Baseline records the catalog path, so point it at this one to get past that check.
+    const committed = JSON.parse(
+      readFileSync(join(packageRoot, baselineRelative), 'utf8')
+    ) as Baseline;
+    const rebased = join(dir, 'undated-baseline.json');
+    const rel = relative(packageRoot, undated).split('\\').join('/');
+    writeFileSync(rebased, JSON.stringify({ ...committed, catalog: rel }));
+
+    const result = await gate(['--catalog', undated, '--baseline', rebased]);
+    expect(result.stdout).toMatch(/UNKNOWN/);
+    expect(result.stdout).toMatch(/STALE:/);
+    // Advisory, never fatal — a date cannot make a PR author's change wrong.
+    expect(result.code).toBe(0);
   });
 
   it('exits 2 on a catalog that covered nothing', async () => {

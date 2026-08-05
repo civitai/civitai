@@ -169,7 +169,15 @@ async function main(): Promise<number> {
 
   const catalog = await loadCatalog(options);
   if (options.dumpCatalog) {
-    process.stdout.write(`${JSON.stringify(catalog)}\n`);
+    // Stamp the capture instant. A frozen catalog decays — every column created after it is
+    // invisible to a comparison against it — and without a date on the artefact that decay
+    // cannot be reported by anything downstream. Read from a --catalog file, an existing
+    // stamp is preserved rather than refreshed: it dates the CAPTURE, not the re-dump.
+    const stamped: DbCatalog = {
+      ...catalog,
+      capturedAt: catalog.capturedAt ?? new Date().toISOString(),
+    };
+    process.stdout.write(`${JSON.stringify(stamped)}\n`);
     return 0;
   }
 
