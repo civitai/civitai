@@ -246,3 +246,86 @@ current numbers.
 Run by hand today. The root `unit` Vitest project globs `src/**` only, so this package's
 suite runs via `pnpm --filter @civitai/db-schema test` — as do the suites of the seven other
 packages in the same position.
+
+## Gating a pull request
+
+`drift:gate` is the CI half. It blocks a pull request that makes the gap WORSE, and only
+that.
+
+```bash
+pnpm --filter @civitai/db-schema drift:gate       # verdict; exit 1 on new enforced drift
+pnpm --filter @civitai/db-schema drift:baseline   # accept the current findings
+```
+
+It never opens a database connection. `gate-cli.ts` has no database code path to reach — it
+compares the schema against the committed catalog snapshot and nothing else. That is a
+requirement rather than a convenience: this repo is public and so are its CI logs.
+
+### Why a baseline and not `--strict`
+
+`--strict` fails on any finding, and there are 61 on `main` today. A gate red on every run
+teaches everyone to click through it, so it would be switched off within a week — the same
+reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
+
+`drift-baseline.json`, next to this README, records those 61 as accepted. The gate reports
+only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
+act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
+which constraint the change gave up on.
+
+It is checked against the catalog it was captured with. A baseline measured against a
+different snapshot describes a different database, so the gate exits 2 rather than comparing
+them.
+
+### Two severities, and why the split is structural
+
+Migrations here are applied **by hand**, per environment. A declaration being ahead of the
+database is therefore a normal intermediate state, not a defect — and a gate that could not
+tell that apart from real drift would block every pull request that adds a column.
+
+The discriminator is not a taste ranking. It is: does the finding concern database surface
+that **already exists**?
+
+|              |                                                                |            |
+| ------------ | -------------------------------------------------------------- | ---------- |
+| **enforced** | the columns are in the catalog and the constraint is not       | **blocks** |
+| **pending**  | the column is not in the catalog, so the schema is ahead of it | warns      |
+
+`missing-column` is always pending by construction — the column's absence _is_ the finding.
+`nullability` and `uniqueness` are always enforced by construction — the differ only emits
+them for columns it found. `missing-foreign-key` is the only kind that can be either, decided
+by looking its constrained columns up in the catalog.
+
+An enforced finding is a hazard the moment it merges: declaring `@unique` on a live column
+with no unique index, or flipping a live NULLABLE column to required, makes Prisma hand
+callers a type the database does not back.
+
+### What this gate does not measure
+
+**Referential actions.** The committed snapshot carries no `ON DELETE`/`ON UPDATE` data, so
+all ~408 comparable foreign keys read as "not comparable" and this gate can produce no
+`referential-action` finding at all. A live run does measure them and found **45** — every one
+an `ON UPDATE` `Cascade`-vs-`NoAction` on a hand-written App Blocks foreign key, with zero
+`ON DELETE` mismatches. Since `id` is never updated, they are inert in practice.
+
+They are absorbed here by being structurally unmeasurable, not by being waved through, and the
+verdict prints the count of what it could not compare on its own line rather than a clean
+zero. Recapturing the snapshot from a live database — `drift --dump-catalog` — would bring
+them into scope, at which point all 45 need a baseline entry or a fix before the gate can
+stay green.
+
+### What a developer sees
+
+Adding a column, or a relation on new columns, warns and passes: the schema is ahead of the
+snapshot, which is what an unapplied migration looks like.
+
+Adding drift on a live column blocks, names the finding, and offers three routes — fix the
+declaration, write and apply the migration, or accept it in the baseline with the reason in
+the PR description.
+
+### Refreshing
+
+- **Accepting a finding:** `drift:baseline`, commit the diff, say why in the PR.
+- **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
+  without blocking; `drift:baseline` prunes it.
+- **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
+  catalog and the baseline are a pair and the gate enforces that they stay one.

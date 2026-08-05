@@ -1,0 +1,67 @@
+name: Schema drift gate
+
+# Blocks a pull request that makes the gap between `schema.full.prisma` and the production
+# database WORSE, and only that. Pre-existing drift is warned about, never blocked on — the
+# database carries 61 accepted findings today, and a gate red on every run is a gate everyone
+# learns to click through.
+#
+# What "worse" means is decided structurally, not by taste. Migrations in this project are
+# applied BY HAND, per environment, so a declaration being ahead of the database is a normal
+# intermediate state. The gate therefore blocks only on drift that concerns columns the
+# database ALREADY HAS — declaring `@unique` on a live column with no unique index, or
+# flipping a live NULLABLE column to required — and merely warns when the column is not in
+# the catalog snapshot at all, which is what an unapplied migration looks like.
+# `packages/civitai-db-schema/src/schema-drift/gate.ts` carries the full reasoning.
+#
+# THE DATABASE SIDE IS A COMMITTED SNAPSHOT, NOT A CONNECTION. This job opens no database
+# connection and holds no credential; the entry point it runs (`gate-cli.ts`) has no database
+# code path to reach. That is a requirement, not a convenience: this repo is public and so
+# are these logs.
+#
+# Its own workflow file rather than a job in lint.yml, so the drift gate's verdict is a
+# separate, individually-readable check.
+
+on:
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Schema drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # No `submodules: true`. The gate reads the Prisma schema and a JSON snapshot; nothing
+      # in its import graph reaches event-engine-common.
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Schema drift gate
+        run: |
+          set -euo pipefail
+          pnpm --filter @civitai/db-schema drift:gate | tee drift-gate.log
+          # `pnpm --filter` prints "No projects matched the filters" and EXITS 0. A renamed
+          # package, or a filter typo, would therefore report this gate as passing having
+          # produced no verdict at all. The gate always prints its match line, including when
+          # it blocks, so requiring it distinguishes "ran and found nothing new" from
+          # "did not run".
+          if ! grep -q 'baseline findings reproduced' drift-gate.log; then
+            echo "::error::The drift gate produced no verdict. \`pnpm --filter\` exits 0 when it matches no project, so this job would otherwise have reported success without running the gate."
+            exit 1
+          fi

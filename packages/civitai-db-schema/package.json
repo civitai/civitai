@@ -6,6 +6,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "drift": "tsx src/schema-drift/cli.ts",
+    "drift:gate": "tsx src/schema-drift/gate-cli.ts",
+    "drift:baseline": "tsx src/schema-drift/gate-cli.ts --update-baseline",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,0 +1,553 @@
+{
+  "catalog": "src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json",
+  "entries": [
+    {
+      "fingerprint": "missing-column|ModelFlag|sfwOnly|ModelFlag|sfwOnly",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "ModelFlag",
+      "columns": ["sfwOnly"],
+      "model": "ModelFlag",
+      "field": "sfwOnly"
+    },
+    {
+      "fingerprint": "missing-column|UserCosmeticShopPurchases|meta|UserCosmeticShopPurchases|meta",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserCosmeticShopPurchases",
+      "columns": ["meta"],
+      "model": "UserCosmeticShopPurchases",
+      "field": "meta"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsDownCountAllTimeRank|UserRank|thumbsDownCountAllTimeRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsDownCountAllTimeRank"],
+      "model": "UserRank",
+      "field": "thumbsDownCountAllTimeRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsDownCountDayRank|UserRank|thumbsDownCountDayRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsDownCountDayRank"],
+      "model": "UserRank",
+      "field": "thumbsDownCountDayRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsDownCountMonthRank|UserRank|thumbsDownCountMonthRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsDownCountMonthRank"],
+      "model": "UserRank",
+      "field": "thumbsDownCountMonthRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsDownCountWeekRank|UserRank|thumbsDownCountWeekRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsDownCountWeekRank"],
+      "model": "UserRank",
+      "field": "thumbsDownCountWeekRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsDownCountYearRank|UserRank|thumbsDownCountYearRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsDownCountYearRank"],
+      "model": "UserRank",
+      "field": "thumbsDownCountYearRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsUpCountAllTimeRank|UserRank|thumbsUpCountAllTimeRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsUpCountAllTimeRank"],
+      "model": "UserRank",
+      "field": "thumbsUpCountAllTimeRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsUpCountDayRank|UserRank|thumbsUpCountDayRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsUpCountDayRank"],
+      "model": "UserRank",
+      "field": "thumbsUpCountDayRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsUpCountMonthRank|UserRank|thumbsUpCountMonthRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsUpCountMonthRank"],
+      "model": "UserRank",
+      "field": "thumbsUpCountMonthRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsUpCountWeekRank|UserRank|thumbsUpCountWeekRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsUpCountWeekRank"],
+      "model": "UserRank",
+      "field": "thumbsUpCountWeekRank"
+    },
+    {
+      "fingerprint": "missing-column|UserRank|thumbsUpCountYearRank|UserRank|thumbsUpCountYearRank",
+      "kind": "missing-column",
+      "tier": "pending",
+      "table": "UserRank",
+      "columns": ["thumbsUpCountYearRank"],
+      "model": "UserRank",
+      "field": "thumbsUpCountYearRank"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Article|coverId|Article|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Article",
+      "columns": ["coverId"],
+      "model": "Article",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ArticleRank|articleId|ArticleRank|article",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ArticleRank",
+      "columns": ["articleId"],
+      "model": "ArticleRank",
+      "field": "article"
+    },
+    {
+      "fingerprint": "missing-foreign-key|BountyEntryRank|bountyEntryId|BountyEntryRank|BountyEntry",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "BountyEntryRank",
+      "columns": ["bountyEntryId"],
+      "model": "BountyEntryRank",
+      "field": "BountyEntry"
+    },
+    {
+      "fingerprint": "missing-foreign-key|BountyRank|bountyId|BountyRank|Bounty",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "BountyRank",
+      "columns": ["bountyId"],
+      "model": "BountyRank",
+      "field": "Bounty"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Challenge|eventId|Challenge|event",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Challenge",
+      "columns": ["eventId"],
+      "model": "Challenge",
+      "field": "event"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ChallengeEvent|createdById|ChallengeEvent|createdBy",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ChallengeEvent",
+      "columns": ["createdById"],
+      "model": "ChallengeEvent",
+      "field": "createdBy"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Club|avatarId|Club|avatar",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Club",
+      "columns": ["avatarId"],
+      "model": "Club",
+      "field": "avatar"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Club|coverImageId|Club|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Club",
+      "columns": ["coverImageId"],
+      "model": "Club",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Club|headerImageId|Club|headerImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Club",
+      "columns": ["headerImageId"],
+      "model": "Club",
+      "field": "headerImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ClubPost|coverImageId|ClubPost|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ClubPost",
+      "columns": ["coverImageId"],
+      "model": "ClubPost",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ClubRank|clubId|ClubRank|Club",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ClubRank",
+      "columns": ["clubId"],
+      "model": "ClubRank",
+      "field": "Club"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ClubTier|coverImageId|ClubTier|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ClubTier",
+      "columns": ["coverImageId"],
+      "model": "ClubTier",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Collection|imageId|Collection|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Collection",
+      "columns": ["imageId"],
+      "model": "Collection",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|CollectionRank|collectionId|CollectionRank|collection",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "CollectionRank",
+      "columns": ["collectionId"],
+      "model": "CollectionRank",
+      "field": "collection"
+    },
+    {
+      "fingerprint": "missing-foreign-key|CosmeticShopSection|imageId|CosmeticShopSection|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "CosmeticShopSection",
+      "columns": ["imageId"],
+      "model": "CosmeticShopSection",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|DownloadHistory|modelVersionId|DownloadHistory|modelVersion",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "DownloadHistory",
+      "columns": ["modelVersionId"],
+      "model": "DownloadHistory",
+      "field": "modelVersion"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageConnection|imageId|ImageConnection|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageConnection",
+      "columns": ["imageId"],
+      "model": "ImageConnection",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageEngagement|imageId|ImageEngagement|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageEngagement",
+      "columns": ["imageId"],
+      "model": "ImageEngagement",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageFlag|imageId|ImageFlag|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageFlag",
+      "columns": ["imageId"],
+      "model": "ImageFlag",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageRatingRequest|imageId|ImageRatingRequest|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageRatingRequest",
+      "columns": ["imageId"],
+      "model": "ImageRatingRequest",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageReaction|imageId|ImageReaction|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageReaction",
+      "columns": ["imageId"],
+      "model": "ImageReaction",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageResource|imageId|ImageResource|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageResource",
+      "columns": ["imageId"],
+      "model": "ImageResource",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageResourceNew|imageId|ImageResourceNew|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageResourceNew",
+      "columns": ["imageId"],
+      "model": "ImageResourceNew",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageResourceNew|modelVersionId|ImageResourceNew|modelVersion",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageResourceNew",
+      "columns": ["modelVersionId"],
+      "model": "ImageResourceNew",
+      "field": "modelVersion"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageTagForReview|imageId|ImageTagForReview|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageTagForReview",
+      "columns": ["imageId"],
+      "model": "ImageTagForReview",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageTechnique|imageId|ImageTechnique|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageTechnique",
+      "columns": ["imageId"],
+      "model": "ImageTechnique",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ImageTool|imageId|ImageTool|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ImageTool",
+      "columns": ["imageId"],
+      "model": "ImageTool",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ModelBaseModelMetric|modelId|ModelBaseModelMetric|model",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ModelBaseModelMetric",
+      "columns": ["modelId"],
+      "model": "ModelBaseModelMetric",
+      "field": "model"
+    },
+    {
+      "fingerprint": "missing-foreign-key|PurchasableReward|coverImageId|PurchasableReward|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "PurchasableReward",
+      "columns": ["coverImageId"],
+      "model": "PurchasableReward",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|TagRank|tagId|TagRank|tag",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "TagRank",
+      "columns": ["tagId"],
+      "model": "TagRank",
+      "field": "tag"
+    },
+    {
+      "fingerprint": "missing-foreign-key|TagsOnImageNew|imageId|TagsOnImageNew|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "TagsOnImageNew",
+      "columns": ["imageId"],
+      "model": "TagsOnImageNew",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|TagsOnImageVote|imageId|TagsOnImageVote|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "TagsOnImageVote",
+      "columns": ["imageId"],
+      "model": "TagsOnImageVote",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Thread|challengeId|Thread|challenge",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": ["challengeId"],
+      "model": "Thread",
+      "field": "challenge"
+    },
+    {
+      "fingerprint": "missing-foreign-key|Thread|imageId|Thread|image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": ["imageId"],
+      "model": "Thread",
+      "field": "image"
+    },
+    {
+      "fingerprint": "missing-foreign-key|User|profilePictureId|User|profilePicture",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "User",
+      "columns": ["profilePictureId"],
+      "model": "User",
+      "field": "profilePicture"
+    },
+    {
+      "fingerprint": "missing-foreign-key|UserProfile|coverImageId|UserProfile|coverImage",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "UserProfile",
+      "columns": ["coverImageId"],
+      "model": "UserProfile",
+      "field": "coverImage"
+    },
+    {
+      "fingerprint": "missing-foreign-key|UserRank|userId|UserRank|user",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "UserRank",
+      "columns": ["userId"],
+      "model": "UserRank",
+      "field": "user"
+    },
+    {
+      "fingerprint": "nullability|ArticleMetric|updatedAt|ArticleMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "ArticleMetric",
+      "columns": ["updatedAt"],
+      "model": "ArticleMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|BountyEntryMetric|updatedAt|BountyEntryMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "BountyEntryMetric",
+      "columns": ["updatedAt"],
+      "model": "BountyEntryMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|BountyMetric|updatedAt|BountyMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "BountyMetric",
+      "columns": ["updatedAt"],
+      "model": "BountyMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|ChallengeEvent|createdById|ChallengeEvent|createdById|optional",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "ChallengeEvent",
+      "columns": ["createdById"],
+      "model": "ChallengeEvent",
+      "field": "createdById"
+    },
+    {
+      "fingerprint": "nullability|CollectionMetric|updatedAt|CollectionMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "CollectionMetric",
+      "columns": ["updatedAt"],
+      "model": "CollectionMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|ModelMetric|updatedAt|ModelMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "ModelMetric",
+      "columns": ["updatedAt"],
+      "model": "ModelMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|ModelVersionMetric|updatedAt|ModelVersionMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "ModelVersionMetric",
+      "columns": ["updatedAt"],
+      "model": "ModelVersionMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|PostMetric|updatedAt|PostMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "PostMetric",
+      "columns": ["updatedAt"],
+      "model": "PostMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|Purchase|userId|Purchase|userId|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "Purchase",
+      "columns": ["userId"],
+      "model": "Purchase",
+      "field": "userId"
+    },
+    {
+      "fingerprint": "nullability|TagMetric|updatedAt|TagMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "TagMetric",
+      "columns": ["updatedAt"],
+      "model": "TagMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "nullability|UserMetric|updatedAt|UserMetric|updatedAt|required",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "UserMetric",
+      "columns": ["updatedAt"],
+      "model": "UserMetric",
+      "field": "updatedAt"
+    },
+    {
+      "fingerprint": "uniqueness|ImageResource|modelVersionId,name,imageId|ImageResource|",
+      "kind": "uniqueness",
+      "tier": "enforced",
+      "table": "ImageResource",
+      "columns": ["modelVersionId", "name", "imageId"],
+      "model": "ImageResource"
+    }
+  ]
+}
