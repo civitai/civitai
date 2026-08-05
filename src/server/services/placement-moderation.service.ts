@@ -89,6 +89,13 @@ export async function declinePlacementsOnBlock({
   placerId: number;
   limit?: number;
 }) {
+  // The correctness argument for this cascade is that no new placement can join
+  // the set behind it, which holds only because `assertCanPlace` reads the
+  // primary — and only once the block is actually committed. This module does not
+  // write the block, so the precondition is checked rather than assumed.
+  if (!(await isPlacementBlocked({ ownerId, placerId })))
+    throw new Error('placement: the block must be committed before its placements are declined');
+
   const pending = await dbWrite.placement.findMany({
     where: { ownerId, placerId, status: 'pending' },
     select: { id: true },
@@ -126,6 +133,12 @@ export async function removePlacementsByUser({
   actorId: number;
   limit?: number;
 }) {
+  // Same shape as the block cascade: without the suspension already committed,
+  // the placer can create new placements between the loop and the takedown, or
+  // between two bounded runs, and this reports success having missed them.
+  if (!(await isPlacementSuspended(placerId)))
+    throw new Error('placement: suspend the user before removing their placements');
+
   const pending = await dbWrite.placement.findMany({
     where: { placerId, status: 'pending' },
     select: { id: true },
@@ -136,19 +149,33 @@ export async function removePlacementsByUser({
     settlePlacement({ placementId: id, action: 'removeByModerator', actorId })
   );
 
-  // Bounded and resumable: a moderator action over thousands of rows will time
-  // out, and running it again has to be safe rather than merely tolerable.
-  const { count: takenDown } = await dbWrite.placement.updateMany({
+  // Bounded through an id list, because `updateMany` cannot take one: a placer
+  // with 50,000 approved placements would otherwise be a single enormous UPDATE
+  // holding row locks, rolled back whole by a statement timeout and redone in
+  // full on every retry.
+  const approved = await dbWrite.placement.findMany({
     where: { placerId, status: 'approved' },
+    select: { id: true },
+    take: limit,
+  });
+
+  const { count: takenDown } = await dbWrite.placement.updateMany({
+    where: { id: { in: approved.map((row) => row.id) }, status: 'approved' },
     data: {
       status: 'removed',
       removedBy: 'moderator',
-      resolvedAt: new Date(),
-      resolvedById: actorId,
+      // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
+      // is the one path whose purpose is a moderation record.
+      takenDownAt: new Date(),
+      takenDownById: actorId,
     },
   });
 
-  return { ...settled, takenDown };
+  return {
+    ...settled,
+    takenDown,
+    hasMore: settled.considered === limit || approved.length === limit,
+  };
 }
 
 export async function suspendPlacementPrivileges({

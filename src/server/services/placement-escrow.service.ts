@@ -261,15 +261,41 @@ export async function settlePlacement({
   const status = STATUS_FOR_ACTION[action];
   const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
 
-  const { count } = await dbWrite.placement.updateMany({
-    where: { id: placementId, status: 'pending' },
-    data: {
-      status,
-      removedBy,
-      resolvedAt: new Date(),
-      resolvedById: actorId ?? null,
-      ...(action === 'declineByBlock' ? { feeWaived: true } : {}),
-    },
+  const before = await dbWrite.placement.findUnique({ where: { id: placementId } });
+  if (!before) throw new Error(`placement escrow: placement ${placementId} not found`);
+
+  const feeWaived = action === 'declineByBlock' ? true : before.feeWaived;
+  const held = await heldAmountsFor(placementId);
+  // Computed against the status this settle is *about to* write, since the row
+  // still says `pending` and a pending placement has no settled outcome.
+  const legs = await computePayoutLegs({ ...before, status, removedBy, feeWaived }, held);
+
+  // The status flip and the payout plan go in one transaction. Two statements
+  // would let a crash between them leave a placement settled — approved and live
+  // — with no plan at all. Nothing recovers that state: it is not pending so
+  // expiry skips it, and it has no claimed-but-unpaid leg so the sweeper skips
+  // it too. Worse, a later moderator takedown would then flip it to `removed`
+  // and the first thing to compute a plan would forfeit money the owner had
+  // earned and never been paid.
+  const { count } = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.placement.updateMany({
+      where: { id: placementId, status: 'pending' },
+      data: {
+        status,
+        removedBy,
+        resolvedAt: new Date(),
+        resolvedById: actorId ?? null,
+        ...(action === 'declineByBlock' ? { feeWaived: true } : {}),
+      },
+    });
+
+    if (updated.count > 0 && legs.length)
+      await tx.placementTransaction.createMany({
+        data: legs.map((leg) => ({ placementId, ...leg })),
+        skipDuplicates: true,
+      });
+
+    return updated;
   });
 
   const placement = await dbWrite.placement.findUnique({ where: { id: placementId } });
@@ -311,7 +337,7 @@ async function planPayout(placement: PlacementRow, held: Map<string, number>) {
   // writing one), so they would sit in the sweeper's result set forever, and
   // past its batch limit they would crowd out genuinely stranded legs — starving
   // the one mechanism that recovers from an outage, while reporting success.
-  const legs = (await computePayoutLegs(placement, held)).filter((leg) => leg.amount > 0);
+  const legs = await computePayoutLegs(placement, held);
 
   await dbWrite.placementTransaction.createMany({
     data: legs.map((leg) => ({ placementId: placement.id, ...leg })),
@@ -329,6 +355,19 @@ async function planPayout(placement: PlacementRow, held: Map<string, number>) {
 }
 
 async function computePayoutLegs(
+  placement: PlacementRow,
+  held: Map<string, number>
+): Promise<PlannedLeg[]> {
+  return (await payoutLegsFor(placement, held)).filter((leg) => leg.amount > 0);
+}
+
+/**
+ * Zero-amount legs are filtered by the caller above, not here: a leg with
+ * nothing to pay can never acquire a receipt, so persisting one leaves a row the
+ * sweeper can never clear, and past its batch limit those crowd out genuinely
+ * stranded legs.
+ */
+async function payoutLegsFor(
   placement: PlacementRow,
   held: Map<string, number>
 ): Promise<PlannedLeg[]> {
@@ -527,4 +566,51 @@ export async function sweepUnpaidLegs({
   }
 
   return { stranded: stranded.length, resumed };
+}
+
+/**
+ * Placements that settled but never got a payout plan.
+ *
+ * `sweepUnpaidLegs` finds legs that were claimed and not paid. It cannot see a
+ * settlement that produced no legs at all, and nothing else can either: the row
+ * is not pending, so expiry skips it. Writing the plan inside the settle
+ * transaction makes this state unreachable going forward; this sweep exists for
+ * rows that predate that, and as the check that it stays unreachable.
+ */
+export async function sweepUnplannedSettlements({
+  limit = 100,
+  olderThanMinutes = 10,
+}: { limit?: number; olderThanMinutes?: number } = {}) {
+  const before = new Date(Date.now() - olderThanMinutes * 60_000);
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT p.id FROM "Placement" p
+    WHERE p.status <> 'pending'
+      AND p."resolvedAt" < ${before}
+      AND NOT EXISTS (
+        SELECT 1 FROM "PlacementTransaction" t
+        WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+      )
+    LIMIT ${limit}
+  `;
+
+  let planned = 0;
+  for (const { id } of rows) {
+    const placement = await dbWrite.placement.findUnique({ where: { id } });
+    if (!placement) continue;
+
+    try {
+      await payOutPlacement(placement);
+      planned++;
+    } catch (error) {
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'unplanned settlement could not be resolved',
+        placementId: id,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { unplanned: rows.length, planned };
 }

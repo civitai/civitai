@@ -92,6 +92,8 @@ describe('the block guard', () => {
 });
 
 describe('blocking cascades to pending placements', () => {
+  beforeEach(() => queryRaw.mockResolvedValue([{ exists: true }]));
+
   it('declines every pending placement from that user, fee waived', async () => {
     placementFindMany.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
 
@@ -155,6 +157,8 @@ describe('the confirmation count', () => {
 });
 
 describe('moderator removal', () => {
+  beforeEach(() => suspensionFindUnique.mockResolvedValue({ userId: PLACER }));
+
   // settlePlacement claims WHERE status = 'pending', so routing approved
   // placements through it would silently no-op on exactly the ones a moderator
   // most needs gone.
@@ -167,7 +171,6 @@ describe('moderator removal', () => {
     expect(result).toMatchObject({ settled: 1, takenDown: 4 });
     expect(placementUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { placerId: PLACER, status: 'approved' },
         data: expect.objectContaining({ status: 'removed', removedBy: 'moderator' }),
       })
     );
@@ -213,5 +216,59 @@ describe('suspension', () => {
     );
     // Nothing was written to the block table, which real users' block lists read.
     expect(queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('the preconditions the cascades depend on', () => {
+  // Each cascade's correctness argument is that nothing new can join the set
+  // behind it. That holds only once the block or suspension is committed, and
+  // neither is written by this module — so a precondition a comment relies on is
+  // a line of code.
+  it('refuses to decline placements before the block is committed', async () => {
+    queryRaw.mockResolvedValue([{ exists: false }]);
+
+    await expect(declinePlacementsOnBlock({ ownerId: OWNER, placerId: PLACER })).rejects.toThrow(
+      /block must be committed/
+    );
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses to remove placements before the user is suspended', async () => {
+    suspensionFindUnique.mockResolvedValue(null);
+
+    await expect(removePlacementsByUser({ placerId: PLACER, actorId: 99 })).rejects.toThrow(
+      /suspend the user/
+    );
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('the takedown record', () => {
+  beforeEach(() => suspensionFindUnique.mockResolvedValue({ userId: PLACER }));
+
+  // resolvedAt/resolvedById record who approved the placement. Overwriting them
+  // on the one path whose purpose is a moderation record destroys the trail.
+  it('keeps the approval trail intact', async () => {
+    placementFindMany.mockResolvedValue([]);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await removePlacementsByUser({ placerId: PLACER, actorId: 99 });
+
+    const data = placementUpdateMany.mock.calls[0][0].data;
+    expect(data).toMatchObject({ takenDownById: 99 });
+    expect(data).not.toHaveProperty('resolvedById');
+    expect(data).not.toHaveProperty('resolvedAt');
+  });
+
+  // updateMany cannot take a limit, so an unbounded one is a single enormous
+  // UPDATE that a statement timeout rolls back whole and every retry redoes.
+  it('bounds the takedown through an id list and says whether more remain', async () => {
+    placementFindMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    placementUpdateMany.mockResolvedValue({ count: 2 });
+
+    const result = await removePlacementsByUser({ placerId: PLACER, actorId: 99, limit: 2 });
+
+    expect(placementUpdateMany.mock.calls[0][0].where).toMatchObject({ id: { in: [1, 2] } });
+    expect(result.hasMore).toBe(true);
   });
 });

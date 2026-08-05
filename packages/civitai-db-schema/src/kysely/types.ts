@@ -2910,6 +2910,13 @@ export type Placement = {
   expiresAt: Timestamp | null;
   resolvedAt: Timestamp | null;
   resolvedById: number | null;
+  /**
+   * A moderator takedown of an already-settled placement. Its own columns because
+   * `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+   * one path whose purpose is a moderation record would destroy the approval trail.
+   */
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
 };
 export type PlacementSpace = {
   id: Generated<number>;

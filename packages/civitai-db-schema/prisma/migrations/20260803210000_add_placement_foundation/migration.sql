@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS "Placement" (
   "expiresAt"         TIMESTAMP(3),
   "resolvedAt"        TIMESTAMP(3),
   "resolvedById"      INTEGER,
+  -- A moderator takedown of an already-settled placement. Separate from
+  -- resolvedAt/resolvedById, which record who approved it: overwriting those on
+  -- the one path whose purpose is a moderation record would destroy the trail.
+  "takenDownAt"       TIMESTAMP(3),
+  "takenDownById"     INTEGER,
   CONSTRAINT "Placement_amount_nonnegative" CHECK ("amount" >= 0)
 );
 

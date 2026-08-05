@@ -7539,6 +7539,11 @@ model Placement {
   expiresAt             DateTime?
   resolvedAt            DateTime?
   resolvedById          Int?
+  /// A moderator takedown of an already-settled placement. Its own columns because
+  /// `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+  /// one path whose purpose is a moderation record would destroy the approval trail.
+  takenDownAt           DateTime?
+  takenDownById         Int?
   transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])

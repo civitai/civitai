@@ -5167,6 +5167,8 @@ export interface Placement {
   expiresAt: Date | null;
   resolvedAt: Date | null;
   resolvedById: number | null;
+  takenDownAt: Date | null;
+  takenDownById: number | null;
   transactions?: PlacementTransaction[];
 }
 

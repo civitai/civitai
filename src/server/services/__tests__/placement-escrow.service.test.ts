@@ -59,8 +59,27 @@ type LedgerQuery = {
 
 const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
+const dbWriteMock: Record<string, unknown> = {};
+const txCommits: string[][] = [];
 vi.mock('~/server/db/client', () => ({
-  dbWrite: {
+  dbWrite: dbWriteMock,
+}));
+
+Object.assign(dbWriteMock, {
+  // Interactive transaction: the callback gets the same client. Good enough to
+  // exercise "these two writes happen together", which is the property under
+  // test; it does NOT model rollback, so a test asserting partial failure would
+  // be lying.
+  $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+    const result = await fn(dbWriteMock);
+    // Snapshot at commit: the point of the transaction is that the plan is on
+    // disk the instant the status is, so a later planPayout cannot be what makes
+    // the assertion pass.
+    txCommits.push([...db.legs.keys()]);
+    return result;
+  },
+  $queryRaw: vi.fn(async () => []),
+  ...{
     placement: {
       findUnique: vi.fn(
         async ({ where }: { where: { id: number } }) => db.placements.get(where.id) ?? null
@@ -157,7 +176,7 @@ vi.mock('~/server/db/client', () => ({
       ),
     },
   },
-}));
+});
 
 const configState = { rate: 0.3, shares: { seller: 0, platform: 0.3 } };
 vi.mock('~/server/services/placement.service', () => ({
@@ -226,6 +245,7 @@ beforeEach(() => {
   db.placements.clear();
   db.legs.clear();
   heldLocks.clear();
+  txCommits.length = 0;
   lockState.available = true;
   configState.rate = 0.3;
   configState.shares = { seller: 0, platform: 0.3 };
@@ -872,6 +892,67 @@ describe('when two callers claim different amounts', () => {
     expect(createBuzzTransaction).toHaveBeenCalledWith(expect.objectContaining({ amount: 400 }));
     expect(createBuzzTransaction).not.toHaveBeenCalledWith(
       expect.objectContaining({ amount: 700 })
+    );
+  });
+});
+
+describe('a settlement always leaves a plan', () => {
+  // The status flip and the plan are one transaction. Two statements would let a
+  // crash between them leave a placement approved and live with no plan — a
+  // state nothing recovers, since it is not pending (expiry skips it) and has no
+  // claimed-but-unpaid leg (the sweeper skips it).
+  it('writes the payout plan in the same breath as the status', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValue(new Error('buzz service down'));
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    expect(db.placements.get(1)).toMatchObject({ status: 'approved' });
+    // The plan is on disk at the moment the status commits — not written later
+    // by the payout, which is what leaves the unrecoverable gap.
+    const atCommit = txCommits.at(-1) ?? [];
+    expect(atCommit).toContain('1:toOwner');
+    expect(atCommit).toContain('1:toPlatform');
+  });
+
+  // The dangerous case is money never paid, not money already paid: a takedown
+  // flips an approved placement to removed, and if no plan existed yet the first
+  // thing to compute one would forfeit the owner's earnings to the platform.
+  it('does not let a later takedown forfeit what the owner had earned', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    // A moderator takes it down before the payout was finished.
+    const placement = db.placements.get(1) as Record<string, unknown>;
+    placement.status = 'removed';
+    placement.removedBy = 'moderator';
+
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    // The plan written at approval still governs: the owner is paid, and no
+    // forfeit leg appears.
+    expect(legsFor(1)).toMatchObject({ toOwner: 700 });
+    expect(legsFor(1)).not.toHaveProperty('forfeit');
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountId: OWNER, amount: 700 })
     );
   });
 });
