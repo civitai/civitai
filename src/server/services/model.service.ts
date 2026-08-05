@@ -91,6 +91,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -162,7 +163,7 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
+import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
@@ -280,9 +281,7 @@ type ModelRaw = {
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
 
-export async function getModelEarlyAccessDeadlines(
-  modelIds: number[]
-): Promise<Map<number, Date>> {
+export async function getModelEarlyAccessDeadlines(modelIds: number[]): Promise<Map<number, Date>> {
   if (!modelIds.length) return new Map();
   const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
     SELECT mv."modelId", MAX(pa."endsAt") AS deadline
@@ -311,6 +310,7 @@ export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
@@ -318,6 +318,8 @@ export const getModelsRaw = async ({
     take?: number;
     skip?: number;
   };
+  // Request color, used to pick which "new & upcoming" board backs `newCreators`.
+  domain?: DomainColor;
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
   /**
@@ -347,6 +349,7 @@ export const getModelsRaw = async ({
     cursor,
     query,
     followed,
+    newCreators,
     archived,
     tag,
     tagname,
@@ -617,6 +620,18 @@ export const getModelsRaw = async ({
     }
 
     isPrivate = true;
+  }
+
+  // Creators on the "new & upcoming" board. Global per domain rather than per
+  // viewer, so unlike `followed` it doesn't mark the query private. An unpopulated
+  // board returns nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'models', domain });
+    AND.push(
+      newCreatorIds.length
+        ? Prisma.sql`mm."userId" IN (${Prisma.join(newCreatorIds, ',')})`
+        : Prisma.sql`1 = 0`
+    );
   }
 
   // Base model filtering:
@@ -1006,19 +1021,25 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, earlyAccessDeadlines] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelEarlyAccessDeadlines(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    earlyAccessDeadlines,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      getModelEarlyAccessDeadlines(modelIds),
+    ])
+  );
   for (const model of models) {
     model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
   }
@@ -1406,12 +1427,14 @@ export const getModelsWithImagesAndModelVersions = async ({
   // flag. When false, the per-request owner-settings + membership work below is
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
+  domain,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
+  domain?: DomainColor;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1432,6 +1455,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take: input.limit },
     user,
+    domain,
     include: ['cosmetics'],
   });
 

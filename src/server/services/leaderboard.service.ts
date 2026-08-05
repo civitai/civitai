@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import { DomainColor } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isModerator } from '~/server/routers/base.router';
@@ -25,11 +26,27 @@ export async function isLeaderboardPopulated() {
   return populated;
 }
 
+// A board is visible on a domain when its `domain` array contains that color or
+// `all`.
+//
+// An unresolved domain falls back to the SFW colors, NOT to `all` alone. Failing
+// closed here means "never surface mature boards on a host we can't identify" — it
+// does not mean "surface nothing". Environments that don't set the server-side
+// `SERVER_DOMAIN_*` vars (PR previews ship only the NEXT_PUBLIC_ ones) resolve
+// undefined for every request, and an `all`-only filter blanks every domain-scoped
+// board there — which is how this was first noticed.
+const SFW_DOMAINS = [DomainColor.all, DomainColor.green, DomainColor.blue];
+
+export function domainVisibilityFilter(domain?: DomainColor) {
+  return { hasSome: domain ? [DomainColor.all, domain] : SFW_DOMAINS };
+}
+
 export async function getLeaderboards(input: GetLeaderboardsInput) {
   const leaderboards = await dbRead.leaderboard.findMany({
     where: {
       public: !input.isModerator ? true : undefined,
       active: true,
+      domain: domainVisibilityFilter(input.domain),
       id: input.ids
         ? {
             in: input.ids,
@@ -69,7 +86,10 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
     where: {
       userId,
       date,
-      leaderboard: !input.isModerator ? { public: true } : undefined,
+      leaderboard: {
+        domain: domainVisibilityFilter(input.domain),
+        ...(!input.isModerator ? { public: true } : {}),
+      },
       position: input.top ? { lte: input.top } : undefined,
     },
     select: {
@@ -150,6 +170,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     WHERE lr.date = date(${date})
       AND lr."leaderboardId" = ${input.id}
       AND lr.position < ${input.maxPosition ?? 1000}
+      AND l.domain && ${domainVisibilityFilter(input.domain).hasSome}::"DomainColor"[]
       ${Prisma.raw(!input.isModerator ? 'AND l.public = true' : '')}
     ORDER BY lr.position
   `;
@@ -168,6 +189,7 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
       const results = await getLeaderboard({
         id: leaderboard.id,
         isModerator,
+        domain: input.domain,
         date: input.date,
         maxPosition: 5,
       });
@@ -206,12 +228,14 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
     WITH scores AS (
       SELECT
-        "userId",
-        score,
-        metrics,
-        position
-      FROM "LegendsBoardResult"
-      WHERE "leaderboardId" = ${input.id}
+        lbr."userId",
+        lbr.score,
+        lbr.metrics,
+        lbr.position
+      FROM "LegendsBoardResult" lbr
+      JOIN "Leaderboard" l ON l.id = lbr."leaderboardId"
+      WHERE lbr."leaderboardId" = ${input.id}
+        AND l.domain && ${domainVisibilityFilter(input.domain).hasSome}::"DomainColor"[]
     )
     SELECT
       s."userId",

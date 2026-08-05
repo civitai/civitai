@@ -134,6 +134,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -563,6 +564,7 @@ export const getModelsInfiniteHandler = async ({
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        domain: getRequestBoardDomainColor(ctx.req),
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,

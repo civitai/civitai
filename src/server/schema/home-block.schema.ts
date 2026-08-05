@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import {
+  DomainColor,
+  HomeBlockType,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
@@ -37,9 +42,34 @@ export const homeBlockMetaSchema = z
       z.object({
         id: z.string(),
         index: z.number().default(0),
+        // Where the card's "More" button goes. Defaults to the board's own page;
+        // the new-creator boards point at their pre-filtered feed instead, since
+        // browsing those creators' work is the point rather than the ranking.
+        moreHref: z.string().optional(),
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),
+    // Generic feed slice: run one of the existing feeds under saved filters and render
+    // the result like a Collection block. Filters are an explicit allowlist rather than
+    // a passthrough of the feed input — home-block metadata is mod-editable, and a
+    // passthrough would let a config change reach every knob those services expose.
+    feed: z.object({
+      entity: z.enum(['images', 'models']),
+      limit: z.number().int().min(1).max(100).default(28),
+      rows: z.number().int().min(1).max(4).default(2),
+      maxPerUser: z.number().int().positive().optional(),
+      sort: z.string().optional(),
+      period: z.enum(MetricTimeframe).optional(),
+      newCreators: z.boolean().optional(),
+      // Home-page content is not human-reviewed before it lands there, so a Feed
+      // block defaults to PG only rather than the PG+PG13 the feeds themselves use.
+      // Set 'sfw' to opt a block back up to PG-13.
+      browsingLevel: z.enum(['public', 'sfw']).optional(),
+      // images only
+      types: z.array(z.enum(MediaType)).optional(),
+      // models only
+      baseModels: z.array(z.string()).optional(),
+    }),
     announcements: z.object({
       ids: z.array(z.number()).optional(),
       limit: z.number().optional(),
@@ -94,7 +124,9 @@ export const getSystemHomeBlocksInputSchema = z
 
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 
-export const getHomeBlockByIdInputSchema = getByIdSchema.partial();
+export const getHomeBlockByIdInputSchema = getByIdSchema
+  .partial()
+  .extend({ domain: z.enum(DomainColor).optional() });
 
 export type CreateCollectionHomeBlockInputSchema = z.infer<
   typeof createCollectionHomeBlockInputSchema
