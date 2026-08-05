@@ -191,13 +191,58 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     ).rejects.toThrow(/nodepack resources are not permitted/);
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE TYPE ALLOWLIST (`INLINE_ALLOWED_AIR_TYPES`) NEEDS AN ASSERTION ONLY
+  // IT CAN SATISFY. `comfyImage` — an arbitrary OCI container the claiming
+  // worker would run — is unsettable via the wire schema's `.strict()`; this
+  // guard is what stops the same capability arriving through `resources`.
+  //
+  // The trap it was written out of: the type guard and the SOURCE guard sit two
+  // lines apart and their messages share the tail `is not permitted in an inline
+  // workflow`. A `/is not permitted in an inline workflow/` assertion is
+  // therefore satisfied by EITHER — so deleting the type guard left the old
+  // version of the first case below still green, because the fixture's `ghcr`
+  // source then tripped the source guard instead. The two cases below fix that
+  // from both directions: each names the token in ITS OWN guard's message, and
+  // the second uses an ALLOWLISTED source so no sibling can stand in for it.
+  // ───────────────────────────────────────────────────────────────────────────
   it('rejects an OCI container-image AIR arriving through `resources`', async () => {
+    // MEASURED ORDER: the type guard runs BEFORE the source guard, so this
+    // fixture is rejected on `type: image`, not on `source: ghcr`. Asserting the
+    // type guard's own message is what makes this case die when that guard is
+    // removed rather than falling through to the source guard's identical tail.
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:oci:image:ghcr:evil/comfy@v1'],
         user: VIEWER,
       })
-    ).rejects.toThrow(/is not permitted in an inline workflow/);
+    ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
+  });
+
+  it('🔴 …and from an ALLOWLISTED source too, where NO sibling guard could mask it', async () => {
+    // `huggingface` IS allowlisted, so the source guard cannot reject this AIR:
+    // the type guard is the only thing standing between an app and an arbitrary
+    // container image. Remove it and this case does not merely change its error
+    // — it stops throwing at all.
+    await expect(
+      assertViewerEntitledToInlineResources({
+        airs: ['urn:air:oci:image:huggingface:evil/comfy@v1'],
+        user: VIEWER,
+      })
+    ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
+  });
+
+  it('POSITIVE CONTROL — the same AIR with an ALLOWLISTED type is accepted', async () => {
+    // Isolates the `type` token as the cause: same source, same `oci` ecosystem,
+    // same `evil/comfy@v1` id and version — only `image` → `lora` changes, and
+    // the rejection goes away. Without this, the case above is also satisfied by
+    // a guard that rejects every huggingface AIR for some unrelated reason.
+    await expect(
+      assertViewerEntitledToInlineResources({
+        airs: ['urn:air:oci:lora:huggingface:evil/comfy@v1'],
+        user: VIEWER,
+      })
+    ).resolves.toBeUndefined();
   });
 
   it('🔴 OVER-STRICTNESS CONTROL — accepts every AIR the SHIPPED recipes actually pin', async () => {

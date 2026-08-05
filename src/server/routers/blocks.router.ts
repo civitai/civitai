@@ -6161,13 +6161,25 @@ type CustomComfyRecipeBody = Exclude<CustomComfyBody, CustomComfyInlineBody>;
 /**
  * Narrow a `customComfy` body to its INLINE arm, or `null` for the recipe arm.
  *
- * Keyed on the PRESENCE of `mode` rather than its value: the recipe arm has no
- * `mode` property at all, so `body.mode` is not a legal read across the union and
- * `'mode' in body` is what actually narrows. The schema's `mode: z.literal('inline')`
- * means presence and value are the same test at runtime.
+ * 🔴 KEYED ON THE VALUE, NOT ON PRESENCE — `'mode' in body` IS WRONG HERE, AND
+ * THE DIFFERENCE IS A 500. The recipe arm declares `mode: z.literal('recipe')
+ * .optional()` (see `blockCustomComfyBodySchema`), so it is NOT a mode-less arm:
+ * `mode` is a legal read across the union, and THREE bodies parse as recipes —
+ * `{kind,recipe,params}` (no key), `{…, mode:'recipe', …}` and
+ * `{…, mode:undefined, …}`. The latter two set `mode` as an OWN key, so a
+ * presence test routes a valid RECIPE body down the inline path: submit then
+ * dies in the graph walk (the inline body's `workflow` is absent) and estimate
+ * silently quotes `cost.total: undefined` instead of the recipe's estimate.
+ * `undefined` survives the wire (superjson), so an SDK spreading an optional
+ * `mode` variable reaches this. Pinned by the `mode:'recipe'` / `mode:undefined`
+ * routing tests in `blocks.router.workflow.test.ts`.
+ *
+ * The `.optional()` on the recipe arm is itself load-bearing and cannot be
+ * dropped — see the union comment in `schema/blocks/workflow.schema.ts` for why
+ * `.default('recipe')` rejects every deployed body.
  */
 function isInlineComfyBody(body: CustomComfyBody): body is CustomComfyInlineBody {
-  return 'mode' in body;
+  return body.mode === 'inline';
 }
 
 /**

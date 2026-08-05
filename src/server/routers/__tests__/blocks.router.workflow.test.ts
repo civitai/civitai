@@ -6409,6 +6409,76 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       // …and the inline belt was NOT consulted for a recipe body.
       expect(mockGetResourceData).not.toHaveBeenCalled();
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔴 ARM ROUTING — the recipe arm has THREE legal spellings, not one.
+    //
+    // `blockCustomComfyBodySchema` declares `mode: z.literal('recipe').optional()`,
+    // so `{…, mode:'recipe', …}` and `{…, mode:undefined, …}` are BOTH valid
+    // recipe bodies, and both leave `mode` as an OWN KEY on the parsed object the
+    // router receives (measured against the repo's zod, not assumed — the parse
+    // output own-keys are `kind,mode,params,recipe` for both). A router that
+    // narrowed on PRESENCE (`'mode' in body`) therefore sent a valid RECIPE body
+    // down the INLINE path: submit died in the graph walk (no `workflow` field →
+    // a 500 on the block's submit) and estimate silently returned
+    // `cost:{total: undefined}` instead of the recipe's estimate. `undefined`
+    // survives the wire (superjson), so an SDK spreading an optional `mode`
+    // variable reaches this — it is not a hand-crafted body.
+    //
+    // Each case below asserts the RECIPE path was taken by something only the
+    // recipe path produces (the recipe's own estimate; the recipe entitlement
+    // gate + a reserve), never by the absence of an error.
+    // ─────────────────────────────────────────────────────────────────────────
+    describe("🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path", () => {
+      // The three legal recipe spellings, exercised identically. `no mode` is the
+      // control: it was already covered and must stay green.
+      const RECIPE_SPELLINGS: Array<[string, Record<string, unknown>]> = [
+        ['no `mode` key (every deployed body)', {}],
+        ["explicit `mode:'recipe'`", { mode: 'recipe' }],
+        ['`mode: undefined` (an SDK spreading an unset optional)', { mode: undefined }],
+      ];
+
+      for (const [label, modeSpelling] of RECIPE_SPELLINGS) {
+        it(`estimate — ${label} quotes the RECIPE estimate, not an inline ceiling`, async () => {
+          mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+          happyUser();
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: ccBody(modeSpelling),
+          });
+          // 20 = the zimage-turbo DISPLAY estimate. The inline path would have
+          // read `body.maxBuzz` — absent on a recipe body — and quoted
+          // `{ total: undefined }`, so this is the recipe branch's own output.
+          expect(result.snapshot.cost).toEqual({ total: 20 });
+          expect(typeof result.snapshot.cost.total).toBe('number');
+        });
+
+        it(`submit — ${label} runs the RECIPE gates and reserves normally`, async () => {
+          mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+          happyCcResources();
+          happySubmit();
+          await caller().submitWorkflow({ blockToken: 'tok', body: ccBody(modeSpelling) });
+          // Recipe path: the recipe entitlement gate ran over the recipe's pinned
+          // versions, and the inline entitlement belt was never consulted.
+          expect(mockResolveCanGenerateForVersions).toHaveBeenCalled();
+          expect(mockGetResourceData).not.toHaveBeenCalled();
+          // …and the spend belt reserved the RECIPE's per-engine CEILING (90 for
+          // zimage-turbo). The inline path reserves the body's declared `maxBuzz`,
+          // which a recipe body does not carry — it could never produce 90.
+          expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+          // The recipe path stamps the NAMED recipe + its engine on the settle
+          // record; the inline path stamps the constants `__inline__` / `inline`.
+          // This is the tell the inline branch cannot fake.
+          expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+            expect.objectContaining({
+              ceiling: 90,
+              engine: 'zimage-turbo',
+              recipe: 'seamless-pano-360',
+            })
+          );
+        });
+      }
+    });
   });
 });
 
