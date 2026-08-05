@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
 
 import { env } from '~/env/server';
@@ -11,6 +10,7 @@ import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -36,8 +36,10 @@ export default PublicEndpoint(
     // edge after the origin returns 404. Override with no-store.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
-    // Get ip so that we can block exploits we catch
-    const ip = requestIp.getClientIp(req);
+    // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+    // (edge-attested or transport peer only) — an enforcement control must not key
+    // on an address the caller supplies. Do not swap this for an inline resolver.
+    const ip = getTrustedClientIp(req);
     const ipBlacklist = (
       ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
       ''

@@ -2,13 +2,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';
-import requestIp from 'request-ip';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
-  // Get ip so that we can block exploits we catch
-  const ip = requestIp.getClientIp(req);
+  // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+  // (edge-attested or transport peer only) — an enforcement control must not key
+  // on an address the caller supplies. Do not swap this for an inline resolver.
+  const ip = getTrustedClientIp(req);
   const blacklist = (
     ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
   ).split(',');

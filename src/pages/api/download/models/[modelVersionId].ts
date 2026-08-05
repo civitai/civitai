@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -11,6 +10,8 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
+import { fetchDownloadCount } from '~/server/utils/download-count';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
@@ -27,20 +28,9 @@ const schema = z.object({
 const downloadLimiter = createLimiter({
   counterKey: REDIS_SYS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
-  fetchCount: async (userKey) => {
-    const isIP = userKey.includes(':') || userKey.includes('.');
-    if (!clickhouse) return 0;
-
-    const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM modelVersionEvents
-      WHERE type = 'Download' AND time > subtractHours(now(), 24)
-      ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
-    `;
-    const count = data[0]?.count ?? 0;
-    return count;
-  },
+  // Extracted to ~/server/utils/download-count so the key-shape validation that
+  // makes this query safe to build has a test of its own.
+  fetchCount: fetchDownloadCount,
 });
 
 export default PublicEndpoint(
@@ -62,8 +52,11 @@ export default PublicEndpoint(
     }
 
     try {
-      // Get ip so that we can block exploits we catch
-      const ip = requestIp.getClientIp(req);
+      // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+      // (edge-attested or transport peer only) — an enforcement control must not key
+      // on an address the caller supplies, and for anonymous callers this same value
+      // is the download-quota bucket below. Do not swap this for an inline resolver.
+      const ip = getTrustedClientIp(req);
       const ipBlacklist = (
         ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
         ''

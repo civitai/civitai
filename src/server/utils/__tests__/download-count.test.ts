@@ -1,0 +1,120 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+/**
+ * Guard coverage for `fetchDownloadCount`.
+ *
+ * `clickhouse.$query` concatenates its interpolations into the query text with
+ * no binding, so the ONLY thing keeping this query well-formed is that the
+ * rate-limit key has been proven to be a bare integer or a bare IP address
+ * before it is placed in the text. These tests pin that the key is admitted by
+ * VALIDATION (not by a character test) and that a key of any other shape is
+ * refused loudly rather than concatenated.
+ */
+
+const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
+
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: {
+    $query: (strings: TemplateStringsArray | string, ...values: unknown[]) => {
+      const text =
+        typeof strings === 'string'
+          ? strings
+          : strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
+      return mockQuery(text);
+    },
+  },
+}));
+
+import { fetchDownloadCount } from '../download-count';
+
+/** The full query text ClickHouse was asked to run on the last call. */
+function lastQuery(): string {
+  const calls = mockQuery.mock.calls;
+  return calls[calls.length - 1][0] as string;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockQuery.mockResolvedValue([{ count: 7 }]);
+});
+
+describe('fetchDownloadCount — accepted key shapes', () => {
+  it('a numeric user id filters on userId', async () => {
+    await expect(fetchDownloadCount('4242')).resolves.toBe(7);
+    expect(lastQuery()).toContain('AND userId = 4242');
+    expect(lastQuery()).not.toContain('AND ip =');
+  });
+
+  it('an IPv4 address filters on ip', async () => {
+    await expect(fetchDownloadCount('203.0.113.7')).resolves.toBe(7);
+    expect(lastQuery()).toContain("AND ip = '203.0.113.7'");
+    expect(lastQuery()).not.toContain('AND userId =');
+  });
+
+  it('an IPv6 address filters on ip', async () => {
+    await fetchDownloadCount('2001:db8::1');
+    expect(lastQuery()).toContain("AND ip = '2001:db8::1'");
+  });
+
+  it('an empty result set reads as zero', async () => {
+    mockQuery.mockResolvedValue([]);
+    await expect(fetchDownloadCount('4242')).resolves.toBe(0);
+  });
+});
+
+describe('fetchDownloadCount — refused key shapes', () => {
+  // Each of these contains a '.' or ':' and so passes the character test that
+  // shape validation replaces. They are the reason validation, not a character
+  // test, is what decides the branch.
+  const REFUSED = [
+    "203.0.113.7' OR '1'='1",
+    "1.2.3.4'; SELECT 1 --",
+    "' UNION ALL SELECT count() FROM modelVersionEvents --",
+    '203.0.113.7 AND userId = 1',
+    '203.0.113.999',
+    '203.0.113.7:8080',
+    'user:4242',
+    'example.com',
+    '',
+    '42abc',
+    '-1',
+  ];
+
+  it.each(REFUSED)('refuses %j without building a query', async (key) => {
+    await expect(fetchDownloadCount(key)).rejects.toThrow(
+      /rate-limit key is neither a user id nor an IP address/
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL: the harness does observe a query for an accepted key', async () => {
+    // Without this, every `expect(mockQuery).not.toHaveBeenCalled()` above is
+    // indistinguishable from a spy that is wired to nothing.
+    await fetchDownloadCount('203.0.113.7');
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(lastQuery()).toContain('FROM modelVersionEvents');
+  });
+
+  it('no interpolated value can carry a quote into the query text', async () => {
+    // The complement of the list above, stated as the property rather than the
+    // enumeration: for every key that IS accepted, the emitted text contains
+    // exactly the two quotes this query's own literals need.
+    for (const key of ['4242', '203.0.113.7', '2001:db8::1', '0']) {
+      vi.clearAllMocks();
+      mockQuery.mockResolvedValue([{ count: 0 }]);
+      await fetchDownloadCount(key);
+      const quotes = (lastQuery().match(/'/g) ?? []).length;
+      expect(quotes).toBe(key === '4242' || key === '0' ? 2 : 4);
+    }
+  });
+});
+
+describe('fetchDownloadCount — no ClickHouse configured', () => {
+  it('reads as zero rather than throwing', async () => {
+    vi.resetModules();
+    vi.doMock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
+    const { fetchDownloadCount: fn } = await import('../download-count');
+    await expect(fn('203.0.113.7')).resolves.toBe(0);
+    vi.doUnmock('~/server/clickhouse/client');
+  });
+});

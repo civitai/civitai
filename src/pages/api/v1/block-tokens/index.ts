@@ -15,6 +15,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -230,23 +231,18 @@ function setSameOriginCors(req: NextApiRequest, res: NextApiResponse): 'handled'
 }
 
 /**
- * Returns the IP used for per-IP rate limiting. cf-connecting-ip is trusted
- * ONLY when cf-ray is also present (Cloudflare always emits cf-ray on every
- * proxied request and direct-to-origin attackers can't set it because the
- * value identifies a specific CF datacenter request).
+ * Returns the IP used for per-IP rate limiting.
  *
- * Audit M-4: when cf-ray is absent we do NOT fall back to XFF / X-Real-IP —
- * those headers are attacker-controlled the moment the origin is reachable
- * without CF transit. The trade is that direct-to-origin debug traffic gets
- * bucketed under the LB / socket peer IP, which is the right fail-closed.
+ * Audit M-4 introduced this derivation here as a file-local helper. It is now
+ * the shared `getTrustedClientIp` in `~/server/utils/client-ip` — same rule
+ * (cf-connecting-ip only alongside cf-ray, otherwise the socket peer), one
+ * definition, so the download endpoints and this one cannot drift apart. The
+ * only behaviour change is that both candidates are now validated as real IP
+ * addresses, and an unresolvable one yields the same `'unknown'` bucket this
+ * helper already returned when the socket had no address.
  */
 function getClientIp(req: NextApiRequest): string {
-  const cfRay = req.headers['cf-ray'];
-  if (typeof cfRay === 'string' && cfRay.length > 0) {
-    const cf = req.headers['cf-connecting-ip'];
-    if (typeof cf === 'string' && cf.length > 0) return cf;
-  }
-  return req.socket?.remoteAddress ?? 'unknown';
+  return getTrustedClientIp(req) ?? 'unknown';
 }
 
 // M-2 (audit): in-process LRU fallback for the per-IP rate limit when Redis
