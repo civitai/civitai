@@ -58,7 +58,8 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 import handler from '~/pages/api/download/vault/[vaultItemId]';
 
 const BLOCKED = '203.0.113.7';
-const VICTIM = '198.51.100.9';
+// The address a caller puts in the forwarding headers. Asserted inert.
+const SUPPLIED = '198.51.100.9';
 const CF_RAY = '8a1b2c3d4e5f6789-IAD';
 
 function run(headers: Record<string, string>, remoteAddress?: string) {
@@ -116,26 +117,26 @@ describe('/api/download/vault/[vaultItemId] — IP blocklist', () => {
     expect(mockGetVaultWithStorage).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a caller-supplied address does not evade a block on the real one', async () => {
+  it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
-      'x-forwarded-for': VICTIM,
-      'x-real-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
+      'x-forwarded-for': SUPPLIED,
+      'x-real-ip': SUPPLIED,
     });
     await promise;
     expect(res.status).toHaveBeenCalledWith(403);
     expect(mockGetVaultWithStorage).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a caller-supplied address does not induce a block on someone else', async () => {
-    blocklist(VICTIM);
+  it('SECURITY: a supplied address is not consulted when deciding the block', async () => {
+    blocklist(SUPPLIED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
     });
     await promise;
     expect(res.status).not.toHaveBeenCalledWith(403);

@@ -3,12 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 /**
  * Guard coverage for `fetchDownloadCount`.
  *
- * `clickhouse.$query` concatenates its interpolations into the query text with
- * no binding, so the ONLY thing keeping this query well-formed is that the
- * rate-limit key has been proven to be a bare integer or a bare IP address
- * before it is placed in the text. These tests pin that the key is admitted by
- * VALIDATION (not by a character test) and that a key of any other shape is
- * refused loudly rather than concatenated.
+ * The contract under test: the helper admits a rate-limit key only after
+ * proving it is a bare integer or a bare IP address, and a key of any other
+ * shape is refused loudly rather than used. These tests pin that the decision
+ * is made by VALIDATION and not by a character test, and that the emitted query
+ * text contains only what this query's own literals need.
  */
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
@@ -63,13 +62,13 @@ describe('fetchDownloadCount — accepted key shapes', () => {
 });
 
 describe('fetchDownloadCount — refused key shapes', () => {
-  // Each of these contains a '.' or ':' and so passes the character test that
+  // Most of these contain a '.' or ':' and so pass the character test that
   // shape validation replaces. They are the reason validation, not a character
   // test, is what decides the branch.
   const REFUSED = [
     "203.0.113.7' OR '1'='1",
     "1.2.3.4'; SELECT 1 --",
-    "' UNION ALL SELECT count() FROM modelVersionEvents --",
+    "' UNION ALL SELECT 1 --",
     '203.0.113.7 AND userId = 1',
     '203.0.113.999',
     '203.0.113.7:8080',
@@ -78,6 +77,13 @@ describe('fetchDownloadCount — refused key shapes', () => {
     '',
     '42abc',
     '-1',
+    // Digits followed by a newline and more text. `^`/`$` without the `m` flag
+    // anchor to the whole string, so this is refused; with `m` they anchor
+    // per-line and the first line alone would satisfy the integer shape. The
+    // two cases below are here so that adding that one flag cannot pass an
+    // unvalidated remainder through as a user id.
+    '123\nDROP',
+    '123\n',
   ];
 
   it.each(REFUSED)('refuses %j without building a query', async (key) => {

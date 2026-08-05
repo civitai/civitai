@@ -5,10 +5,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * Regression coverage for the abuse IP blocklist on `/api/download/[...key]`.
  *
  * The blocklist is an enforcement control, so the address it compares against
- * has to be one the caller cannot select. These tests pin that in BOTH
- * directions — a caller-supplied address neither evades a block nor induces
- * one — which is what distinguishes "the supplied value is ignored" from "the
- * supplied value is merely one of several considered".
+ * has to be one the caller cannot select. These tests pin the stronger of the
+ * two available contracts: the verdict is a function of the DERIVED address
+ * alone. Varying a supplied address must leave the verdict unchanged whatever
+ * the list contains, which is what distinguishes "the supplied value is
+ * ignored" from "the supplied value is merely one of several considered".
  */
 
 const { mockFindUnique, mockGetDownloadUrl, mockGetServerAuthSession } = vi.hoisted(() => ({
@@ -98,7 +99,7 @@ describe('/api/download/[...key] — IP blocklist', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' });
   });
 
-  it('SECURITY: a caller-supplied address does not evade a block on the real one', async () => {
+  it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
@@ -114,7 +115,7 @@ describe('/api/download/[...key] — IP blocklist', () => {
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a caller-supplied address does not induce a block on someone else', async () => {
+  it('SECURITY: a supplied address is not consulted when deciding the block', async () => {
     blocklist(NOT_BLOCKED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
@@ -130,7 +131,7 @@ describe('/api/download/[...key] — IP blocklist', () => {
     expect(res.redirect).toHaveBeenCalledWith('/login?returnUrl=/api/download/some/file.zip');
   });
 
-  it('SECURITY: rotating the supplied address never changes the verdict', async () => {
+  it('SECURITY: the verdict is a function of the derived address alone', async () => {
     blocklist(BLOCKED);
     for (const n of [1, 2, 3, 200]) {
       vi.clearAllMocks();

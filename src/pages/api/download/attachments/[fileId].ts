@@ -10,7 +10,7 @@ import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getTrustedClientIp } from '~/server/utils/client-ip';
+import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -39,11 +39,15 @@ export default PublicEndpoint(
     // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
     // (edge-attested or transport peer only) — an enforcement control must not key
     // on an address the caller supplies. Do not swap this for an inline resolver.
+    //
+    // Operator note before you add an entry to `ip-blacklist`: a request that did
+    // not transit the Cloudflare edge is attributed to the transport peer — the
+    // load balancer — so listing THAT address blocks all non-edge traffic to every
+    // download route at once rather than one abuser. See `parseIpBlocklist`.
     const ip = getTrustedClientIp(req);
-    const ipBlacklist = (
-      ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
-      ''
-    ).split(',');
+    const ipBlacklist = parseIpBlocklist(
+      (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+    );
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
     const session = await getServerAuthSession({ req, res });

@@ -12,20 +12,23 @@ import { isIpAddress } from '~/server/utils/client-ip';
  *   - `^\d+$`      → an integer id, filtered on `userId`
  *   - `net.isIP`   → an address, filtered on `ip`
  *
- * `clickhouse.$query` is a plain template-concatenating tagged template — it
- * performs NO parameter binding (see `packages/civitai-clickhouse/src/client.ts`),
- * so every value in the query text is there literally. Validating to these two
- * shapes is therefore load-bearing, not defensive tidiness: an integer and an
- * IP address are both closed character sets that cannot terminate a string
- * literal or introduce a clause. A key matching neither shape is a broken
- * invariant upstream and THROWS rather than silently returning 0 — the caller
- * (`createLimiter.hasExceededLimit`) already has a logged fail-open around this
- * call, so throwing surfaces the fault instead of quietly disabling the limit.
+ * This helper validates its input before the value reaches the query text, and
+ * that validation is load-bearing rather than defensive tidiness: it is the
+ * property that makes the interpolation below safe to write. Both accepted
+ * shapes are closed character sets — an integer and an IP address contain
+ * nothing that could terminate a string literal or introduce a clause — so a
+ * key that has passed this check contributes no syntax to the statement.
  *
- * NOT converted to bound `query_params`: the deployed column type for `ip` is
- * not declared in this repo, so a typed parameter risks a ClickHouse type
- * mismatch whose only symptom is this limiter failing open. Shape validation
- * gives the same guarantee with no change to the emitted query.
+ * A key matching neither shape is a broken invariant upstream and THROWS rather
+ * than silently returning 0 — the caller (`createLimiter.hasExceededLimit`)
+ * already has a logged fail-open around this call, so throwing surfaces the
+ * fault instead of quietly disabling the limit.
+ *
+ * Keep the validation adjacent to the interpolation. If this function ever
+ * grows a second query or a third key shape, validate the new one here too
+ * rather than at the call site: the guarantee above is a property of this
+ * function, and it is only true while every value placed into the text below
+ * has been through it.
  */
 export async function fetchDownloadCount(userKey: string): Promise<number> {
   if (!clickhouse) return 0;

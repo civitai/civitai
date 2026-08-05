@@ -9,10 +9,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *   2. the anonymous download-quota bucket (`userKey`) — the value an anonymous
  *      caller's 24h download count is accumulated under.
  *
- * Both must key on an address the caller cannot select. For (2) the failure is
- * symmetric and worth pinning explicitly: a selectable bucket can be rotated to
- * shed an accumulated count, and can equally be pointed at someone else's
- * address so their budget absorbs the traffic.
+ * The contract for both is the same: the address is derived from the edge
+ * attestation or the transport peer, never from a value the caller supplied.
+ * For (2) that contract is stated as a stability property — the bucket is a
+ * function of the derived address alone, so it does not move when the request's
+ * forwarding headers vary, in either direction.
  */
 
 const {
@@ -85,7 +86,8 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 import handler from '~/pages/api/download/models/[modelVersionId]';
 
 const BLOCKED = '203.0.113.7';
-const VICTIM = '198.51.100.9';
+// The address a caller puts in the forwarding headers. Asserted inert.
+const SUPPLIED = '198.51.100.9';
 const CF_RAY = '8a1b2c3d4e5f6789-IAD';
 
 function run(headers: Record<string, string>, remoteAddress?: string) {
@@ -147,26 +149,26 @@ describe('/api/download/models/[modelVersionId] — IP blocklist', () => {
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a caller-supplied address does not evade a block on the real one', async () => {
+  it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
-      'x-forwarded-for': VICTIM,
-      'x-real-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
+      'x-forwarded-for': SUPPLIED,
+      'x-real-ip': SUPPLIED,
     });
     await promise;
     expect(res.status).toHaveBeenCalledWith(403);
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a caller-supplied address does not induce a block on someone else', async () => {
-    blocklist(VICTIM);
+  it('SECURITY: a supplied address is not consulted when deciding the block', async () => {
+    blocklist(SUPPLIED);
     const { promise, res } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
     });
     await promise;
     expect(res.status).not.toHaveBeenCalledWith(403);
@@ -183,7 +185,7 @@ describe('/api/download/models/[modelVersionId] — anonymous download quota buc
     expect(chargedKey()).toBe(BLOCKED);
   });
 
-  it('SECURITY: rotating the supplied address does not rotate the quota bucket', async () => {
+  it('SECURITY: the quota bucket is a function of the derived address alone', async () => {
     mockFindUnique.mockResolvedValue(null);
     const keys: string[] = [];
     for (const n of [1, 2, 3, 200]) {
@@ -203,18 +205,18 @@ describe('/api/download/models/[modelVersionId] — anonymous download quota buc
     expect(keys[0]).toBe(BLOCKED);
   });
 
-  it("SECURITY: a caller cannot charge its downloads to a victim's address", async () => {
+  it('SECURITY: the quota is charged to the derived address, not a supplied one', async () => {
     mockFindUnique.mockResolvedValue(null);
     const { promise } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
-      'x-forwarded-for': VICTIM,
-      'true-client-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
+      'x-forwarded-for': SUPPLIED,
+      'true-client-ip': SUPPLIED,
     });
     await promise;
     expect(chargedKey()).toBe(BLOCKED);
-    expect(chargedKey()).not.toBe(VICTIM);
+    expect(chargedKey()).not.toBe(SUPPLIED);
     expect(mockIncrement).toHaveBeenCalledWith(BLOCKED);
   });
 
@@ -224,7 +226,7 @@ describe('/api/download/models/[modelVersionId] — anonymous download quota buc
     const { promise } = run({
       'cf-ray': CF_RAY,
       'cf-connecting-ip': BLOCKED,
-      'x-client-ip': VICTIM,
+      'x-client-ip': SUPPLIED,
     });
     await promise;
     expect(chargedKey()).toBe('4242');
