@@ -6,6 +6,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "drift": "tsx src/schema-drift/cli.ts",
+    "fk-remediate": "tsx src/schema-drift/remediation/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
