@@ -12,6 +12,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
   ModelFileVisibility,
   ModelModifier,
+  ModelStatus,
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
@@ -356,6 +357,11 @@ export const getFileForModelVersion = async ({
       inEarlyAccess,
       metadata: file.metadata as FileMetadata,
       isDownloadable,
+      // The download endpoint excludes unpublished versions from the download metric — a draft is only
+      // reachable by its owner and by internal services, so anything fetching one isn't a download.
+      published:
+        modelVersion.status === ModelStatus.Published &&
+        modelVersion.model.status === ModelStatus.Published,
     };
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
@@ -468,6 +474,7 @@ type ModelVersionFileResult =
       inEarlyAccess: boolean;
       metadata: FileMetadata;
       isDownloadable?: boolean;
+      published: boolean;
     };
 
 type FileResult = {
