@@ -230,14 +230,22 @@ jobs:
     # and two of them had been RED on `main` since #3592 corrected the schema out from under
     # their assertions, with nothing to say so.
     #
-    # BLOCKING, unlike `unit`. The reasoning that made `unit` report-only does not transfer:
-    # `unit` is ~12,000 tests whose cost is a ~33s import/transform phase per file and which
-    # timed out five tests under load. This is 616 tests with no browser, no database and no
-    # Next module graph — the whole run is ~15s locally. There is no flake budget to buy.
+    # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
+    # buy: `main` has branch protection but NO required_status_checks, so a red check here
+    # does not prevent a merge. The difference from `unit` is that this renders RED rather
+    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
+    # hides. Making it an actual interlock means adding "Package unit tests" to the required
+    # checks, which is a repo-settings change, not a workflow one.
+    #
+    # The reasoning that made `unit` report-only still does not transfer, which is why this
+    # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
+    # import/transform phase per file, and it timed out five tests under load. This is 616
+    # tests with no browser, no database and no Next module graph — ~15s locally.
     #
     # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
-    # `.env`, which does not exist on a runner, so its four EXPLAIN tests report as skipped.
-    # They are visible as skips in the summary rather than as a silent absence.
+    # `.env`, which does not exist on a runner, so its 4 DB-backed tests across two files
+    # (3 in tag.db.explain, 1 in enum-array-parsers.explain) report as skipped. They are
+    # visible as skips in the summary rather than as a silent absence.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

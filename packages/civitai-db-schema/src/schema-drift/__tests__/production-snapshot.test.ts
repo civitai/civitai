@@ -97,11 +97,37 @@ describe('production catalog snapshot (2026-08-03)', () => {
     // this package's suite; the test was red on `main` from the moment #3592 merged until
     // the packages were wired into CI. So the Rank family is now asserted at ZERO, which
     // makes this a guard on the REMEDIATION rather than on the defect.
+    // POSITIVE CONTROL ON THE ZERO, and it has to be about the RANK FAMILY specifically.
+    // "no Rank nullability findings" is satisfied just as well by a differ that never looks
+    // at a Rank table at all — measured: making compare.ts `continue` on every model whose
+    // table ends in `Rank` leaves THIS test green and reds only two neighbouring ones, which
+    // is green-for-the-wrong-reason. A count of nullability findings elsewhere cannot see
+    // that, because it proves the KIND is still emitted, not that these seven tables are
+    // still in scope.
+    //
+    // So pin the family's presence using findings of a DIFFERENT kind that the same seven
+    // models must still produce. If the differ stops visiting them, this goes red first.
+    const rankTables = [
+      'ArticleRank',
+      'BountyEntryRank',
+      'BountyRank',
+      'ClubRank',
+      'CollectionRank',
+      'TagRank',
+      'UserRank',
+    ];
+    const rankFkTables = new Set(
+      report.findings
+        .filter((f) => f.kind === 'missing-foreign-key' && f.table.endsWith('Rank'))
+        .map((f) => f.table)
+    );
+    expect(rankTables.filter((t) => !rankFkTables.has(t))).toEqual([]);
+
     const nullability = report.findings.filter((f) => f.kind === 'nullability');
     expect(nullability.filter((f) => f.table.endsWith('Rank'))).toEqual([]);
 
-    // Positive control on that zero: nullability detection still finds the 11 that remain,
-    // so an empty Rank result cannot come from a check that stopped running.
+    // Second control, on the nullability check itself: it still finds the 11 that remain, so
+    // an empty Rank result cannot come from nullability detection having stopped running.
     expect(nullability.length).toBeGreaterThanOrEqual(11);
     expect(found('nullability')).toEqual(
       expect.arrayContaining([

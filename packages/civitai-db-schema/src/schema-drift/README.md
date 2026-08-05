@@ -263,6 +263,18 @@ pnpm run test:packages:run          # all nine package suites
 pnpm --filter @civitai/db-schema test   # just this one
 ```
 
-That job is blocking, and it asserts a ledger — every workspace package that has a vitest
-config and a test file on disk must appear in the results — because `--project` matching
-nothing exits 0, and so does a config whose globs stopped resolving.
+That job asserts a ledger — every workspace package that has a vitest config and a test file
+on disk must appear in the results, having executed at least one non-skipped test — because
+`--project` matching nothing exits 0, and so does a config whose globs stopped resolving, and
+so does a suite that skips itself entirely.
+
+Two things it is worth being precise about, because both are easy to overstate:
+
+- **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
+  a red `Package unit tests` does not prevent a merge. It renders red rather than
+  red-but-ignored, which is the real difference from the `Unit tests` job.
+- **The workspace gap is not closed, only the `packages/*` part of it.** `apps/*` has four
+  more vitest configs and ~43 test files that still no CI job runs. Same one-line fix — another
+  glob in the same `projects` array — plus teaching the ledger script about `apps/`, which
+  currently hardcodes `packages/`. Deliberately left to a follow-up rather than widened into
+  the change that closed the first part.
