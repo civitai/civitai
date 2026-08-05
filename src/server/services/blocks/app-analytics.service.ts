@@ -45,6 +45,36 @@ export type AppAnalytics = {
    * even when every counter is 0 — without this a real "no activity yet" app
    * and a never-queried one are byte-identical, and a client renders fabricated
    * zeros as data.
+   *
+   * DECIDED — a caller who owns NO apps is deliberately NOT flagged, and
+   * "ownsNothing" is deliberately not a third value. (Raised twice in review as
+   * "defensible but wants a recorded decision"; this is that record.)
+   *
+   * The discriminator's test is whether the zeros were MEASURED, not whether
+   * they are interesting. `notEntitled` and `notOwned` are both cases where we
+   * ran no aggregate at all, so their zeros are fabricated. Owning nothing is
+   * not that case: an aggregate over an empty owned set genuinely IS zero, so
+   * `getMyAppAnalytics` short-circuits only because the answer is already
+   * knowable — "you have no apps, so you have no installs" is a true statement
+   * about the world, and it is one the caller can already see without a flag.
+   * Flagging it would put every honest new author behind an `unavailable`
+   * branch on their first visit and teach clients to skip the flag that exists
+   * to stop them believing a fabricated zero.
+   *
+   * PRECEDENT — #3581 settled the shape of this answer for the sibling
+   * `getMyRevenue`: ONE value, not two, because `getRevenueForOwner` never
+   * *computes* ownership (it scopes by `appOwnerUserId` in the WHERE clause),
+   * so a not-owned request there returns a truthful zero-row aggregate and
+   * `notOwned` is unproducible — declaring it would force an unreachable branch
+   * into every renderer. Analytics DOES compute ownership up front, which is
+   * why it has the second value revenue cannot have; the rule ("flag only what
+   * was never measured") is identical, and it is what holds this union at two.
+   *
+   * SETTLED BY IMPLEMENTATION — #3613 applied the same rule one level down:
+   * `views` carries its own flag and tracks this one, so the owns-nothing path
+   * leaves views unflagged (`emptyViews()`, never `unavailableViews()`), with a
+   * test pinning it. A third value here would have to move that section and
+   * every renderer branch with it.
    */
   unavailable?: 'notEntitled' | 'notOwned';
   installs: {
@@ -200,8 +230,11 @@ export async function getMyAppAnalytics({
   if (appBlockId && ownedIds.length === 0) {
     return emptyAnalytics(range, true);
   }
-  // The caller owns nothing — nothing to report (but not "notOwned", since
-  // they didn't ask for a specific foreign id).
+  // The caller owns nothing — nothing to report, and deliberately NOT flagged
+  // `unavailable`: they didn't ask for a specific foreign id, and an aggregate
+  // over an empty owned set is a truthful measured zero rather than a
+  // placeholder. See the DECIDED note on the `unavailable` field before
+  // "fixing" this into a third discriminator value.
   if (ownedIds.length === 0) {
     return emptyAnalytics(range, false);
   }
