@@ -1320,8 +1320,7 @@ export const reviewCreatorShopItem = async ({
 
   // D14: an item leaving Published is no longer bundlable, so packs holding it
   // have to come off sale too.
-  if (action !== 'approve' && item.cosmeticId != null)
-    await delistPacksContaining(item.cosmeticId);
+  if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {

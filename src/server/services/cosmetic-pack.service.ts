@@ -1,10 +1,13 @@
 import { randomUUID } from 'crypto';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import type { CosmeticPurchaseMeta, CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type {
+  CosmeticPurchaseMeta,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import {
   computeCreatorShopSplit,
   isConsumableCosmeticType,
@@ -270,9 +273,7 @@ export const computePackPayouts = ({
   // Never negative: the pack floor guarantees foreign members are covered, but a
   // member re-priced upward after the pack was built could otherwise invert it.
   const remainder = Math.max(0, packPrice - foreignTotal);
-  const packCreatorAmount = packCreatorId
-    ? computeCreatorShopSplit(remainder).creatorPool
-    : 0;
+  const packCreatorAmount = packCreatorId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
   return { components, foreignTotal, remainder, packCreatorAmount };
 };
@@ -395,7 +396,11 @@ export const purchaseCosmeticPack = async ({
         members,
       });
       const recipients = [
-        ...components.map((c) => ({ userId: c.userId, amount: c.amount, cosmeticId: c.cosmeticId })),
+        ...components.map((c) => ({
+          userId: c.userId,
+          amount: c.amount,
+          cosmeticId: c.cosmeticId,
+        })),
         ...(shopItem.addedById && packCreatorAmount > 0
           ? [{ userId: shopItem.addedById, amount: packCreatorAmount, cosmeticId: null }]
           : []),

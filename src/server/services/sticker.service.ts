@@ -251,18 +251,34 @@ export async function purchaseStickerUses({
   // Delisted stickers can still be topped up — delisting stops NEW sales, and
   // stranding someone who already paid punishes them for the creator's
   // decision. Archived (and never-published) cannot: withdrawn is withdrawn.
+  // A sticker sold only inside packs has no listing of its own, and refusing to
+  // top it up would make "packs inherit per-use pricing" decorative. The pack
+  // that sells it authorises the top-up in its place.
   const listing = await dbWrite.cosmeticShopItem.findFirst({
-    where: { cosmeticId, status: CosmeticShopItemStatus.Published },
-    orderBy: { id: 'asc' },
-    select: { id: true, meta: true, addedById: true },
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      OR: [{ cosmeticId }, { members: { some: { cosmeticId } } }],
+    },
+    // Own listing first: its meta is the sticker's own terms, and a pack's
+    // Blue Buzz opt-in is the pack's, not this creator's.
+    orderBy: [{ cosmeticId: 'asc' }, { id: 'asc' }],
+    select: { id: true, meta: true, addedById: true, cosmeticId: true },
   });
   if (!listing) throw throwBadRequestError('This sticker is no longer available');
+
+  // Blue is a per-item creator opt-in. Read off a pack it would be the pack
+  // builder's choice, not the sticker creator's, so a pack-only sticker can't
+  // carry blue into a top-up.
+  const authorisedByPack = listing.cosmeticId !== cosmeticId;
 
   // Same block semantics as buying the sticker outright, and the same generic
   // error so the block isn't revealed.
   if (cosmetic.createdById) {
     const blockedPairIds = await getBlockedPairIds(userId);
-    const sellerIds = [cosmetic.createdById, listing.addedById].filter(
+    // A top-up pays the sticker's creator. When only a pack authorised it, the
+    // pack's builder isn't part of this sale, so a block against them isn't
+    // grounds for refusing.
+    const sellerIds = [cosmetic.createdById, authorisedByPack ? null : listing.addedById].filter(
       (id): id is number => id != null
     );
     if (sellerIds.some((id) => blockedPairIds.includes(id)))
@@ -288,7 +304,7 @@ export async function purchaseStickerUses({
   const listingMeta = (listing.meta ?? {}) as CosmeticShopItemMeta;
   // Blue is a per-item creator opt-in on the listing, exactly as it is when
   // buying the sticker — read from there rather than given a rule of its own.
-  if (payWith !== 'default' && !listingMeta.acceptsBlueBuzz)
+  if (payWith !== 'default' && (authorisedByPack || !listingMeta.acceptsBlueBuzz))
     throw throwBadRequestError('This creator does not accept Blue Buzz');
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];

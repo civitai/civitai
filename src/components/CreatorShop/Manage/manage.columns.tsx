@@ -12,6 +12,7 @@ import {
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
+import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
@@ -130,7 +131,12 @@ function ItemActionsMenu({
               // Rejected is terminal — nothing more can be changed.
               disabled={item.status === CosmeticShopItemStatus.Rejected}
               onClick={() =>
-                dialogStore.trigger({ component: CreatorShopSubmitModal, props: { item } })
+                dialogStore.trigger({
+                  // A pack has no cosmetic to edit — its contents and price live
+                  // in the pack builder instead.
+                  component: item.cosmetic ? CreatorShopSubmitModal : CreatorShopPackModal,
+                  props: { item },
+                })
               }
             >
               {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}

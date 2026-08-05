@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -118,7 +118,9 @@ const withOwnership = (members: ResolvedMember[], userId: number) =>
 
 /** Members that stop a pack from accepting Blue Buzz — named, so the builder can say which. */
 export const blueBuzzBlockers = (members: ResolvedMember[]) =>
-  members.filter((m) => !m.acceptsBlueBuzz).map((m) => ({ cosmeticId: m.cosmeticId, name: m.name }));
+  members
+    .filter((m) => !m.acceptsBlueBuzz)
+    .map((m) => ({ cosmeticId: m.cosmeticId, name: m.name }));
 
 const buildRightsAffirmation = (userId: number) => ({
   userId,
@@ -246,8 +248,7 @@ export const updateCreatorShopPack = async ({
     },
   });
   if (!existing) throw throwNotFoundError('Pack not found');
-  if (existing.cosmeticId != null)
-    throw throwBadRequestError('This listing is not a pack');
+  if (existing.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
   if (!isModerator && existing.addedById !== userId)
     throw throwBadRequestError('You can only manage your own shop items');
   if (existing.status === CosmeticShopItemStatus.Rejected)

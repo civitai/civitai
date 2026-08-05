@@ -46,7 +46,8 @@ describe('packPriceFloor', () => {
     // Own members contribute only their type floor, so a creator can discount
     // their own work inside a pack but never someone else's.
     const members = [OWN_DECORATION, FOREIGN_BADGE];
-    const typeSum = packItemFloor(CosmeticType.ProfileDecoration) + packItemFloor(CosmeticType.Badge);
+    const typeSum =
+      packItemFloor(CosmeticType.ProfileDecoration) + packItemFloor(CosmeticType.Badge);
     expect(packPriceFloor(members)).toBe(Math.max(1400, typeSum));
   });
 

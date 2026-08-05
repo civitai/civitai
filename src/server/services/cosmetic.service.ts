@@ -327,7 +327,11 @@ export async function revokeCosmeticsFromUsers({
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
-    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds }, ...claimKeyFilter },
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
+    },
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);

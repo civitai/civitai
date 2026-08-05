@@ -156,6 +156,23 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to update item'),
   });
 
+  const submitPack = trpc.creatorShop.submitPack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      showSuccessNotification({ message: 'Pack submitted for review' });
+    },
+    onError: onError('Failed to submit pack'),
+  });
+
+  const updatePack = trpc.creatorShop.updatePack.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getPack.invalidate();
+      showSuccessNotification({ message: 'Pack updated' });
+    },
+    onError: onError('Failed to update pack'),
+  });
+
   const archiveItem = trpc.creatorShop.archiveItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
@@ -272,6 +289,8 @@ export const useMutateCreatorShop = () => {
   return {
     submitItem,
     updateItem,
+    submitPack,
+    updatePack,
     archiveItem,
     setItemListed,
     unarchiveItem,

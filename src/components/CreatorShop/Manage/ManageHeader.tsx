@@ -1,9 +1,10 @@
 import { ActionIcon, Button, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
-import { IconArrowLeft, IconPlus, IconSettings, IconShoppingBagPlus } from '@tabler/icons-react';
+import { IconArrowLeft, IconPackage, IconPlus, IconSettings, IconShoppingBagPlus } from '@tabler/icons-react';
 import Link from 'next/link';
 import { CreatorShopSettingsModal } from '~/components/CreatorShop/CreatorShopSettingsModal';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
 import { ListExistingModal } from '~/components/CreatorShop/Manage/ListExistingModal';
+import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 
 export function ManageHeader({
@@ -60,6 +61,13 @@ export function ManageHeader({
               onClick={() => dialogStore.trigger({ component: ListExistingModal })}
             >
               Resell a cosmetic
+            </Button>
+            <Button
+              variant="light"
+              leftSection={<IconPackage size={16} />}
+              onClick={() => dialogStore.trigger({ component: CreatorShopPackModal })}
+            >
+              Build a pack
             </Button>
             <Button
               leftSection={<IconPlus size={16} />}

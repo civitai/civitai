@@ -107,7 +107,7 @@ export const cosmeticPurchaseMeta = z.object({
     .optional(),
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
-  platformCut: z.number().optional(),  
+  platformCut: z.number().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;

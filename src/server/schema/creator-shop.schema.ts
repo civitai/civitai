@@ -401,7 +401,10 @@ export const submitCreatorShopPackSchema = z.object({
     }),
   // Authoritative floor is per-member and type-dependent, so the real check runs
   // in the service; this only rejects what no pack could ever clear.
-  price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN * PACK_MIN_MEMBERS),
+  price: z
+    .number()
+    .int()
+    .min(COSMETIC_PRICE_FLOOR_MIN * PACK_MIN_MEMBERS),
   availableQuantity: z.number().int().positive().nullish(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
   // Requested, not granted: the service clears it unless every member's own
