@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { placementExhaustedLegsGauge } from '~/server/prom/client';
+import { isTimeoutError } from '@civitai/buzz';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -78,10 +79,17 @@ export const LEG_RETRY_BACKOFF_MINUTES = 30;
  * Two independent constants cannot express that: shorten the gap next quarter
  * and the timeout stays put, and the hazard returns with nothing failing.
  */
-export const BUZZ_CALL_TIMEOUT_MS = Math.min(
-  Math.max((LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60, 10_000),
-  120_000
-);
+export const BUZZ_CALL_TIMEOUT_MS = Math.min((LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60, 120_000);
+
+// The ceiling above clamps, because a huge gap yielding a two-minute timeout
+// fails in the safe direction. The floor asserts instead: clamping a too-short
+// gap UP would produce a timeout longer than the gap itself, which inverts the
+// very invariant the derivation exists to hold — silently, at 3am. Better to
+// refuse to start.
+if (BUZZ_CALL_TIMEOUT_MS < 10_000)
+  throw new Error(
+    `placement escrow: LEG_RETRY_BACKOFF_MINUTES=${LEG_RETRY_BACKOFF_MINUTES} derives a ${BUZZ_CALL_TIMEOUT_MS}ms Buzz timeout, which is too short for a real call`
+  );
 
 /**
  * The Buzz client's own retry is disabled for these calls, and `runLeg` owns it
@@ -95,7 +103,15 @@ export const BUZZ_CALL_TIMEOUT_MS = Math.min(
  * alert; a second, dumber retry loop underneath it is a second path to a thing
  * that already has rules.
  */
-const BUZZ_CALL_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS, retries: 0 };
+const BUZZ_CALL_OPTIONS = {
+  timeoutMs: BUZZ_CALL_TIMEOUT_MS,
+  // Not `retries: 0`. That would also discard the retry that is *safe* — a
+  // rolling restart refuses connections for a few seconds, nothing ran
+  // server-side, and the client absorbs it in milliseconds. Handing that to
+  // `runLeg` instead spends one of five attempts and waits 30 minutes for a
+  // non-failure. Only the timeout is unsafe to retry.
+  shouldRetry: (error: unknown) => !isTimeoutError(error),
+};
 
 /**
  * How recently a leg must have given up to be alerted on.

@@ -1387,7 +1387,7 @@ describe('the Buzz call bound', () => {
   // An aborted request is not cancelled server-side, so retrying a timeout puts
   // a second write on the wire with the same external id while the first may
   // still be running. runLeg owns the retry; the client's must stay out of it.
-  it('disables the client retry on every write', async () => {
+  it('retries a refused connection but never a timeout', async () => {
     givenPlacement();
     await holdPlacementEscrow({
       placementId: 1,
@@ -1404,7 +1404,17 @@ describe('the Buzz call bound', () => {
     ];
 
     expect(calls.length).toBeGreaterThan(0);
-    for (const call of calls) expect(call[1]).toMatchObject({ retries: 0 });
+    for (const call of calls) {
+      // A timeout must not be retried: the abort does not cancel the server, so
+      // a second write goes out with the same external id while the first may
+      // still be running.
+      const timeout = new Error('The operation was aborted due to timeout');
+      timeout.name = 'TimeoutError';
+      expect(call[1].shouldRetry(timeout)).toBe(false);
+      // ...but a refused connection must be, because nothing happened. Handing
+      // that to runLeg costs an attempt from a budget of five and 30 minutes.
+      expect(call[1].shouldRetry(new Error('ECONNREFUSED'))).toBe(true);
+    }
   });
 
   it('bounds every write, and inside the retry gap', () => {
@@ -1416,8 +1426,12 @@ describe('the Buzz call bound', () => {
 
   // "Make retries less aggressive" reaches for a bigger gap and "recover faster"
   // for a smaller one; unclamped, both produce a timeout that cannot work.
-  it('stays usable at the extremes of the gap it derives from', () => {
-    expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  // The ceiling clamps because a huge gap failing to a two-minute timeout is
+  // safe. The floor asserts at import instead: clamping a too-short gap UP would
+  // make the timeout longer than the gap, inverting the invariant silently.
+  it('is never longer than the gap it must fit inside', () => {
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
+    expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
   });
 });

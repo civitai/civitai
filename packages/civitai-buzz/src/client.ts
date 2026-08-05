@@ -97,17 +97,22 @@ export type BuzzRefundMultiTransactionInput = {
  */
 export type BuzzWriteOptions = {
   timeoutMs?: number;
+  /** Per-call retry override. `0` disables the client's internal retry entirely. */
+  retries?: number;
   /**
-   * Per-call retry override. `0` disables the client's internal retry.
+   * Which failures are worth retrying.
    *
    * A client-side abort does not cancel the server side, so retrying a
    * *timeout* on a non-idempotent write puts a second request on the wire while
    * the first may still be executing — with the same external id. A retry is
    * right for connection-refused, where you know nothing happened; it is wrong
-   * for a timeout, where the outcome is unknown by definition. A caller with its
-   * own retry loop, receipts and backoff should own this and pass `0`.
+   * for a timeout, where the outcome is unknown by definition.
+   *
+   * Disabling retries altogether would throw away the safe half: a rolling
+   * restart refuses connections for a few seconds, and absorbing that here costs
+   * milliseconds where a caller's own retry loop is usually far coarser.
    */
-  retries?: number;
+  shouldRetry?: (error: unknown) => boolean;
 };
 
 /** Body for `refundTransaction`. */
@@ -116,14 +121,23 @@ export type BuzzRefundTransactionInput = {
   details?: Record<string, unknown> | null;
 };
 
-async function withRetries<T>(fn: () => Promise<T>, retries: number): Promise<T> {
+async function withRetries<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  shouldRetry?: (error: unknown) => boolean
+): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    if (retries > 0) return withRetries(fn, retries - 1);
+    if (retries > 0 && (shouldRetry?.(error) ?? true))
+      return withRetries(fn, retries - 1, shouldRetry);
     throw error;
   }
 }
+
+/** A client-side abort, which says nothing about whether the server ran the write. */
+export const isTimeoutError = (error: unknown) =>
+  error instanceof Error && error.name === 'TimeoutError';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -173,29 +187,38 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   async function request<T = unknown>(
     urlPart: string,
     init?: RequestInit,
-    opts?: { allow404?: boolean; timeoutMs?: number; retries?: number }
+    opts?: {
+      allow404?: boolean;
+      timeoutMs?: number;
+      retries?: number;
+      shouldRetry?: (error: unknown) => boolean;
+    }
   ): Promise<T> {
     try {
-      return await withRetries(async () => {
-        const url = `${endpoint()}${urlPart}`;
-        // Opt-in, and absent by default: existing callers keep today's unbounded
-        // behaviour exactly. A caller that needs a bound — one holding a lock, or
-        // relying on "not in flight any more" — passes its own.
-        const response = await fetch(url, {
-          ...init,
-          ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
-        });
-        if (!response.ok) {
-          if (opts?.allow404 && response.status === 404) return null as T;
-          log?.('request failed', {
-            url,
-            status: response.status,
-            statusText: response.statusText,
+      return await withRetries(
+        async () => {
+          const url = `${endpoint()}${urlPart}`;
+          // Opt-in, and absent by default: existing callers keep today's unbounded
+          // behaviour exactly. A caller that needs a bound — one holding a lock, or
+          // relying on "not in flight any more" — passes its own.
+          const response = await fetch(url, {
+            ...init,
+            ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
           });
-          throw new BuzzApiError(response.status, response.statusText);
-        }
-        return (await response.json()) as T;
-      }, opts?.retries ?? retries);
+          if (!response.ok) {
+            if (opts?.allow404 && response.status === 404) return null as T;
+            log?.('request failed', {
+              url,
+              status: response.status,
+              statusText: response.statusText,
+            });
+            throw new BuzzApiError(response.status, response.statusText);
+          }
+          return (await response.json()) as T;
+        },
+        opts?.retries ?? retries,
+        opts?.shouldRetry
+      );
     } catch (error) {
       if (error instanceof BuzzApiError && mapError) throw mapError(error);
       throw error;
@@ -222,7 +245,11 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     return request(
       urlPart,
       { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) },
-      { timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs, retries: opts?.retries }
+      {
+        timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs,
+        retries: opts?.retries,
+        shouldRetry: opts?.shouldRetry,
+      }
     );
   }
 
