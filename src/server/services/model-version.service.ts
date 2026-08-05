@@ -49,8 +49,6 @@ import {
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
-import { Flags } from '~/shared/utils/flags';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   MergeVersionsInput,
@@ -484,10 +482,6 @@ export const upsertModelVersion = async ({
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
-  const existingFlags = id
-    ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
-    : 0;
-
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
   // absent as cleared would wipe a creator's fee when a moderator declines a review.
@@ -500,16 +494,6 @@ export const upsertModelVersion = async ({
     data.licensingFee = null;
     data.licensingFeeType = null;
     data.licensingFeeSettlementCurrency = null;
-  }
-
-  // Versions with a license fee earn through that channel, so they opt out of tip + creator-comp
-  // payouts. This is the flag's only set site, so clearing the fee has to strip it — otherwise the
-  // version earns neither the fee nor payouts (CU 868kk4j2k).
-  let flagsOverride: number | undefined;
-  if (hasLicensingFee) {
-    flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
-  } else if (feeProvided && Flags.hasFlag(existingFlags, ModelVersionFlag.DisablePayout)) {
-    flagsOverride = Flags.removeFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
   // Get model information to check NSFW + restricted base model combination
@@ -614,7 +598,6 @@ export const upsertModelVersion = async ({
             ((rightsAffirmation
               ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
               : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
-          flags: flagsOverride,
           availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
             (s) => s === data?.status
           )
@@ -724,7 +707,6 @@ export const upsertModelVersion = async ({
       data: {
         ...data,
         meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
-        flags: flagsOverride,
         availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
@@ -825,17 +807,12 @@ export const upsertModelVersion = async ({
           // applied (absent input = gate cleared / monetization deleted).
           paidAccess: toPaidAccessAuditState(paidAccess),
           monetization: toMonetizationAuditShape(monetization),
-          flags: flagsOverride,
         },
         actorRole: resolveActorRole({
           actorUserId: actorUserId ?? 0,
           ownerId: model.userId,
           isModerator,
         }),
-        systemFields:
-          flagsOverride !== undefined
-            ? { flags: hasLicensingFee ? 'licensing-fee-disable-payout' : 'licensing-fee-cleared' }
-            : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
     }
@@ -845,13 +822,13 @@ export const upsertModelVersion = async ({
       logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
     );
 
-    // The orchestrator caches fee + payoutEnabled per version, so a fee or flag change that doesn't
-    // invalidate it keeps pricing and paying against the old value. Never rejects: the write has
-    // already committed, and a failed bust must not surface as a failed save.
+    // The orchestrator caches fee + payoutEnabled per version, and payoutEnabled now derives from the
+    // fee, so a fee change that doesn't invalidate it keeps pricing and paying against the old value.
+    // Never rejects: the write has already committed, and a failed bust must not surface as a failed save.
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter || flagsOverride !== undefined)
+    if (feeBefore !== feeAfter)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     return version;
@@ -2084,7 +2061,14 @@ export const earlyAccessPurchase = async ({
   });
 
   try {
-    const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
+    // A timed early-access window and a permanent paid-access sale are different products and must be
+    // separable in the ledger. They previously shared the `early-access-` prefix, leaving the description
+    // string as the only signal — which made a copy edit enough to silently reclassify revenue. Both
+    // prefixes are two segments, so the `<versionId>` position is unchanged for anything parsing them.
+    // Readers must match BOTH: rows written before this change carry `early-access-` either way.
+    const externalTransactionIdPrefix = `${
+      permanent ? 'permanent-access' : 'early-access'
+    }-${modelVersionId}-${type}-${userId}`;
     const data = await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
@@ -2093,7 +2077,7 @@ export const earlyAccessPurchase = async ({
       description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
         modelVersion.model.name
       } - ${modelVersion.name}`,
-      details: { modelVersionId, type, earlyAccessPurchase: true },
+      details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
     });

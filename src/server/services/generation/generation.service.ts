@@ -843,8 +843,8 @@ export async function toggleGenerationDisabled({
   if (!isModerator) throw throwAuthorizationError();
 
   // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with DisablePayout/NotDerivative, so a read-modify-write
-  // would clobber a concurrent write to those other bits.
+  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
+  // concurrent write to those other bits.
   const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
     UPDATE "ModelVersion"
     SET flags = flags # ${ModelVersionFlag.GenerationDisabled}

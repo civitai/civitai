@@ -4,13 +4,13 @@ import { Flags } from './flags';
  * Model Version Flags — Bitwise opt-out / behavior flags stored on `ModelVersion.flags`.
  *
  * Each flag is a power of 2 so they can be combined with bitwise OR.
- * Use `Flags.hasFlag(modelVersion.flags, ModelVersionFlag.DisablePayout)` to check.
+ * Use `Flags.hasFlag(modelVersion.flags, ModelVersionFlag.GenerationDisabled)` to check.
+ *
+ * Bit 0 (value 1) is retired — it held DisablePayout, which duplicated `licensingFee`.
+ * Do not reuse it without checking that no `ModelVersion.flags` row still carries it.
  */
 export const ModelVersionFlag = {
   None: 0,
-
-  /** This version opts out of creator payouts — tips and creator compensation (e.g. licensed models earning via license fees instead). */
-  DisablePayout: 1 << 0, // 1
 
   /**
    * This version is blocked from the on-site generator — a moderator override on
@@ -35,7 +35,6 @@ export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof Model
  * wherever flags are rendered generically.
  */
 export const modelVersionFlagLabels: Record<number, string> = {
-  [ModelVersionFlag.DisablePayout]: 'Payouts disabled',
   [ModelVersionFlag.GenerationDisabled]: 'Generation blocked',
   [ModelVersionFlag.NotDerivative]: 'Not a derivative',
 };

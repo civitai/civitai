@@ -83,14 +83,15 @@ describe('getResourceCanGenerate — GenerationDisabled flag', () => {
   });
 
   it('blocks when GenerationDisabled is combined with another flag', () => {
-    expect(canGenerate(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.DisablePayout)).toBe(
+    expect(canGenerate(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative)).toBe(
       false
     );
   });
 
   it('does NOT block on an unrelated flag (bit-confusion guard)', () => {
-    expect(canGenerate(ModelVersionFlag.DisablePayout)).toBe(true);
     expect(canGenerate(ModelVersionFlag.NotDerivative)).toBe(true);
+    // Retired bit 0 (was DisablePayout) — rows in the wild still carry it.
+    expect(canGenerate(1)).toBe(true);
   });
 
   it('blocks a moderator too — the flag is not a visibility gate', () => {

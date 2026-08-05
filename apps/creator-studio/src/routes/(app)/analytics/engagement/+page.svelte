@@ -7,7 +7,7 @@
     IconExternalLink,
   } from '@tabler/icons-svelte';
   import { page } from '$app/state';
-  import { setSortParam } from '$lib/table-nav';
+  import { tableSortState } from '$lib/state/table-sort.svelte';
   import { modelUrl } from '$lib/model-url';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import Pagination from '$lib/components/Pagination.svelte';
@@ -19,8 +19,12 @@
   const perPage = $derived(analyticsPageSize.value);
 
   // Sort + page live in the URL (shallow routing). Default: most-downvoted first — the models to review.
-  const sortKey = $derived(page.url.searchParams.get('sort') ?? 'downvotes');
-  const sortDir = $derived(page.url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc');
+  const sorting = tableSortState('engagement', () => data.tableSort, {
+    sort: 'downvotes',
+    dir: 'desc',
+  });
+  const sortKey = $derived(sorting.key);
+  const sortDir = $derived(sorting.dir);
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const rows = $derived(data.engagement ?? []);
@@ -57,7 +61,7 @@
       <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
         <button
           type="button"
-          onclick={() => setSortParam(key, sortKey, sortDir)}
+          onclick={() => sorting.toggle(key)}
           class="flex w-full cursor-pointer items-center justify-end gap-1 hover:text-white {active
             ? 'font-medium text-white'
             : 'text-dark-3'}"

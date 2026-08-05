@@ -2,6 +2,8 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getModelVersionAnalytics, getModelVersionSeries } from '$lib/server/models-earnings';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
+import { readBuzzCurrencyFilter } from '$lib/server/buzz-currency-filter';
+import { readTableSort } from '$lib/server/table-sort';
 
 export const load: PageServerLoad = async ({ locals, params, cookies }) => {
   const modelId = Number(params.modelId);
@@ -23,5 +25,13 @@ export const load: PageServerLoad = async ({ locals, params, cookies }) => {
     getModelVersionSeries({ userId, modelId, ...compare }).catch(() => null),
   ]);
   if (!model) throw error(404, 'Model not found, or not yours');
-  return { model, series, compareSeries };
+  // Same table id as /analytics/models: identical columns over the same rows, so a creator who sorted by
+  // License Fees there expects to land here still sorted by License Fees.
+  return {
+    model,
+    series,
+    compareSeries,
+    buzzCurrencies: readBuzzCurrencyFilter(cookies),
+    tableSort: readTableSort(cookies, 'models'),
+  };
 };
