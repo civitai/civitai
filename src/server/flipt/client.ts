@@ -60,6 +60,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Kill switch for BOTH unattended paths that flag a model minor by SHA256
+  // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
+  // returns false for an unknown flag or an unreachable Flipt, and for a path
+  // that auto-restricts other people's models, not flagging is the safe
+  // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
+  // rollback stays usable after the switch is thrown.
+  MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
@@ -115,6 +122,10 @@ const FLIPT_EVAL_CACHE_MAX = 10_000;
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
+  // Thrown when auto-flagging is misfiring, so propagation should be the 60s
+  // config poll alone. Evaluated once per model-file scan and once per nightly
+  // job run — nowhere near hot enough for the cache to be worth the extra lag.
+  FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
 ]);
 
 type FliptCacheEntry<T> = { value: T; expiresAt: number };

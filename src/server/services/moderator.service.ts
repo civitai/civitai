@@ -4,7 +4,15 @@ type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
 type ModelModActivity = {
   entityType: 'model';
-  activity: TagActivities | 'review' | 'moderateFlag' | 'setMinor' | 'unsetMinor';
+  activity:
+    | TagActivities
+    | 'review'
+    | 'moderateFlag'
+    | 'setMinor'
+    | 'unsetMinor'
+    | 'setMinorAutoHash'
+    | 'rollbackMinorAutoHash'
+    | 'dismissMinorHashMatch';
 };
 
 type ModelVersionModActivity = {

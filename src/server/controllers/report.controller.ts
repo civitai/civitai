@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
@@ -21,13 +22,16 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
+  getLatestModelAppeal,
   getReports,
+  reopenModelAppeal,
   resolveEntityAppeal,
   updateReportById,
 } from '~/server/services/report.service';
 import {
   isPrismaForeignKeyViolation,
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbCustomError,
   throwDbError,
   throwNotFoundError,
@@ -336,6 +340,7 @@ export async function createEntityAppealHandler({
   ctx: ProtectedContext;
 }) {
   const { id: userId } = ctx.user;
+  let skipFee = false;
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
@@ -353,6 +358,35 @@ export async function createEntityAppealHandler({
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
         break;
+      case EntityType.Model: {
+        const model = await dbRead.model.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, minor: true, meta: true },
+        });
+        if (!model) throw throwNotFoundError('Model not found');
+        if (model.userId !== userId) throw throwAuthorizationError();
+
+        // Legacy flags carry no snapshot and are deliberately excluded.
+        const meta = model.meta as ModelMeta | null;
+        if (!model.minor || !meta?.minorFlagSnapshot)
+          throw throwBadRequestError('This model is not flagged as depicting a minor');
+
+        // `Appeal` is unique on (entityType, entityId, userId): creating a second
+        // row raises P2002, which is not a TRPCError and reaches the owner as a
+        // raw 500. Asking again after a denial is intended, so reuse the row.
+        const existing = await getLatestModelAppeal(input.entityId, userId);
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this model is already under review');
+        if (existing)
+          return await reopenModelAppeal({
+            entityId: input.entityId,
+            userId,
+            message: input.message,
+          });
+
+        skipFee = true;
+        break;
+      }
       default:
         throw throwDbCustomError('Entity type not supported for appeals');
     }
@@ -361,6 +395,7 @@ export async function createEntityAppealHandler({
       ...input,
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
+      skipFee,
     });
 
     return appeal;

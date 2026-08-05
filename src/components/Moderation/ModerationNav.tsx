@@ -52,6 +52,7 @@ export function ModerationNav() {
         { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
+        { label: 'Minor Hash Matches', href: '/moderator/minor-hash-matches' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Creator Shop Review',
