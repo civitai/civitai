@@ -46,6 +46,8 @@ const db = {
       kind: string;
       amount: number;
       transactionId: string | null;
+      attempts: number;
+      lastError?: string | null;
       createdAt: Date;
     }
   >(),
@@ -63,6 +65,7 @@ type LedgerQuery = {
 const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
 const dbWriteMock: Record<string, unknown> = {};
+const queryRaw = vi.fn(async () => [] as { id: number }[]);
 const txCommits: string[][] = [];
 vi.mock('~/server/db/client', () => ({
   dbWrite: dbWriteMock,
@@ -81,7 +84,7 @@ Object.assign(dbWriteMock, {
     txCommits.push([...db.legs.keys()]);
     return result;
   },
-  $queryRaw: vi.fn(async () => []),
+  $queryRaw: queryRaw,
   ...{
     placement: {
       findUnique: vi.fn(
@@ -123,7 +126,7 @@ Object.assign(dbWriteMock, {
               code: 'P2002',
               clientVersion: 'test',
             });
-          const row = { ...data, transactionId: null, createdAt: new Date(0) };
+          const row = { ...data, transactionId: null, attempts: 0, createdAt: new Date(0) };
           db.legs.set(key, row);
           return row;
         }
@@ -139,6 +142,8 @@ Object.assign(dbWriteMock, {
             return false;
           if (where.kind?.in && !where.kind.in.includes(leg.kind)) return false;
           if (where.kind?.not && leg.kind === where.kind.not) return false;
+          if (where.attempts?.lt !== undefined && leg.attempts >= where.attempts.lt) return false;
+          if (where.amount?.gt !== undefined && leg.amount <= where.amount.gt) return false;
           if (where.transactionId === null && leg.transactionId !== null) return false;
           // `{ not: null }` means receipted-only. Ignoring it would let a
           // claimed-but-unpaid hold count as money in escrow, which is the
@@ -163,12 +168,28 @@ Object.assign(dbWriteMock, {
           : withAge;
         return take ? deduped.slice(0, take) : deduped;
       }),
+      count: vi.fn(async ({ where }: LedgerQuery) => {
+        return [...db.legs.values()].filter((leg) => {
+          if (where.placementId !== undefined && leg.placementId !== where.placementId)
+            return false;
+          if (where.kind?.in && !where.kind.in.includes(leg.kind)) return false;
+          if (where.transactionId === null && leg.transactionId !== null) return false;
+          if (where.attempts?.gte !== undefined && leg.attempts < where.attempts.gte) return false;
+          if (where.amount?.gt !== undefined && leg.amount <= where.amount.gt) return false;
+          return true;
+        }).length;
+      }),
       createMany: vi.fn(
         async ({ data }: { data: { placementId: number; kind: string; amount: number }[] }) => {
           for (const row of data) {
             const key = legKey(row.placementId, row.kind);
             if (!db.legs.has(key))
-              db.legs.set(key, { ...row, transactionId: null, createdAt: new Date(0) });
+              db.legs.set(key, {
+                ...row,
+                transactionId: null,
+                attempts: 0,
+                createdAt: new Date(0),
+              });
           }
           return { count: data.length };
         }
@@ -179,12 +200,21 @@ Object.assign(dbWriteMock, {
           data,
         }: {
           where: { placementId_kind: { placementId: number; kind: string } };
-          data: { transactionId: string | null };
+          data: {
+            transactionId?: string | null;
+            lastError?: string | null;
+            attempts?: { increment: number };
+          };
         }) => {
           const row = db.legs.get(
             legKey(where.placementId_kind.placementId, where.placementId_kind.kind)
           );
-          if (row) row.transactionId = data.transactionId;
+          if (row) {
+            if (data.attempts && typeof data.attempts === 'object' && 'increment' in data.attempts)
+              row.attempts += data.attempts.increment;
+            if ('transactionId' in data) row.transactionId = data.transactionId ?? null;
+            if ('lastError' in data) row.lastError = data.lastError ?? null;
+          }
           return row;
         }
       ),
@@ -205,9 +235,14 @@ const storedRate = (rate: number) => (configState.rate = rate);
 const storedShares = (shares: { seller: number; platform: number }) =>
   (configState.shares = shares);
 
-const { holdPlacementEscrow, settlePlacement, expirePlacements, sweepUnpaidLegs } = await import(
-  '~/server/services/placement-escrow.service'
-);
+const {
+  holdPlacementEscrow,
+  settlePlacement,
+  expirePlacements,
+  sweepUnpaidLegs,
+  sweepUnplannedSettlements,
+  MAX_LEG_ATTEMPTS,
+} = await import('~/server/services/placement-escrow.service');
 
 const OWNER = 10;
 const PLACER = 20;
@@ -259,6 +294,7 @@ beforeEach(() => {
   db.placements.clear();
   db.legs.clear();
   heldLocks.clear();
+  queryRaw.mockResolvedValue([]);
   txCommits.length = 0;
   lockState.available = true;
   configState.rate = 0.3;
@@ -1069,5 +1105,105 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
 
     expect(swept.stranded).toBe(1);
     expect(db.legs.get('2:toOwner')?.transactionId).toBe('buzz-tx');
+  });
+});
+
+describe('a leg that can never succeed', () => {
+  // The recurring defect: a row the sweep finds and can never finish consumes a
+  // slot in every bounded batch. Three instances were fixed by narrowing a query;
+  // this is the general answer, so the fourth is reported rather than silent.
+  const givenPermanentlyFailingLeg = async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValue(new Error('unknown account'));
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+  };
+
+  it('counts its attempts and records why it failed', async () => {
+    await givenPermanentlyFailingLeg();
+
+    expect(db.legs.get('1:toOwner')?.attempts).toBe(1);
+    expect(db.legs.get('1:toOwner')?.lastError).toContain('unknown account');
+  });
+
+  it('stops being retried once it exhausts them', async () => {
+    await givenPermanentlyFailingLeg();
+
+    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++)
+      await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
+
+    const leg = db.legs.get('1:toOwner');
+    expect(leg?.attempts).toBeLessThanOrEqual(MAX_LEG_ATTEMPTS);
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+    expect(swept.stranded).toBe(0);
+  });
+
+  // Not retrying is only half of it. Silently dropping the row would turn a
+  // starving batch into an invisible one.
+  it('is reported once it stops being retried', async () => {
+    await givenPermanentlyFailingLeg();
+    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++)
+      await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(swept.exhausted).toBeGreaterThan(0);
+  });
+
+  it('clears its error when a later attempt succeeds', async () => {
+    await givenPermanentlyFailingLeg();
+    createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
+
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(db.legs.get('1:toOwner')?.transactionId).toBe('buzz-tx');
+    expect(db.legs.get('1:toOwner')?.lastError).toBeNull();
+  });
+});
+
+describe('a settlement with no funded escrow behind it', () => {
+  // It plans nothing, so the sweep would otherwise count it as resumed on every
+  // run forever — the same false-healthy signal as a counter that measures work
+  // attempted rather than work landed. It is terminal, not resumable.
+  it('is reported as unfunded rather than counted as resumed', async () => {
+    givenPlacement({ status: 'approved', resolvedAt: new Date(0) });
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: null,
+      attempts: 0,
+      createdAt: new Date(0),
+    });
+    queryRaw.mockResolvedValue([{ id: 1 }]);
+
+    const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
+
+    expect(swept).toMatchObject({ unplanned: 1, planned: 0, unfunded: 1 });
+  });
+
+  it('counts a genuinely resumable settlement as planned', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    db.placements.get(1)!.status = 'approved';
+    db.placements.get(1)!.resolvedAt = new Date(0);
+    queryRaw.mockResolvedValue([{ id: 1 }]);
+
+    const swept = await sweepUnplannedSettlements({ olderThanMinutes: 0 });
+
+    expect(swept).toMatchObject({ planned: 1, unfunded: 0 });
   });
 });

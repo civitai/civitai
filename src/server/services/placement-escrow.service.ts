@@ -33,6 +33,20 @@ const ESCROW_ACCOUNT_ID = 0;
  */
 const PLATFORM_KEEP_RECEIPT = 'platform-keep';
 
+/**
+ * After this many failed attempts a leg stops being retried and starts being
+ * reported.
+ *
+ * The recurring defect in this feature has been a row the recovery sweep can
+ * find and can never finish: it consumes a slot in every bounded batch, and
+ * enough of them starve the mechanism that recovers from an outage — while the
+ * sweep reports healthy numbers, because the counter measures work attempted
+ * rather than work landed. Three separate instances were fixed by narrowing a
+ * query; this is the general answer, so the fourth is a page rather than a
+ * silence.
+ */
+export const MAX_LEG_ATTEMPTS = 5;
+
 const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 const PAYOUT_KINDS = [
   'toOwner',
@@ -141,14 +155,36 @@ async function runLeg(
       // callers can compute different numbers — they read live config at
       // slightly different moments — and whoever lost the insert would otherwise
       // move an amount the ledger does not record.
-      const transactionId = await pay(
-        placementTransactionId(placementId, kind),
-        claimed?.amount ?? amount
-      );
+      // The ceiling is enforced here, not only in the sweep query. The sweep
+      // selects placements and then re-runs the whole payout, so filtering there
+      // would skip *choosing* an exhausted leg and still retry it — a list
+      // operation where a refusal is needed.
+      if ((claimed?.attempts ?? 0) >= MAX_LEG_ATTEMPTS) return null;
 
       await dbWrite.placementTransaction.update({
         where: { placementId_kind: { placementId, kind } },
-        data: { transactionId },
+        data: { attempts: { increment: 1 }, lastAttemptAt: new Date() },
+      });
+
+      let transactionId: string | null;
+      try {
+        transactionId = await pay(
+          placementTransactionId(placementId, kind),
+          claimed?.amount ?? amount
+        );
+      } catch (error) {
+        // Recorded before rethrowing, so a leg that keeps failing says why on the
+        // row rather than only in a log nobody correlates.
+        await dbWrite.placementTransaction.update({
+          where: { placementId_kind: { placementId, kind } },
+          data: { lastError: String((error as Error).message ?? error).slice(0, 500) },
+        });
+        throw error;
+      }
+
+      await dbWrite.placementTransaction.update({
+        where: { placementId_kind: { placementId, kind } },
+        data: { transactionId, lastError: null },
       });
 
       return transactionId;
@@ -574,12 +610,33 @@ export async function sweepUnpaidLegs({
       kind: { in: [...PAYOUT_KINDS] },
       transactionId: null,
       amount: { gt: 0 },
+      attempts: { lt: MAX_LEG_ATTEMPTS },
       createdAt: { lt: before },
     },
     select: { placementId: true },
     distinct: ['placementId'],
     take: limit,
   });
+
+  // Legs past the ceiling are no longer retried, so they must be reported —
+  // otherwise "stopped starving the batch" would just mean "stopped mentioning
+  // it". This is the signal that something needs a human.
+  const exhausted = await dbWrite.placementTransaction.count({
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      attempts: { gte: MAX_LEG_ATTEMPTS },
+    },
+  });
+
+  if (exhausted > 0)
+    logToAxiom({
+      name: 'placement-escrow',
+      type: 'error',
+      message: 'placement legs have exhausted their retries and need a human',
+      exhausted,
+    }).catch(() => null);
 
   let resumed = 0;
   for (const { placementId } of stranded) {
@@ -600,7 +657,7 @@ export async function sweepUnpaidLegs({
     }
   }
 
-  return { stranded: stranded.length, resumed };
+  return { stranded: stranded.length, resumed, exhausted };
 }
 
 /**
@@ -629,13 +686,32 @@ export async function sweepUnplannedSettlements({
   `;
 
   let planned = 0;
+  let unfunded = 0;
   for (const { id } of rows) {
     const placement = await dbWrite.placement.findUnique({ where: { id } });
     if (!placement) continue;
 
     try {
       await payOutPlacement(placement);
-      planned++;
+
+      // A settlement whose holds never landed plans nothing, so this loop would
+      // otherwise count it as resumed on every run forever — the same
+      // false-healthy signal as a sweep reporting the work it attempted rather
+      // than the work that landed. It is terminal, not resumable.
+      const planExists = await dbWrite.placementTransaction.count({
+        where: { placementId: id, kind: { in: [...PAYOUT_KINDS] } },
+      });
+
+      if (planExists > 0) planned++;
+      else {
+        unfunded++;
+        logToAxiom({
+          name: 'placement-escrow',
+          type: 'error',
+          message: 'settled placement has no funded escrow behind it',
+          placementId: id,
+        }).catch(() => null);
+      }
     } catch (error) {
       logToAxiom({
         name: 'placement-escrow',
@@ -647,5 +723,5 @@ export async function sweepUnplannedSettlements({
     }
   }
 
-  return { unplanned: rows.length, planned };
+  return { unplanned: rows.length, planned, unfunded };
 }

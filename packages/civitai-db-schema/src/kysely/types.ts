@@ -2944,6 +2944,15 @@ export type PlacementTransaction = {
   kind: string;
   transactionId: string | null;
   amount: number;
+  /**
+   * Failure accounting. Without it a leg that can never succeed is
+   * indistinguishable from one that has not been tried yet, so it stays in the
+   * recovery sweep forever and — past the batch limit — starves it, while the
+   * sweep reports healthy numbers.
+   */
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type PlatformDefaultBlock = {

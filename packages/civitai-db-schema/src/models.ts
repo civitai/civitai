@@ -659,6 +659,7 @@ export interface User {
   placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
   placementsMade?: Placement[];
+  placementsSold?: Placement[];
 }
 
 export interface CustomerSubscription {
@@ -5162,6 +5163,7 @@ export interface Placement {
   removedBy: string | null;
   amount: number;
   sellerId: number | null;
+  seller?: User | null;
   feeWaived: boolean;
   createdAt: Date;
   expiresAt: Date | null;
@@ -5179,6 +5181,9 @@ export interface PlacementTransaction {
   kind: string;
   transactionId: string | null;
   amount: number;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
   createdAt: Date;
 }
 

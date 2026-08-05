@@ -62,6 +62,15 @@ BEGIN
       FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 
+  -- A payout target with no referential integrity is a transfer to an id nothing
+  -- guarantees exists. SET NULL rather than RESTRICT so deleting a user is not
+  -- blocked; the resulting unpayable leg is surfaced by the attempt counter.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_sellerId_fkey') THEN
+    ALTER TABLE "Placement"
+      ADD CONSTRAINT "Placement_sellerId_fkey"
+      FOREIGN KEY ("sellerId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Placement_placerId_fkey') THEN
     ALTER TABLE "Placement"
       ADD CONSTRAINT "Placement_placerId_fkey"
@@ -110,6 +119,12 @@ CREATE TABLE IF NOT EXISTS "PlacementTransaction" (
   "kind"          TEXT NOT NULL,
   "transactionId" TEXT,
   "amount"        INTEGER NOT NULL,
+  -- Failure accounting. Without it a leg that can never succeed looks exactly
+  -- like one that has not been tried, so it stays in the recovery sweep forever
+  -- and past the batch limit starves it, while the sweep reports healthy numbers.
+  "attempts"      INTEGER NOT NULL DEFAULT 0,
+  "lastAttemptAt" TIMESTAMP(3),
+  "lastError"     TEXT,
   "createdAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "PlacementTransaction_amount_nonnegative" CHECK ("amount" >= 0)
 );
@@ -126,9 +141,12 @@ $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "PlacementTransaction_placementId_kind_key"
   ON "PlacementTransaction" ("placementId", "kind");
--- Drives the sweeper over legs that were claimed but never paid.
+-- Drives the sweeper over legs that were claimed but never paid, which reads
+-- unreceipted rows under the attempt ceiling.
 CREATE INDEX IF NOT EXISTS "PlacementTransaction_kind_createdAt_idx"
   ON "PlacementTransaction" ("kind", "createdAt");
+CREATE INDEX IF NOT EXISTS "PlacementTransaction_unpaid_idx"
+  ON "PlacementTransaction" ("attempts", "createdAt") WHERE "transactionId" IS NULL;
 
 -- Sitewide suspension of a user's placement privileges. Not a block from a system
 -- account: that would inherit the block cache's staleness and pollute the block

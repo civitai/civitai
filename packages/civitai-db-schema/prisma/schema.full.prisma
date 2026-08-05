@@ -606,6 +606,7 @@ model User {
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
   placementsMade                     Placement[]                @relation("PlacementPlacer")
+  placementsSold                     Placement[]                @relation("PlacementSeller")
 
   @@index([deletedAt])
 }
@@ -7530,6 +7531,7 @@ model Placement {
   /// On the row rather than passed in, because the settlement is resumable and a
   /// sweeper that never saw the argument would strand the seller's share.
   sellerId              Int?
+  seller                User?     @relation("PlacementSeller", fields: [sellerId], references: [id], onDelete: SetNull)
   /// Set when a block declined this placement. A block is the owner refusing to
   /// give attention to anyone, and the decline fee is the price of that attention,
   /// so no fee is taken. Stored rather than inferred: settlement is resumable and
@@ -7564,6 +7566,13 @@ model PlacementTransaction {
   kind          String
   transactionId String?
   amount        Int
+  /// Failure accounting. Without it a leg that can never succeed is
+  /// indistinguishable from one that has not been tried yet, so it stays in the
+  /// recovery sweep forever and — past the batch limit — starves it, while the
+  /// sweep reports healthy numbers.
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  lastError     String?
   createdAt     DateTime  @default(now())
 
   @@unique([placementId, kind])
