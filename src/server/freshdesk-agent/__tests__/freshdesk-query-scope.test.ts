@@ -297,10 +297,7 @@ describe('checkQueryScope — paren-unbalanced input', () => {
     ['an extra ")" after a balanced sub-select', 'SELECT * FROM (SELECT id FROM "User")) x'],
     ['an unclosed "(" around a sub-select', 'SELECT * FROM (SELECT id FROM "User"'],
     ['two unclosed "("', 'SELECT * FROM (SELECT (id FROM "User"'],
-    [
-      'a stray ")" that hides an out-of-scope relation behind a comma',
-      'SELECT 1) x, "Account" a',
-    ],
+    ['a stray ")" that hides an out-of-scope relation behind a comma', 'SELECT 1) x, "Account" a'],
   ])('refuses %s', (_label, sql) => {
     const result = checkQueryScope(sql);
     expect(result.ok).toBe(false);

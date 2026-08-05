@@ -266,8 +266,7 @@ describe('query_database', () => {
    * bug lives in text none of them contained.
    */
   describe('paren-unbalanced input never reaches the driver', () => {
-    const EVASION =
-      'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1';
+    const EVASION = 'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1';
 
     it('refuses a statement that would only become valid once wrapped', async () => {
       const result = await executeToolCall('query_database', { sql: EVASION });
