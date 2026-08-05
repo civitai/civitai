@@ -208,7 +208,7 @@ describe('query_database', () => {
     // Invariant guard, not regression coverage: the scope check already read the
     // original SQL before this change. It is pinned here because the change
     // introduced a rewrite that a later edit could easily hoist above it.
-    it('scope-checks the model\'s original SQL, never the rewritten statement', async () => {
+    it("scope-checks the model's original SQL, never the rewritten statement", async () => {
       h.queryWithTimeout.mockResolvedValue({ rows: [] });
 
       await executeToolCall('query_database', { sql: ALLOWED_SQL });
