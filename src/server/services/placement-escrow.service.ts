@@ -65,6 +65,22 @@ export const MAX_LEG_ATTEMPTS = 5;
 export const LEG_RETRY_BACKOFF_MINUTES = 30;
 
 /**
+ * How long a Buzz call may run before it is aborted.
+ *
+ * **Derived from the retry gap on purpose, not written as its own number.** The
+ * invariant is not "30 seconds" — it is *the request must be over well before
+ * the leg becomes eligible again*. The per-leg lock reliably covers a hang of
+ * seconds (5s TTL, renewed every ~1.7s, and a lost renewal is silent), so if a
+ * call could still be in flight when the backoff expires, a second caller can
+ * enter with the same external id and only the remote's deduplication stands
+ * between that and a double payment.
+ *
+ * Two independent constants cannot express that: shorten the gap next quarter
+ * and the timeout stays put, and the hazard returns with nothing failing.
+ */
+export const BUZZ_CALL_TIMEOUT_MS = (LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60;
+
+/**
  * How recently a leg must have given up to be alerted on.
  *
  * Re-reporting every exhausted leg on every run would fire forever and be muted
@@ -319,17 +335,20 @@ export async function holdPlacementEscrow({
 
   const hold = (kind: PlacementTransactionKind, holdAmount: number) =>
     runLeg(placementId, kind, holdAmount, async (externalTransactionIdPrefix, payAmount) => {
-      const result = await createMultiAccountBuzzTransaction({
-        amount: payAmount,
-        fromAccountId: placerId,
-        toAccountId: ESCROW_ACCOUNT_ID,
-        type: TransactionType.Fee,
-        // Yellow and Green only. Blue is non-transferable by design, and a
-        // placement that took it and paid it out would be a laundering channel.
-        fromAccountTypes: PLACEMENT_SPEND_TYPES,
-        description: `Placement escrow (${kind}) for placement ${placementId}`,
-        externalTransactionIdPrefix,
-      });
+      const result = await createMultiAccountBuzzTransaction(
+        {
+          amount: payAmount,
+          fromAccountId: placerId,
+          toAccountId: ESCROW_ACCOUNT_ID,
+          type: TransactionType.Fee,
+          // Yellow and Green only. Blue is non-transferable by design, and a
+          // placement that took it and paid it out would be a laundering channel.
+          fromAccountTypes: PLACEMENT_SPEND_TYPES,
+          description: `Placement escrow (${kind}) for placement ${placementId}`,
+          externalTransactionIdPrefix,
+        },
+        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+      );
 
       if (result.transactionCount === 0)
         throw new Error(
@@ -558,14 +577,17 @@ async function payOutPlacement(placement: PlacementRow) {
 
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
     runLeg(placement.id, kind, amount, async (externalTransactionId, payAmount) => {
-      const { transactionId } = await createBuzzTransaction({
-        amount: payAmount,
-        fromAccountId: ESCROW_ACCOUNT_ID,
-        toAccountId,
-        type: TransactionType.Fee,
-        description: `Placement ${placement.id} (${kind})`,
-        externalTransactionId,
-      });
+      const { transactionId } = await createBuzzTransaction(
+        {
+          amount: payAmount,
+          fromAccountId: ESCROW_ACCOUNT_ID,
+          toAccountId,
+          type: TransactionType.Fee,
+          description: `Placement ${placement.id} (${kind})`,
+          externalTransactionId,
+        },
+        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+      );
 
       return transactionId;
     });
@@ -575,13 +597,16 @@ async function payOutPlacement(placement: PlacementRow) {
   // from, so nothing here has to reconstruct it.
   const refundHold = (kind: PlacementTransactionKind, holdKind: string, amount: number) =>
     runLeg(placement.id, kind, amount, async () => {
-      const result = await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: placementTransactionId(
-          placement.id,
-          holdKind as PlacementTransactionKind
-        ),
-        description: `Placement ${placement.id} refund (${holdKind})`,
-      });
+      const result = await refundMultiAccountTransaction(
+        {
+          externalTransactionIdPrefix: placementTransactionId(
+            placement.id,
+            holdKind as PlacementTransactionKind
+          ),
+          description: `Placement ${placement.id} refund (${holdKind})`,
+        },
+        { timeoutMs: BUZZ_CALL_TIMEOUT_MS }
+      );
 
       return result.externalTransactionIdPrefix;
     });

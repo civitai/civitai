@@ -452,12 +452,14 @@ describe('settling', () => {
     await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
 
     expect(createBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ toAccountId: OWNER, amount: 300 })
+      expect.objectContaining({ toAccountId: OWNER, amount: 300 }),
+      expect.anything()
     );
     // The placer's money returns through a refund of a real hold, so the Buzz
     // service restores the mix it drew from rather than us reconstructing it.
     expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ externalTransactionIdPrefix: 'placement-1-holdPrincipal' })
+      expect.objectContaining({ externalTransactionIdPrefix: 'placement-1-holdPrincipal' }),
+      expect.anything()
     );
     expect(legsFor(1)).toMatchObject({ feeToOwner: 300, principalToPlacer: 700 });
   });
@@ -671,7 +673,10 @@ describe('the amounts a resume replays', () => {
 
     expect(legsFor(1)).toMatchObject({ feeToOwner: 50, principalToPlacer: 950 });
     expect(paidOut).toBe(1000);
-    expect(createBuzzTransaction).toHaveBeenCalledWith(expect.objectContaining({ amount: 50 }));
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 }),
+      expect.anything()
+    );
   });
 
   // Same defect reached by crash-then-resume: the legs that hadn't run yet were
@@ -743,7 +748,8 @@ describe('the seller share survives a resume', () => {
     await sweepUnpaidLegs({ olderThanMinutes: 0 });
 
     expect(createBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ toAccountId: SELLER })
+      expect.objectContaining({ toAccountId: SELLER }),
+      expect.anything()
     );
     expect(legsFor(1).toSeller).toBeGreaterThan(0);
   });
@@ -994,9 +1000,13 @@ describe('when two callers claim different amounts', () => {
 
     await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
 
-    expect(createBuzzTransaction).toHaveBeenCalledWith(expect.objectContaining({ amount: 400 }));
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 400 }),
+      expect.anything()
+    );
     expect(createBuzzTransaction).not.toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 700 })
+      expect.objectContaining({ amount: 700 }),
+      expect.anything()
     );
   });
 });
@@ -1057,7 +1067,8 @@ describe('a settlement always leaves a plan', () => {
     expect(legsFor(1)).toMatchObject({ toOwner: 700 });
     expect(legsFor(1)).not.toHaveProperty('forfeit');
     expect(createBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ toAccountId: OWNER, amount: 700 })
+      expect.objectContaining({ toAccountId: OWNER, amount: 700 }),
+      expect.anything()
     );
   });
 });

@@ -87,6 +87,16 @@ export type BuzzRefundMultiTransactionInput = {
   details?: Record<string, unknown> | null;
 };
 
+/**
+ * Per-call overrides for a write.
+ *
+ * `timeoutMs` is opt-in and absent by default, so existing callers keep today's
+ * unbounded behaviour. A caller that holds a lock while it waits needs "this
+ * request is no longer in flight" to become true at some point; without a
+ * timeout there is no such point, and no lock TTL can be sized against it.
+ */
+export type BuzzWriteOptions = { timeoutMs?: number };
+
 /** Body for `refundTransaction`. */
 export type BuzzRefundTransactionInput = {
   description?: string;
@@ -195,11 +205,11 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   // a lock needs "this request is no longer in flight" to be true at some point,
   // and without a timeout there is no such point for a lock TTL to be sized
   // against.
-  function post(urlPart: string, body: unknown) {
+  function post(urlPart: string, body: unknown, opts?: BuzzWriteOptions) {
     return request(
       urlPart,
       { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) },
-      { timeoutMs: transactionTimeoutMs }
+      { timeoutMs: opts?.timeoutMs ?? transactionTimeoutMs }
     );
   }
 
@@ -331,8 +341,8 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     );
 
   // ---- Transaction writes --------------------------------------------------
-  const createTransaction = (transaction: BuzzTransactionInput) =>
-    post('/transaction', toApiTransaction(transaction)) as Promise<CreateTransactionResponse>;
+  const createTransaction = (transaction: BuzzTransactionInput, opts?: BuzzWriteOptions) =>
+    post('/transaction', toApiTransaction(transaction), opts) as Promise<CreateTransactionResponse>;
 
   const createTransactions = (transactions: BuzzTransactionInput[]) =>
     post(
@@ -340,11 +350,15 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       transactions.map((t) => toApiTransaction(t))
     ) as Promise<CreateTransactionsResponse>;
 
-  const createMultiTransaction = (input: BuzzMultiTransactionInput) =>
-    post('/multi-transactions', toApiTransaction(input)) as Promise<CreateMultiTransactionResponse>;
+  const createMultiTransaction = (input: BuzzMultiTransactionInput, opts?: BuzzWriteOptions) =>
+    post(
+      '/multi-transactions',
+      toApiTransaction(input),
+      opts
+    ) as Promise<CreateMultiTransactionResponse>;
 
-  const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput) =>
-    post('/multi-transactions/refund', body) as Promise<RefundMultiTransactionResponse>;
+  const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput, opts?: BuzzWriteOptions) =>
+    post('/multi-transactions/refund', body, opts) as Promise<RefundMultiTransactionResponse>;
 
   const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
     post(`/transactions/${transactionId}/refund`, body) as Promise<RefundTransactionResponse>;

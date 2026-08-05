@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type { BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -747,19 +748,23 @@ function counterpartyName(accountId: number, username?: string) {
   return username ?? `User ${accountId}`;
 }
 
-export async function createBuzzTransaction({
-  entityId,
-  entityType,
-  toAccountId,
-  amount,
-  details,
-  insufficientFundsErrorMsg,
-  ...payload
-}: CreateBuzzTransactionInput & {
-  fromAccountId: number;
-  fromAccountType?: BuzzAccountType;
-  insufficientFundsErrorMsg?: string;
-}) {
+export async function createBuzzTransaction(
+  {
+    entityId,
+    entityType,
+    toAccountId,
+    amount,
+    details,
+    insufficientFundsErrorMsg,
+    ...payload
+  }: CreateBuzzTransactionInput & {
+    fromAccountId: number;
+    fromAccountType?: BuzzAccountType;
+    insufficientFundsErrorMsg?: string;
+  },
+  // Optional per-call bound. Absent means today's behaviour: unbounded.
+  opts?: BuzzWriteOptions
+) {
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbWrite.$queryRawUnsafe<
       [{ userId?: number }]
@@ -801,16 +806,19 @@ export async function createBuzzTransaction({
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
-  const data = await buzzService.createTransaction({
-    ...payload,
-    details: {
-      ...(details ?? {}),
-      entityId: entityId ?? details?.entityId,
-      entityType: entityType ?? details?.entityType,
+  const data = await buzzService.createTransaction(
+    {
+      ...payload,
+      details: {
+        ...(details ?? {}),
+        entityId: entityId ?? details?.entityId,
+        entityType: entityType ?? details?.entityType,
+      },
+      amount,
+      toAccountId,
     },
-    amount,
-    toAccountId,
-  });
+    opts
+  );
 
   return data;
 }
@@ -1100,17 +1108,21 @@ export async function refundTransaction(
 }
 
 export async function createMultiAccountBuzzTransaction(
-  input: CreateMultiAccountBuzzTransactionInput & { fromAccountId: number }
+  input: CreateMultiAccountBuzzTransactionInput & { fromAccountId: number },
+  opts?: BuzzWriteOptions
 ) {
   // Default user acc:
   input.toAccountType = input.toAccountType ?? 'yellow'; // Default to bank if not provided
-  const data = await buzzService.createMultiTransaction(input);
+  const data = await buzzService.createMultiTransaction(input, opts);
 
   return createMultiAccountBuzzTransactionResponse.parse(data);
 }
 
-export async function refundMultiAccountTransaction(input: RefundMultiAccountTransactionInput) {
-  const data = await buzzService.refundMultiTransaction(input);
+export async function refundMultiAccountTransaction(
+  input: RefundMultiAccountTransactionInput,
+  opts?: BuzzWriteOptions
+) {
+  const data = await buzzService.refundMultiTransaction(input, opts);
 
   return refundMultiAccountTransactionResponse.parse(data);
 }
