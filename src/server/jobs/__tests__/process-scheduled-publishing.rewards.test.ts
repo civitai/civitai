@@ -1,7 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockApply, mockSetLastRun, mockLogToAxiom, jobDate } = vi.hoisted(() => ({
+const {
+  mockDbWrite,
+  mockApply,
+  mockSetLastRun,
+  mockLogToAxiom,
+  mockProcessEngagement,
+  jobDate,
+} = vi.hoisted(() => ({
   mockDbWrite: {
     $queryRaw: vi.fn(),
     $executeRaw: vi.fn(),
@@ -12,6 +19,7 @@ const { mockDbWrite, mockApply, mockSetLastRun, mockLogToAxiom, jobDate } = vi.h
   mockApply: vi.fn(),
   mockSetLastRun: vi.fn(),
   mockLogToAxiom: vi.fn(() => Promise.resolve()),
+  mockProcessEngagement: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -22,7 +30,7 @@ vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 // modules that build query caches from the db client at import time, so pulling the
 // real one in drops this suite to zero collected tests.
 vi.mock('~/server/rewards', () => ({ firstDailyPostReward: { apply: mockApply } }));
-vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
+vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   userImageVideoCountCaches: { refresh: vi.fn() },
@@ -87,6 +95,17 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
     await runJob();
     expect(mockApply).toHaveBeenCalledWith({ postId: 2, posterId: 20 });
+  });
+
+  it('registers the published engagement for standalone scheduled posts too', async () => {
+    stubReads({ newlyLive: [{ id: 6, userId: 60 }] });
+    await runJob();
+    expect(mockProcessEngagement).toHaveBeenCalledWith({
+      userId: 60,
+      type: 'published',
+      entityType: 'post',
+      entityId: 6,
+    });
   });
 
   // The two reads can't overlap today — the flip happens after both — so this pins

@@ -301,7 +301,13 @@ export const processScheduledPublishing = createJob(
       });
       await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
-    for (const post of scheduledPosts) {
+    // Neither scheduled path reaches the inline side effects in post.controller, so
+    // they land here on the day the post actually goes live. The sweep half of this
+    // set also carries normally-published drafts, so anything driven off it has to
+    // tolerate being handed the same post id twice.
+    const publishedPosts = uniqBy([...scheduledPosts, ...newlyLivePosts], 'id');
+
+    for (const post of publishedPosts) {
       await eventEngine.processEngagement({
         userId: post.userId,
         type: 'published',
@@ -310,8 +316,6 @@ export const processScheduledPublishing = createJob(
       });
     }
 
-    // Neither scheduled path reaches the inline reward in post.controller, so the
-    // grant lands here on the day the post actually goes live.
     if (newlyLivePosts.length === REWARD_SWEEP_LIMIT) {
       await logToAxiom({
         name: 'process-scheduled-publishing',
@@ -320,7 +324,7 @@ export const processScheduledPublishing = createJob(
         windowStart: rewardWindowStart.toISOString(),
       }).catch(() => undefined);
     }
-    for (const post of uniqBy([...scheduledPosts, ...newlyLivePosts], 'id')) {
+    for (const post of publishedPosts) {
       // Caught per post so one failure can't abort the job — but routed to Axiom
       // rather than swallowed, since base.reward rethrows genuine ClickHouse schema
       // breaks precisely so they stay visible.
