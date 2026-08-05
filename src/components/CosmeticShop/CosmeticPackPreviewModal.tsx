@@ -20,6 +20,7 @@ import type { PayWithOption } from '~/components/CosmeticShop/PayWithSelector';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -88,8 +89,10 @@ export const CosmeticPackPreviewModal = ({
               <CloseButton className="show-mobile" onClick={dialog.onClose} />
             </Group>
             <Center my="auto" h={250}>
-              {pack?.meta.coverUrl && (
+              {pack?.meta.coverUrl ? (
                 <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
+              ) : (
+                <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} />
               )}
             </Center>
             <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">

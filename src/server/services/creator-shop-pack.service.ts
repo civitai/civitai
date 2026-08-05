@@ -17,6 +17,7 @@ import {
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -127,6 +128,13 @@ export const blueBuzzBlockers = (members: ResolvedMember[]) =>
     .filter((m) => !m.acceptsBlueBuzz)
     .map((m) => ({ cosmeticId: m.cosmeticId, name: m.name }));
 
+const COVER_TILE_COUNT = 4;
+const coverTilesFrom = (members: ResolvedMember[]) =>
+  members
+    .map((m) => getCosmeticArtworkUrl(m.data as Prisma.JsonValue))
+    .filter((url): url is string => !!url)
+    .slice(0, COVER_TILE_COUNT);
+
 const buildRightsAffirmation = (userId: number) => ({
   userId,
   affirmedAt: new Date().toISOString(),
@@ -196,7 +204,8 @@ export const submitCreatorShopPack = async ({
           meta: {
             purchases: 0,
             submissionTxId: feeTxId,
-            coverUrl: imageUrl,
+            ...(imageUrl ? { coverUrl: imageUrl } : {}),
+            coverTiles: coverTilesFrom(members),
             packMemberCount: members.length,
             acceptsBlueBuzz,
             rightsAffirmation: buildRightsAffirmation(userId),
@@ -321,6 +330,7 @@ export const updateCreatorShopPack = async ({
         meta: {
           ...meta,
           ...(imageUrl ? { coverUrl: imageUrl } : {}),
+          ...(memberCosmeticIds ? { coverTiles: coverTilesFrom(members) } : {}),
           // Only re-baselined when the contents were actually chosen. A member
           // Cosmetic being deleted cascades its join row away, so rewriting this
           // on a price-only edit would quietly ratify the shrunken pack.

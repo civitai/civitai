@@ -458,8 +458,10 @@ export const submitCreatorShopPackSchema = z.object({
   // listing accepts blue, since paying blue for a pack pays each member's
   // creator in blue.
   acceptsBlueBuzz: z.boolean().default(false),
-  // The pack's own cover artwork. Members keep their own art.
-  imageUrl: z.string().min(1),
+  // Optional cover art. A pack's cover is a storefront image, not a cosmetic
+  // anyone receives, so it has none of the artwork rules a cosmetic does — and
+  // without one the card shows the contents instead.
+  imageUrl: z.string().optional(),
   rightsAffirmed: rightsAffirmedSchema,
 });
 

@@ -22,6 +22,7 @@ import {
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 import { CosmeticPackPreviewModal } from '~/components/CosmeticShop/CosmeticPackPreviewModal';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -188,10 +189,10 @@ export const ShopItem = ({
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
                 {cosmetic ? (
                   <CosmeticSample cosmetic={cosmetic} size="lg" />
+                ) : itemMeta.coverUrl ? (
+                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
                 ) : (
-                  itemMeta.coverUrl && (
-                    <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
-                  )
+                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} />
                 )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>

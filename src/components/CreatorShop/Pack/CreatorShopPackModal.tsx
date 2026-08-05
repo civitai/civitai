@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { ArtworkField } from '~/components/CreatorShop/Submit/ArtworkField';
+import { PackCoverField } from '~/components/CreatorShop/Pack/PackCoverField';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -35,7 +35,6 @@ import {
   packPriceFloor,
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
-import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -127,6 +126,15 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   const blueBlockers = selected.filter((m) => !m.acceptsBlueBuzz);
   const partTotal = selected.reduce((sum, m) => sum + m.listPrice, 0);
 
+  const coverTiles = useMemo(
+    () =>
+      selected
+        .map((m) => (m.data as { url?: string } | null)?.url)
+        .filter((url): url is string => !!url)
+        .slice(0, 4),
+    [selected]
+  );
+
   const uploading = files.some((file) => file.status === 'uploading');
   const tooFew = selected.length < PACK_MIN_MEMBERS;
   const tooMany = selected.length > PACK_MAX_MEMBERS;
@@ -137,7 +145,6 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     !tooMany &&
     !priceTooLow &&
     !uploading &&
-    !!imageId &&
     (isEdit || rightsAffirmed) &&
     !(acceptsBlueBuzz && blueBlockers.length);
 
@@ -160,7 +167,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit || !imageId || price == null) return;
+    if (!canSubmit || price == null) return;
     const memberCosmeticIds = selected.map((m) => m.cosmeticId);
     if (isEdit && item)
       await updatePack.mutateAsync({
@@ -170,7 +177,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         price,
         availableQuantity: quantity ?? null,
         acceptsBlueBuzz,
-        imageUrl: imageId,
+        ...(imageId ? { imageUrl: imageId } : {}),
         memberCosmeticIds,
       });
     else
@@ -182,7 +189,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         availableQuantity: quantity ?? null,
         buzzType: 'yellow',
         acceptsBlueBuzz,
-        imageUrl: imageId,
+        ...(imageId ? { imageUrl: imageId } : {}),
         rightsAffirmed: true,
       });
     dialog.onClose();
@@ -210,16 +217,14 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
           onChange={(e) => setDescription(e.currentTarget.value)}
         />
 
-        <ArtworkField
-          type={CosmeticType.Badge}
-          artLocked={false}
+        <PackCoverField
           localUrl={localUrl}
           imageId={imageId}
           uploading={uploading}
+          tiles={coverTiles}
           maxSize={MAX_COVER_SIZE}
-          checks={[]}
           onDrop={handleDrop}
-          onReplace={() => {
+          onClear={() => {
             setImageId(null);
             setLocalUrl(null);
             resetFiles();

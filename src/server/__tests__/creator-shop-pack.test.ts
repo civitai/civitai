@@ -172,6 +172,13 @@ describe('submitCreatorShopPackSchema', () => {
     expect(submitCreatorShopPackSchema.safeParse(valid).success).toBe(true);
   });
 
+  // The cover is a storefront image, not a cosmetic anyone receives — a pack
+  // without one shows its contents instead.
+  it('accepts a pack with no cover image', () => {
+    const { imageUrl: _cover, ...withoutCover } = valid;
+    expect(submitCreatorShopPackSchema.safeParse(withoutCover).success).toBe(true);
+  });
+
   it('rejects a duplicated member', () => {
     const result = submitCreatorShopPackSchema.safeParse({
       ...valid,

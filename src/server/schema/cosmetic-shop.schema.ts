@@ -55,6 +55,10 @@ export const cosmeticShopItemMeta = z.object({
   // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
   // convenience; the join table stays authoritative for what's in the pack.
   coverUrl: z.string().optional(),
+  // Artwork of the first few members, for packs with no cover of their own.
+  // Snapshotted rather than joined so a storefront card can render it from meta
+  // alone; re-taken whenever the contents change.
+  coverTiles: z.array(z.string()).optional(),
   packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
