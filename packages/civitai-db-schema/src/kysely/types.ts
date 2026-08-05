@@ -2893,6 +2893,12 @@ export type Placement = {
    * the space, whose price may move between placement and release.
    */
   amount: number;
+  /**
+   * Who sold the thing being placed, when an approved placement owes them a cut.
+   * On the row rather than passed in, because the settlement is resumable and a
+   * sweeper that never saw the argument would strand the seller's share.
+   */
+  sellerId: number | null;
   createdAt: Generated<Timestamp>;
   expiresAt: Timestamp | null;
   resolvedAt: Timestamp | null;

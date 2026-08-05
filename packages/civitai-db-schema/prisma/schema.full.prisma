@@ -7525,6 +7525,10 @@ model Placement {
   /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
   /// the space, whose price may move between placement and release.
   amount                Int
+  /// Who sold the thing being placed, when an approved placement owes them a cut.
+  /// On the row rather than passed in, because the settlement is resumable and a
+  /// sweeper that never saw the argument would strand the seller's share.
+  sellerId              Int?
   createdAt             DateTime  @default(now())
   expiresAt             DateTime?
   resolvedAt            DateTime?

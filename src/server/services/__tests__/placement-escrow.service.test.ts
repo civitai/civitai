@@ -13,6 +13,22 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
+// A real mutex, not a pass-through: the lock is what stops two callers both
+// reaching the Buzz call after one has claimed the ledger row, so a double that
+// always grants it would hide the defect it exists to prevent.
+const heldLocks = new Set<string>();
+vi.mock('~/server/utils/distributed-lock', () => ({
+  withDistributedLock: async (options: { key: string }, operation: () => Promise<unknown>) => {
+    if (heldLocks.has(options.key)) return null;
+    heldLocks.add(options.key);
+    try {
+      return await operation();
+    } finally {
+      heldLocks.delete(options.key);
+    }
+  },
+}));
+
 /**
  * A stand-in for the two tables, honouring the one property the whole design
  * rests on: UNIQUE (placementId, kind). Without that the ledger is just logging.
@@ -31,7 +47,11 @@ const db = {
   >(),
 };
 
-type LedgerFilter = { in?: string[]; not?: string } | number | null | undefined;
+type LedgerQuery = {
+  where: Record<string, { in?: string[]; not?: string; lt?: Date } | number | null | undefined>;
+  distinct?: string[];
+  take?: number;
+};
 
 const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
@@ -57,7 +77,12 @@ vi.mock('~/server/db/client', () => ({
           data: Record<string, unknown>;
         }) => {
           const row = db.placements.get(where.id as number);
-          if (!row || row.status !== where.status) return { count: 0 };
+          // Every key in `where` has to match, so adding a predicate to the real
+          // query cannot silently become a no-op against this double.
+          const matches =
+            !!row &&
+            Object.entries(where).every(([key, value]) => key === 'id' || row[key] === value);
+          if (!matches) return { count: 0 };
           Object.assign(row, data);
           return { count: 1 };
         }
@@ -82,7 +107,7 @@ vi.mock('~/server/db/client', () => ({
           db.legs.get(legKey(where.placementId_kind.placementId, where.placementId_kind.kind)) ??
           null
       ),
-      findMany: vi.fn(async ({ where }: { where: Record<string, LedgerFilter> }) => {
+      findMany: vi.fn(async ({ where, distinct, take }: LedgerQuery) => {
         const rows = [...db.legs.values()].filter((leg) => {
           if (where.placementId !== undefined && leg.placementId !== where.placementId)
             return false;
@@ -91,8 +116,26 @@ vi.mock('~/server/db/client', () => ({
           if (where.transactionId === null && leg.transactionId !== null) return false;
           return true;
         });
-        return rows;
+        const withAge = rows.filter((leg) =>
+          where.createdAt?.lt ? leg.createdAt < where.createdAt.lt : true
+        );
+        const deduped = distinct
+          ? withAge.filter(
+              (leg, i) => withAge.findIndex((o) => o.placementId === leg.placementId) === i
+            )
+          : withAge;
+        return take ? deduped.slice(0, take) : deduped;
       }),
+      createMany: vi.fn(
+        async ({ data }: { data: { placementId: number; kind: string; amount: number }[] }) => {
+          for (const row of data) {
+            const key = legKey(row.placementId, row.kind);
+            if (!db.legs.has(key))
+              db.legs.set(key, { ...row, transactionId: null, createdAt: new Date(0) });
+          }
+          return { count: data.length };
+        }
+      ),
       update: vi.fn(
         async ({
           where,
@@ -112,6 +155,19 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 
+const configState = { rate: 0.3, shares: { seller: 0, platform: 0.3 } };
+vi.mock('~/server/services/placement.service', () => ({
+  getPlacementConfig: async () => ({
+    declineFeeRate: () => configState.rate,
+    expiryHours: () => 48,
+    priceCapTiers: () => [],
+    approvalShares: () => configState.shares,
+  }),
+}));
+const storedRate = (rate: number) => (configState.rate = rate);
+const storedShares = (shares: { seller: number; platform: number }) =>
+  (configState.shares = shares);
+
 const { holdPlacementEscrow, settlePlacement, expirePlacements, sweepUnpaidLegs } = await import(
   '~/server/services/placement-escrow.service'
 );
@@ -123,6 +179,7 @@ const SELLER = 30;
 const givenPlacement = (overrides: Record<string, unknown> = {}) => {
   const placement = {
     id: 1,
+    sellerId: null,
     surface: 'sticker',
     targetType: 'image',
     targetId: 99,
@@ -164,6 +221,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.placements.clear();
   db.legs.clear();
+  heldLocks.clear();
+  configState.rate = 0.3;
+  configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
   refundMultiAccountTransaction.mockResolvedValue({ externalTransactionIdPrefix: 'refund-tx' });
@@ -255,12 +315,12 @@ describe('settling', () => {
     givenPlacement();
     await hold();
 
-    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER, sellerId: SELLER });
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
 
     const payouts = createBuzzTransaction.mock.calls.map((c) => [c[0].toAccountId, c[0].amount]);
     // Defaults: owner 70%, platform 30%, seller 0.
     expect(payouts).toEqual([[OWNER, 700]]);
-    expect(legsFor(1)).toMatchObject({ toOwner: 700, forfeit: 300 });
+    expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
   });
 
   it('pays the fee to the owner and returns the principal hold on decline', async () => {
@@ -334,7 +394,7 @@ describe('running a release path twice', () => {
     async (action) => {
       givenPlacement();
       await hold();
-      await settlePlacement({ placementId: 1, action, actorId: OWNER, sellerId: SELLER });
+      await settlePlacement({ placementId: 1, action, actorId: OWNER });
 
       const legsAfterFirst = legsFor(1);
       clearMoneyMocks();
@@ -457,5 +517,158 @@ describe('expiry sweep', () => {
 
     expect(second.expired).toBe(0);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('the amounts a resume replays', () => {
+  const hold = () =>
+    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+
+  // The holds are sized by the config as it stood when the placement was made.
+  // Recomputing the fee at decline time paid out more than was ever held — a
+  // rate change alone minted the difference, with no crash and no race.
+  it('pays the fee that was held, not the fee the config now says', async () => {
+    storedRate(0.05);
+    givenPlacement();
+    await hold();
+    expect(legsFor(1)).toEqual({ holdFee: 50, holdPrincipal: 950 });
+
+    storedRate(0.5);
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    const paidOut = Object.entries(legsFor(1))
+      .filter(([kind]) => !kind.startsWith('hold'))
+      .reduce((sum, [, amount]) => sum + amount, 0);
+
+    expect(legsFor(1)).toMatchObject({ feeToOwner: 50, principalToPlacer: 950 });
+    expect(paidOut).toBe(1000);
+    expect(createBuzzTransaction).toHaveBeenCalledWith(expect.objectContaining({ amount: 50 }));
+  });
+
+  // Same defect reached by crash-then-resume: the legs that hadn't run yet were
+  // paid against a split recomputed from the new config.
+  it('replays the original split when the shares move mid-payout', async () => {
+    givenPlacement({ sellerId: SELLER });
+    await hold();
+    storedShares({ seller: 0.05, platform: 0.05 });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow('buzz service down');
+
+    storedShares({ seller: 0.45, platform: 0.05 });
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    const planned = legsFor(1);
+    const paidOut = planned.toOwner + planned.toSeller + (planned.toPlatform ?? 0);
+    expect(paidOut).toBe(1000);
+    expect(planned.toOwner).toBe(900);
+  });
+
+  it('keeps the ledger summing to what was held, on every outcome', async () => {
+    for (const action of [
+      'approve',
+      'decline',
+      'expire',
+      'removeByOwner',
+      'removeByModerator',
+    ] as const) {
+      db.placements.clear();
+      db.legs.clear();
+      givenPlacement({ sellerId: SELLER });
+      await hold();
+      await settlePlacement({ placementId: 1, action, actorId: OWNER });
+
+      const legs = legsFor(1);
+      const held = legs.holdFee + legs.holdPrincipal;
+      const out = Object.entries(legs)
+        .filter(([kind]) => !kind.startsWith('hold'))
+        .reduce((sum, [, amount]) => sum + amount, 0);
+
+      expect(out, `${action} paid out ${out} of ${held}`).toBe(held);
+    }
+  });
+});
+
+describe('the seller share survives a resume', () => {
+  // sellerId was a call-time argument to a resumable operation. The sweeper never
+  // saw it, folded the seller's share into the platform keep, and left no record
+  // that anyone was owed.
+  it('pays the seller from the row when the sweeper finishes the payout', async () => {
+    givenPlacement({ sellerId: SELLER });
+    storedShares({ seller: 0.3, platform: 0.3 });
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow('buzz service down');
+
+    clearMoneyMocks();
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountId: SELLER })
+    );
+    expect(legsFor(1).toSeller).toBeGreaterThan(0);
+  });
+});
+
+describe('two callers on one leg', () => {
+  // The unique constraint serialises the CLAIM. Without a lock, a second caller
+  // finds a claimed row with no receipt yet and pays anyway, leaving the remote's
+  // dedupe as the only thing between that and a double payment.
+  it('does not let both reach the Buzz call', async () => {
+    givenPlacement();
+    let release: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => (release = resolve));
+    createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      await inFlight;
+      return { transactionCount: 2, totalAmount: 0 };
+    });
+
+    const first = holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    await Promise.resolve();
+    const second = holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    release();
+    await Promise.all([first, second]);
+
+    const feeCalls = createMultiAccountBuzzTransaction.mock.calls.filter(
+      (c) => c[0].externalTransactionIdPrefix === 'placement-1-holdFee'
+    );
+    expect(feeCalls).toHaveLength(1);
+  });
+});
+
+describe('the expiry deadline', () => {
+  // A null expiresAt is never `<= now()`, so the sweep steps over it forever and
+  // the escrow is frozen — the exact failure expiry exists to prevent.
+  it('is set when the escrow is taken', async () => {
+    givenPlacement({ expiresAt: null });
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(db.placements.get(1)?.expiresAt).toBeInstanceOf(Date);
   });
 });

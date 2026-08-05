@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS "Placement" (
   -- opposite amounts, so the status alone cannot settle the money.
   "removedBy"         TEXT,
   "amount"            INTEGER NOT NULL,
+  -- On the row, not a call argument: settlement is resumable, and a sweeper that
+  -- never saw the argument would strand the seller's share with no record it was
+  -- ever owed.
+  "sellerId"          INTEGER,
   "createdAt"         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "expiresAt"         TIMESTAMP(3),
   "resolvedAt"        TIMESTAMP(3),

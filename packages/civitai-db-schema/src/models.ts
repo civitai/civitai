@@ -5160,6 +5160,7 @@ export interface Placement {
   status: string;
   removedBy: string | null;
   amount: number;
+  sellerId: number | null;
   createdAt: Date;
   expiresAt: Date | null;
   resolvedAt: Date | null;

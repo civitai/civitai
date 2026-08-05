@@ -7,6 +7,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
@@ -23,6 +24,25 @@ import {
 
 /** Where held Buzz sits between placement and settlement. */
 const ESCROW_ACCOUNT_ID = 0;
+
+/**
+ * Receipt for a leg where nothing leaves the escrow account. Without it the row
+ * is created null and updated null, so "claimed" and "paid" stay
+ * indistinguishable for exactly the kinds that can never be audited by their
+ * transaction id.
+ */
+const PLATFORM_KEEP_RECEIPT = 'platform-keep';
+
+const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
+const PAYOUT_KINDS = [
+  'toOwner',
+  'toSeller',
+  'toPlatform',
+  'feeToOwner',
+  'principalToPlacer',
+  'feeToPlacer',
+  'forfeit',
+] as const;
 
 type SettleAction = 'approve' | 'decline' | 'expire' | 'removeByOwner' | 'removeByModerator';
 
@@ -43,18 +63,24 @@ const isUniqueViolation = (error: unknown) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
 /**
- * Runs one movement of money exactly once, across retries and crashes.
+ * Runs one movement of money exactly once, across retries, races and crashes.
  *
- * The ledger row is written **before** the money moves, with a null
- * `transactionId`, and filled in after. That ordering is deliberate: a crash
- * between the two leaves a claimed-but-unpaid leg, which `sweepUnpaidLegs` can
- * see and finish. The reverse ordering leaves money moved with no receipt, which
- * is indistinguishable from money never moved.
+ * Three things cooperate, and each covers a window the others don't:
  *
- * The unique constraint on `(placementId, kind)` is what makes the claim a lock —
- * a second caller's insert raises rather than paying. A unique index on a column
- * of `Placement` could not do this: "no two rows share an id" is a different
- * proposition from "this row's money moved once".
+ * 1. The **lock** serialises the payment. The unique constraint below only
+ *    serialises the *claim* — two concurrent callers can both find a claimed
+ *    row with no receipt yet and both reach the Buzz call, which would leave the
+ *    remote's deduplication as the only thing preventing a double payment.
+ * 2. The **unique constraint** on `(placementId, kind)` makes the claim itself
+ *    atomic, so a leg cannot be planned twice.
+ * 3. The **receipt ordering** — claim first with a null `transactionId`, fill it
+ *    in after the money moves — means a crash between the two leaves a
+ *    claimed-but-unpaid leg that `sweepUnpaidLegs` can finish. The reverse
+ *    ordering leaves money moved with no receipt, indistinguishable from money
+ *    never moved.
+ *
+ * The external id is derived from the row, so the Buzz service's own dedupe
+ * backs all of this rather than being asked to carry it.
  */
 async function runLeg(
   placementId: number,
@@ -64,28 +90,34 @@ async function runLeg(
 ) {
   if (amount <= 0) return null;
 
-  try {
-    await dbWrite.placementTransaction.create({ data: { placementId, kind, amount } });
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
+  const result = await withDistributedLock(
+    { key: `placement:${placementId}:${kind}`, autoRenew: true },
+    async () => {
+      try {
+        await dbWrite.placementTransaction.create({ data: { placementId, kind, amount } });
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
 
-    const existing = await dbWrite.placementTransaction.findUnique({
-      where: { placementId_kind: { placementId, kind } },
-    });
-    // Already paid. Anything else is a claim whose payment never landed, so it
-    // falls through and is retried — the external id is derived from the row, so
-    // the Buzz service dedupes a payment that did land after all.
-    if (existing?.transactionId) return existing.transactionId;
-  }
+        const existing = await dbWrite.placementTransaction.findUnique({
+          where: { placementId_kind: { placementId, kind } },
+        });
+        if (existing?.transactionId) return existing.transactionId;
+      }
 
-  const transactionId = await pay(placementTransactionId(placementId, kind));
+      const transactionId = await pay(placementTransactionId(placementId, kind));
 
-  await dbWrite.placementTransaction.update({
-    where: { placementId_kind: { placementId, kind } },
-    data: { transactionId },
-  });
+      await dbWrite.placementTransaction.update({
+        where: { placementId_kind: { placementId, kind } },
+        data: { transactionId },
+      });
 
-  return transactionId;
+      return transactionId;
+    }
+  );
+
+  // Lock not acquired: another caller is mid-payment on this exact leg. Doing
+  // nothing is correct — it is finishing, and the sweeper covers it if it dies.
+  return result;
 }
 
 /**
@@ -109,9 +141,18 @@ export async function holdPlacementEscrow({
 }) {
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
-  if (amount === 0) return { fee: 0, principal: 0 };
 
   const config = await getPlacementConfig();
+
+  // Escrow with no deadline is money frozen indefinitely, and a null `expiresAt`
+  // is never `<= now()`, so the sweep would step over it forever.
+  await dbWrite.placement.updateMany({
+    where: { id: placementId, expiresAt: null },
+    data: { expiresAt: new Date(Date.now() + config.expiryHours(surface) * 3_600_000) },
+  });
+
+  if (amount === 0) return { fee: 0, principal: 0 };
+
   const fee = declineFeeAmount(amount, config.declineFeeRate(surface));
   const principal = amount - fee;
 
@@ -156,12 +197,10 @@ export async function settlePlacement({
   placementId,
   action,
   actorId,
-  sellerId,
 }: {
   placementId: number;
   action: SettleAction;
   actorId?: number;
-  sellerId?: number;
 }) {
   const status = STATUS_FOR_ACTION[action];
   const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
@@ -175,41 +214,100 @@ export async function settlePlacement({
   if (!placement) throw new Error(`placement escrow: placement ${placementId} not found`);
 
   // Someone else settled it. Not an error — a double-submitted approve and a
-  // retried webhook both land here — but this call moves no money.
+  // retried webhook both land here — but this call moves no money of its own:
+  // the payout below reads the winner's outcome off the row, not this action.
   if (count === 0 && placement.status !== status) return { settled: false, placement };
 
-  await payOutPlacement({ placement, sellerId });
+  await payOutPlacement(placement);
 
   return { settled: count > 0, placement };
 }
 
-type PlacementRow = Awaited<ReturnType<typeof dbWrite.placement.findUnique>>;
+type PlacementRow = NonNullable<Awaited<ReturnType<typeof dbWrite.placement.findUnique>>>;
+type PlannedLeg = { kind: PlacementTransactionKind; amount: number };
 
 /**
- * Idempotent by construction, so it is safe to call on a placement that was
- * already settled but whose payout did not finish.
+ * The payout plan, written to the ledger once and thereafter read back.
+ *
+ * **Nothing recomputes an amount at settle time.** The holds were sized by the
+ * config as it stood when the placement was made, and an operator retuning the
+ * decline rate or the approval shares while placements are pending would
+ * otherwise produce a release that does not match what is actually held — paying
+ * out more than was taken, or stranding the difference in the escrow account
+ * with no ledger row to find it by. Refunds come from the hold amounts; the
+ * approve split is computed once and persisted.
  */
-async function payOutPlacement({
-  placement,
-  sellerId,
-}: {
-  placement: NonNullable<PlacementRow>;
-  sellerId?: number;
-}) {
-  const surface = placement.surface as PlacementSurface;
-  const config = await getPlacementConfig();
+async function planPayout(placement: PlacementRow, held: Map<string, number>) {
+  const existing = await dbWrite.placementTransaction.findMany({
+    where: { placementId: placement.id, kind: { in: [...PAYOUT_KINDS] } },
+    select: { kind: true, amount: true },
+  });
+  if (existing.length) return existing as PlannedLeg[];
+
+  const legs = await computePayoutLegs(placement, held);
+
+  await dbWrite.placementTransaction.createMany({
+    data: legs.map((leg) => ({ placementId: placement.id, ...leg })),
+    skipDuplicates: true,
+  });
+
+  return legs;
+}
+
+async function computePayoutLegs(
+  placement: PlacementRow,
+  held: Map<string, number>
+): Promise<PlannedLeg[]> {
+  const fee = held.get('holdFee') ?? 0;
+  const principal = held.get('holdPrincipal') ?? 0;
   const outcome = placementOutcomeFromStatus(
     placement.status as never,
     placement.removedBy as PlacementRemovedBy | null
   );
-  const shares = config.approvalShares(surface);
-  const split = splitPlacementPayment({
-    amount: placement.amount,
-    outcome,
-    declineFeeRate: config.declineFeeRate(surface),
-    sellerShare: shares.seller,
-    platformShare: shares.platform,
-  });
+
+  switch (outcome) {
+    case 'approved': {
+      const config = await getPlacementConfig();
+      const shares = config.approvalShares(placement.surface as PlacementSurface);
+      const split = splitPlacementPayment({
+        amount: fee + principal,
+        outcome,
+        declineFeeRate: config.declineFeeRate(placement.surface as PlacementSurface),
+        sellerShare: shares.seller,
+        platformShare: shares.platform,
+      });
+      // With no seller on the row there is nobody to pay, so their share stays
+      // with the platform rather than being invented a recipient.
+      const seller = placement.sellerId ? split.toSeller : 0;
+
+      return [
+        { kind: 'toOwner', amount: split.toOwner },
+        { kind: 'toSeller', amount: seller },
+        { kind: 'toPlatform', amount: split.toPlatform + (split.toSeller - seller) },
+      ];
+    }
+    // The fee that was held is the fee that is paid. Recomputing it here is what
+    // let a rate change mint the difference.
+    case 'declined':
+      return [
+        { kind: 'feeToOwner', amount: fee },
+        { kind: 'principalToPlacer', amount: principal },
+      ];
+    case 'expired':
+    case 'removedByOwner':
+      return [
+        { kind: 'principalToPlacer', amount: principal },
+        { kind: 'feeToPlacer', amount: fee },
+      ];
+    case 'removedByModerator':
+      return [{ kind: 'forfeit', amount: fee + principal }];
+  }
+}
+
+/** Idempotent by construction, so a partly-finished payout can be re-driven. */
+async function payOutPlacement(placement: PlacementRow) {
+  const held = await heldAmountsFor(placement.id);
+  const plan = await planPayout(placement, held);
 
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
     runLeg(placement.id, kind, amount, async (externalTransactionId) => {
@@ -225,56 +323,55 @@ async function payOutPlacement({
       return transactionId;
     });
 
-  const heldAmounts = await heldAmountsFor(placement.id);
-
   // A whole hold returning to the placer. This is the reason the escrow is taken
   // as two holds: the Buzz service restores the exact account-type mix it drew
   // from, so nothing here has to reconstruct it.
-  const refundHold = (kind: PlacementTransactionKind, holdKind: PlacementTransactionKind) =>
-    runLeg(placement.id, kind, heldAmounts.get(holdKind) ?? 0, async () => {
+  const refundHold = (kind: PlacementTransactionKind, holdKind: string, amount: number) =>
+    runLeg(placement.id, kind, amount, async () => {
       const result = await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: placementTransactionId(placement.id, holdKind),
+        externalTransactionIdPrefix: placementTransactionId(
+          placement.id,
+          holdKind as PlacementTransactionKind
+        ),
         description: `Placement ${placement.id} refund (${holdKind})`,
       });
 
       return result.externalTransactionIdPrefix;
     });
 
-  switch (outcome) {
-    case 'approved':
-      await payFromEscrow('toOwner', placement.ownerId, split.toOwner);
-      if (sellerId) await payFromEscrow('toSeller', sellerId, split.toSeller);
-      await recordPlatformKeep(placement.id, split.toPlatform + (sellerId ? 0 : split.toSeller));
-      return;
-    case 'declined':
-      await payFromEscrow('feeToOwner', placement.ownerId, split.toOwner);
-      await refundHold('principalToPlacer', 'holdPrincipal');
-      return;
-    case 'expired':
-    case 'removedByOwner':
-      await refundHold('principalToPlacer', 'holdPrincipal');
-      await refundHold('feeToPlacer', 'holdFee');
-      return;
-    // Nothing moves: the funds stay in the escrow account. The ledger row is the
-    // receipt that this was decided rather than dropped.
-    case 'removedByModerator':
-      await recordPlatformKeep(placement.id, placement.amount);
-      return;
+  for (const { kind, amount } of plan) {
+    switch (kind) {
+      case 'toOwner':
+      case 'feeToOwner':
+        await payFromEscrow(kind, placement.ownerId, amount);
+        break;
+      case 'toSeller':
+        if (placement.sellerId) await payFromEscrow(kind, placement.sellerId, amount);
+        break;
+      case 'principalToPlacer':
+        await refundHold(kind, 'holdPrincipal', amount);
+        break;
+      case 'feeToPlacer':
+        await refundHold(kind, 'holdFee', amount);
+        break;
+      // Nothing leaves the escrow account; the receipt records that it was
+      // decided rather than dropped.
+      case 'toPlatform':
+      case 'forfeit':
+        await runLeg(placement.id, kind, amount, async () => PLATFORM_KEEP_RECEIPT);
+        break;
+    }
   }
 }
 
 const heldAmountsFor = async (placementId: number) => {
   const rows = await dbWrite.placementTransaction.findMany({
-    where: { placementId, kind: { in: ['holdFee', 'holdPrincipal'] } },
+    where: { placementId, kind: { in: [...HOLD_KINDS] } },
     select: { kind: true, amount: true },
   });
 
   return new Map(rows.map((row) => [row.kind, row.amount]));
 };
-
-/** Buzz that stays with the platform still gets a receipt, so the ledger balances. */
-const recordPlatformKeep = (placementId: number, amount: number) =>
-  runLeg(placementId, 'forfeit', amount, async () => null);
 
 /**
  * Pending placements the owner never answered. An owner who did not respond has
@@ -324,7 +421,7 @@ export async function sweepUnpaidLegs({
 }: { limit?: number; olderThanMinutes?: number } = {}) {
   const before = new Date(Date.now() - olderThanMinutes * 60_000);
   const stranded = await dbWrite.placementTransaction.findMany({
-    where: { transactionId: null, createdAt: { lt: before }, kind: { not: 'forfeit' } },
+    where: { transactionId: null, createdAt: { lt: before } },
     select: { placementId: true },
     distinct: ['placementId'],
     take: limit,
@@ -336,7 +433,7 @@ export async function sweepUnpaidLegs({
     if (!placement || placement.status === 'pending') continue;
 
     try {
-      await payOutPlacement({ placement });
+      await payOutPlacement(placement);
       resumed++;
     } catch (error) {
       logToAxiom({
