@@ -81,15 +81,14 @@ export const LEG_RETRY_BACKOFF_MINUTES = 30;
  */
 export const BUZZ_CALL_TIMEOUT_MS = Math.min((LEG_RETRY_BACKOFF_MINUTES * 60_000) / 60, 120_000);
 
-// The ceiling above clamps, because a huge gap yielding a two-minute timeout
-// fails in the safe direction. The floor asserts instead: clamping a too-short
-// gap UP would produce a timeout longer than the gap itself, which inverts the
-// very invariant the derivation exists to hold — silently, at 3am. Better to
-// refuse to start.
-if (BUZZ_CALL_TIMEOUT_MS < 10_000)
-  throw new Error(
-    `placement escrow: LEG_RETRY_BACKOFF_MINUTES=${LEG_RETRY_BACKOFF_MINUTES} derives a ${BUZZ_CALL_TIMEOUT_MS}ms Buzz timeout, which is too short for a real call`
-  );
+// Only the ceiling clamps, because a huge gap yielding a two-minute timeout
+// fails in the safe direction. A floor must NOT clamp: raising a too-short gap's
+// timeout would make it longer than the gap itself, inverting the invariant the
+// derivation exists to hold. That lower bound is asserted in the tests rather
+// than thrown at import — the gap is a compile-time constant, so a bad value
+// cannot arrive at runtime, and an import-time throw in a module the routers
+// will soon load would take the app down at boot for a mistake CI already
+// catches.
 
 /**
  * The Buzz client's own retry is disabled for these calls, and `runLeg` owns it

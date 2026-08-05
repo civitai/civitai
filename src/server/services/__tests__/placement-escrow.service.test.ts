@@ -1426,10 +1426,12 @@ describe('the Buzz call bound', () => {
 
   // "Make retries less aggressive" reaches for a bigger gap and "recover faster"
   // for a smaller one; unclamped, both produce a timeout that cannot work.
-  // The ceiling clamps because a huge gap failing to a two-minute timeout is
-  // safe. The floor asserts at import instead: clamping a too-short gap UP would
-  // make the timeout longer than the gap, inverting the invariant silently.
-  it('is never longer than the gap it must fit inside', () => {
+  // This test IS the lower-bound guard. The ceiling clamps in code because that
+  // direction fails safe; the floor cannot clamp, because raising a too-short
+  // gap's timeout above the gap inverts the invariant. Asserting here rather
+  // than throwing at import keeps a bad constant from taking the app down at
+  // boot for something CI catches first.
+  it('is never longer than the gap it must fit inside, nor too short to complete', () => {
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
