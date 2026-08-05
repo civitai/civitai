@@ -190,8 +190,25 @@ export async function holdPlacementEscrow({
       return externalTransactionIdPrefix;
     });
 
-  await hold('holdFee', fee);
-  await hold('holdPrincipal', principal);
+  // A leg returns null when the lock was not acquired — Redis down, or contended
+  // past its retries — which means nothing was charged. Reporting the amounts
+  // anyway would let the caller create a placement whose escrow does not exist,
+  // and approving it later would pay out of an account that never received it.
+  // The hold legs cannot be swept, either: the sweeper skips pending placements,
+  // and a hold only exists while a placement is pending. So it has to fail here.
+  const held = {
+    holdFee: await hold('holdFee', fee),
+    holdPrincipal: await hold('holdPrincipal', principal),
+  };
+
+  for (const [kind, amount] of [
+    ['holdFee', fee],
+    ['holdPrincipal', principal],
+  ] as const)
+    if (amount > 0 && !held[kind])
+      throw new Error(
+        `placement escrow: ${kind} could not be taken for placement ${placementId} — nothing was charged`
+      );
 
   return { fee, principal };
 }

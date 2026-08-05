@@ -653,12 +653,16 @@ describe('two callers on one leg', () => {
     });
 
     release();
-    await Promise.all([first, second]);
+    const [firstResult, secondResult] = await Promise.allSettled([first, second]);
 
     const feeCalls = createMultiAccountBuzzTransaction.mock.calls.filter(
       (c) => c[0].externalTransactionIdPrefix === 'placement-1-holdFee'
     );
     expect(feeCalls).toHaveLength(1);
+    // The loser fails rather than reporting an escrow it did not take — its
+    // caller must not go on to create a placement backed by nothing.
+    expect(firstResult.status).toBe('fulfilled');
+    expect(secondResult.status).toBe('rejected');
   });
 });
 
@@ -706,15 +710,27 @@ describe('when the lock cannot be acquired', () => {
     expect(db.legs.get('1:principalToPlacer')?.transactionId).toBe('refund-tx');
   });
 
+  // The caller must not be told the escrow is held when nothing was charged: it
+  // would create the placement, and approving it later would pay out of an
+  // account that never received the money. Hold legs cannot be swept either —
+  // the sweeper skips pending placements, and a hold only exists while one is.
+  it('refuses to report a hold it could not take', async () => {
+    givenPlacement();
+    lockState.available = false;
+
+    await expect(
+      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+    ).rejects.toThrow(/nothing was charged/);
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   it('does not take the escrow twice when the hold is retried after a lock failure', async () => {
     givenPlacement();
     lockState.available = false;
-    await holdPlacementEscrow({
-      placementId: 1,
-      placerId: PLACER,
-      surface: 'sticker',
-      amount: 1000,
-    });
+    await expect(
+      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+    ).rejects.toThrow();
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
     expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
