@@ -11,7 +11,7 @@ left worth porting) · `dropped` (agreed not to port)
 | App | Export | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
 | Moderation Status | `Moderation%20Status.json` | 77 | 197 | `/retool/moderation-status` | not started |
-| User Lookup v2 | `User%20Lookup%20v2.json` | 170 | 433 | `/retool/user-lookup` | not started |
+| User Lookup v2 | `User%20Lookup%20v2.json` | 170 | 433 | `/retool/user-lookup` | in progress |
 
 Counts are from `extract.mjs` and measure the Retool app, not the work — most apps carry dead queries,
 duplicates and Retool plumbing (`Function`, `State`, `Timer`).
@@ -48,10 +48,13 @@ The big one, and the moderation team's primary console. **Do not attempt as a si
 follow the ClickUp design doc (868kkxqpn §1.2) — see
 [`docs/moderator-app/retool-migration-tasks.md`](../../../docs/moderator-app/retool-migration-tasks.md).
 
-- [ ] **Shell + resolver** — `UserIDByUsername`, `UserIDByEmail`, `UserBio`, `UserContent`,
-      `AllCountsUnion`, `UserStats`, `UserRank`
-- [ ] **Content counts** — `ModelCount`, `ImageCount`, `PostCount`, `ArticleCount`, `CommentCount`,
-      `ReviewCount`, `CollectionCount`
+- [x] **Shell + resolver + counts + stats** — `/retool/user-lookup`. Covers `UserIDByUsername`,
+      `UserIDByEmail`, `UserContent`, `AllCountsUnion`, `UserStats`, and folds in the per-type counts
+      that were a separate slice. One resolver handles id / username / email.
+      Not ported: `UserRank` (leaderboard positions) — deferred, low value for triage.
+      **Retool's `UserStats` is stale**: it selects `ratingAllTime`, which no longer exists on
+      `UserStat`. Replaced with thumbs up/down + generations.
+- [x] **Content counts** — folded into the slice above.
 - [ ] **Reports** — `ReportCount`, `ReportsSubmitted`, `ReportedImageCount`, `ReportedModelCount`,
       `ReportedCommentCount`
 - [ ] **Moderation memory** — `SelectUserNotes`, `InsertUpdateUserNotes`, `UserStrikes`. Lives in
