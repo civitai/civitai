@@ -61,3 +61,7 @@ export const placementPriceRangeSchema = z.object({ surface: placementSurfaceSch
 export const getPlacementSettlementStatesSchema = z.object({
   placementIds: z.array(z.number().int().positive()).min(1).max(100),
 });
+
+export const countPendingPlacementsFromSchema = z.object({
+  userId: z.number().int().positive(),
+});

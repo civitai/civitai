@@ -2,6 +2,7 @@ import {
   actOnStickerPlacementSchema,
   createStickerPlacementSchema,
   getPlacementSpaceSchema,
+  countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
@@ -13,6 +14,7 @@ import {
   resolvePlacementSpaceFor,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
+import { countPendingPlacementsFrom } from '~/server/services/placement-moderation.service';
 import {
   actOnStickerPlacement,
   createStickerPlacement,
@@ -97,4 +99,14 @@ export const placementRouter = router({
   getPending: protectedProcedure.query(({ ctx }) =>
     getPendingStickerPlacements({ ownerId: ctx.user.id })
   ),
+
+  // How many pending placements blocking someone would decline, so the confirm
+  // dialog can say. Advisory by construction — holding it accurate across a
+  // human's confirmation would be a distributed transaction for no benefit, and
+  // the number that matters is the one the cascade actually declined.
+  countPendingFrom: protectedProcedure
+    .input(countPendingPlacementsFromSchema)
+    .query(({ input, ctx }) =>
+      countPendingPlacementsFrom({ ownerId: ctx.user.id, placerId: input.userId })
+    ),
 });
