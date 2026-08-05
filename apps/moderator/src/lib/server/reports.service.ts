@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { rewardReportReporters } from './rewards';
-import { ReportEntity, ReportStatus, type ReportReason } from '$lib/reports';
+import { ReportStatus, type ReportEntity, type ReportReason } from '$lib/reports';
 
 const reportEntityJoin: Record<ReportEntity, { table: string; fk: string }> = {
   model: { table: 'ModelReport', fk: 'modelId' },
@@ -150,4 +150,87 @@ export async function updateReportNotes({
   internalNotes: string | null;
 }) {
   await dbWrite.updateTable('Report').set({ internalNotes }).where('id', '=', id).execute();
+}
+
+export type MostReportedRow = {
+  id: number;
+  reason: ReportReason;
+  createdAt: Date;
+  reportCount: number;
+  entity: 'image' | 'model' | 'post' | 'article' | 'reportedUser' | 'other';
+  entityId: number | null;
+  reportedByUsername: string | null;
+};
+
+// Content the community is piling reports onto — the signal moderators use to find the worst
+// live content fast. Excludes images already blocked, since those are handled.
+const MOST_REPORTED_TTL_MS = 60_000;
+let mostReportedCache: { at: number; value: Promise<MostReportedRow[]> } | null = null;
+
+export function getMostReported(limit = 20, now = Date.now()): Promise<MostReportedRow[]> {
+  if (mostReportedCache && now - mostReportedCache.at < MOST_REPORTED_TTL_MS)
+    return mostReportedCache.value;
+  const value = fetchMostReported(limit);
+  mostReportedCache = { at: now, value };
+  value.catch(() => {
+    if (mostReportedCache?.value === value) mostReportedCache = null;
+  });
+  return value;
+}
+
+async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
+  // `alsoReportedBy` is a Postgres array and the ordering key, so array_length stays raw sql.
+  const reportCount = sql<number>`array_length(t."alsoReportedBy", 1)`;
+  const rows = await dbRead
+    .selectFrom('Report as t')
+    .leftJoin('ImageReport as ir', 'ir.reportId', 't.id')
+    .leftJoin('ModelReport as mr', 'mr.reportId', 't.id')
+    .leftJoin('UserReport as ur', 'ur.reportId', 't.id')
+    .leftJoin('PostReport as pr', 'pr.reportId', 't.id')
+    .leftJoin('ArticleReport as ar', 'ar.reportId', 't.id')
+    .leftJoin('Image as i', 'i.id', 'ir.imageId')
+    .innerJoin('User as u', 'u.id', 't.userId')
+    .select([
+      't.id',
+      't.reason',
+      't.createdAt',
+      'ir.imageId',
+      'mr.modelId',
+      'ur.userId as reportedUserId',
+      'pr.postId',
+      'ar.articleId',
+      'u.username as reportedByUsername',
+      reportCount.as('reportCount'),
+    ])
+    .where('t.status', '=', ReportStatus.Pending)
+    .where(reportCount, '>', 1)
+    .where('t.createdAt', '>', sql<Date>`now() - interval '1 week'`)
+    .where('i.blockedFor', 'is', null)
+    .orderBy(reportCount, 'desc')
+    .orderBy('t.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+
+  return rows.map((r) => {
+    const [entity, entityId] = r.imageId
+      ? (['image', r.imageId] as const)
+      : r.modelId
+      ? (['model', r.modelId] as const)
+      : r.postId
+      ? (['post', r.postId] as const)
+      : r.articleId
+      ? (['article', r.articleId] as const)
+      : r.reportedUserId
+      ? (['reportedUser', r.reportedUserId] as const)
+      : (['other', null] as const);
+    return {
+      id: r.id,
+      reason: r.reason as ReportReason,
+      createdAt: r.createdAt,
+      reportCount: Number(r.reportCount ?? 0),
+      entity,
+      entityId,
+      reportedByUsername: r.reportedByUsername,
+    };
+  });
 }
