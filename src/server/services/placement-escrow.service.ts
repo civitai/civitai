@@ -63,6 +63,45 @@ export const MAX_LEG_ATTEMPTS = 5;
  */
 export const LEG_RETRY_BACKOFF_MINUTES = 30;
 
+/**
+ * How recently a leg must have given up to be alerted on.
+ *
+ * Re-reporting every exhausted leg on every run would fire forever and be muted
+ * within a week, at which point the next one is invisible. Anything older is
+ * found through `listExhaustedLegs`, which is the deliberate query rather than
+ * the alert.
+ */
+export const EXHAUSTED_ALERT_WINDOW_MINUTES = 90;
+
+/**
+ * Every leg that has given up, for an operator arriving from the placement side.
+ *
+ * The evidence lives on the leg rather than on `Placement`, which reads
+ * `approved` and settled either way. A denormalised `needsAttention` flag would
+ * be a second source of truth for a state the ledger already knows, and this
+ * feature has been bitten repeatedly by exactly that; a query is the honest
+ * version.
+ */
+export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
+  dbWrite.placementTransaction.findMany({
+    where: {
+      kind: { in: [...PAYOUT_KINDS] },
+      transactionId: null,
+      amount: { gt: 0 },
+      attempts: { gte: MAX_LEG_ATTEMPTS },
+    },
+    select: {
+      placementId: true,
+      kind: true,
+      amount: true,
+      attempts: true,
+      lastAttemptAt: true,
+      lastError: true,
+    },
+    orderBy: { lastAttemptAt: 'desc' },
+    take: limit,
+  });
+
 const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 const PAYOUT_KINDS = [
   'toOwner',
@@ -653,22 +692,35 @@ export async function sweepUnpaidLegs({
   // Legs past the ceiling are no longer retried, so they must be reported —
   // otherwise "stopped starving the batch" would just mean "stopped mentioning
   // it". This is the signal that something needs a human.
-  const exhausted = await dbWrite.placementTransaction.count({
+  // Bounded to legs that gave up recently. An unbounded count would make every
+  // run after the first exhaustion emit an error forever, which gets muted
+  // within a week — and a permanently-firing alert is functionally identical to
+  // silence, which is the failure this whole mechanism exists to avoid.
+  const exhaustedRows = await dbWrite.placementTransaction.findMany({
     where: {
       kind: { in: [...PAYOUT_KINDS] },
       transactionId: null,
       amount: { gt: 0 },
       attempts: { gte: MAX_LEG_ATTEMPTS },
+      lastAttemptAt: { gt: new Date(Date.now() - EXHAUSTED_ALERT_WINDOW_MINUTES * 60_000) },
     },
+    select: { placementId: true, kind: true, lastError: true },
+    take: 20,
   });
 
-  if (exhausted > 0)
+  if (exhaustedRows.length)
     logToAxiom({
       name: 'placement-escrow',
       type: 'error',
       message: 'placement legs have exhausted their retries and need a human',
-      exhausted,
+      exhausted: exhaustedRows.length,
+      // The ids, so the page is actionable rather than telling someone that
+      // something somewhere needs attention.
+      legs: exhaustedRows.map((row) => `${row.placementId}:${row.kind}`),
+      lastError: exhaustedRows[0]?.lastError,
     }).catch(() => null);
+
+  const exhausted = exhaustedRows.length;
 
   let resumed = 0;
   for (const { placementId } of stranded) {

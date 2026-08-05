@@ -144,6 +144,10 @@ Object.assign(dbWriteMock, {
           if (where.kind?.in && !where.kind.in.includes(leg.kind)) return false;
           if (where.kind?.not && leg.kind === where.kind.not) return false;
           if (where.attempts?.lt !== undefined && leg.attempts >= where.attempts.lt) return false;
+          if (where.attempts?.gte !== undefined && leg.attempts < where.attempts.gte) return false;
+          if (where.lastAttemptAt?.gt !== undefined) {
+            if (!leg.lastAttemptAt || leg.lastAttemptAt <= where.lastAttemptAt.gt) return false;
+          }
           if (Array.isArray((where as Record<string, unknown>).OR)) {
             const clauses = (where as unknown as { OR: { lastAttemptAt: null | { lt: Date } }[] })
               .OR;
@@ -261,6 +265,8 @@ const {
   sweepUnplannedSettlements,
   MAX_LEG_ATTEMPTS,
   LEG_RETRY_BACKOFF_MINUTES,
+  EXHAUSTED_ALERT_WINDOW_MINUTES,
+  listExhaustedLegs,
 } = await import('~/server/services/placement-escrow.service');
 
 const OWNER = 10;
@@ -1188,9 +1194,10 @@ describe('a leg that can never succeed', () => {
   // starving batch into an invisible one.
   it('is reported once it stops being retried', async () => {
     await givenPermanentlyFailingLeg();
+    // Ages rather than clears, so the leg still carries a recent attempt when the
+    // ceiling stops it — which is what the alert window keys on.
     for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
-      const leg = db.legs.get('1:toOwner');
-      if (leg) leg.lastAttemptAt = null;
+      ageLastAttempt('1:toOwner');
       await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
     }
 
@@ -1298,5 +1305,52 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
 
     expect(swept.stranded).toBe(1);
     expect(db.legs.get('1:toOwner')?.transactionId).toBe('buzz-tx');
+  });
+});
+
+describe('the exhausted-leg alert', () => {
+  const exhaustLeg = async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+    createBuzzTransaction.mockRejectedValue(new Error('unknown account'));
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER })
+    ).rejects.toThrow();
+
+    for (let i = 0; i < MAX_LEG_ATTEMPTS + 2; i++) {
+      ageLastAttempt('1:toOwner');
+      await sweepUnpaidLegs({ olderThanMinutes: 0 }).catch(() => null);
+    }
+  };
+
+  // An alert that fires on every run forever is muted within a week, and then
+  // the next exhaustion is invisible - the same failure as reporting success
+  // while doing nothing, in the other direction.
+  it('stops firing once the exhaustion is no longer recent', async () => {
+    await exhaustLeg();
+
+    const leg = db.legs.get('1:toOwner');
+    if (leg)
+      leg.lastAttemptAt = new Date(Date.now() - (EXHAUSTED_ALERT_WINDOW_MINUTES + 60) * 60_000);
+
+    const swept = await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(swept.exhausted).toBe(0);
+  });
+
+  // ...but the leg is still findable by someone looking for it deliberately.
+  it('leaves the leg discoverable after the alert has gone quiet', async () => {
+    await exhaustLeg();
+
+    const legs = await listExhaustedLegs();
+
+    expect(legs).toHaveLength(1);
+    expect(legs[0]).toMatchObject({ placementId: 1, kind: 'toOwner', amount: 700 });
+    expect(legs[0].lastError).toContain('unknown account');
   });
 });
