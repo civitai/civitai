@@ -90,6 +90,15 @@ function seriesSql(
   return `SELECT toDate(${timeCol}) AS date, count() AS value FROM ${table} WHERE ${filter} AND toDate(${timeCol}) >= toDate('${from}') AND toDate(${timeCol}) <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
 }
 
+// `reactions` is append-only: reacting writes `<Entity>_Create`, un-reacting writes `<Entity>_Delete`. Counting only
+// the creates makes every react/un-react cycle a permanent +1, so we net the deletes out instead. Clamped per day
+// because a reaction added before the window and removed inside it would otherwise push a bucket negative.
+const netReactions = `greatest(sum(if(endsWith(toString(type), '_Create'), 1, -1)), 0)`;
+
+function netReactionsDailySql(uid: number, from: string, to: string): string {
+  return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
+}
+
 async function fetchContentAnalytics(
   userId: number,
   from: string,
@@ -105,13 +114,11 @@ async function fetchContentAnalytics(
 
   const [reactions, followers, images, posts, profileViews] = await Promise.all([
     series(
-      seriesSql(
-        'reactions',
-        'time',
-        `ownerId = ${uid} AND endsWith(toString(type), '_Create')`,
+      `${netReactionsDailySql(
+        uid,
         from,
         to
-      )
+      )} ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`
     ),
     series(
       seriesSql('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`, from, to)
@@ -147,7 +154,7 @@ async function fetchTopMedia(userId: number, from: string, to: string): Promise<
     imageId: number | string;
     reactions: number | string;
   }>(
-    `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 100`
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND toString(type) IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC LIMIT 100`
   );
   return enrichTopImages(raw);
 }
@@ -198,8 +205,16 @@ async function fetchContentTotals(
     return Number(rows[0]?.value ?? 0);
   };
 
+  // Sums the same per-day clamped buckets the series uses, so the dashboard total always matches the chart.
+  const netReactionsTotal = async (): Promise<number> => {
+    const rows = await ch.$query<{ value: number | string }>(
+      `SELECT sum(value) AS value FROM (${netReactionsDailySql(uid, from, to)})`
+    );
+    return Number(rows[0]?.value ?? 0);
+  };
+
   const [reactions, followers, images, posts, profileViews] = await Promise.all([
-    count('reactions', 'time', `ownerId = ${uid} AND endsWith(toString(type), '_Create')`),
+    netReactionsTotal(),
     count('userEngagements', 'time', `targetUserId = ${uid} AND type = 'Follow'`),
     count('images_created', 'createdAt', `userId = ${uid}`),
     count('posts', 'time', `userId = ${uid} AND type = 'Publish'`),
