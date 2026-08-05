@@ -69,6 +69,8 @@ const BUYER = 702;
 const OTHER_CREATOR = 703;
 const OWN_MEMBER = 4001;
 const FOREIGN_MEMBER = 4002;
+const RESELLER = 704;
+const RESALE_PRICE = 4400;
 const PRICE = 8800;
 
 const memberRows = [
@@ -103,8 +105,8 @@ beforeEach(() => {
   packMemberFindMany.mockResolvedValue(
     memberRows.map((row) => ({ ...row, cosmetic: cosmeticFor(row.cosmeticId) }))
   );
-  shopItemFindMany.mockResolvedValue(
-    memberRows.map((row) => ({
+  shopItemFindMany.mockResolvedValue([
+    ...memberRows.map((row) => ({
       id: 9000 + row.cosmeticId,
       cosmeticId: row.cosmeticId,
       unitAmount: row.floorAmount,
@@ -115,8 +117,24 @@ beforeEach(() => {
       availableTo: null,
       _count: { purchases: 0 },
       cosmetic: cosmeticFor(row.cosmeticId),
-    }))
-  );
+    })),
+    // A second listing of the foreign member, pricier and listed by someone
+    // else. With one listing each, "pick the highest-priced" is a no-op in both
+    // resolvers and the suite cannot show they pick the SAME one — which is what
+    // decides the reseller payout and the block check.
+    {
+      id: 9500,
+      cosmeticId: FOREIGN_MEMBER,
+      unitAmount: RESALE_PRICE,
+      meta: { purchases: 0, sellerShare: 20 },
+      addedById: RESELLER,
+      availableQuantity: null,
+      availableFrom: null,
+      availableTo: null,
+      _count: { purchases: 0 },
+      cosmetic: cosmeticFor(FOREIGN_MEMBER),
+    },
+  ]);
   componentGroupBy.mockResolvedValue([]);
   ownedFindMany.mockResolvedValue([]);
   spend.mockImplementation(({ amount }: { amount: number }) => ({
@@ -182,6 +200,44 @@ describe('getPackDetail agrees with what the purchase charges', () => {
     shopItemFindMany.mockResolvedValue([]);
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.unavailableCount).toBe(memberRows.length);
+    await expect(charge(BUYER)).rejects.toThrow(/no longer available/i);
+  });
+
+  it('both resolvers land on the same listing when a member has several', async () => {
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    // The detail quotes the snapshot, so the resale price shows as today's price
+    // rather than as what this pack charges.
+    const foreign = detail.members.find((m) => m.cosmeticId === FOREIGN_MEMBER);
+    expect(foreign?.currentListPrice).toBe(RESALE_PRICE);
+    expect(foreign?.listPrice).toBe(3100);
+
+    const members = await getPackMembers(PACK_ID);
+    const purchaseSide = members.find((m) => m.cosmeticId === FOREIGN_MEMBER);
+    // Same row on both sides: the pricier listing, hence its lister and terms.
+    expect(purchaseSide?.addedById).toBe(RESELLER);
+    expect(purchaseSide?.listingMeta.sellerShare).toBe(20);
+  });
+
+  // Whenever a member cannot be resolved, the purchase refuses — so the detail
+  // must never quote a price for a pack that can't be bought. The all-missing
+  // case is easy; the partial one is where a lower quote could leak out.
+  it('refuses a partially unavailable pack rather than quoting the survivors', async () => {
+    shopItemFindMany.mockResolvedValue([
+      {
+        id: 9000 + OWN_MEMBER,
+        cosmeticId: OWN_MEMBER,
+        unitAmount: 2600,
+        meta: { purchases: 0 },
+        addedById: LISTER,
+        availableQuantity: null,
+        availableFrom: null,
+        availableTo: null,
+        _count: { purchases: 0 },
+        cosmetic: cosmeticFor(OWN_MEMBER),
+      },
+    ]);
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(1);
     await expect(charge(BUYER)).rejects.toThrow(/no longer available/i);
   });
 });

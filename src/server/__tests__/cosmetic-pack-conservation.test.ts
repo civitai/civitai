@@ -759,6 +759,17 @@ describe('purchaseCosmeticPack — generated member combinations', () => {
     );
     const paid = payouts.reduce((sum, p) => sum + p.amount, 0);
     expect(paid).toBeLessThanOrEqual(Math.floor(charged * (1 - PLATFORM_KEEPS)));
+    // Without this, the generated rows assert nothing about the amount at all:
+    // a pricing defect that over-discounts either lands in the refusal branch
+    // (swallowed as legitimate) or charges less with payouts scaling down to
+    // match, and every other assertion here still holds. Derived from what the
+    // system owes other people, so it can't ratify the pricing it checks.
+    const payableSnapshot = members
+      .filter(
+        (m) => m.createdById != null && m.createdById !== PACK_CREATOR && m.createdById !== BUYER
+      )
+      .reduce((sum, m) => sum + m.floorAmount, 0);
+    expect(charged).toBeGreaterThanOrEqual(payableSnapshot);
     // No role a buyer can hold — member creator, member reseller, pack lister —
     // may make them a recipient of their own purchase.
     expect(payouts.some((p) => p.toAccountId === BUYER)).toBe(false);
