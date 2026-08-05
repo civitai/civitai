@@ -269,14 +269,67 @@ describe('🔴 the report does not call an unverifiable constraint "already enfo
     expect(text).toContain('Orphan remediation, derived from');
   });
 
-  it('shows a satisfied relation that carries a prerequisite, without --verbose', () => {
-    // plan.ts claims the unknown state is "surfaced as a prerequisite so it appears in the
-    // report". The default filter used to drop every `satisfied` relation, making that
-    // comment false — and a comment that contradicts the code is how a guard gets deleted.
+  it('surfaces the unknown-validity state in the SUMMARY, and its detail under --verbose', () => {
+    // plan.ts claims the unknown state is "surfaced ... so it appears in the report rather
+    // than being swallowed by a reassuring satisfied". It is — at the granularity the
+    // condition actually has.
+    //
+    // `constraint-validity-unknown` is a property of the CATALOG, true of all 408 existing
+    // constraints or none, so the summary is where it belongs; a per-relation block for
+    // each of them made the default report identical to --verbose and buried the ~68
+    // relations an operator has to choose between. Listing it per relation is still
+    // available, behind the flag.
     const withPrereq = plan.relations.find(
       (r) => r.outcome === 'satisfied' && r.prerequisites.length > 0
     );
     expect(withPrereq).toBeDefined();
-    expect(text).toContain(withPrereq!.key);
+    expect(text).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*[1-9]\d*/);
+    expect(formatPlan(plan, { verbose: true })).toContain(withPrereq!.key);
+  });
+});
+
+describe('the default report stays a survey, and --verbose still means something', () => {
+  const plan = buildRemediationPlan(schema, catalog, {});
+  const dflt = formatPlan(plan).split('\n');
+  const verbose = formatPlan(plan, { verbose: true }).split('\n');
+
+  it('default is materially SHORTER than --verbose', () => {
+    // The N2 fix regressed this: every one of the ~408 validity-unknown relations carried
+    // a prerequisite, none were hidden, and the default report became byte-identical to
+    // --verbose — burying the ~68 relations an operator actually chooses between.
+    expect(dflt.length).toBeLessThan(verbose.length / 2);
+  });
+
+  it('POSITIVE control: --verbose really does list the hidden ones', () => {
+    // Otherwise "default is shorter" would be satisfied by a --verbose that prints nothing.
+    expect(verbose.length).toBeGreaterThan(2000);
+  });
+
+  it('still states the validity-unknown count LOUDLY in the default summary', () => {
+    // Hiding the per-relation detail is only defensible because the summary says it. This
+    // is the assertion that keeps N2 fixed while A is also fixed.
+    expect(dflt.join('\n')).toMatch(/VALIDITY NOT ESTABLISHED\s*:\s*[1-9]\d*/);
+  });
+
+  it('still shows every relation that is refused or blocked by default', () => {
+    const actionable = plan.relations.filter(
+      (r) => r.outcome === 'refused' || r.outcome === 'blocked'
+    );
+    expect(actionable.length).toBeGreaterThan(30); // positive control on the population
+    for (const r of actionable) {
+      expect(dflt.join('\n'), `${r.key} must be visible without --verbose`).toContain(r.key);
+    }
+  });
+
+  it('hides ONLY relations whose sole issue is the catalog-wide unknown validity', () => {
+    const hidden = plan.relations.filter((r) => !dflt.join('\n').includes(r.key));
+    expect(hidden.length).toBeGreaterThan(300); // positive control: something IS hidden
+    for (const r of hidden) {
+      expect(r.refusals, `${r.key} is refused and must not be hidden`).toEqual([]);
+      expect(
+        r.prerequisites.every((p) => p.code === 'constraint-validity-unknown'),
+        `${r.key} carries a relation-specific prerequisite and must not be hidden`
+      ).toBe(true);
+    }
   });
 });

@@ -141,16 +141,31 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
     lines.push('');
   }
 
-  // A `satisfied` relation is hidden by default because on a full run there are hundreds of
-  // them — but one carrying a prerequisite or a refusal is NOT nothing-to-do, and hiding it
-  // is what made the comment in plan.ts ("surfaced as a prerequisite so it appears in the
-  // report") false. The filter now agrees with that comment.
+  // Which relations get a detail block by default.
+  //
+  // A `satisfied` relation carrying a refusal or an unmet prerequisite is NOT
+  // nothing-to-do, and hiding it is what made the comment in plan.ts false. But listing
+  // EVERY such relation regressed the other way: `constraint-validity-unknown` applies to
+  // all 408 existing constraints at once against a catalog with no `convalidated` data, so
+  // the default report grew to 6,529 lines and became byte-identical to `--verbose` — the
+  // 68 relations an operator actually has to choose between were buried, and the flag
+  // stopped meaning anything.
+  //
+  // The resolution is about GRANULARITY, not about hiding. `constraint-validity-unknown` is
+  // a property of the CATALOG, not of any one relation — it is either true of all of them
+  // or none — so it belongs in the summary, where it is stated loudly and unconditionally
+  // above, and its per-relation detail belongs behind `--verbose`. Every other
+  // prerequisite and every refusal is relation-specific and still shows by default.
+  const catalogWide = (r: RelationPlan) =>
+    r.refusals.length === 0 &&
+    r.prerequisites.length > 0 &&
+    r.prerequisites.every((p) => p.code === 'constraint-validity-unknown');
+
   const shown = plan.relations.filter(
     (r) =>
       options.verbose ||
       r.outcome !== 'satisfied' ||
-      r.prerequisites.length > 0 ||
-      r.refusals.length > 0
+      ((r.prerequisites.length > 0 || r.refusals.length > 0) && !catalogWide(r))
   );
   const order: Record<RelationPlan['outcome'], number> = {
     refused: 0,
@@ -168,7 +183,13 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
       'matter, whether a referenced entity is soft-deleted rather than gone, whether an ' +
       'application-level cleanup already owns this relation, and the timing of a VALIDATE ' +
       'against a hot table. A READY outcome means the mechanics are safe, not that the ' +
-      'change is right.'
+      'change is right.\n\n' +
+      '🔴 THIS TOOL HAS NO TRIGGER AWARENESS. It reads tables, columns, constraints and ' +
+      'indexes, and nothing else. A trigger may already enforce what a constraint would, ' +
+      'or may make the remediation itself fail — ImageResourceNew carries an AFTER DELETE ' +
+      'trigger running REFRESH MATERIALIZED VIEW CONCURRENTLY, which cannot run inside a ' +
+      'transaction, and ImageResourceNew.imageId plans as an ordinary cascade delete. ' +
+      'Read the triggers on a table before remediating it.'
   );
   return lines.join('\n');
 }

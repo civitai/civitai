@@ -290,6 +290,13 @@ plan is not evidence that they are fine.
 - **`VALIDATE CONSTRAINT` completing.** See above — it can be killed by a statement
   timeout the tool cannot raise. The state is then resumable and visible, not finished.
 - **Replication lag and downstream consumers.** A large batched DELETE generates WAL.
+- **Scale.** The end-to-end exercise behind this module ran against a disposable local
+  PostgreSQL with fixtures of a few thousand rows: **no concurrent load, no connection
+  pooler, no index bloat, no replication, and nothing resembling the 120M-row `Image`
+  table** most of these relations reference. What it established is transaction, lock and
+  catalog *semantics* — not timings, not lock-queue behaviour under real traffic, and not
+  how long a `VALIDATE` takes on a large table. Treat every duration and batch count here
+  as unmeasured at production scale.
 - **Whether the catalog is current.** With `--catalog` it is a snapshot, and a snapshot
   captured before `convalidated` was collected cannot establish that any constraint is
   actually enforcing — which the report now says out loud rather than counting as enforced.

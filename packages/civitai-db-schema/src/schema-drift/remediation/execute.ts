@@ -281,7 +281,11 @@ async function runWithLockRetry(
       if (attempt >= maxAttempts) {
         throw new Error(
           `${key}: ADD CONSTRAINT could not acquire its locks within the lock timeout after ` +
-            `${maxAttempts} attempts. The table is busy; nothing was changed by this ` +
+            // `attempt`, not `maxAttempts`: with `>=` they are equal, but the message is
+            // the only record of how many times this actually ran, so it reports what
+            // happened rather than what was configured. An off-by-one in the comparison
+            // then shows up as a wrong number instead of a silently extra attempt.
+            `${attempt} attempts. The table is busy; nothing was changed by this ` +
             'statement. Retry later — the orphan cleanup that ran before it is already ' +
             'durable, and re-planning will pick up from here.'
         );

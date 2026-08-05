@@ -25,8 +25,12 @@
  *      those whose LAST recorded operation is a DROP. Absence is intentional and
  *      recorded; "restoring" one reverts a decision. Yields three:
  *      `Article.coverId`, `ImageConnection.imageId`, `TagsOnImageNew.imageId`.
- *   B. Every relation on a table rebuilt by `recreateRankTable` — all NINE owning-side
- *      `*Rank` relations. A `CREATE TABLE ... AS SELECT` copies no constraints.
+ *   B. Every relation on a table rebuilt by `recreateRankTable` — a `CREATE TABLE ... AS
+ *      SELECT` copies no constraints. SEVEN of the nine owning-side `*Rank` relations have
+ *      a `rank: { table }` declaration in `src/server/metrics/*.metrics.ts` to point at.
+ *      The remaining two (`QuestionRank`, `AnswerRank`) do NOT — they are included on the
+ *      strength of the NAME alone, are backed by views today, and are marked as such at
+ *      their entry below. Do not read this criterion as verified for all nine.
  *   C. `TagsOnImageNew.imageId` again, independently: enforcement is a live trigger.
  *
  * **Union: 12** — nine rank relations plus `Article.coverId` and `ImageConnection.imageId`

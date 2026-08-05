@@ -233,3 +233,67 @@ describe('an unmet prerequisite blocks BOTH paths identically', () => {
     expect(measured.relations[0].outcome).toBe('ready');
   });
 });
+
+describe('🔴 rollbackQuietly swallows a FAILING rollback (the branch the old fake could not reach)', () => {
+  const isAlter = (sql: string) => /ADD CONSTRAINT/i.test(sql);
+  const isRollback = (sql: string) => /^ROLLBACK$/i.test(sql.trim());
+
+  it('surfaces the ORIGINAL error, not the rollback error', async () => {
+    // A dead connection fails the ROLLBACK too. The operator needs the constraint
+    // violation that actually stopped the run, not a secondary "connection terminated"
+    // raised while trying to tidy up after it.
+    const pg = new FakePostgres([
+      { match: isAlter, code: '23503' },
+      { match: isRollback, code: '08006' }, // connection_failure
+    ]);
+    await expect(executePlan(pg, readyPlan(), { apply: true })).rejects.toMatchObject({
+      code: '23503',
+    });
+  });
+
+  it('does not turn a failing rollback into an unhandled rejection', async () => {
+    const pg = new FakePostgres([
+      { match: isAlter, code: LOCK_NOT_AVAILABLE },
+      { match: isRollback, code: '08006' },
+    ]);
+    // Still reports the lock give-up, having survived a rollback that itself threw.
+    await expect(executePlan(pg, readyPlan(), { apply: true, lockRetries: 1 })).rejects.toThrow(
+      /could not acquire its locks/
+    );
+  });
+
+  it('POSITIVE control: the fake CAN fail a ROLLBACK', async () => {
+    // Without this the two assertions above would pass against a fake that quietly
+    // ignored the rollback predicate — which is exactly what the previous fake did.
+    const pg = new FakePostgres([{ match: isRollback, code: '08006' }]);
+    await expect(pg.query('ROLLBACK;')).rejects.toMatchObject({ code: '08006' });
+  });
+
+  it('NEGATIVE control: a ROLLBACK with no predicate still succeeds', async () => {
+    const pg = new FakePostgres();
+    await expect(pg.query('ROLLBACK;')).resolves.toBeTruthy();
+  });
+});
+
+describe('the retry budget is exact', () => {
+  const isAlter = (sql: string) => /ADD CONSTRAINT/i.test(sql);
+
+  it('makes exactly `lockRetries` attempts, and says so', async () => {
+    // `attempt >= maxAttempts` vs `>` is a one-character difference that yields N+1
+    // attempts and makes the message's count false. Both the count and the number in the
+    // message are pinned.
+    const pg = new FakePostgres([{ match: isAlter, code: LOCK_NOT_AVAILABLE }]);
+    await expect(executePlan(pg, readyPlan(), { apply: true, lockRetries: 3 })).rejects.toThrow(
+      /after 3 attempts/
+    );
+    expect(pg.statements.filter((s) => /ADD CONSTRAINT/i.test(s))).toHaveLength(3);
+  });
+
+  it('a different budget moves both numbers together', async () => {
+    const pg = new FakePostgres([{ match: isAlter, code: LOCK_NOT_AVAILABLE }]);
+    await expect(executePlan(pg, readyPlan(), { apply: true, lockRetries: 1 })).rejects.toThrow(
+      /after 1 attempts/
+    );
+    expect(pg.statements.filter((s) => /ADD CONSTRAINT/i.test(s))).toHaveLength(1);
+  });
+});

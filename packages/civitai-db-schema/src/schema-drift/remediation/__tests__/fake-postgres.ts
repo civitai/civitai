@@ -27,6 +27,13 @@ import type { CatalogQueryRunner } from '../../catalog';
  *   - `COMMIT` on an aborted transaction behaves as a rollback and clears the state, as
  *     Postgres does.
  *   - `ROLLBACK` always clears the state.
+ *
+ * Two known simplifications, both unreachable for the statements this module emits and
+ * both loud rather than silent if they ever are reached. Recorded rather than engineered
+ * around: splitting on `;` would mis-parse a statement containing a literal semicolon (in
+ * a string literal or a dollar-quoted body), and a multi-statement string returns one
+ * result object rather than the array node-postgres gives — so a caller that started
+ * reading `result[1].rows` would get `undefined`, not a wrong row.
  */
 export class FakePostgres implements CatalogQueryRunner {
   /** Every statement received, in order, including transaction control. */
@@ -75,6 +82,23 @@ export class FakePostgres implements CatalogQueryRunner {
     for (const part of parts) {
       const upper = part.toUpperCase();
 
+      // 🔴 The failure predicates are consulted BEFORE the transaction-control shortcut.
+      //
+      // They used to be consulted after, which meant a `ROLLBACK` could never be made to
+      // fail — so `rollbackQuietly`'s swallow branch, the whole reason that `try`/`catch`
+      // exists, had no possible coverage: deleting the `catch` survived the suite. That is
+      // the same shape as the defect this fake was built for, one layer in — a branch the
+      // instrument could not express. The connection-genuinely-gone case is now reachable.
+      const control = upper === 'ROLLBACK' || upper === 'COMMIT' || upper === 'BEGIN';
+      const failure = this.failures.find((f) => f.match(part) && (f.times ?? Infinity) > 0);
+      if (failure && (control || !this.aborted)) {
+        if (failure.times !== undefined) failure.times -= 1;
+        // A failing ROLLBACK models a dead connection: the session state is unknowable, so
+        // it is left as-is rather than optimistically cleared.
+        if (this.inTransaction && !control) this.aborted = true;
+        throw Object.assign(new Error(`fake failure ${failure.code}`), { code: failure.code });
+      }
+
       if (upper === 'ROLLBACK') {
         this.inTransaction = false;
         this.aborted = false;
@@ -101,13 +125,6 @@ export class FakePostgres implements CatalogQueryRunner {
         this.inTransaction = true;
         this.executed.push(part);
         continue;
-      }
-
-      const failure = this.failures.find((f) => f.match(part) && (f.times ?? Infinity) > 0);
-      if (failure) {
-        if (failure.times !== undefined) failure.times -= 1;
-        if (this.inTransaction) this.aborted = true;
-        throw Object.assign(new Error(`fake failure ${failure.code}`), { code: failure.code });
       }
 
       this.executed.push(part);
