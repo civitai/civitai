@@ -31,7 +31,9 @@ describe('env/database-target — resolveDatabaseEnvironment', () => {
   });
 
   it('trims and lowercases', () => {
-    expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: '  Production ' })).toBe('production');
+    expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: '  Production ' })).toBe(
+      'production'
+    );
     expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: 'NON-PRODUCTION' })).toBe(
       'non-production'
     );
@@ -87,7 +89,9 @@ describe('env/database-target — isNonProductionDatabase', () => {
   });
 
   it('transitional: an unrecognised value falls back to the legacy reading, not to a guess', () => {
-    expect(isNonProductionDatabase({ IS_PREVIEW: 'true', DATABASE_ENVIRONMENT: 'prod' })).toBe(true);
+    expect(isNonProductionDatabase({ IS_PREVIEW: 'true', DATABASE_ENVIRONMENT: 'prod' })).toBe(
+      true
+    );
     expect(isNonProductionDatabase({ DATABASE_ENVIRONMENT: 'prod' })).toBe(false);
   });
 

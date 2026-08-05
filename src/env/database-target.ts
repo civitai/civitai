@@ -66,7 +66,9 @@ export const DATABASE_ENVIRONMENT_VAR = 'DATABASE_ENVIRONMENT';
  * `env` is injectable so the matrix can be exercised as literal input/output pairs without
  * mutating the process.
  */
-export function resolveDatabaseEnvironment(env: NodeJS.ProcessEnv = process.env): DatabaseEnvironment {
+export function resolveDatabaseEnvironment(
+  env: NodeJS.ProcessEnv = process.env
+): DatabaseEnvironment {
   const raw = env[DATABASE_ENVIRONMENT_VAR]?.trim().toLowerCase();
   if (raw === 'production') return 'production';
   if (raw === 'non-production') return 'non-production';
