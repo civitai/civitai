@@ -89,23 +89,29 @@ describe('production catalog snapshot (2026-08-03)', () => {
     expect(found('missing-foreign-key').length).toBeGreaterThanOrEqual(37);
   });
 
-  it('reports the nullability drift concentrated on the Rank tables', () => {
+  it('reports the nullability drift that is still outstanding', () => {
+    // HISTORY, because the shape of this assertion changed for a real reason. When the
+    // detector shipped, 235 of the 246 nullability findings sat on seven `*Rank` tables and
+    // this test pinned exactly that. #3592 then marked those columns optional to match the
+    // database, and the 235 went away — correctly. Nothing noticed, because no CI job ran
+    // this package's suite; the test was red on `main` from the moment #3592 merged until
+    // the packages were wired into CI. So the Rank family is now asserted at ZERO, which
+    // makes this a guard on the REMEDIATION rather than on the defect.
     const nullability = report.findings.filter((f) => f.kind === 'nullability');
-    const rank = nullability.filter((f) => f.table.endsWith('Rank'));
-    expect(new Set(rank.map((f) => f.table))).toEqual(
-      new Set([
-        'ArticleRank',
-        'BountyEntryRank',
-        'BountyRank',
-        'ClubRank',
-        'CollectionRank',
-        'TagRank',
-        'UserRank',
-      ])
-    );
-    expect(rank.length).toBeGreaterThanOrEqual(235);
+    expect(nullability.filter((f) => f.table.endsWith('Rank'))).toEqual([]);
+
+    // Positive control on that zero: nullability detection still finds the 11 that remain,
+    // so an empty Rank result cannot come from a check that stopped running.
+    expect(nullability.length).toBeGreaterThanOrEqual(11);
     expect(found('nullability')).toEqual(
-      expect.arrayContaining(['ChallengeEvent.createdById', 'Purchase.userId'])
+      expect.arrayContaining([
+        'ChallengeEvent.createdById',
+        'Purchase.userId',
+        // Nine `*Metric.updatedAt` columns declared required against a NULLABLE column.
+        'UserMetric.updatedAt',
+        'ModelMetric.updatedAt',
+        'ModelVersionMetric.updatedAt',
+      ])
     );
   });
 

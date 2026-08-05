@@ -96,6 +96,8 @@
     "test:unit": "vitest --project unit",
     "test:unit:run": "vitest run --project unit",
     "test:unit:coverage": "vitest run --project unit --coverage",
+    "test:packages": "vitest --project '@civitai/*'",
+    "test:packages:run": "vitest run --project '@civitai/*'",
     "test:lint-rules": "vitest run --project unit src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
     "test:component": "vitest run --project component",
     "test:component:watch": "vitest --project component",

@@ -219,3 +219,49 @@ jobs:
 
       - name: Unit tests
         run: pnpm run test:unit:run
+
+  packages:
+    name: Package unit tests
+    runs-on: ubuntu-latest
+    # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
+    # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
+    # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
+    # suite. That is not a small gap: the schema-drift detector shipped 81 tests into it,
+    # and two of them had been RED on `main` since #3592 corrected the schema out from under
+    # their assertions, with nothing to say so.
+    #
+    # BLOCKING, unlike `unit`. The reasoning that made `unit` report-only does not transfer:
+    # `unit` is ~12,000 tests whose cost is a ~33s import/transform phase per file and which
+    # timed out five tests under load. This is 616 tests with no browser, no database and no
+    # Next module graph — the whole run is ~15s locally. There is no flake budget to buy.
+    #
+    # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
+    # `.env`, which does not exist on a runner, so its four EXPLAIN tests report as skipped.
+    # They are visible as skips in the summary rather than as a silent absence.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Package unit tests
+        run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
+
+      # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
+      # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
+      # workspace package with a vitest config and a test file on disk must appear in the
+      # results — so the job fails when the executed set shrinks, which is the regression the
+      # totals cannot see.
+      - name: Assert every package suite actually ran
+        if: always()
+        run: node scripts/ci/assert-package-suites-ran.mjs packages-report.json

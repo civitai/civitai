@@ -62,6 +62,26 @@ export default defineConfig({
   resolve: { alias },
   test: {
     projects: [
+      // The nine `packages/*` suites, referenced by their OWN config files rather than
+      // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
+      // project's `include` is root-relative (`src/**`, `scripts/**`), and CI runs
+      // `vitest run --project unit`, so ~330 tests across nine workspace packages ran only
+      // for whoever remembered `pnpm --filter <pkg> test` by hand. That is how the
+      // schema-drift detector (#3591) shipped with 81 tests CI never executed.
+      //
+      // Globbed on the CONFIG FILE, not the directory. A bare `packages/*` glob would also
+      // adopt the six packages that have no vitest config, and Vitest would give each a
+      // default config whose `include` (`**/*.{test,spec}.?(c|m)[jt]s?(x)`) is not the
+      // include those packages were written against.
+      //
+      // Project names come from each package's `package.json` `name` (`@civitai/auth`,
+      // `@civitai/db-schema`, ...), because none of the package configs set `test.name`.
+      // That is what `--project '@civitai/*'` selects; see the `test:packages:run` script.
+      // Keeping them as separate projects (rather than folding their globs into `unit`)
+      // preserves each package's own config — `@civitai/db-queries`, for instance, sources
+      // DATABASE_URL from the root `.env` so its DB-backed tier self-skips without one.
+      'packages/*/vitest.config.ts',
+      'packages/*/vitest.config.mts',
       {
         resolve: { alias },
         test: {
@@ -126,7 +146,12 @@ export default defineConfig({
         // cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
         // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
         optimizeDeps: {
-          include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
+          include: [
+            'next/router',
+            'vitest-browser-react',
+            'react/jsx-dev-runtime',
+            'react/jsx-runtime',
+          ],
           // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
           // (globTestFiles), not just the one you ran. The review app-listing browser tests
           // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from

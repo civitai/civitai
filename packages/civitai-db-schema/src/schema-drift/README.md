@@ -167,7 +167,7 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## Measured against production, 2026-08-03
+## Measured against the committed snapshot, 2026-08-05
 
 `__tests__/fixtures/catalog-production-2026-08-03.json` is a point-in-time capture of the
 production constraint catalogs — table and column names, nullability, foreign-key and
@@ -180,22 +180,29 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 474
+declared owning-side relations : 476
 checked against the database   : 445
-skipped (view / absent table)  : 29
+skipped (view / absent table)  : 31
 MISSING foreign key            : 37
 wrong referential action       : 0   <- see below
-MISSING column                 : 11
+MISSING column                 : 12
 nullability checked            : 2383
-nullability drift              : 246
+nullability drift              : 11
 uniqueness declarations checked: 122
 missing unique index           : 1
 ```
 
-The 246 nullability findings are 235 across seven `*Rank` tables, `ChallengeEvent.createdById`,
-`Purchase.userId`, and nine `*Metric.updatedAt` columns. The 11 missing columns are
-`ModelFlag.sfwOnly` and ten `UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness
-finding is `ImageResource(modelVersionId, name, imageId)`.
+61 findings in total. The 11 nullability findings are `Purchase.userId`,
+`ChallengeEvent.createdById`, and nine `*Metric.updatedAt` columns. The 12 missing columns are
+`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, and ten
+`UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness finding is
+`ImageResource(modelVersionId, name, imageId)`.
+
+**Nullability was 246 when this tool shipped.** #3592 then marked the seven `*Rank` families'
+columns optional to match the database and 235 of them went away — a real remediation, and
+the reason this section is dated separately from the snapshot. Nothing observed it at the
+time, because no CI job ran this package's suite; the two assertions that pinned those 235
+were red on `main` from the moment #3592 merged until the packages were wired into CI.
 
 **The `0` on referential actions is "not measured", not "clean".** This snapshot predates
 that check and carries no `ON DELETE`/`ON UPDATE` data, so all 408 comparable foreign keys
@@ -241,8 +248,21 @@ named findings survive rather than pinning the totals, so ordinary schema work d
 the suite for reasons that have nothing to do with this tool. Re-run the command above for
 current numbers.
 
-## Not wired into CI
+## In CI
 
-Run by hand today. The root `unit` Vitest project globs `src/**` only, so this package's
-suite runs via `pnpm --filter @civitai/db-schema test` — as do the suites of the seven other
-packages in the same position.
+The root `unit` Vitest project globs `src/**` and `scripts/**` — both root-relative — and the
+`Unit tests` job runs `vitest run --project unit`, so for a while nothing in CI invoked this
+package's suite, or any of the eight other `packages/*` suites. 616 tests, 81 of them this
+tool's, ran only for whoever remembered `pnpm --filter <pkg> test` by hand.
+
+They now run in the `Package unit tests` job, from the `packages/*/vitest.config.*` entries in
+the root `vitest.config.mts`:
+
+```bash
+pnpm run test:packages:run          # all nine package suites
+pnpm --filter @civitai/db-schema test   # just this one
+```
+
+That job is blocking, and it asserts a ledger — every workspace package that has a vitest
+config and a test file on disk must appear in the results — because `--project` matching
+nothing exits 0, and so does a config whose globs stopped resolving.
