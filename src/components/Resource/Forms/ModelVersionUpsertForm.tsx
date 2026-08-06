@@ -438,6 +438,16 @@ export function ModelVersionUpsertForm({
     permanent: !!paidAccessConfig?.permanent,
   });
   const licensingFeeCap = limits.fee.maxPerGeneration;
+  // The input bound is the ABSOLUTE ceiling, not the creator's tier cap. Clamping to the tier cap
+  // rewrites a grandfathered fee as soon as the form loads or the denominator changes — the server only
+  // blocks raises and never rewrites the stored value, so the client must not undo that. The over-cap
+  // notice below is what tells the creator they're earning less.
+  const licensingFeeCeilingLimits = monetizationLimits({
+    tier: 'gold',
+    modelType: model?.type,
+    baseModel,
+    isModerator: currentUser?.isModerator,
+  });
   const feeImageOptions = limits.fee.denominators;
   // An unlimited price renders as no cap at all, so the input falls back to the donation ceiling.
   const paidAccessCap = limits.access.maxPrice ?? MAX_DONATION_GOAL;
@@ -1507,7 +1517,7 @@ export function ModelVersionUpsertForm({
                             })
                           }
                           min={0}
-                          max={feeMaxFor(limits, feeRatio.images)}
+                          max={feeMaxFor(licensingFeeCeilingLimits, feeRatio.images)}
                           step={1}
                           allowDecimal={false}
                           leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -1521,11 +1531,14 @@ export function ModelVersionUpsertForm({
                           value={String(feeRatio.images)}
                           onChange={(v) => {
                             const images = Number(v) || DEFAULT_FEE_IMAGES;
-                            // Clamp in the RATIO domain: the cap is per-image and can be fractional (free/other is
-                            // 0.1), so `cap * images` would put a decimal into a whole-number field the schema then
-                            // rejects. floor() keeps the value enterable and valid.
+                            // Clamp to the absolute ceiling only, in the RATIO domain: the cap is
+                            // per-image and can be fractional, so `cap * images` would put a decimal
+                            // into a whole-number field the schema rejects. floor() keeps it valid.
                             applyFeeRatio({
-                              buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
+                              buzz: Math.min(
+                                feeRatio.buzz,
+                                feeMaxFor(licensingFeeCeilingLimits, images)
+                              ),
                               images,
                             });
                           }}

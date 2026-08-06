@@ -28,14 +28,21 @@
     ariaLabelSuffix?: string;
   } = $props();
 
-  const max = $derived(feeMaxFor(limits, Number(images)));
+  // The creator's own ceiling, used for the upsell and the over-cap warning.
+  const tierMax = $derived(feeMaxFor(limits, Number(images)));
+  // What the input actually allows. Clamping to the TIER cap would rewrite a grandfathered fee the
+  // moment the drawer opens — the server only blocks raises, and never rewrites the stored value, so a
+  // lapse must not cost a creator their setting. Gold is the absolute ceiling, and capFor is already
+  // media- and type-aware.
+  const ceiling = $derived(capFor('gold', Number(images)));
+  const overCap = $derived((buzz ?? 0) > tierMax);
 </script>
 
 <div class="flex flex-wrap items-center gap-1.5">
   <NumberInput
     name="buzz"
     min={0}
-    {max}
+    max={ceiling}
     bind:value={buzz}
     placeholder="Off"
     aria-label="Buzz{ariaLabelSuffix}"
@@ -68,7 +75,7 @@
   <div class="w-full">
     <CapUpsell
       value={buzz}
-      cap={max}
+      cap={tierMax}
       {capTier}
       capFor={(t: CapTier) => capFor(t, Number(images))}
       title="Licensing fee"
@@ -92,6 +99,13 @@
         Use this
       </button>
     </p>
+  {/if}
+
+  {#if overCap}
+    <span class="w-full text-xs text-yellow-5">
+      Above your tier's cap of {tierMax} ⚡ per {images} generation{images === '1' ? '' : 's'} — you'll
+      earn the capped rate until you upgrade. The value you set is kept.
+    </span>
   {/if}
 
   <span class="w-full text-xs text-dark-2">Leave empty to clear the fee.</span>
