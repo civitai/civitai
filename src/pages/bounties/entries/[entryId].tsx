@@ -16,9 +16,25 @@ export const getServerSideProps = createServerSideProps({
       return { notFound: true };
     }
 
+    // threadUrlMap builds `/bounties/entries/{id}?highlight=…` for every bountyEntry comment
+    // notification, and a destination without the query silently drops it — so the comment the
+    // notification is about never gets highlighted.
+    const { entryId: _, ...query } = ctx.query;
+    const queryString = new URLSearchParams(
+      Object.entries(query).flatMap(([key, value]) =>
+        value === undefined
+          ? []
+          : Array.isArray(value)
+          ? value.map((v) => [key, v])
+          : [[key, value]]
+      ) as [string, string][]
+    ).toString();
+
     return {
       redirect: {
-        destination: `/bounties/${bountyEntry.bountyId}/entries/${entryId}`,
+        destination: `/bounties/${bountyEntry.bountyId}/entries/${entryId}${
+          queryString ? `?${queryString}` : ''
+        }`,
         permanent: false,
       },
     };

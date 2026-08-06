@@ -664,6 +664,57 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');
     `,
   },
+  'new-bounty-entry-comment': {
+    displayName: 'New comments on your bounty entries',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your entry to the "${details.bountyTitle}" bounty`,
+      // Not threadUrlMap's `/bounties/entries/{id}`: that route is a getServerSideProps redirect to
+      // the canonical URL and the destination string drops the query, taking `highlight` with it.
+      url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_bounty_entry_comment AS (
+        SELECT DISTINCT
+          be."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'bountyEntryId', be.id,
+            'bountyId', b.id,
+            'bountyTitle', b.name,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."bountyEntryId" IS NOT NULL
+        JOIN "BountyEntry" be ON be.id = t."bountyEntryId"
+        JOIN "Bounty" b ON b.id = be."bountyId"
+        -- BountyEntry."userId" is nullable (SetNull on user delete); NULL > 0 is NULL, so this drops
+        -- orphaned entries as well as system-owned ones.
+        WHERE be."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          -- A new type has no cursor row until its first successful run, so it inherits the job's
+          -- global last-run: new Date(0) on a fresh DB, stale by the outage duration after any
+          -- send-notifications outage. There are 21,812 historical entry comments across 3,876
+          -- owners. Launch date is the guard new-bounty-comment carries; the rolling window is what
+          -- still holds once that date is behind us.
+          AND c."createdAt" > '2026-08-06'
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          AND c."userId" != be."userId"
+      )
+      SELECT
+        concat('new-comment-bounty-entry:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-bounty-entry-comment' "type",
+        details
+      FROM new_bounty_entry_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-entry-comment');
+    `,
+  },
   'new-challenge-comment': {
     displayName: 'New comments on your challenges',
     category: NotificationCategory.Comment,

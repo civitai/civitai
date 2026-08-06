@@ -30,6 +30,7 @@ const V2_TYPES = [
   'new-post-comment',
   'new-article-comment',
   'new-bounty-comment',
+  'new-bounty-entry-comment',
   'new-challenge-comment',
   'new-3d-model-comment',
   'new-3d-model-comment-response',
@@ -260,6 +261,8 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':
         return [{ ...base, version: 2, bountyId: 4, bountyTitle: 'B' }];
+      case 'new-bounty-entry-comment':
+        return [{ ...base, version: 2, bountyEntryId: 9, bountyId: 4, bountyTitle: 'B' }];
       case 'new-challenge-comment':
         return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
       case 'new-comment':
