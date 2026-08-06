@@ -900,7 +900,9 @@ export const saveItemInCollections = async ({
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         collectionIds: reviewCollectionIds,
-      }).catch();
+      }).catch(() => {
+        // swallow — best-effort logging must never break the submit it is observing
+      });
     }
   }
 
