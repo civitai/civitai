@@ -166,7 +166,10 @@ describe('projectBlockInitViewer (BLOCK_INIT viewer allowlist)', () => {
    * with no audit trail — `GET_VIEWER` is the replacement) but still sent: the
    * `isValidBlockInitPayload` guard compiled into every deployed bundle rejects
    * a viewer that is not `null`-or-an-object-with-numeric-`id`, and 5 of the 9
-   * live apps read `viewer.id` for load-bearing logic.
+   * CURRENTLY-APPROVED apps read `viewer.id` for load-bearing logic. (9 =
+   * the executed/served set; the deployed population a compatibility claim must
+   * cover is 21 rows / 20 deployments — see the population note above
+   * `BlockInitPayload` in ../types.ts.)
    */
   it('stamps signedIn: true — literally true, not a computed boolean', () => {
     const viewer = projectBlockInitViewer(fullContext);
@@ -251,6 +254,74 @@ describe('withSignedInFlag (shared BLOCK_INIT viewer stamper)', () => {
       username: null,
       signedIn: true,
     });
+  });
+
+  /**
+   * 🔴 `undefined` username → EXPLICIT `null`, never an absent key.
+   *
+   * `undefined` object values are DROPPED by structured clone, so a passed-through
+   * `undefined` reaches the block as a MISSING `username` — and the deployed
+   * `isValidBlockInitPayload` guard treats missing and `null` differently: an
+   * explicit `null` is accepted, an absent key is REJECTED (16 of 16 extracted
+   * guards), which blanks the block entirely. The parameter type forbids
+   * `undefined` and all three call sites already coalesce, so this is unreachable
+   * TODAY — the point is that this helper is the single choke point both hosts
+   * funnel through, and the whole PR rests on the deployed guard being
+   * unforgiving.
+   */
+  it('🔴 coalesces an undefined username to an explicit null (an ABSENT key fails the deployed guard)', () => {
+    const stamped = withSignedInFlag({
+      id: 1471,
+      username: undefined as unknown as string | null,
+    });
+    expect(stamped?.username).toBeNull();
+    // `toBeNull()` alone passes on `undefined` under `toEqual` semantics elsewhere,
+    // so pin the KEY's presence too — that is the property the guard reads.
+    expect(Object.keys(stamped ?? {})).toContain('username');
+    expect(stamped).toEqual({ id: 1471, username: null, signedIn: true });
+    // Belt and braces: prove it survives the postMessage serialisation that
+    // motivates the coalesce. `undefined` would vanish here; `null` does not.
+    expect(JSON.parse(JSON.stringify(stamped))).toHaveProperty('username', null);
+  });
+
+  /**
+   * 🔴 THE ANTI-SPREAD PROBE — feeds a viewer object WIDER than any host produces.
+   *
+   * Every other assertion in this describe uses a `{ id, username }` fixture, so
+   * `{ ...viewer, signedIn: true }` satisfies all of them: with a narrow input a
+   * spread and an explicit pick are indistinguishable, and the module's
+   * data-minimisation docstring would then hold only by accident of the fixture
+   * shape. This test makes the difference observable. `PageBlockHost` hands this
+   * helper a viewer object it did NOT build (a prop from the /apps/run/[slug]
+   * route), so "the caller's object only ever has two keys" is not a property this
+   * module controls.
+   *
+   * The extra fields are modelled on real over-share hazards — the moderation
+   * state and NSFW preference `projectBlockInitContext` already drops, plus a
+   * credential-shaped one — rather than a neutral `foo: 'bar'`.
+   */
+  it('🔴 PICKS id/username/signedIn — a WIDER viewer object does not spread through', () => {
+    const wideViewer = {
+      id: 3094,
+      username: 'sable-thorne',
+      // None of these may reach untrusted publisher code.
+      status: 'muted',
+      email: 'sable-thorne@example.invalid',
+      nsfwEnabled: true,
+      sessionToken: 'sess_do_not_forward_5821',
+    };
+
+    const stamped = withSignedInFlag(wideViewer);
+
+    // Exact-set, not a subset: a subset check is what let the spread hide.
+    expect(Object.keys(stamped ?? {}).sort()).toEqual(['id', 'signedIn', 'username']);
+    expect(stamped).not.toHaveProperty('status');
+    expect(stamped).not.toHaveProperty('email');
+    expect(stamped).not.toHaveProperty('nsfwEnabled');
+    expect(stamped).not.toHaveProperty('sessionToken');
+    // The contract fields still come through correctly (a projection that dropped
+    // everything would also pass the assertions above).
+    expect(stamped).toEqual({ id: 3094, username: 'sable-thorne', signedIn: true });
   });
 
   it('does not mutate the caller’s viewer object (the hosts hold it as a prop)', () => {

@@ -67,7 +67,16 @@ export type HostReq = 'required' | string; // string = N/A reason
 export interface MessageSpec {
   /** REQUEST-style (sendTypedRequest, awaits a *_RESULT/ack). Unhandled ⇒ hang. */
   request: boolean;
-  /** Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget. */
+  /**
+   * Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget.
+   *
+   * 🔴 DOCUMENTATION ONLY — NOTHING ENFORCES THIS STRING. The parity test greps
+   * each host for a REGISTERED handler (`onMessage('<TYPE>'`), then interpolates
+   * this value into the test's NAME. It never checks that the host actually
+   * sends it, so a wrong value here is invisible: it produces a green test with a
+   * misleading title. Treat it as a comment, and put behavioural claims about the
+   * reply in the per-message browser tests.
+   */
   reply: string;
   IframeHost: HostReq;
   PageBlockHost: HostReq;
@@ -165,9 +174,18 @@ export const INVENTORY = {
   },
 
   // ── REQUEST-style (await a reply ⇒ unhandled HANGS the block) ───────────────
+  // 🔴 CONDITIONAL REPLY — the one entry in this table where `reply` is not a
+  // single type. A REQUEST_TOKEN carrying a STRING `requestId` (`''` included) is
+  // answered with `TOKEN_REFRESH_RESPONSE` echoing that id; one with no usable
+  // `requestId` gets a `TOKEN_REFRESH` PUSH instead, because the SDK correlates
+  // strictly by `requestId` and an uncorrelated response can never resolve
+  // anyone's `refresh()`. `reply` is documentation only (see MessageSpec), so
+  // this comment — not that string — is what carries the contract. The
+  // behavioural pins are IframeHostInitContractV2 / PageBlockHostInitContractV2
+  // `.browser.test.tsx`.
   REQUEST_TOKEN: {
     request: true,
-    reply: 'TOKEN_REFRESH_RESPONSE',
+    reply: 'TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,

@@ -755,6 +755,22 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
+  // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
+  // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
+  // verbatim. So the `@deprecated` markers on `BlockInitPayload.viewer.id` /
+  // `.username` reduce unconditional identity disclosure on the model slot and by
+  // ZERO here — a full-page block learns who is looking at it from `context`
+  // whether or not it ever touches `viewer`.
+  //
+  // Deliberately left in place rather than quietly dropped: these are published
+  // SDK contract fields on `PageContext`, and the deployed-population enumeration
+  // that justifies every other keep/drop call in this payload was run for the
+  // `viewer` object, NOT for `context.viewerUserId`. Removing them needs a
+  // PAGE-SHAPED allowlist (the model allowlist would strip `slug` / `subPath` /
+  // `entityType` and break deep-linking) plus that enumeration. Tracked on the
+  // `PageContext.viewerUserId` @deprecated note; pinned as present-today by
+  // PageBlockHostInitContractV2.browser.test.tsx so the removal cannot be silent.
   const buildContext = useCallback(
     (): PageContext => ({
       slotId: 'app.page',

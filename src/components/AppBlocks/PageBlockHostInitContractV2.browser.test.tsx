@@ -127,11 +127,22 @@ function listenForHostPosts() {
 }
 
 /**
- * Fixture values are NON-DEFAULT and PAIRWISE DISTINCT, and deliberately share
- * NO value with the model-slot mirror of this file. Every id is a different
- * number and every name a different string, so no assertion can pass by two
+ * Fixture values are NON-DEFAULT and pairwise distinct, and deliberately share NO
+ * value with the model-slot mirror of this file — so no assertion can pass by two
  * fields collapsing onto the same value, and a cross-host copy-paste cannot pass
  * against the wrong host's data.
+ *
+ * TWO DELIBERATE EXCEPTIONS, both mirroring a real production identity rather
+ * than sloppiness — do not "fix" them by inventing distinct values, that would
+ * make the fixture LESS faithful than the route it stands in for:
+ *
+ *   - `slug` === `blockId`. `/apps/run/[slug]/[[...path]].tsx` builds its props
+ *     with `slug: page.blockId` — the AppBlock's `block_id` IS the slug (it is
+ *     what builds `<slug>.civit.ai`). They are one value in prod, so a
+ *     "transposition" of the two is not a defect that can exist.
+ *   - `blockInstanceId` embeds `appBlockId` (`page_<appBlockId>`), which is how
+ *     the route derives it. The blockId/appId/blockInstanceId assertions below
+ *     stay meaningful because those three ARE mutually distinct.
  */
 const baseProps = {
   appBlockId: 'apb_sandpiper_5527',
@@ -199,7 +210,8 @@ describe('PageBlockHost BLOCK_INIT — viewer.signedIn (v2)', () => {
     // Deprecated (unconditional identity disclosure; `GET_VIEWER` is the
     // replacement) but NOT removable: the `isValidBlockInitPayload` guard
     // compiled into every deployed bundle rejects a viewer without a numeric
-    // `id`, and 5 of the 9 live apps read it for ownership/authorship logic.
+    // `id`, and 5 of the 9 currently-approved apps read it for
+    // ownership/authorship logic.
     expect(init.viewer?.id).toBe(8472);
     expect(init.viewer?.username).toBe('nimbus-drake');
     posts.stop();
@@ -231,21 +243,82 @@ describe('PageBlockHost BLOCK_INIT — viewer.signedIn (v2)', () => {
   });
 });
 
+describe('PageBlockHost BLOCK_INIT — the UNPROJECTED context is a second identity channel', () => {
+  /**
+   * 🔴 CHARACTERISATION, NOT AN ENDORSEMENT. This pins what the page surface
+   * ACTUALLY discloses today, so the `@deprecated` prose on
+   * `BlockInitPayload.viewer.id` cannot be read as a privacy guarantee it does
+   * not deliver.
+   *
+   * `IframeHost` projects its slot context through `projectBlockInitContext`,
+   * whose allowlist drops `viewerUserId` / `viewerUsername`. This host does not
+   * project at all — `buildContext()` emits both verbatim. So deprecating
+   * `viewer.id` / `viewer.username` ends unconditional identity disclosure on the
+   * model slot and buys ZERO here.
+   *
+   * They were NOT removed: they are published SDK contract fields on
+   * `PageContext`, and the deployed-population enumeration behind this file's
+   * other keep/drop claims covered the `viewer` OBJECT, not `context.viewerUserId`
+   * — removing them on that evidence would be generalising a measurement onto a
+   * different field.
+   *
+   * If this test is in your way, you are doing the removal. Good — but do it with
+   * the enumeration in hand and a PAGE-shaped allowlist (the model allowlist would
+   * strip `slug` / `subPath` / `entityType` and break deep-linking), then update
+   * the `PageContext` and `BlockInitPayload.viewer` notes in the same change.
+   */
+  test('🔴 context still carries viewerUserId/viewerUsername — the viewer.id deprecation buys ZERO here', async () => {
+    const { posts, init } = await mountAndCaptureInit();
+    const ctx = init.context as Record<string, unknown>;
+
+    // Positive control on the read itself: a page context that had lost its own
+    // routing fields would make the identity assertions below meaningless.
+    expect(ctx.slotId).toBe('app.page');
+    expect(ctx.slug).toBe('lanternfish-studio');
+
+    expect(ctx.viewerUserId).toBe(8472);
+    expect(ctx.viewerUsername).toBe('nimbus-drake');
+    // …and it is the SAME identity the deprecated `viewer` object carries — two
+    // channels, one of them undeprecated.
+    expect(ctx.viewerUserId).toBe(init.viewer?.id);
+    expect(ctx.viewerUsername).toBe(init.viewer?.username);
+    posts.stop();
+  });
+
+  test('an anonymous page viewer discloses no identity on EITHER channel', async () => {
+    const { posts, init } = await mountAndCaptureInit({ viewer: null });
+    const ctx = init.context as Record<string, unknown>;
+
+    expect(init.viewer).toBeNull();
+    expect(ctx.viewerUserId).toBeNull();
+    expect(ctx.viewerUsername).toBeNull();
+    posts.stop();
+  });
+});
+
 describe('PageBlockHost BLOCK_INIT — blockId / appId are DEPRECATED but MANDATORY', () => {
   /**
    * 🔴 REGRESSION GUARD AGAINST A FUTURE "CLEANUP" DELETING THESE FIELDS.
    *
    * `blockId` and `appId` are build-time identity a block already knows, and the
-   * enumeration of the deployed population (21 rows in the prod `app_blocks`
-   * table, 9 approved/live) found ZERO runtime readers. That combination reads
-   * as dead weight — which is exactly the trap.
+   * runtime-reader survey over the 9 CURRENTLY-APPROVED bundles found ZERO
+   * readers. That combination reads as dead weight — which is exactly the trap.
    *
    * Every already-deployed bundle carries a compiled-in
    * `isValidBlockInitPayload` guard that REJECTS THE WHOLE BLOCK_INIT PAYLOAD
-   * when either field is missing. That guard was fetched from all 9 live bundles
-   * and EXECUTED against a payload without them: it fails, the block never
-   * initialises, and the viewer sees a blank block. Dropping these from the wire
-   * is therefore a fleet-wide outage, not a tidy-up.
+   * when either field is missing. That guard was fetched from each of those 9
+   * and EXECUTED against a payload without them: it fails on every one, the
+   * block never initialises, and the viewer sees a blank block. Dropping these
+   * from the wire is therefore a fleet-wide outage, not a tidy-up.
+   *
+   * 🔴 WHICH NUMBER MEANS WHAT. 9 = approved, i.e. what is SERVED today (both
+   * surfaces gate on `status: 'approved'`) and what was actually EXECUTED. The
+   * population a COMPATIBILITY claim has to cover is the full deployed set —
+   * 21 rows / 20 deployments in `app_blocks` — because a suspension is
+   * reversible (`relistListing` flips suspended → approved and the untouched
+   * bundle serves again). The other 11 deployments were not guard-executed; that
+   * they behave the same is an inference from their shipping the same SDK guard.
+   * Full note above `BlockInitPayload` in types.ts.
    *
    * If this test is in your way: the answer is NOT to delete it.
    */

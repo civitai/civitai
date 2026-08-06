@@ -226,7 +226,8 @@ describe('IframeHost BLOCK_INIT — viewer.signedIn (v2)', () => {
     // Deprecated (unconditional identity disclosure; `GET_VIEWER` is the
     // replacement) but NOT removable: the `isValidBlockInitPayload` guard
     // compiled into every deployed bundle rejects a viewer without a numeric
-    // `id`, and 5 of the 9 live apps read it for ownership/authorship logic.
+    // `id`, and 5 of the 9 currently-approved apps read it for
+    // ownership/authorship logic.
     expect(init.viewer?.id).toBe(5150);
     expect(init.viewer?.username).toBe('zephyr-quill');
     posts.stop();
@@ -257,17 +258,25 @@ describe('IframeHost BLOCK_INIT — blockId / appId are DEPRECATED but MANDATORY
    * 🔴 REGRESSION GUARD AGAINST A FUTURE "CLEANUP" DELETING THESE FIELDS.
    *
    * `blockId` and `appId` are build-time identity a block already knows, and the
-   * enumeration of the deployed population (21 rows in the prod `app_blocks`
-   * table, 9 approved/live) found ZERO runtime readers. That combination reads
-   * as dead weight — which is exactly the trap.
+   * runtime-reader survey over the 9 CURRENTLY-APPROVED bundles found ZERO
+   * readers. That combination reads as dead weight — which is exactly the trap.
    *
    * Every already-deployed bundle carries a compiled-in
    * `isValidBlockInitPayload` guard that REJECTS THE WHOLE BLOCK_INIT PAYLOAD
-   * when either field is missing. That guard was fetched from all 9 live bundles
-   * and EXECUTED against a payload without them: it fails, the block never
-   * initialises, and the viewer sees a blank block. Dropping these from the wire
-   * is therefore a fleet-wide outage, not a tidy-up — and no publisher can be
-   * forced to rebuild against a v2 guard on our schedule.
+   * when either field is missing. That guard was fetched from each of those 9
+   * and EXECUTED against a payload without them: it fails on every one, the
+   * block never initialises, and the viewer sees a blank block. Dropping these
+   * from the wire is therefore a fleet-wide outage, not a tidy-up — and no
+   * publisher can be forced to rebuild against a v2 guard on our schedule.
+   *
+   * 🔴 WHICH NUMBER MEANS WHAT. 9 = approved, i.e. what is SERVED today (both
+   * surfaces gate on `status: 'approved'`) and what was actually EXECUTED. The
+   * population a COMPATIBILITY claim has to cover is the full deployed set —
+   * 21 rows / 20 deployments in `app_blocks` — because a suspension is
+   * reversible (`relistListing` flips suspended → approved and the untouched
+   * bundle serves again). The other 11 deployments were not guard-executed; that
+   * they behave the same is an inference from their shipping the same SDK guard.
+   * Full note above `BlockInitPayload` in types.ts.
    *
    * If this test is in your way: the answer is NOT to delete it.
    */

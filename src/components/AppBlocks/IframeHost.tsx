@@ -132,8 +132,12 @@ function storageErrorMessage(err: unknown): string {
  *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds.
  *   5. Page-visibility change drives SUSPEND / RESUME.
  *   6. Token rotation triggers TOKEN_REFRESH (host-pushed) with the new
- *      wrapped token. REQUEST_TOKEN from the iframe is answered with
- *      TOKEN_REFRESH_RESPONSE so block-initiated refreshes also work.
+ *      wrapped token. A block-initiated REQUEST_TOKEN is answered CONDITIONALLY:
+ *      one carrying a STRING requestId (`''` included) gets a
+ *      TOKEN_REFRESH_RESPONSE echoing that id; one with no usable requestId gets
+ *      a TOKEN_REFRESH PUSH, because the SDK correlates strictly by requestId
+ *      and an uncorrelated response can never resolve a caller's refresh(). See
+ *      the handler's own comment for the full rationale.
  *   7. Unmount sends SUSPEND and removes listeners.
  *
  * Origin security: BLOCK_INIT is posted to `new URL(manifest.iframe.src).origin`

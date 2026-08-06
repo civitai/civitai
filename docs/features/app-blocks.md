@@ -135,8 +135,12 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     userSettings: Record<string, unknown>;       // per-viewer prefs from block_user_settings (e.g. SET_USER_CHECKPOINT)
   };
   viewer: {
+    /** @deprecated identity disclosed unconditionally at load — use GET_VIEWER */
     id: number;
+    /** @deprecated same — use GET_VIEWER */
     username: string | null;
+    signedIn?: true;                   // v2. Literally `true`; ABSENT when anon,
+                                       // because an anon viewer has no object at all.
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
     // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
@@ -148,6 +152,32 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
 }
 ```
+
+#### `viewer.signedIn`, and what "deprecated" means here (v2)
+
+`viewer.signedIn` is the forward-looking MINIMAL viewer signal and the only
+viewer field a new block should read: it answers "is someone signed in?", which
+is what almost every block actually branches on. It is literally `true` when
+present, and **absent for an anonymous viewer** — because an anonymous viewer has
+no `viewer` object at all (`viewer: null`). Do not expect `signedIn: false`; it
+never appears.
+
+`viewer.id` / `viewer.username` are **deprecated but still sent, and will keep
+being sent**. Deprecated because identity reaches the block unconditionally at
+load, before the viewer has interacted with it, with nothing recording that it
+happened; the replacement is the scope-gated, per-call-audited `GET_VIEWER`
+message (`blocks.getMyViewer`), which requires the block to ask. Still sent
+because the `isValidBlockInitPayload` guard compiled into already-deployed
+bundles **rejects the whole payload** without a numeric `viewer.id` — removing it
+would blank every deployed block at once. Same story for `blockId` / `appId`.
+
+⚠️ **The deprecation does NOT reduce what a full-page app sees today.**
+`PageBlockHost` does not project its context: `BLOCK_INIT.context` on the
+`app.page` surface still carries `viewerUserId` and `viewerUsername`, an
+undeprecated second channel carrying the same identity. (The model-slot host
+*does* project and drops both.) Those page-context fields are deprecated too —
+treat `GET_VIEWER` as the supported way to learn who the viewer is on either
+surface — but nothing has been removed from the wire.
 
 ### Theme changes
 
@@ -175,9 +205,31 @@ Two flows, both delivering the same wrapped-token shape:
 1. **Host-pushed**: when the host refreshes the token (~13 min cadence) the
    iframe receives `TOKEN_REFRESH` with the new `token` object. No user
    action required.
-2. **Iframe-initiated**: the iframe sends `REQUEST_TOKEN` (optionally with a
-   `requestId`) and the host replies with `TOKEN_REFRESH_RESPONSE` carrying
-   the current token. Useful right before an expensive orchestrator call.
+2. **Iframe-initiated**: the iframe sends `REQUEST_TOKEN` and the host answers
+   with the current token. Useful right before an expensive orchestrator call.
+
+   🔴 **Send a `requestId`, or you do not get a reply — you get a push.** The SDK
+   correlates a `TOKEN_REFRESH_RESPONSE` **strictly** by `requestId`: it resolves
+   the pending promise for that id and nothing else, so an uncorrelated response
+   has never resolved anyone's `refresh()` (where it appeared to work at all, it
+   was the SDK's incidental side effect of snapshotting whatever token rides on
+   any `TOKEN_REFRESH_RESPONSE`, while the caller's promise sat there to its own
+   timeout). Both hosts therefore branch on what arrived:
+
+   | `REQUEST_TOKEN` payload | host answers with |
+   |---|---|
+   | `{ requestId: '<string>' }` — any string, **`''` included** | `TOKEN_REFRESH_RESPONSE` echoing that exact `requestId` |
+   | `{}`, no `requestId`, or a non-string one | `TOKEN_REFRESH` **push** (no `requestId` — there is nothing to correlate to) |
+
+   An empty-string `requestId` is echoed verbatim. It used to be dropped by a
+   truthiness test, which silently turned a legitimate request into an
+   uncorrelated response that could never resolve.
+
+   The no-`requestId` case is a **push**, not a reply, because that is what the
+   message semantically is: a host-initiated rotation. It arrives on the same
+   handler as flow 1 above — which was the only path that ever actually delivered
+   a token in that case — instead of putting an unanswerable
+   `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
 
 ### Block↔host message inventory
 
@@ -196,7 +248,8 @@ block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
-- **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE`),
+- **Auth / consent**: `REQUEST_TOKEN` (→ `TOKEN_REFRESH_RESPONSE` when it carried
+  a string `requestId`, else a `TOKEN_REFRESH` push — see "Token refresh"),
   `REQUEST_SIGN_IN`, `REQUEST_CONSENT`.
 - **Viewer**: `GET_VIEWER` (→ `VIEWER_RESULT`) — the viewer self-read ("who am
   I") backing the SDK `useViewer()` hook, host-mediated via the

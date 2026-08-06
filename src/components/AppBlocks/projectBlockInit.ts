@@ -141,8 +141,29 @@ export function projectBlockInitMaturity(input: {
  * requires; see BlockInitPayload.viewer.
  *
  * `id` / `username` are DEPRECATED but still stamped through unchanged — the
- * deployed guard requires the numeric `id`, and 5 of the 9 live apps read it for
- * load-bearing logic. See the field docs on BlockInitPayload.viewer.
+ * deployed guard requires the numeric `id`, and 5 of the 9 currently-approved
+ * apps read it for load-bearing logic. See the field docs on
+ * BlockInitPayload.viewer.
+ *
+ * 🔴 `username` IS COALESCED TO `null`, NOT PASSED THROUGH RAW. An `undefined`
+ * username serialises to an ABSENT key over postMessage (structured clone drops
+ * `undefined` object values), and the deployed `isValidBlockInitPayload` guard
+ * distinguishes the two: an explicit `null` is accepted, an ABSENT `username` is
+ * rejected. Executed against the guards extracted from the deployed bundles, an
+ * absent `username` was rejected by 16 of 16 and an explicit `null` accepted by
+ * all 16. A rejected payload means the block never initialises at all. No
+ * current caller can pass `undefined` (the parameter type forbids it and all
+ * three call sites already coalesce), but this helper is the single choke point
+ * BOTH hosts funnel through, so the coalesce lives here rather than depending on
+ * every future caller remembering it.
+ *
+ * 🔴 THE FIELDS ARE PICKED EXPLICITLY, NEVER SPREAD. `{ ...viewer, signedIn }`
+ * would pass every shape assertion written against a narrow fixture while
+ * forwarding whatever else the caller's object happens to carry — and the
+ * PageBlockHost caller's `viewer` is a route-supplied object, not one this module
+ * built. The projection is the data-minimisation property this module exists for,
+ * and it is pinned by a test that feeds a DELIBERATELY WIDER viewer object than
+ * any host produces — a narrow fixture cannot tell a pick from a spread.
  */
 export function withSignedInFlag(
   viewer: { id: number; username: string | null } | null | undefined
@@ -150,7 +171,7 @@ export function withSignedInFlag(
   if (!viewer) return null;
   return {
     id: viewer.id,
-    username: viewer.username,
+    username: viewer.username ?? null,
     signedIn: true,
   };
 }

@@ -7,7 +7,10 @@
 // enumeration on 2026-08-05 established two facts that together make an
 // UNCONDITIONAL append the wrong default:
 //
-//   1. 🔴 NO DEPLOYED BLOCK CAN DECODE IT. Across all 20 live bundles,
+//   1. 🔴 NO DEPLOYED BLOCK CAN DECODE IT. Across all 20 DEPLOYED bundles — the
+//      full `app_blocks` deployed set (21 rows), not just the 9 currently
+//      `approved`/serving, which is the right population for a "nobody can
+//      decode this" claim since a suspension is reversible —
 //      `civitai-block=v1` x0 and `BLOCK_HELLO` x0. The SDK half is merged but
 //      NOT published (npm latest is still `@civitai/app-sdk@0.30.0`). So the
 //      fast path currently buys exactly nothing, and "zero benefit" is the

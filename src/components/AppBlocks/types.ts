@@ -123,7 +123,41 @@ export interface PageContext extends SlotContext {
   /** Sub-path under the page route (`/apps/run/<slug>/<...path>`), no leading
    *  slash. Empty string for the page root. Forwarded so the block can deep-link. */
   subPath: string;
+  /**
+   * @deprecated Same unconditional identity disclosure as
+   * `BlockInitPayload.viewer.id`, through a SECOND, currently-UNPROJECTED
+   * channel. `GET_VIEWER` / `blocks.getMyViewer` is the replacement.
+   *
+   * 🔴 READ THIS BEFORE BELIEVING THE `viewer.id` DEPRECATION BUYS ANYTHING ON
+   * THIS SURFACE. `IframeHost` runs its slot context through
+   * `projectBlockInitContext`, whose allowlist DROPS `viewerUserId` /
+   * `viewerUsername` — so on the model slot the `viewer` object is the only
+   * identity channel and deprecating it is the whole story. `PageBlockHost` does
+   * NOT project: `buildContext()` emits this field verbatim into
+   * `BLOCK_INIT.context`, so a full-page block still learns exactly who is
+   * looking at it whether or not it reads `viewer.id`. Deprecating `viewer.id` /
+   * `viewer.username` therefore reduces disclosure on the model slot and by
+   * ZERO on the page.
+   *
+   * Deliberately still sent, and NOT removed in the PR that added this note.
+   * These are published SDK contract fields on `PageContext` — a block author was
+   * told to read them — and the removal is only safe behind the same kind of
+   * deployed-population enumeration that backed the `blockId` / `appId` /
+   * `viewer.id` findings. That enumeration covered the `viewer` object; it was
+   * NOT run for `context.viewerUserId`. Removing these on the strength of the
+   * `viewer.id` result would be generalising one measurement onto a different
+   * field. The honest state is: known over-share, un-enumerated, un-removed.
+   *
+   * Removing it is a page-context projection (a page-shaped allowlist —
+   * `projectBlockInitContext`'s model allowlist would strip `slug` / `subPath` /
+   * `entityType` and break deep-linking, so it is NOT a drop-in), gated on that
+   * enumeration. `PageBlockHostInitContractV2.browser.test.tsx` pins the field as
+   * PRESENT today, so that removal has to be a deliberate act with the
+   * enumeration in hand rather than a silent one.
+   */
   viewerUserId: number | null;
+  /** @deprecated Same second-channel disclosure as `viewerUserId` above — read
+   *  that note before assuming the `viewer.username` deprecation covers it. */
   viewerUsername?: string | null;
   /** Host-page color scheme — lets the iframe match without a flicker. */
   theme?: 'light' | 'dark';
@@ -156,30 +190,63 @@ export function slotRemountKey(args: {
  * SDK BLOCK_INIT contract — the payload the host posts to the iframe once
  * iframe.load AND token are both ready. Matches @civitai/app-sdk/blocks v1.
  * See docs/features/app-blocks.md "BLOCK_INIT contract".
+ *
+ * ── THE DEPLOYED POPULATION, AND WHICH NUMBER MEANS WHAT ─────────────────────
+ * Several `@deprecated` notes below rest on an enumeration of deployed block
+ * bundles. Three different counts are in play and they are NOT interchangeable;
+ * quote the one that matches the claim you are making:
+ *
+ *   21 rows / 20 deployments — the `app_blocks` table. This is the population a
+ *     COMPATIBILITY claim must cover ("removing field X breaks nobody"), because
+ *     a suspended block is not gone: `relistListing` in
+ *     src/server/services/blocks/offsite-moderation.service.ts flips
+ *     `app_blocks.status` suspended → approved in the same tx as the relist, and
+ *     the bundle starts serving again unchanged. A field removed while a block
+ *     is suspended breaks it the moment it is restored.
+ *
+ *   9 approved — the CURRENTLY-SERVED set, and all a "what happens today" claim
+ *     covers. Both serving surfaces gate on `status: 'approved'`
+ *     (`BlockRegistry.resolvePageBlockBySlug` for the page, the
+ *     `known-app-blocks` query for the model slot), so a suspended block
+ *     receives no BLOCK_INIT at all right now.
+ *
+ *   what was EXECUTED — the `isValidBlockInitPayload` guard was extracted and
+ *     RUN against synthetic payloads for the 9 approved bundles; the runtime
+ *     field-reader survey ("5 of 9 read `viewer.id`") is over those same 9. The
+ *     remaining deployments were NOT guard-executed. So the removal-is-an-outage
+ *     conclusion is measured on the 9 and INFERRED for the other 11 — which is
+ *     the safe direction (they ship the same SDK guard), but it is an inference
+ *     and is written as one.
+ *
+ * Where a note below says "the 9 approved" it means the executed set; where it
+ * says "the deployed population" it means all 20 deployments / 21 rows.
  */
 export interface BlockInitPayload {
   blockInstanceId: string;
   /**
    * @deprecated BUILD-TIME identity. A block already knows its own `blockId` —
    * it is baked into the bundle the publisher shipped — so the host telling it
-   * again carries no information. Enumerated against the deployed population
-   * (21 rows in the prod `app_blocks` table, 9 `approved`/live): ZERO deployed
-   * readers. Nothing in any live bundle reads this field after init.
+   * again carries no information. The reader survey over the 9 approved bundles
+   * found ZERO runtime readers: nothing reads this field after init.
    *
    * 🔴 DEPRECATED, NOT REMOVABLE — dropping it from the wire is a FLEET-WIDE
    * OUTAGE. Every already-deployed bundle carries a compiled-in
    * `isValidBlockInitPayload` guard that REJECTS the whole BLOCK_INIT payload
-   * when `blockId` is absent. We fetched and EXECUTED that guard from all 9 live
-   * bundles: a payload without this field fails validation, the block never
-   * initialises, and the viewer sees a blank block. It must keep being sent
-   * until every deployed bundle has been rebuilt against a v2 guard — which the
-   * platform cannot force, because publishers own their own release cadence.
+   * when `blockId` is absent. We fetched that guard from each of the 9 approved
+   * bundles and EXECUTED it: a payload without this field fails validation on
+   * every one, the block never initialises, and the viewer sees a blank block.
+   * The other 11 deployments were not executed against — same SDK guard, so the
+   * conclusion is inferred there, not measured (see the population note above).
+   * It must keep being sent until every DEPLOYED bundle — all 20, not just the 9
+   * serving today, since a suspension is reversible — has been rebuilt against a
+   * v2 guard, which the platform cannot force because publishers own their own
+   * release cadence.
    */
   blockId: string;
   /**
    * @deprecated BUILD-TIME identity, exactly like `blockId` above: the OAuth
-   * client id is baked into the bundle, and the enumeration of the deployed
-   * population found ZERO readers of this field.
+   * client id is baked into the bundle, and the reader survey over the 9
+   * approved bundles found ZERO readers of this field.
    *
    * 🔴 DEPRECATED, NOT REMOVABLE — same fleet-wide-outage mechanism: the
    * `isValidBlockInitPayload` guard compiled into every already-deployed bundle
@@ -224,9 +291,24 @@ export interface BlockInitPayload {
      * and leaves an audit row per call.
      *
      * Still sent because the deployed guard requires the object shape (see the
-     * `viewer` doc above) AND because 5 of the 9 live apps read `viewer.id` at
-     * runtime for load-bearing logic — ownership filters and optimistic row
-     * authorship. Removing it silently breaks those five.
+     * `viewer` doc above) AND because 5 of the 9 currently-approved apps read
+     * `viewer.id` at runtime for load-bearing logic — ownership filters and
+     * optimistic row authorship. Removing it silently breaks those five.
+     *
+     * 🔴 SCOPE OF WHAT THIS DEPRECATION ACTUALLY BUYS — it is NOT the whole
+     * identity story, and this note exists so nobody reads it as one:
+     *
+     *   - MODEL SLOT (`IframeHost`): this object is the ONLY identity channel.
+     *     `projectBlockInitContext`'s allowlist already drops `viewerUserId` /
+     *     `viewerUsername` from `BLOCK_INIT.context`, so retiring these two
+     *     fields does end unconditional identity disclosure on that surface.
+     *   - FULL PAGE (`PageBlockHost`): it buys NOTHING today. That host does not
+     *     project its context — `buildContext()` emits `viewerUserId` and
+     *     `viewerUsername` into `BLOCK_INIT.context` verbatim, an undeprecated
+     *     second channel carrying the same identity. See the `@deprecated` notes
+     *     on `PageContext.viewerUserId` for why they were not removed here
+     *     (published SDK contract fields; the deployed-population enumeration
+     *     that backs this file's other claims was never run for them).
      */
     id: number;
     /**
