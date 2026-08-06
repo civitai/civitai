@@ -16,6 +16,11 @@ migrating a page is not just porting a React component; it means recreating the 
 
 Each page is a checkbox. Sub-bullets list the procedures, services, schemas, and infra to recreate.
 
+**How the page is built is standardised** — Svelte 5 idiom, shadcn primitives, styling tokens, component
+placement: [`apps/moderator/CLAUDE.md`](../../apps/moderator/CLAUDE.md). Before ticking a page, run the
+[`moderator-review`](../../.claude/skills/moderator-review/SKILL.md) skill over it. Both apply equally to
+Retool migrations, so the two migration paths converge on the same result.
+
 ---
 
 ## Priority tiers

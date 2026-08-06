@@ -140,8 +140,10 @@ Never interpolate them into SQL — use Kysely's builder, or parameterised `sql`
 
 ## 4. Build the page
 
-Follow the app's existing conventions (read a neighbouring route first — `routes/reports` and
-`routes/blocklists` are good models).
+**Read [`apps/moderator/CLAUDE.md`](../../../apps/moderator/CLAUDE.md) first** — Svelte 5 idiom, shadcn
+usage, styling tokens and component placement are defined there and apply to every page in the app,
+whether it came from Retool or the main app. What follows is only the Retool-specific part. A
+neighbouring route (`routes/reports`, `routes/blocklists`) is a good model.
 
 - **Route**: `apps/moderator/src/routes/retool/<slug>/+page.server.ts` + `+page.svelte`
 - **Data**: `load` calls a service in `$lib/server/<domain>.service.ts`; queries go through
@@ -150,9 +152,7 @@ Follow the app's existing conventions (read a neighbouring route first — `rout
 - **Mutations**: SvelteKit form actions → the same service layer, `use:enhance` on the client
 - **Filters**: the URL query string is the source of truth — see
   `docs/moderator-app/url-filtering-pattern.md`
-- **UI**: shadcn from `@civitai/ui/components/ui/*` + Tailwind. No bespoke components where a
-  shadcn one exists. Image grids reuse `ImageQueueGrid` (300px cards).
-- **Comments**: only breakage guards. The moderator app's rule is stricter than the repo's.
+- **UI**: image grids reuse `ImageQueueGrid` (300px cards); everything else per the standard above.
 
 ## 5. Register it in the nav — and grant access
 
@@ -178,6 +178,11 @@ Two things that will otherwise bite you:
   page inside it is.
 
 ## 6. Verify
+
+**Run the [`moderator-review`](../moderator-review/SKILL.md) skill before calling a slice done.** It
+fans out three review agents — correctness, Svelte 5 + UI conventions, abstraction — over the segment.
+Every slice reviewed so far has come back with findings, several of them the kind that make a moderator
+believe something false about a user. Then:
 
 ```bash
 pnpm --filter ./apps/moderator run typecheck
