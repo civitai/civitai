@@ -484,11 +484,7 @@ export function ImageDetail2() {
                           >
                             <ImageDetailReactions image={image} />
                           </ReactionSettingsProvider>
-                          <StickerPlacementBar
-                            imageId={image.id}
-                            imageUrl={image.url}
-                            className="ml-2"
-                          />
+                          <StickerPlacementBar imageId={image.id} className="ml-2" />
                         </div>
                         <CarouselIndicators {...carouselNavigation} />
                         {/* {viewportHeight >= 1050 && (

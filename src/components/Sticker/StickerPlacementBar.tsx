@@ -1,14 +1,14 @@
 import { Button, Group, Text, Tooltip } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
-import { StickerPlacementEditor } from '~/components/Sticker/StickerPlacementEditor';
+import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import {
   useImagePlacementSpace,
   useStickerPlacementCounts,
 } from '~/components/Sticker/placement.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { useStickerRevealStore } from '~/store/sticker-reveal.store';
 
 /**
@@ -21,21 +21,19 @@ import { useStickerRevealStore } from '~/store/sticker-reveal.store';
  */
 export function StickerPlacementBar({
   imageId,
-  imageUrl,
   className,
 }: {
   imageId: number;
-  imageUrl: string;
   className?: string;
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const [editing, setEditing] = useState(false);
 
   const counts = useStickerPlacementCounts([imageId]);
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
 
+  const openTray = useStickerPlacementDraftStore((state) => state.open);
   const revealed = useStickerRevealStore((state) => state.revealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
@@ -80,7 +78,7 @@ export function StickerPlacementBar({
               size="compact-sm"
               variant="light"
               color="yellow"
-              onClick={() => setEditing(true)}
+              onClick={() => openTray(imageId)}
               leftSection={<IconSticker size={16} />}
             >
               <Text size="xs" fw={600}>
@@ -91,15 +89,7 @@ export function StickerPlacementBar({
         )}
       </Group>
 
-      {editing && (
-        <StickerPlacementEditor
-          imageId={imageId}
-          imageUrl={imageUrl}
-          price={space?.price ?? 0}
-          requiresReview={space?.mode === 'review'}
-          onClose={() => setEditing(false)}
-        />
-      )}
+      <StickerPlacementTray />
     </>
   );
 }
