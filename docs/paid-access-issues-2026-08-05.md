@@ -113,7 +113,8 @@ Two things from that call worth carrying into any future work:
       share components with bulk. Highest-value checks: the gate picker's loading/disabled states, the
       partial-selection notice, and the fee dropdown now sourcing real per-tier denominators.
 
-- [ ] **Steps 2 and 3 of [retire-earlyaccess-availability.md](retire-earlyaccess-availability.md)** —
+- [x] **Step 2 of [retire-earlyaccess-availability.md](retire-earlyaccess-availability.md) run 2026-08-05** — 0 rows remain, so clearing a gate no longer touches `availability`.
+- [ ] **Step 3 of [retire-earlyaccess-availability.md](retire-earlyaccess-availability.md)** —
       clear the remaining 152 rows, then drop the five readers.
 
 ---

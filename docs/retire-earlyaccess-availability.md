@@ -10,14 +10,14 @@ Not a Prisma migration. Run the SQL by hand and delete this file when the last s
 
 Verified 2026-08-05:
 
-| | count |
-|---|---|
-| Model versions with `availability = 'EarlyAccess'` | **152** |
-| …permanent gate (`endsAt IS NULL`) — never expires | 16 |
-| …timed, still active — clears itself on expiry | 130 |
-| …timed, already expired — should have cleared, didn't | 6 |
-| …not `Published` — the job skips these | 9 |
-| Rows with no gate at all | **0** ✅ *(285 cleared 2026-08-05)* |
+|                                                       | count                               |
+| ----------------------------------------------------- | ----------------------------------- |
+| Model versions with `availability = 'EarlyAccess'`    | **0** — step 2 run 2026-08-05 ✅    |
+| …permanent gate (`endsAt IS NULL`) — never expires    | 16                                  |
+| …timed, still active — clears itself on expiry        | 130                                 |
+| …timed, already expired — should have cleared, didn't | 6                                   |
+| …not `Published` — the job skips these                | 9                                   |
+| Rows with no gate at all                              | **0** ✅ _(285 cleared 2026-08-05)_ |
 
 **No writer remains.** `early_access_trigger.sql` would set it, but that trigger is **not installed** — only
 `trigger_comic_chapter_early_access_ends_at` exists, and comics are a separate entity. `earlyAccessConfig`,
@@ -30,7 +30,7 @@ today only because all 13 gates are permanent and never reach that query.
 
 ---
 
-## Step 2 — clear the remaining 152
+## Step 2 — clear the remaining 152 — DONE 2026-08-05 (verified 0 rows)
 
 The 130 active timed gates will clear themselves as they expire, but there's no reason to wait, and the 16
 permanent ones never will.
@@ -69,6 +69,8 @@ it. `POST /api/v1/model-versions/bust-cache` with the affected ids, or accept up
 ## Step 3 — remove the readers
 
 Only after step 2 verifies `0`. Each is safe on its own once no row carries the value; do them in any order.
+
+### 3a. — the writePaidAccessForModelVersion reconciliation is already removed (safe now that the count is 0)
 
 ### 3a. `process-ending-early-access.ts` — drop the reconciliation pass
 
