@@ -142,4 +142,44 @@ describe('/api/download/vault/[vaultItemId] — IP blocklist', () => {
     expect(res.status).not.toHaveBeenCalledWith(403);
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
   });
+
+  /**
+   * 🔴 THE DISCRIMINATING INPUT — `cf-connecting-ip` with NO `cf-ray`.
+   *
+   * Every other fixture in the four download suites pairs those two headers,
+   * and that pairing is the one input on which the trusted predicate and the
+   * looser `resolveClientIp` AGREE. So none of them can tell which derivation
+   * the route took: swapping this endpoint to `resolveClientIp` passed all of
+   * them. Unpaired, they disagree — `getTrustedClientIp` rejects the
+   * unattested header and falls through to the transport peer, while a
+   * derivation that trusts `cf-connecting-ip` on its own returns whatever the
+   * caller wrote.
+   *
+   * Which means an abuser on the blocklist escapes it simply by sending a
+   * `cf-connecting-ip` of their choosing on a request that does not transit
+   * the edge. That is the concrete cost, and this is the test that sees it.
+   */
+  it('SECURITY: cf-connecting-ip WITHOUT cf-ray is not trusted — a listed caller cannot spoof past the block', async () => {
+    // The peer is the listed address; the caller declares an unlisted one.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': SUPPLIED }, BLOCKED);
+    await promise;
+    expect(
+      res.status,
+      'the unattested cf-connecting-ip was trusted, so the transport peer — which IS on the ' +
+        'blocklist — was never compared. This is the predicate swap.'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetVaultWithStorage).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an unattested cf-connecting-ip cannot get an innocent caller blocked either', async () => {
+    // The mirror direction: the declared address is listed, the real peer is
+    // not. A derivation that trusted the header would 403 a caller who is not
+    // on the list.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': BLOCKED }, SUPPLIED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+  });
 });

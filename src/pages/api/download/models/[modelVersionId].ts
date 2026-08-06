@@ -10,7 +10,7 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
+import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -70,10 +70,9 @@ export default PublicEndpoint(
       // Check if user is blacklisted
       const session = await getServerAuthSession({ req, res });
       if (!!session?.user) {
-        const userBlacklist = (
-          ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
-            ?.value as string) ?? ''
-        ).split(',');
+        const userBlacklist = parseUserBlocklist(
+          (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
+        );
         if (userBlacklist.includes(session.user.id.toString()))
           return errorResponse(403, 'Forbidden');
       }

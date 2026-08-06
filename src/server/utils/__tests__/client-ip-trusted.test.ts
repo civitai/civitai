@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { getTrustedClientIp, isIpAddress, parseIpBlocklist } from '../client-ip';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  getTrustedClientIp,
+  isIpAddress,
+  parseIpBlocklist,
+  parseUserBlocklist,
+} from '../client-ip';
 
 /**
  * Contract for the shared client-IP derivation used by the download
@@ -53,8 +58,14 @@ describe('isIpAddress', () => {
     // `isIP({ toString: () => '1.2.3.4' })` is 4. The `typeof value === 'string'`
     // half of this predicate is therefore load-bearing and not a formality:
     // without it these values pass, the `value is string` type predicate becomes
-    // a lie, and a non-string reaches a blocklist comparison and a query. The
-    // array case is the reachable one — a repeated header arrives as an array.
+    // a lie, and a non-string reaches a blocklist comparison and a query.
+    //
+    // None of these is reachable through a Node HTTP server today: node joins
+    // duplicate headers into one comma-separated string (`set-cookie` is the
+    // only header it turns into an array), so not even the array case arrives
+    // that way. They are pinned because the parameter type is `unknown` and the
+    // request type admits `string[]` — see the note on `headerValue` in
+    // `client-ip.ts`, which is the same reasoning applied to the same fact.
     expect(isIpAddress(['1.2.3.4'])).toBe(false);
     expect(isIpAddress(['203.0.113.7', '198.51.100.9'])).toBe(false);
     // eslint-disable-next-line no-new-wrappers
@@ -279,5 +290,76 @@ describe('parseIpBlocklist', () => {
     expect(parseIpBlocklist(null)).toEqual([]);
     expect(parseIpBlocklist(42)).toEqual([]);
     expect(parseIpBlocklist({ value: '1.2.3.4' })).toEqual([]);
+  });
+
+  it('REPORTS a malformed row rather than silently disabling the control', () => {
+    // `KeyValue.value` is a `Json` column, so a non-string is representable.
+    // Returning `[]` for one converts a loud failure (the previous inline form
+    // threw a TypeError → 500) into "no blocklist" — the fail-OPEN direction,
+    // on a security control, with nothing anywhere saying so. The report is the
+    // only signal that the control is not running.
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(parseIpBlocklist(42)).toEqual([]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The message has to identify WHICH row, or an operator cannot act on it.
+      expect(String(spy.mock.calls[0][0])).toContain('ip-blacklist');
+
+      spy.mockClear();
+      expect(parseUserBlocklist({ nope: true })).toEqual([]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0][0])).toContain('user-blacklist');
+
+      // An ABSENT row is the normal state — no row configured — and must stay
+      // quiet, or the signal is buried in noise on every single request.
+      spy.mockClear();
+      expect(parseIpBlocklist(undefined)).toEqual([]);
+      expect(parseIpBlocklist(null)).toEqual([]);
+      expect(parseUserBlocklist(undefined)).toEqual([]);
+      expect(spy).not.toHaveBeenCalled();
+
+      // A well-formed row is likewise quiet.
+      expect(parseIpBlocklist('1.2.3.4')).toEqual(['1.2.3.4']);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('parseUserBlocklist', () => {
+  it('REGRESSION: trims entries, so every id after the first still matches', () => {
+    // The download routes open-coded `(value ?? '').split(',')` for this row.
+    // A list written the obvious way — `123, 456` — produced a second entry of
+    // `' 456'`, which can never equal `session.user.id.toString()`. The
+    // user-blacklist silently covered exactly one user.
+    const entries = parseUserBlocklist('123, 456 ,\t789\n');
+    expect(entries).toEqual(['123', '456', '789']);
+    expect(entries).toContain('456');
+  });
+
+  it('the OLD inline form is what this replaced — pin the difference', () => {
+    // Kept as an executable statement of the defect: identical input, and the
+    // shared helper matches where the inline split did not.
+    const raw = '123, 456';
+    const inline = raw.split(',');
+    expect(inline.includes('456')).toBe(false); // the bug
+    expect(parseUserBlocklist(raw).includes('456')).toBe(true); // the fix
+  });
+
+  it('drops blanks, so an empty row never matches a user id', () => {
+    expect(parseUserBlocklist('')).toEqual([]);
+    expect(parseUserBlocklist('  ')).toEqual([]);
+    expect(parseUserBlocklist('123,,456')).toEqual(['123', '456']);
+    // The old form yielded `['']` for an empty row. `''` is not a real id, but
+    // the entry existing at all is what made the list non-empty.
+    expect(''.split(',')).toEqual(['']);
+    expect(parseUserBlocklist('')).not.toContain('');
+  });
+
+  it('reads a missing or non-string row as an empty list, never as a match', () => {
+    expect(parseUserBlocklist(undefined)).toEqual([]);
+    expect(parseUserBlocklist(null)).toEqual([]);
+    expect(parseUserBlocklist(42)).toEqual([]);
   });
 });

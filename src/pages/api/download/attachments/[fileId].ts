@@ -10,7 +10,7 @@ import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
+import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -52,10 +52,9 @@ export default PublicEndpoint(
 
     const session = await getServerAuthSession({ req, res });
     if (!!session?.user) {
-      const userBlacklist = (
-        ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
-          ?.value as string) ?? ''
-      ).split(',');
+      const userBlacklist = parseUserBlocklist(
+        (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
+      );
       if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
     }
 

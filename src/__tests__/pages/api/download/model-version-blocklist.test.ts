@@ -232,3 +232,53 @@ describe('/api/download/models/[modelVersionId] — anonymous download quota buc
     expect(chargedKey()).toBe('4242');
   });
 });
+
+/**
+ * The user blocklist on this route — the second consumer of the shared
+ * key-value list splitter, and the second site that open-coded
+ * `(value ?? '').split(',')` before it was converted.
+ *
+ * It gets its own coverage rather than leaning on the identical suite for
+ * `/attachments/[fileId]`: the two are separate call sites, and a mutation that
+ * reverted only this one survived a battery in which the attachments revert was
+ * killed. A shared helper is only as converted as its least-tested call site.
+ */
+describe('/api/download/models/[modelVersionId] — user blocklist', () => {
+  const LISTED_USER = 4242;
+
+  /** Key-aware KeyValue mock — the two rows must answer differently here. */
+  function rows(values: Record<string, unknown>) {
+    mockFindUnique.mockImplementation(async (args: { where: { key: string } }) =>
+      args.where.key in values ? { value: values[args.where.key] } : null
+    );
+  }
+
+  it('CONTROL: an unlisted user is not blocked', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 777 } });
+    rows({ 'user-blacklist': `123, ${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+  });
+
+  it('blocks a listed user when the list is written without spaces', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: LISTED_USER } });
+    rows({ 'user-blacklist': `123,${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it('REGRESSION: blocks a listed user when the list is written WITH spaces', async () => {
+    // `'123, 4242'.split(',')` → `['123', ' 4242']`; the space meant the entry
+    // could never equal `session.user.id.toString()`.
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: LISTED_USER } });
+    rows({ 'user-blacklist': `123, ${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(
+      res.status,
+      'the second and subsequent entries of a spaced user-blacklist never matched'
+    ).toHaveBeenCalledWith(403);
+  });
+});

@@ -11,7 +11,7 @@ import { isIP } from 'node:net';
  * │                                                                        │
  * │ WHICHEVER PR LANDS SECOND also has to fix one paragraph: #3658's copy   │
  * │ of this doc says the stricter variant "lives at                         │
- * │ src/pages/api/v1/block-tokens/index.ts … deliberately not shared here". │
+ * │ src/pages/api/v1/block-tokens/ … deliberately not shared here".         │
  * │ After the union merge it IS shared — it is `getTrustedClientIp`, a few  │
  * │ dozen lines below. Delete that paragraph rather than merging it in.     │
  * └─────────────────────────────────────────────────────────────────────────┘
@@ -188,16 +188,49 @@ function normalizeIp(ip: string): string {
 }
 
 /**
- * Split a comma-separated operator-maintained IP list (the `ip-blacklist` /
- * `user-blacklist` key-value rows) into entries.
+ * Split a comma-separated operator-maintained `KeyValue` list into entries.
  *
  * Entries are TRIMMED, and blanks dropped. This is not tidiness: the comparison
  * these entries feed is exact string equality, so an entry stored as
  * `1.2.3.4, 5.6.7.8` yields a second entry of `" 5.6.7.8"` that can never equal
- * any address this module produces. The control silently covers one fewer
- * address than the operator believes it does, with nothing anywhere reporting a
- * problem. Writing a list with spaces after the commas is the obvious way to
- * write one.
+ * any value it is compared against. The control silently covers one fewer entry
+ * than the operator believes it does, with nothing anywhere reporting a problem.
+ * Writing a list with spaces after the commas is the obvious way to write one.
+ *
+ * `KeyValue.value` is a `Json` column, so a non-string is representable. It is
+ * reported rather than thrown on — see the note on the return of `[]` below —
+ * but it must not pass silently: an empty list is an INERT control, and the
+ * direction that failure falls is "allow".
+ *
+ * @param key the `KeyValue` key, used only to make the report identify the row.
+ */
+function parseKeyValueList(value: unknown, key: string): string[] {
+  if (typeof value !== 'string') {
+    // 🔴 FAIL-OPEN, DELIBERATELY LOUD. Returning `[]` here means "no entries",
+    // and every caller of this helper is an enforcement control, so `[]` is
+    // indistinguishable at the call site from a genuinely empty list — the
+    // control is simply switched off. The previous inline form threw a
+    // `TypeError` and produced a 500, which was at least visible. Downgrading a
+    // loud denial to a silent allowance without a trace is not a trade worth
+    // making, so the trace is mandatory: if this row is malformed the control
+    // guarding these downloads is not running, and this line is the only thing
+    // that will ever say so.
+    if (value !== null && value !== undefined) {
+      console.error(
+        `[client-ip] KeyValue '${key}' is not a string (got ${typeof value}); ` +
+          `treating the list as EMPTY, which disables this control. Fix the row.`
+      );
+    }
+    return [];
+  }
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Split the operator-maintained `ip-blacklist` row into address entries.
  *
  * 🔴 OPERATOR HAZARD, stated here because this is the function that reads the
  * list: the addresses this list is compared against come from
@@ -210,11 +243,24 @@ function normalizeIp(ip: string): string {
  * this is the first thing to check.
  */
 export function parseIpBlocklist(value: unknown): string[] {
-  if (typeof value !== 'string') return [];
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  return parseKeyValueList(value, 'ip-blacklist');
+}
+
+/**
+ * Split the operator-maintained `user-blacklist` row into user-id entries.
+ *
+ * Same splitter, different list: these are user ids compared against
+ * `session.user.id.toString()`, not addresses, so they get their own name
+ * rather than being pushed through `parseIpBlocklist`.
+ *
+ * The trimming matters here for the same reason and had the same defect: the
+ * download routes open-coded `(value ?? '').split(',')`, so a list written
+ * `123, 456` produced `' 456'` and every entry after the first silently never
+ * matched. An operator writing a comma-separated list with spaces — the obvious
+ * way to write one — got a blocklist that covered one user.
+ */
+export function parseUserBlocklist(value: unknown): string[] {
+  return parseKeyValueList(value, 'user-blacklist');
 }
 
 /**

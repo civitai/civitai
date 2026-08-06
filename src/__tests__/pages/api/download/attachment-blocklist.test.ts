@@ -134,3 +134,97 @@ describe('/api/download/attachments/[fileId] — IP blocklist', () => {
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
   });
 });
+
+/**
+ * The OTHER blocklist on this route, which the IP suite above deliberately
+ * steps around by running unauthenticated.
+ *
+ * It had the same defect the IP list was fixed for and kept it: the route
+ * open-coded `(value ?? '').split(',')`, so an operator writing the list the
+ * obvious way — `123, 456` — got entries of `'123'` and `' 456'`, and the
+ * leading space meant every id after the first could never equal
+ * `session.user.id.toString()`. The list silently covered one user. Nothing
+ * reported it, because a blocklist that does not match looks exactly like a
+ * caller who is not on it.
+ */
+describe('/api/download/attachments/[fileId] — user blocklist', () => {
+  const LISTED_USER = 456;
+  const UNLISTED_USER = 999;
+
+  /** Key-aware KeyValue mock — the two rows must answer differently here. */
+  function rows(values: Record<string, unknown>) {
+    mockFindUnique.mockImplementation(async (args: { where: { key: string } }) =>
+      args.where.key in values ? { value: values[args.where.key] } : null
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetFileWithPermission.mockResolvedValue({
+      id: 77,
+      url: 'files/attachment.pdf',
+      name: 'attachment.pdf',
+      entityId: 5,
+      entityType: 'Article',
+    });
+    mockGetDownloadUrl.mockResolvedValue({ url: 'https://example.invalid/attachment.pdf' });
+  });
+
+  function asUser(id: number) {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id, isModerator: false } });
+  }
+
+  it('CONTROL: an unlisted user completes the download', async () => {
+    // Positive control. Without it, a 403 asserted below could be coming from
+    // anywhere in the handler and the test would be green for the wrong reason.
+    asUser(UNLISTED_USER);
+    rows({ 'user-blacklist': `123,${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
+  });
+
+  it('blocks a listed user when the list is written without spaces', async () => {
+    asUser(LISTED_USER);
+    rows({ 'user-blacklist': `123,${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(mockGetFileWithPermission).not.toHaveBeenCalled();
+  });
+
+  it('REGRESSION: blocks a listed user when the list is written WITH spaces', async () => {
+    // `'123, 456'.split(',')` → `['123', ' 456']`. This is the case the inline
+    // split got wrong, and it is the way an operator would naturally write it.
+    asUser(LISTED_USER);
+    rows({ 'user-blacklist': `123, ${LISTED_USER}` });
+    const { promise, res } = run({}, SUPPLIED);
+    await promise;
+    expect(
+      res.status,
+      'the second and subsequent entries of a spaced user-blacklist never matched'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetFileWithPermission).not.toHaveBeenCalled();
+  });
+
+  it('a malformed (non-string) user-blacklist row does not throw, and does not block', async () => {
+    // `KeyValue.value` is a Json column. The inline form called `.split` on it
+    // and produced a 500; the shared helper reports it and returns no entries.
+    // Asserted so the direction of that change is a deliberate, visible one.
+    asUser(LISTED_USER);
+    rows({ 'user-blacklist': { not: 'a string' } });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { promise, res } = run({}, SUPPLIED);
+      await promise;
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
+      // …but it must not be silent about it.
+      expect(spy).toHaveBeenCalled();
+      expect(String(spy.mock.calls[0][0])).toContain('user-blacklist');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
