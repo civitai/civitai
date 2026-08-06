@@ -4273,7 +4273,7 @@ export type MintReviewBlockTokenResult = {
  *   - SCOPE-STRIPPED: the pending manifest's declared `scopes` are the SOURCE, but
  *     they are clamped through the SAME audited belt the dev-tunnel host mint uses
  *     (`clampDevScopes`) with the STRICTEST allowlist (`REVIEW_MINT_SCOPE_ALLOWLIST`
- *     — render-only) and `keyCanSpend:false` (belt-and-suspenders strip of the
+ *     — render-only) and BOTH spend predicates false (belt-and-suspenders strip of the
  *     spend scope). A manifest that declares `ai:write:budgeted` / `apps:storage:*`
  *     / `buzz:read:self` gets NONE of them — the review JWT can carry only the
  *     render-only survivors.
@@ -4295,9 +4295,9 @@ export async function mintReviewBlockToken(opts: {
   /**
    * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
    * sandbox, BYTE-IDENTICAL to the pre-existing behaviour (render-only allowlist,
-   * keyCanSpend:false, no budget, no run-for-real claim). When true (a mod's
-   * EXPLICIT, consent-gated opt-in), the SAME audited clamp belt runs with the
-   * wider `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` and `keyCanSpend:true`, a
+   * both spend predicates false, no budget, no run-for-real claim). When true (a
+   * mod's EXPLICIT, consent-gated opt-in), the SAME audited clamp belt runs with the
+   * wider `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` and both spend predicates true, a
    * per-call Buzz budget is attached, and a signed `reviewRunForReal` claim
    * selects the tight aggregate session Buzz cap at runtime. STILL: self-bound to
    * the mod, forced-SFW, money-OUT (`social:tip:self`) excluded, and clamped to
@@ -4351,18 +4351,34 @@ export async function mintReviewBlockToken(opts: {
   );
 
   // The AUDITED clamp belt (SAME function both modes — never fork the clamp).
-  //   - render-only (default): render-only allowlist + keyCanSpend:false → the
-  //     spend scope is stripped even if the manifest declares it. BYTE-IDENTICAL
-  //     to the pre-existing sandbox.
-  //   - run-for-real (mod opt-in): the WIDER run-for-real allowlist + keyCanSpend:true.
+  //   - render-only (default): render-only allowlist + no spend → the spend scope
+  //     is stripped even if the manifest declares it. BYTE-IDENTICAL to the
+  //     pre-existing sandbox.
+  //   - run-for-real (mod opt-in): the WIDER run-for-real allowlist + spend.
   //     Granted = (manifest DECLARED scopes) ∩ allowlist ∩ (page money-out forbid),
   //     so a malicious manifest declaring extra scopes still gets ONLY declared∩allowlist.
   // NO OAuth ceiling in either mode (a pending app has no OauthClient; passing 0
   // would wrongly strip every non-skip scope — see clampDevScopes doc).
+  //
+  // 🔴 `runForReal` is passed to BOTH spend predicates, and that is CORRECT here —
+  // it is NOT the old overloaded `keyCanSpend` re-conflated under two names. On this
+  // call site entitlement and intent genuinely COINCIDE, because `runForReal` IS the
+  // moderator's explicit, per-preview, loudly-consented opt-in:
+  //   - as ENTITLEMENT: only that opt-in authorises spending the reviewing mod's own
+  //     Buzz on UNAPPROVED, untrusted code — without it the mod is not entitled at all;
+  //   - as INTENT:      the opt-in is itself the request to spend on THIS mint; there
+  //                     is no second, narrower "and also actually spend" signal, and
+  //                     inventing one would let a mod opt in and still get a token
+  //                     that cannot exercise generation — the whole point of the mode.
+  // So this is the one call site that already had #3703's semantics; it merely
+  // expressed them through a parameter named for entitlement alone. If a separate
+  // per-mint spend request is ever added to the review UI, wire it to
+  // `spendRequested` and leave `spendEntitled: runForReal` alone.
   const granted = clampDevScopes({
     scopeSource: manifestScopes,
     oauthAllowed: null,
-    keyCanSpend: runForReal,
+    spendEntitled: runForReal,
+    spendRequested: runForReal,
     allowlist: runForReal
       ? REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST
       : REVIEW_MINT_SCOPE_ALLOWLIST,

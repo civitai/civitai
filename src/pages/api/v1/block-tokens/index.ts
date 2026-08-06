@@ -333,8 +333,10 @@ function resolveBuzzBudget(
  *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
  *     `assertViewerIsAppDeveloper(sub)` + the per-call (DEV_BUZZ_BUDGET_CAP) /
  *     per-session / per-day caps. There is NO bearer credential here, so the
- *     dev-token 7f AIServicesWrite ceiling doesn't map → `keyCanSpend: true`; the
- *     runtime author-flag re-check is the substitute spend gate.
+ *     dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true` (and
+ *     `spendRequested: true`, since this path has no request body — the declaring
+ *     manifest IS the request); the runtime author-flag re-check is the substitute
+ *     spend gate.
  *   - SCOPE SOURCE (the resolver is the single authority — `app.scopes`): the
  *     caller's OWN pending submission's SERVER-READ `manifest.scopes` (pending), else
  *     the AUTHENTICATED CLI's dev-tunnel SESSION `grantedScopes` (brand-new — NEVER a
