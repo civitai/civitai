@@ -192,6 +192,121 @@ export type ModelSubstitution = {
 export type ModelSubstitutionEvent = Omit<ModelSubstitution, 'reason'>;
 
 /**
+ * The subset of a {@link ModelSubstitution} that travels on a WIRE — the App
+ * Blocks snapshot, the tRPC generation replies, and the orchestrator workflow
+ * metadata that survives to later reads.
+ *
+ * `ecosystem`/`workflow` are deliberately dropped: the caller already knows what
+ * it submitted, and they are the two fields most likely to change shape as the
+ * graph config evolves.
+ */
+export type PersistedModelSubstitution = {
+  requested: number;
+  applied: number;
+  reason: ModelSubstitutionReason;
+};
+
+/**
+ * Project a request's collector onto the wire shape.
+ *
+ * 🔴 ONE PLACE, because it had become three. The App Blocks bridge, the
+ * generation submit and the whatIf estimate each open-coded the identical
+ * `?.list().map(...)`. That is the same duplication the reader below was
+ * consolidated to remove, and the same argument applies: a projection copied at
+ * N sites is wrong at N−1 of them the day the wire shape changes.
+ *
+ * Returns `undefined` when there is no collector (a client-built context) and
+ * `[]` when a collector recorded nothing.
+ *
+ * 🔴 THOSE TWO ARE CURRENTLY INTERCHANGEABLE, and an earlier version of this
+ * comment claimed otherwise — that an explicit `[]` suppresses
+ * `snapshotFromWorkflow`'s fallback read of the persisted metadata while
+ * `undefined` allows it. That is FALSE and was measured: the fallback is guarded
+ * by `extra?.modelSubstitutions?.length` (`services/blocks/workflow.service.ts`),
+ * and `[].length` is `0`, so an empty array takes the same branch as `undefined`.
+ * Every consumer tests `?.length`, so nothing distinguishes them today.
+ *
+ * They are still not collapsed here, for the narrow reason that this function is
+ * a pure extraction of what three call sites already did — collapsing would be a
+ * behaviour change smuggled into a refactor. If you ever want one, check every
+ * consumer for a PRESENCE test (`!== undefined`, `in`, `?? `) first; that is what
+ * would make the distinction real.
+ */
+export function projectModelSubstitutions(
+  collector: Pick<ModelSubstitutionCollector, 'list'> | undefined
+): PersistedModelSubstitution[] | undefined {
+  return collector?.list().map(({ requested, applied, reason }) => ({
+    requested,
+    applied,
+    reason,
+  }));
+}
+
+/**
+ * The key silent substitutions are persisted under on an orchestrator workflow's
+ * `metadata`.
+ *
+ * 🔴 WHY PERSISTED AT ALL, AND NOT ONLY ON THE SUBMIT REPLY. A reply-only field
+ * is gone before there is anything to show beside it: the render/poll path
+ * rebuilds from a freshly fetched Workflow with none of the submitting request's
+ * context, and neither `block_workflows` nor the generation feed retains the
+ * submitted body to recover it from. Riding on the metadata the submit body
+ * already carries makes it readable on EVERY later read, with no schema or DB
+ * change.
+ */
+export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
+
+/**
+ * Read persisted substitutions back off a workflow's `metadata`.
+ *
+ * 🔴 VALIDATED, NOT CAST. This crosses a service boundary — the value is
+ * whatever the orchestrator hands back — and it feeds public wire contracts
+ * whose `reason` is also a bounded prom label. Each entry is checked
+ * structurally and its `reason` narrowed against the code-owned union; anything
+ * else is dropped.
+ *
+ * Returns `undefined` (not `[]`) when there is nothing to report, so every
+ * caller can keep OMITTING the field rather than emitting an empty array.
+ *
+ * 🔴 DECLARED HERE, IN A MODULE THAT IMPORTS NOTHING, BECAUSE IT HAS TWO
+ * CONSUMERS. It began life private to the App Blocks workflow service; the tRPC
+ * generation path (#3665) needs the identical parse, and a second copy of a
+ * predicate is how the same bug gets fixed at one site and not the other. Keep
+ * it dependency-free so both a server service and shared graph code can use it.
+ */
+export function readModelSubstitutionsFromMetadata(
+  // Narrower than `unknown` — a primitive is now rejected — but 🔴 BE CLEAR
+  // ABOUT WHAT THIS DOES NOT BUY, because an earlier version of this comment
+  // claimed the opposite. This function used to take the whole `Workflow` and
+  // now takes its metadata, so `read…(workflow)` is the slip the move invites,
+  // and it is a silent no-op that returns `undefined` forever.
+  //
+  // That slip STILL COMPILES. `Workflow` is a type ALIAS, so TypeScript grants
+  // it an implicit index signature and it is assignable to
+  // `Record<string, unknown>` — measured, with a negative control to prove the
+  // probe compiled. Shaping the parameter to exclude it (`& { steps?: never }`)
+  // would also reject the legitimate callers, which pass a plain
+  // `Record<string, unknown>` whose index signature makes `steps` `unknown`.
+  //
+  // So the type is not the guard here; the tests are. If you are calling this,
+  // pass `something.metadata`, not `something`.
+  metadata: Record<string, unknown> | null | undefined
+): PersistedModelSubstitution[] | undefined {
+  const raw = metadata?.[WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY];
+  if (!Array.isArray(raw)) return undefined;
+  const out: PersistedModelSubstitution[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { requested, applied, reason } = entry as Record<string, unknown>;
+    if (typeof requested !== 'number' || !Number.isFinite(requested)) continue;
+    if (typeof applied !== 'number' || !Number.isFinite(applied)) continue;
+    if (!isModelSubstitutionReason(reason)) continue;
+    out.push({ requested, applied, reason });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
  * Resolves the REASON for one substitution. Server-supplied (see the module
  * note on why this is injected); `classifyModelSubstitutionReason` in
  * `workflow-capability.ts` is the only implementation.
