@@ -31,9 +31,9 @@ export async function emitModelSubstitutions(
     if (!pending.length) return;
     // The SURFACE comes off the collector, which got it from whoever built this
     // request's context (`buildGenerationContext(..., surface)`) — never guessed
-    // here. `validateInput` is shared by the on-site generator, the App Blocks
-    // bridge and preset generation, so this function structurally cannot tell
-    // them apart and must not try.
+    // here. `validateInput` is shared by the on-site generator, bearer-token API
+    // callers, the App Blocks bridge and preset generation, so this function
+    // structurally cannot tell them apart and must not try.
     const { surface } = collector;
     const { recordGenerationModelSubstitution } = await import(
       '~/server/metrics/generation-model-substitution.metrics'

@@ -273,8 +273,11 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
  * @param flags - Feature access flags
  * @param user - User info used to resolve mod-only / testing gating
  * @param surface - 🔴 REQUIRED, and deliberately not defaulted (issue #3520).
- *   Which caller is validating: `onsite` (the on-site generator), `block` (the
- *   App Blocks bridge) or `preset` (comics / preset generation). It becomes the
+ *   Which caller is validating: `onsite` (the on-site generator under a cookie
+ *   session), `api` (the same tRPC procedures reached with a bearer token —
+ *   #3665; resolve it with `generationSurfaceForRequest(ctx)`, never a literal),
+ *   `block` (the App Blocks bridge) or `preset` (comics / preset generation).
+ *   It becomes the
  *   `surface` label on `civitai_generation_model_substitutions_total`, and the
  *   split is load-bearing: #3520 calls the substitution CORRECT on-site and
  *   unobservable through the bridge, so one un-split series measures a

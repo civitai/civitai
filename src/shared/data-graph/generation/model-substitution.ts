@@ -113,13 +113,17 @@ export function isModelSubstitutionReason(value: unknown): value is ModelSubstit
  * `civitai_generation_model_substitutions_total`.
  *
  * 🔴 WHY THIS LABEL EXISTS. `validateInput` is the choke point for EVERY
- * server-side `generationGraph.safeParse`, so without it the counter mixes three
+ * server-side `generationGraph.safeParse`, so without it the counter mixes four
  * populations whose meanings are opposite:
  *
- *   - `onsite`  — the on-site generator, where the substitution is the DELIBERATE,
- *                 CORRECT graceful degradation (#3520 defends it: a stale
- *                 localStorage id after an ecosystem switch, and the user visibly
- *                 sees the picker snap back).
+ *   - `onsite`  — the on-site generator driven by a COOKIE SESSION, where the
+ *                 substitution is the DELIBERATE, CORRECT graceful degradation
+ *                 (#3520 defends it: a stale localStorage id after an ecosystem
+ *                 switch, and the user visibly sees the picker snap back).
+ *   - `api`     — the SAME two tRPC procedures reached with a bearer token
+ *                 (personal API key or OAuth app) — a CLI, a script, any external
+ *                 integration. See below: this is `onsite`'s opposite, not its
+ *                 variant.
  *   - `block`   — the App Blocks bridge, where the id was written by an app author
  *                 and the correction is unobservable. This is the population
  *                 phase 3's policy decision is actually about.
@@ -129,14 +133,38 @@ export function isModelSubstitutionReason(value: unknown): value is ModelSubstit
  * on-site's correct behaviour into the bridge's incorrect behaviour measures a
  * contaminated quantity, so the split is load-bearing, not decoration.
  *
- * 🔴 BOUNDED, AND KEPT THAT WAY: 3 reasons × 3 surfaces = 9 series, total,
- * forever. This is the ONLY dimension added; version id / ecosystem / workflow /
- * app id / user id are all caller-controlled or high-cardinality and stay out
- * (prom-client retains every distinct label set in the Node heap forever, across
- * ~130 scraped pods). Attribution belongs in the snapshot the caller already
- * receives.
+ * 🔴 WHY `api` WAS SPLIT OUT OF `onsite` (#3665). `onsite` was assigned by a
+ * hardcoded literal at the two `orchestrator.router` procedures, so it meant
+ * "these procedures" — but both are deliberately reachable by bearer token
+ * (`AIServicesRead`/`AIServicesWrite` are user-grantable scopes with the consent
+ * label "Generate, train & scan"). Every CLI/API substitution was therefore
+ * counted as the one case everyone agrees is working as intended, and it is
+ * counted into the bucket phase 3 EXCLUDES. That inverts the label's purpose:
+ * an API caller has neither of the two properties that make degradation correct
+ * — the id is deliberate, and there is no picker to visibly snap.
+ *
+ * The split was prompted by a measurement, not a hunch: over the counter's life
+ * so far, `surface="block"` — the population phase 3 is about — had recorded no
+ * substitutions at all, because App Blocks is mod-gated, while `surface="onsite"`
+ * carried the whole signal. A gate that reads zero on the only bucket it consults
+ * cannot gate anything; splitting `api` out is what gives the phase-3 decision a
+ * population with both real volume AND the invisibility property.
+ * (🔴 Figures deliberately omitted — this repo is PUBLIC. The measurement lives in
+ * the private infra repo's handoff notes.)
+ *
+ * 🔴 BOUNDED, AND KEPT THAT WAY: 3 reasons × 4 surfaces = 12 series, total.
+ * This is still the ONLY dimension; version id / ecosystem / workflow / app id /
+ * user id are all caller-controlled or high-cardinality and stay out (prom-client
+ * retains every distinct label set in the Node heap forever, across ~130 scraped
+ * pods). Attribution belongs in the snapshot the caller already receives.
+ *
+ * 🔴 `api` IS ONE VALUE, NOT TWO. A personal API key and an OAuth app differ in
+ * WHO is calling, not in whether the correction is observable — which is the only
+ * thing this label feeds. Splitting them would buy 3 more series and no decision.
+ * The actor distinction already exists, with its own vocabulary, on
+ * `Tracker.setProvenance` (`'web' | 'api-key' | 'oauth'`); use that if you need it.
  */
-export const GENERATION_SURFACES = ['block', 'onsite', 'preset'] as const;
+export const GENERATION_SURFACES = ['api', 'block', 'onsite', 'preset'] as const;
 
 export type GenerationSurface = (typeof GENERATION_SURFACES)[number];
 
@@ -209,10 +237,10 @@ function keyOf(event: ModelSubstitutionEvent): string {
  * Build a fresh per-request collector. 🔴 Call this per request and attach the
  * result to a freshly constructed context object — see the module note.
  *
- * `surface` names the caller (block / onsite / preset) and becomes the second
- * label on the counter. It is supplied by whoever builds the request context —
- * never guessed from the parse — because `validateInput` is shared by all three
- * and cannot tell them apart.
+ * `surface` names the caller (api / block / onsite / preset) and becomes the
+ * second label on the counter. It is supplied by whoever builds the request
+ * context — never guessed from the parse — because `validateInput` is shared by
+ * all of them and cannot tell them apart.
  */
 export function createModelSubstitutionCollector(
   classify: ModelSubstitutionClassifier,
