@@ -82,6 +82,22 @@ export const ShopItem = ({
   const hasDate = isUpcoming || item.availableTo;
   const outOfStock = remaining === 0;
 
+  // Both the card and the Preview button route through this: the button opened
+  // the cosmetic modal directly, and every line of that component reads
+  // `shopItem.cosmetic`, which a pack does not have.
+  const openPreview = () => {
+    if (cosmetic)
+      dialogStore.trigger({
+        component: CosmeticShopItemPreviewModal,
+        props: { shopItem: item, viaShopUserId },
+      });
+    else
+      dialogStore.trigger({
+        component: CosmeticPackPreviewModal,
+        props: { shopItemId: item.id, viaShopUserId },
+      });
+  };
+
   const isNew =
     !outOfStock &&
     lastViewed &&
@@ -172,16 +188,7 @@ export const ShopItem = ({
             onClick={() => {
               if (!currentUser) return;
 
-              if (cosmetic)
-                dialogStore.trigger({
-                  component: CosmeticShopItemPreviewModal,
-                  props: { shopItem: item, viaShopUserId },
-                });
-              else
-                dialogStore.trigger({
-                  component: CosmeticPackPreviewModal,
-                  props: { shopItemId: item.id, viaShopUserId },
-                });
+              openPreview();
             }}
             disabled={!isAvailable || outOfStock}
           >
@@ -251,12 +258,7 @@ export const ShopItem = ({
             <Button
               radius="xl"
               className={clsx(classes.buyButton, domain === 'green' && classes.buyButtonGreen)}
-              onClick={() => {
-                dialogStore.trigger({
-                  component: CosmeticShopItemPreviewModal,
-                  props: { shopItem: item, viaShopUserId },
-                });
-              }}
+              onClick={openPreview}
               disabled={!isAvailable || outOfStock}
             >
               Preview

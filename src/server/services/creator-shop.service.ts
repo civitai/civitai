@@ -880,12 +880,19 @@ export const getCreatorShop = async ({
   ]);
 
   // Sanitize meta to what the card/checkout needs — never the creator
-  // payout/fee internals.
+  // payout/fee internals. A pack's card art lives in meta rather than on a
+  // cosmetic, so the whitelist has to carry it or the card renders empty.
+  const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
+    ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
+    ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
+    ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
+  });
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   });
   const cosmetics = items.map(sanitize);
@@ -896,6 +903,7 @@ export const getCreatorShop = async ({
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
       sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   });
   const resold = preview

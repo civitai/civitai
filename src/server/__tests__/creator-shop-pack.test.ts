@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { cosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import {
   computePackOwnershipDiscount,
   isConsumableCosmeticType,
@@ -195,5 +196,22 @@ describe('submitCreatorShopPackSchema', () => {
   it('defaults blue Buzz to off, since it is granted only if every member accepts', () => {
     const result = submitCreatorShopPackSchema.parse(valid);
     expect(result.acceptsBlueBuzz).toBe(false);
+  });
+});
+
+describe('storefront meta whitelist', () => {
+  // The storefront strips meta to a whitelist so creator payout internals never
+  // reach a card. A pack's card art lives in meta rather than on a cosmetic, so
+  // omitting it renders an empty card and "Pack of 0" — which is what happened.
+  const packDisplayKeys = ['coverUrl', 'coverTiles', 'packMemberCount'] as const;
+
+  it('keeps every field a pack card needs to render', () => {
+    const meta = cosmeticShopItemMeta.parse({
+      purchases: 3,
+      coverUrl: 'cover-id',
+      coverTiles: ['a', 'b'],
+      packMemberCount: 4,
+    });
+    for (const key of packDisplayKeys) expect(meta[key]).toBeDefined();
   });
 });
