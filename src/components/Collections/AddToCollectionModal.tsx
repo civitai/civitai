@@ -496,6 +496,7 @@ function NewCollectionForm({
   ...props
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction }) {
   const currentUser = useCurrentUser();
+  const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -598,13 +599,16 @@ function NewCollectionForm({
               return <SelectItem {...data} {...item} />;
             }}
           />
+          {(isMember || currentUser?.isModerator) && (
+            <InputSelect
+              name="write"
+              label="Who can add to this collection"
+              data={Object.values(collectionWritePrivacyData)}
+            />
+          )}
+
           {currentUser?.isModerator && (
             <>
-              <InputSelect
-                name="write"
-                label="Add permissions"
-                data={Object.values(collectionWritePrivacyData)}
-              />
               <InputSelect
                 name="mode"
                 label="Mode"
