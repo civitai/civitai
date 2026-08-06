@@ -58,6 +58,11 @@ export function PackContentsPanel({ shopItemId }: { shopItemId: number }) {
             </Stack>
             <Stack gap={2} align="flex-end">
               <Text size="xs">{numberWithCommas(member.listPrice)} Buzz</Text>
+              {member.consumable && member.uses != null && (
+                <Text size="xs" c="dimmed">
+                  {numberWithCommas(member.uses)} uses
+                </Text>
+              )}
               {!member.acceptsBlueBuzz && (
                 <Badge size="xs" color="gray" variant="light">
                   No Blue

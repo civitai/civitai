@@ -175,11 +175,19 @@ export const CosmeticPackPreviewModal = ({
                   </Stack>
                   <Stack gap={2} align="flex-end">
                     <Text size="xs">{numberWithCommas(member.listPrice)} Buzz</Text>
+                    {/* A consumable's whole value is how many uses it grants, so
+                        the count belongs on the row whether or not it's owned —
+                        "adds uses" without a number says nothing. */}
+                    {member.consumable && member.uses != null && (
+                      <Text size="xs" c="dimmed">
+                        {numberWithCommas(member.uses)} uses
+                      </Text>
+                    )}
                     {member.owned && (
                       <Badge size="xs" variant="light" color={member.consumable ? 'blue' : 'gray'}>
                         {/* Owning a consumable is not a duplicate — the purchase
                             adds uses (D23), which is why it isn't discounted. */}
-                        {member.consumable ? 'Adds uses' : 'Owned'}
+                        {member.consumable ? 'Adds to yours' : 'Owned'}
                       </Badge>
                     )}
                   </Stack>

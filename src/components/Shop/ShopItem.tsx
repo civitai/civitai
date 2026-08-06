@@ -35,6 +35,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopItemGetById } from '~/types/router';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
@@ -70,6 +72,8 @@ export const ShopItem = ({
   const { toggleWishlist, togglingWishlist } = useToggleWishlistShopItem();
   const domain = useDomainColor();
   const itemMeta = item.meta as CosmeticShopItemMeta;
+  const stickerUses =
+    cosmetic?.type === CosmeticType.Sticker ? stickerUsesFromCosmeticData(cosmetic.data) : null;
 
   const remaining =
     item.availableQuantity !== null
@@ -204,7 +208,11 @@ export const ShopItem = ({
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {cosmetic
-                  ? getDisplayName(cosmetic.type)
+                  ? // A sticker is sold by the use, so the count is part of what
+                    // the card is offering.
+                    `${getDisplayName(cosmetic.type)}${
+                      stickerUses ? ` · ${numberWithCommas(stickerUses)} uses` : ''
+                    }`
                   : `Pack of ${itemMeta.packMemberCount ?? 0}`}
               </Text>
               {cosmetic && cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (

@@ -18,6 +18,7 @@ import {
 } from '~/server/schema/creator-shop.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -481,6 +482,8 @@ export const getPackDetail = async ({
       // Owning a consumable means the purchase tops it up rather than
       // duplicating it (D23), which is also why it earns no discount.
       consumable: isConsumableCosmeticType(m.type),
+      // What a consumable member grants. For a sticker this is the whole offer.
+      uses: stickerUsesFromCosmeticData(m.data),
       discount: discountByCosmetic.get(m.cosmeticId) ?? 0,
     })),
   };

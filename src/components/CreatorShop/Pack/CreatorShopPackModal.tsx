@@ -27,6 +27,7 @@ import { PackCoverField } from '~/components/CreatorShop/Pack/PackCoverField';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   CREATOR_SHOP_PACK_SUBMISSION_FEE,
   PACK_MAX_MEMBERS,
@@ -50,6 +51,8 @@ type Bundlable = PackMemberPricing & {
 };
 
 const MAX_COVER_SIZE = 2 * 1024 * 1024;
+
+const memberUses = (member: Bundlable) => stickerUsesFromCosmeticData(member.data);
 
 export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
@@ -243,6 +246,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
                   </Text>
                   <Text size="xs" c="dimmed" lineClamp={1}>
                     {getDisplayName(member.type)}
+                    {memberUses(member) != null ? ` · ${memberUses(member)} uses` : ''}
                     {member.creatorUsername ? ` · by @${member.creatorUsername}` : ''}
                   </Text>
                 </Stack>
