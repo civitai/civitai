@@ -389,7 +389,30 @@ export const upsertModelVersionHandler = async ({
     let capTier: string | null | undefined;
     const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
 
-    if (input.usageControl !== ModelUsageControl.Download) {
+    // Only MOVING a version off Download is a new grant, matching the Creator Studio rule. Coercing on
+    // every non-Download save would strip generation-only from the versions whose owners aren't entitled
+    // — silently, on an unrelated edit, since the form resubmits the stored control and an absent one
+    // also lands here.
+    //
+    // A templated write creates a NEW version even with an `id` present, so `id` alone is not "the row
+    // this lands on" — reading the stored control off it would let one generation-only version vouch for
+    // unlimited new ones. Same trap resolveRightsAffirmation documents in the service.
+    const updatesExistingVersion = !!input.id && !input.templateId;
+    // dbWrite, and a miss counts as a grant: this decides an entitlement, and the edit wizard saves again
+    // fast enough to beat replication — a replica miss must not read as "already generation-only".
+    const storedUsageControl = updatesExistingVersion
+      ? (
+          await dbWrite.modelVersion.findUnique({
+            where: { id: input.id },
+            select: { usageControl: true },
+          })
+        )?.usageControl
+      : undefined;
+    const grantsGenerationOnly =
+      input.usageControl !== ModelUsageControl.Download &&
+      (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
+
+    if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
       const gate = resolveGenerationOnlyGate({
         requested: requestedUsageControl,
@@ -411,6 +434,7 @@ export const upsertModelVersionHandler = async ({
         modelId: input.modelId,
         modelVersionId: input.id ?? null,
         requestedUsageControl: requestedUsageControl ?? null,
+        storedUsageControl: storedUsageControl ?? null,
         appliedUsageControl: input.usageControl ?? null,
         sessionTier: ctx.user.tier ?? null,
         subscriptionTier: gate.outcome === 'tier' ? await actorTier() : null,
