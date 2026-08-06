@@ -87,6 +87,14 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sql).toContain(commentDedupeKeyByVersion);
   });
 
+  it.each(V2_TYPES)('%s stamps details.version, which routes the detail fetch', (type) => {
+    // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and sends
+    // anything with `version !== 2` to the legacy `Comment` table. Comment and CommentV2 ids
+    // overlap, so a V2 processor that forgets this doesn't fail — it silently attaches a DIFFERENT
+    // comment's body, avatar and username to the notification. Nothing else guards it.
+    expect(sqlFor(type)).toContain(`'version', 2`);
+  });
+
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
     // A key that varied per user or per type would dedupe nothing; this is the whole mechanism.
     for (const type of [...V1_TYPES, ...V2_TYPES, 'new-thread-response']) {

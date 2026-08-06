@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { forwardQuery } from '~/utils/forward-query';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -19,22 +20,12 @@ export const getServerSideProps = createServerSideProps({
     // threadUrlMap builds `/bounties/entries/{id}?highlight=…` for every bountyEntry comment
     // notification, and a destination without the query silently drops it — so the comment the
     // notification is about never gets highlighted.
-    const { entryId: _, ...query } = ctx.query;
-    const queryString = new URLSearchParams(
-      Object.entries(query).flatMap(([key, value]) =>
-        value === undefined
-          ? []
-          : Array.isArray(value)
-          ? value.map((v) => [key, v])
-          : [[key, value]]
-      ) as [string, string][]
-    ).toString();
-
     return {
       redirect: {
-        destination: `/bounties/${bountyEntry.bountyId}/entries/${entryId}${
-          queryString ? `?${queryString}` : ''
-        }`,
+        destination: `/bounties/${bountyEntry.bountyId}/entries/${entryId}${forwardQuery(
+          ctx.query,
+          ['entryId']
+        )}`,
         permanent: false,
       },
     };

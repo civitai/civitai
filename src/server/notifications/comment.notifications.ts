@@ -670,8 +670,9 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your entry to the "${details.bountyTitle}" bounty`,
-      // Not threadUrlMap's `/bounties/entries/{id}`: that route is a getServerSideProps redirect to
-      // the canonical URL and the destination string drops the query, taking `highlight` with it.
+      // The canonical URL directly, rather than threadUrlMap's `/bounties/entries/{id}` — that one
+      // only reaches the entry via a redirect, and threadUrlMap can't build this form because it is
+      // handed the entry id alone, with no bountyId.
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}?highlight=${details.commentId}`,
     }),
     prepareQuery: ({ lastSent }) => `

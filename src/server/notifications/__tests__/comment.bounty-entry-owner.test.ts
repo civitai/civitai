@@ -36,6 +36,13 @@ describe('new-bounty-entry-comment', () => {
     expect(sql()).toContain(`'username', u.username`);
   });
 
+  it('joins are inner, so a missing row drops the notification instead of NULLing it', () => {
+    // Every `toContain('JOIN ...')` above is also a substring of `LEFT JOIN ...`. Widening the User
+    // join would render "null commented on your entry…"; widening Bounty would produce
+    // /bounties/null/entries/9. Both pass the assertions above.
+    expect(sql()).not.toContain('LEFT JOIN');
+  });
+
   it('skips self-comments, and orphaned entries whose owner was deleted', () => {
     expect(sql()).toContain('c."userId" != be."userId"');
     // BountyEntry."userId" is nullable — NULL > 0 is NULL, so this drops orphans too.
@@ -71,10 +78,9 @@ describe('new-bounty-entry-comment', () => {
     );
   });
 
-  it('links to the canonical entry URL, not the query-dropping redirect', () => {
-    // `/bounties/entries/{id}` is a getServerSideProps redirect whose destination string carries no
-    // query, so routing the notification through it would strip `highlight` and land the reader at
-    // the top of the entry.
+  it('links to the canonical entry URL rather than the redirect', () => {
+    // threadUrlMap only gets the entry id, so it cannot build this URL — it emits the redirect form
+    // instead. Linking canonically skips the hop.
     const message = notificationProcessors['new-bounty-entry-comment'].prepareMessage({
       type: 'new-bounty-entry-comment',
       details: {
