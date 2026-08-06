@@ -14,7 +14,7 @@
  *                 Flags tosViolation=true, actions related TOSViolation reports
  *                 (with reporter rewards), notifies the comment owner.
  */
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import * as z from 'zod';
 import {
   bulkDeleteComments,
@@ -70,7 +70,16 @@ export default defineRetoolEndpoint('comment', {
     rateLimit: { max: 30, windowSeconds: 60 },
     async handler(input, ctx) {
       ensureAtLeastOneList(input);
-      const ip = requestIp.getClientIp(ctx.req) ?? undefined;
+      // AUDIT-TRAIL surface: this records WHICH moderator acted, alongside their
+      // user id. It gates nothing, so it takes the derivation that always yields
+      // a label; the fail-closed one would attribute every non-edge moderator to
+      // one shared hop and make the trail unable to tell them apart.
+      //
+      // The `undefined` sentinel is preserved: `actor.ip` is optional and flows
+      // into `reportAcceptedReward.apply(…, { ip })`, whose pipeline folds a
+      // falsy address away before it can reach a buzz idempotency key. Only
+      // WHICH address is recorded changes here.
+      const ip = resolveClientIpOrNull(ctx.req) ?? undefined;
       const actor = { id: ctx.actor.id, ip };
 
       const v1 = input.commentIds?.length

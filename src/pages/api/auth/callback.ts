@@ -68,6 +68,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // authoritative — it's what the hub's flood-guard keys on; on the PUBLIC path the hub's own cf-first
     // getClientIp takes precedence (cf-connecting-ip = the spoke egress) and this is harmlessly shadowed. Coerce
     // the resolver's null to undefined so the bridge omits the header when nothing resolves.
+    //
+    // 🔴 DELIBERATELY NOT CONSOLIDATED onto the shared predicate, while the
+    // repo's other attribution sites were. This value does not stay here: it is
+    // forwarded to another service, and on the internal path that service keys a
+    // flood guard on it. Changing which address is sent therefore changes an
+    // input to a control whose behaviour cannot be observed, reproduced or
+    // tested from this repo — the far side is not in this tree, and nothing here
+    // would go red if the change were wrong. That is a different risk class from
+    // the sites this change did move, where the consequence is a recorded value
+    // this repo can inspect.
+    //
+    // An unchanged site with a stated reason beats a plausible guess. Moving it
+    // wants evidence about the hub's guard, which is a separate piece of work.
     clientIp: requestIp.getClientIp(req) ?? undefined,
   });
 

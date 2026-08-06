@@ -1,6 +1,6 @@
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -142,9 +142,22 @@ export async function runImageSearch(
     ? true
     : !!(data as { modelId?: unknown }).modelId && !(data as { modelVersionId?: unknown }).modelVersionId;
 
+  // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
+  // job is to keep distinct callers in distinct actor labels. The fail-closed
+  // derivation would collapse every non-edge caller into ONE label, which is the
+  // opposite of what a per-caller label is for.
+  //
+  // Using the shared predicate also puts this call site on the SAME derivation as
+  // the two `ctx.ip`-fed `buildSearchActor` calls in `image.controller.ts`, which
+  // it previously disagreed with — one caller could be hashed to two different
+  // actors depending on which entry point served the request.
+  //
+  // The nullable form keeps that agreement at the unresolvable end too:
+  // `buildSearchActor` hashes `ip ?? ''`, and `ctx.ip` is `''` there, so both
+  // sides must arrive as falsy or the two entry points diverge again.
   const actor = buildSearchActor({
     userId: user?.id,
-    ip: requestIp.getClientIp(req),
+    ip: resolveClientIpOrNull(req),
     userAgent: req.headers['user-agent'],
   });
 
