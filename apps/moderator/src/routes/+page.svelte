@@ -141,7 +141,7 @@
         <div class="text-2xl font-semibold tabular-nums text-white">{format(queue.count)}</div>
         <div class="mt-1 text-sm text-dark-0">{queue.label}</div>
         {#if queue.section}
-          <div class="text-xs text-dark-3">{queue.section}</div>
+          <div class="text-xs text-dark-2">{queue.section}</div>
         {/if}
       </a>
     {/each}

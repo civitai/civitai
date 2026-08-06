@@ -86,7 +86,7 @@
         {#each data.pages as page (page.path)}
           <li class="flex items-center gap-2.5 text-sm" style="padding-left: {page.depth}rem">
             {#if page.group}
-              <span class="pt-1 text-xs font-medium tracking-wide text-dark-3 uppercase">
+              <span class="pt-1 text-xs font-medium tracking-wide text-dark-2 uppercase">
                 {page.label}
               </span>
             {:else}
