@@ -278,4 +278,50 @@ jobs:
       # totals cannot see.
       - name: Assert every package suite actually ran
         if: always()
-        run: node scripts/ci/assert-package-suites-ran.mjs packages-report.json
+        run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
+
+  apps:
+    name: App unit tests
+    runs-on: ubuntu-latest
+    # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
+    # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
+    # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
+    # in CI. They only ever ran for whoever remembered `pnpm --filter <app> test` by hand.
+    #
+    # A SEPARATE job rather than folding the apps into `packages`, because the two selectors
+    # have to stay disjoint anyway (see the `apps/*` note in vitest.config.mts) and separate
+    # jobs keep the blame attributable: a red app suite should not make the package suites
+    # look broken. Costs one more `pnpm install`; these suites run in seconds.
+    #
+    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
+    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # no required_status_checks — it is a signal someone has to look at and dismiss.
+    #
+    # `apps/event-engine` and `apps/moderator` are absent on purpose: neither has a vitest
+    # config, and event-engine's one test file is a `node:test` suite by deliberate choice.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: App unit tests
+        run: pnpm run test:apps:run --reporter=default --reporter=json --outputFile=apps-report.json
+
+      # Same positive control as the packages job, and it earns its keep harder here: these
+      # projects are named by hand (`app:auth`, ...), so an app that loses its `test.name`
+      # stops being selected while the other four keep the run green and exit 0. Measured,
+      # not assumed — see the script header.
+      - name: Assert every app suite actually ran
+        if: always()
+        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
