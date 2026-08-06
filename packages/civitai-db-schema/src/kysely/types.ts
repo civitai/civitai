@@ -74,6 +74,8 @@ import type {
   CollectionMode,
   CollectionItemStatus,
   CollectionContributorPermission,
+  CollectionCollaboratorRole,
+  CollectionInviteStatus,
   HomeBlockType,
   Currency,
   BountyType,
@@ -1666,6 +1668,7 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -1673,6 +1676,16 @@ export type CollectionContributor = {
   userId: number;
   collectionId: number;
   permissions: CollectionContributorPermission[];
+};
+export type CollectionInvite = {
+  id: Generated<number>;
+  collectionId: number;
+  userId: number;
+  invitedById: number;
+  role: CollectionCollaboratorRole;
+  status: Generated<CollectionInviteStatus>;
+  createdAt: Generated<Timestamp>;
+  respondedAt: Timestamp | null;
 };
 export type CollectionItem = {
   id: Generated<number>;
@@ -4017,6 +4030,7 @@ export type DB = {
   ClubTier: ClubTier;
   Collection: Collection;
   CollectionContributor: CollectionContributor;
+  CollectionInvite: CollectionInvite;
   CollectionItem: CollectionItem;
   CollectionItemScore: CollectionItemScore;
   CollectionMetric: CollectionMetric;
