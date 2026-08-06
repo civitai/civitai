@@ -248,6 +248,10 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: ['public'],
   collections: ['public'],
+  collaborativeCollections: {
+    availability: ['public'],
+    fliptKey: 'collaborative-collections',
+  },
   collectionAiReview: { availability: ['mod'], fliptKey: 'collection-ai-review' },
   air: {
     toggleable: true,

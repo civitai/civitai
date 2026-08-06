@@ -43,11 +43,23 @@ import {
   setCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
 import {
+  inviteCollaboratorInput,
+  removeCollaboratorInput,
+  respondToInviteInput,
+} from '~/server/schema/collection-collaborator.schema';
+import {
   getCollectionAiReview,
   getCollectionAiReviewDefaultPrompt,
   getCollectionEntryCount,
   setCollectionAiReview,
 } from '~/server/services/collection.service';
+import {
+  getCollaborators,
+  getMyInvites,
+  inviteCollaborator,
+  removeCollaborator,
+  respondToInvite,
+} from '~/server/services/collection-collaborator.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -213,4 +225,38 @@ export const collectionRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)
     .mutation(joinCollectionAsManagerHandler),
+  inviteCollaborator: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(inviteCollaboratorInput)
+    .use(isFlagProtected('collaborativeCollections'))
+    .mutation(({ input, ctx }) =>
+      inviteCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  respondToInvite: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(respondToInviteInput)
+    .use(isFlagProtected('collaborativeCollections'))
+    .mutation(({ input, ctx }) => respondToInvite({ ...input, userId: ctx.user.id })),
+  removeCollaborator: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(removeCollaboratorInput)
+    .use(isFlagProtected('collaborativeCollections'))
+    .mutation(({ input, ctx }) =>
+      removeCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  getCollaborators: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getByIdSchema)
+    .use(isFlagProtected('collaborativeCollections'))
+    .query(({ input, ctx }) =>
+      getCollaborators({
+        collectionId: input.id,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
+  getMyInvites: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .use(isFlagProtected('collaborativeCollections'))
+    .query(({ ctx }) => getMyInvites({ userId: ctx.user.id })),
 });
