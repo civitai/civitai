@@ -46,6 +46,15 @@ vi.mock('~/components/Apps/ExternalSubmitForm', () => ({
 
 const { AppsSubmitEditView } = await import('./AppsSubmitEditView');
 
+/**
+ * A loader ceiling large enough that its timer can NEVER fire inside a test.
+ *
+ * 🔴 This is the tool that makes the re-armed spinner an ABSORBING state. See the
+ * "absorbing state" note on the retry tests below — asserting the spinner while a
+ * short ceiling is live is an unwinnable race, not a slow assertion.
+ */
+const NEVER_ELAPSES_MS = 600_000;
+
 beforeEach(() => {
   mocks.edit = {
     data: undefined,
@@ -163,16 +172,39 @@ describe('AppsSubmitEditView — routing', () => {
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });
 
-  test('retry RE-ARMS a fresh ceiling: a never-settling query recovers the spinner then re-lands the alert', async () => {
-    // Covers the trickiest bit of the bounded loader: `retryNonce` re-arming the
-    // ceiling timer. The query NEVER settles (`isLoading` stays true across the
-    // refetch — the real prod symptom, NOT the error-state mock the retry test
-    // above uses). So clicking "Try again" cannot rely on `isLoading` toggling;
-    // the nonce bump is the ONLY thing that flips the loader back on. We prove:
-    //   1. ceiling elapses → alert,
-    //   2. click "Try again" → the SPINNER returns (only possible if the nonce
-    //      re-armed `loaderExpired=false` while the query is still loading),
-    //   3. a FRESH ceiling elapses → the alert returns again.
+  // 🔴 ABSORBING-STATE RULE for the two retry tests below. The test these replaced
+  // awaited a state that DELETES ITSELF, which is a race the matcher cannot win.
+  //
+  // `expect.element` polls (first attempt immediate, then every 50ms, 15s budget).
+  // Waiting for a state to ARRIVE is safe: load only makes it arrive later and the
+  // matcher keeps polling. Waiting for a state that will LEAVE cannot be won — once
+  // the state is gone it never comes back, so every remaining poll is also too late.
+  //
+  // Measured on this component (instrumented with `performance.now()` timestamps):
+  // after the retry click the spinner is observable for exactly `loaderCeilingMs`,
+  // and the matcher's first poll lands 40-78ms into that window on an idle box. At
+  // `loaderCeilingMs={200}` that is a ~150ms margin, which a saturated CI box erases.
+  // Proof the value governed the outcome: at `loaderCeilingMs={1}` the window
+  // measured 3.3ms and the test went red at ~15.0s, matching the CI signature.
+  //
+  // ⚠️ That ~15.0s wall is a weak signal on its own — it only means SOME
+  // `expect.element` was never satisfied. It does not distinguish "arrived and left"
+  // from "never arrived", and healthy tests elsewhere legitimately run ~15s while
+  // waiting out a real product timeout. To tell the two apart, read the observable
+  // SYNCHRONOUSLY right after the action (present-then-gone vs never-present), or
+  // enlarge the component's own window and see whether the failure disappears.
+  //
+  // So: NEVER assert the transient spinner while a short ceiling is live. Either
+  // widen the ceiling so the spinner cannot delete itself (test 1), or don't assert
+  // it at all and await the absorbing end-state instead (test 2). Widening the
+  // *matcher* budget or the *ceiling* alone would only make the race rarer — it stays
+  // unwinnable whenever the machine is slow enough, which is exactly when CI runs.
+
+  test('retry RE-ARMS the loader: a never-settling query recovers the spinner', async () => {
+    // The query NEVER settles (`isLoading` stays true across the refetch — the real
+    // prod symptom, NOT the error-state mock the retry test above uses). So clicking
+    // "Try again" cannot rely on `isLoading` toggling; `setLoaderExpired(false)` in
+    // `handleRetry` is the ONLY thing that can flip the loader back on.
     const refetch = vi.fn(); // never-settling: refetch does not change the query state
     mocks.edit = {
       data: undefined,
@@ -182,20 +214,66 @@ describe('AppsSubmitEditView — routing', () => {
       error: null,
       refetch,
     };
-    // A comfortable ceiling so the transient re-armed spinner is observable by the
-    // polling matcher (not a real 15s wait — the prod default is 15_000ms).
-    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={200} />);
+    const { rerender } = await renderWithProviders(
+      <AppsSubmitEditView listingId="apl_1" loaderCeilingMs={30} />
+    );
 
-    // 1. First ceiling elapses → recoverable alert.
+    // 1. The first ceiling elapses → the recoverable alert. ABSORBING: `isLoading`
+    //    never toggles, so nothing takes the alert away again.
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
 
-    // 2. Retry re-arms the loader (proves nonce → fresh timer, since isLoading
-    //    never toggled) and re-issues the fetch.
+    // 2. Widen the ceiling so that when the spinner returns it CANNOT delete itself.
+    //    🔴 NEGATIVE CONTROL: `loaderCeilingMs` is an effect dep, so this rerender
+    //    re-runs the effect and arms a fresh timer — but it must NOT by itself revive
+    //    the spinner (`loaderExpired` stays true until something clears it). Asserting
+    //    that here is what makes the spinner in step 3 attributable to the RETRY
+    //    rather than to this prop change.
+    await rerender(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={NEVER_ELAPSES_MS} />);
+    await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
+
+    // 3. Retry → the spinner returns, and with the ceiling widened it is ABSORBING,
+    //    so this assertion waits rather than races.
     await page.getByTestId('apps-offsite-edit-retry').click();
     await expect.element(page.getByTestId('apps-offsite-edit-loading')).toBeInTheDocument();
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
 
-    // 3. The fresh ceiling elapses → the alert returns (still never settled).
+  test('retry re-arms a FRESH ceiling: the re-armed timer elapses and re-lands the alert', async () => {
+    // This is the test that pins `retryNonce` in the effect's dep array. The ceiling
+    // is never changed, so the timer that fires after the retry can ONLY be one the
+    // retry itself armed. Drop the nonce from the deps and the effect never re-runs:
+    // `handleRetry` clears `loaderExpired` and nothing ever sets it back, so the
+    // spinner stays up forever and both assertions below fail.
+    const refetch = vi.fn(); // never-settling: refetch does not change the query state
+    mocks.edit = {
+      data: undefined,
+      isLoading: true,
+      isFetching: true,
+      isError: false,
+      error: null,
+      refetch,
+    };
+    renderWithProviders(<AppsSubmitEditView listingId="apl_1" loaderCeilingMs={30} />);
+
+    // The first ceiling elapses → the alert. ABSORBING.
+    await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
+
+    await page.getByTestId('apps-offsite-edit-retry').click();
+    // We deliberately do NOT assert the spinner here: it deletes itself 30ms later,
+    // and asserting it is precisely the unwinnable race described above.
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    // 🔴 Read this test honestly: its terminal state is textually IDENTICAL to its
+    // initial state (the alert), so nothing INSIDE this test proves the alert ever
+    // left. That the spinner really does go up, and that the alert returning
+    // therefore requires a freshly-armed timer, is established ELSEWHERE — by test 1
+    // above (which asserts the spinner directly against an absorbing ceiling) and by
+    // the mutation matrix: dropping `retryNonce` from the deps, or bumping it to a
+    // value that never changes, both red THIS test 3/3 while leaving test 1 green.
+    // Keep that pairing intact; this test is not self-sufficient without it.
+    //
+    // The FRESH ceiling elapses and re-lands the alert. ABSORBING.
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });
