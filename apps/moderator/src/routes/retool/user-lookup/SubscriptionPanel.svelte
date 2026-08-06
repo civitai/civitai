@@ -1,29 +1,13 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { PageData } from './$types';
   import { dateTime, num } from './format';
+  import type { Account } from './user-account';
 
   type Subscription = NonNullable<PageData['result']>['subscription'];
 
-  export type Account = {
-    buzz: { balance: number; lifetimeBalance: number } | null;
-    reviews: unknown[];
-    comments: unknown[];
-    cosmetics: unknown[];
-  };
-
-  let { subscription, userId }: { subscription: Subscription; userId: number } = $props();
-
-  // Buzz is an external service; the balance arrives after the subscription, which is already in the load.
-  const account = $derived(
-    browser
-      ? fetch(`/api/user-account/${userId}`).then((r): Promise<Account> => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
-      : null
-  );
+  let { subscription, account }: { subscription: Subscription; account: Promise<Account> | null } =
+    $props();
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -44,7 +28,7 @@
             <span class="text-xs text-dark-2">via {subscription.provider}</span>
           {/if}
         </div>
-        <dl class="mt-2 space-y-0.5 text-sm text-dark-1">
+        <dl class="mt-2 space-y-0.5 text-sm text-dark-2">
           <div>Renews / ends: {dateTime(subscription.currentPeriodEnd)}</div>
           {#if subscription.cancelAtPeriodEnd}
             <div class="text-amber-300">Set to cancel at period end</div>

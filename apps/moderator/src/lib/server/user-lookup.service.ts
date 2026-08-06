@@ -41,8 +41,29 @@ export type UserStats = {
   generations: number;
 };
 
+export type UserProfileText = {
+  bio: string | null;
+  message: string | null;
+  location: string | null;
+};
+
+// Civitai score. Every component is optional: `meta->scores` only carries the parts that have been
+// computed, so a missing key means "not scored", not zero — roughly half of all users have no scores
+// object at all, and of those that do most hold only `total` and one component.
+export type UserScores = {
+  total: number | null;
+  users: number | null;
+  images: number | null;
+  models: number | null;
+  articles: number | null;
+  reportsAgainst: number | null;
+  reportsActioned: number | null;
+};
+
 export type UserLookupResult = {
   identity: UserIdentity;
+  profile: UserProfileText | null;
+  scores: UserScores | null;
   counts: UserCounts;
   stats: UserStats | null;
   reportsFiled: ReportsFiled;
@@ -76,15 +97,20 @@ export async function resolveUserId(term: string): Promise<number | null> {
 }
 
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
-  const [identity, counts, stats, reportsFiled, reportedContent, subscription] = await Promise.all([
-    getIdentity(userId),
-    getCounts(userId),
-    getStats(userId),
-    getReportsFiled(userId),
-    getReportedContent(userId),
-    getSubscription(userId),
-  ]);
-  return identity ? { identity, counts, stats, reportsFiled, reportedContent, subscription } : null;
+  const [identity, profile, scores, counts, stats, reportsFiled, reportedContent, subscription] =
+    await Promise.all([
+      getIdentity(userId),
+      getProfile(userId),
+      getScores(userId),
+      getCounts(userId),
+      getStats(userId),
+      getReportsFiled(userId),
+      getReportedContent(userId),
+      getSubscription(userId),
+    ]);
+  return identity
+    ? { identity, profile, scores, counts, stats, reportsFiled, reportedContent, subscription }
+    : null;
 }
 
 async function getIdentity(userId: number): Promise<UserIdentity | null> {
@@ -112,6 +138,38 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
     .where('u.id', '=', userId)
     .executeTakeFirst();
   return (row as UserIdentity | undefined) ?? null;
+}
+
+// Retool's UserBio also selected the cover image; the moderator app links to the profile instead of
+// re-rendering it, so only the text a moderator reads is ported.
+async function getProfile(userId: number): Promise<UserProfileText | null> {
+  const row = await dbRead
+    .selectFrom('UserProfile')
+    .select(['bio', 'message', 'location'])
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
+async function getScores(userId: number): Promise<UserScores | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select(sql<Record<string, number> | null>`meta -> 'scores'`.as('scores'))
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  const scores = row?.scores;
+  if (!scores) return null;
+
+  const at = (key: string) => (typeof scores[key] === 'number' ? scores[key] : null);
+  return {
+    total: at('total'),
+    users: at('users'),
+    images: at('images'),
+    models: at('models'),
+    articles: at('articles'),
+    reportsAgainst: at('reportsAgainst'),
+    reportsActioned: at('reportsActioned'),
+  };
 }
 
 // Retool ran these as a UNION ALL of COUNT(*)s. Kept as parallel counts so a new one is a line, not a
@@ -367,6 +425,78 @@ export async function getSharedIpAccounts(
   };
 }
 
+export type UserSocial = { id: number; url: string; type: string };
+
+// Matching key, not a display value: scheme, `www.` and trailing slashes are cosmetic, and treating them
+// as significant splits a ring in half. Measured: one spam domain is held by 35 accounts with a trailing
+// slash and 25 without, and those two sets do not overlap at all — an exact match reports 24 alts on a
+// 60-account ring.
+const normalizedUrl = (column: string) =>
+  sql<string>`regexp_replace(regexp_replace(lower(btrim(${sql.ref(column)})), '^https?://(www\\.)?', ''), '/+$', '')`;
+
+// `UserLink` has no uniqueness on (userId, url) — one account holds the same link up to 19 times — so
+// every read here dedupes. Left raw it renders a link 19 times, and in the shared-account list it
+// produces a duplicate `{#each}` key, which Svelte throws on in production from inside the `:then`
+// branch where the `{:catch}` cannot see it.
+export async function getSocials(userId: number): Promise<UserSocial[]> {
+  return dbRead
+    .selectFrom('UserLink')
+    .select(['id', 'url', 'type'])
+    .distinctOn(normalizedUrl('url'))
+    .where('userId', '=', userId)
+    .orderBy(normalizedUrl('url'))
+    .orderBy('id')
+    .execute();
+}
+
+export type SharedSocialAccount = {
+  userId: number;
+  username: string | null;
+  bannedAt: Date | null;
+  url: string;
+};
+
+// Ban-evasion signal in the same class as shared IPs, and in practice a sharper one: the most-shared
+// links in the table are spam-network domains posted by dozens of accounts each.
+//
+// Retool did this by SELECTing the entire UserLink table and matching in the browser. Matching in SQL
+// as a self-join is worse still — 21s for a user with many links, because it drives a sequential scan
+// per link. Two statements instead: collect this user's URLs, then one scan matching all of them (~40ms).
+// `url` has no index.
+//
+// The cap counts ACCOUNTS, not rows. Capping rows let one account holding 25 shared links fill the whole
+// window and report "25+ accounts" for what is a single alt, while pushing every genuinely distinct
+// account out of sight.
+export async function getSharedSocialAccounts(
+  userId: number
+): Promise<{ accounts: SharedSocialAccount[]; truncated: boolean }> {
+  const mine = await dbRead
+    .selectFrom('UserLink')
+    .select(normalizedUrl('url').as('url'))
+    .distinct()
+    .where('userId', '=', userId)
+    .execute();
+  const urls = mine.map((r) => r.url).filter(Boolean);
+  if (!urls.length) return { accounts: [], truncated: false };
+
+  const LIMIT = 25;
+  const rows = await dbRead
+    .selectFrom('UserLink as ul')
+    .innerJoin('User as u', 'u.id', 'ul.userId')
+    .select(['ul.userId', 'ul.url', 'u.username', 'u.bannedAt'])
+    .distinctOn('ul.userId')
+    .where(normalizedUrl('ul.url'), 'in', urls)
+    .where('ul.userId', '!=', userId)
+    .orderBy('ul.userId')
+    .orderBy('ul.id')
+    .limit(LIMIT + 1)
+    .execute();
+
+  // DISTINCT ON fixes the row order, so banned-first ordering is applied here rather than in SQL.
+  const sorted = rows.sort((a, b) => Number(!!b.bannedAt) - Number(!!a.bannedAt));
+  return { accounts: sorted.slice(0, LIMIT), truncated: sorted.length > LIMIT };
+}
+
 // Retool's PotentialSpammer/V2 (Postgres, despite sitting beside the ClickHouse queries): a burst of
 // comments in a short window. V2 supersedes V1 by summing both comment tables instead of returning a row
 // per table, so only that behaviour is ported.
@@ -567,6 +697,46 @@ export async function getComments(userId: number, limit = 25): Promise<UserComme
     .orderBy('createdAt', 'desc')
     .limit(limit)
     .execute();
+}
+
+// REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).
+// The concentration is the signal — a normal account spreads reactions over hundreds of creators, a
+// vote-ring account puts most of them on one.
+//
+// `ReactionsAll` (every raw reaction row) is not ported: it is unbounded, and the top of this list
+// answers the question the raw rows were being scanned to answer.
+//
+// Reads a 744M-row table, so it stays off the page load. Bounded by the ImageReaction_userId index:
+// ~47ms at 49K reactions, ~605ms for the heaviest account on the site (6M).
+// `UserStat.reactionCountAllTime` is NOT this number — it counts reactions the user RECEIVED (measured:
+// 51,775 received against 312 given for the same account). The window function totals every group
+// before LIMIT trims them, so the total costs no extra round trip and stays honest.
+export type ReactionTarget = { userId: number; username: string | null; count: number };
+export type ReactionSummary = { total: number; creators: number; targets: ReactionTarget[] };
+
+export async function getReactionTargets(userId: number, limit = 10): Promise<ReactionSummary> {
+  const rows = await dbRead
+    .selectFrom('ImageReaction as ir')
+    .innerJoin('Image as i', 'i.id', 'ir.imageId')
+    .leftJoin('User as u', 'u.id', 'i.userId')
+    .select((eb) => [
+      'i.userId',
+      'u.username',
+      eb.fn.countAll<string>().as('count'),
+      sql<string>`sum(count(*)) over ()`.as('total'),
+      sql<string>`count(*) over ()`.as('creators'),
+    ])
+    .where('ir.userId', '=', userId)
+    .groupBy(['i.userId', 'u.username'])
+    .orderBy('count', 'desc')
+    .limit(limit)
+    .execute();
+
+  return {
+    total: Number(rows[0]?.total ?? 0),
+    creators: Number(rows[0]?.creators ?? 0),
+    targets: rows.map((r) => ({ userId: r.userId, username: r.username, count: Number(r.count) })),
+  };
 }
 
 // COSMETICS — read-only. Retool's RemoveCosmetics is deliberately not ported (destructive, and the

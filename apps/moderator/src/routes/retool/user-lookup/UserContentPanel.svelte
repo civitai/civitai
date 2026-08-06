@@ -1,59 +1,31 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, dateTime } from './format';
+  import { LINK_CLASS, dateTime, num } from './format';
+  import type { Account } from './user-account';
 
-  type Review = {
-    id: number;
-    createdAt: string;
-    rating: number | null;
-    modelId: number | null;
-    tosViolation: boolean | null;
-    exclude: boolean | null;
-    modelCreator: string | null;
-  };
-  type Comment = {
-    id: number;
-    createdAt: string;
-    content: string;
-    nsfw: boolean | null;
-    tosViolation: boolean | null;
-    modelId: number | null;
-  };
-  type Cosmetic = {
-    /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
-    key: string;
-    name: string;
-    type: string;
-    equipped: boolean;
-    obtainedAt: string | null;
-  };
-  type Account = { reviews: Review[]; comments: Comment[]; cosmetics: Cosmetic[] };
-
-  let { userId, civitaiUrl }: { userId: number; civitaiUrl: string } = $props();
+  let { account, civitaiUrl }: { account: Promise<Account> | null; civitaiUrl: string } = $props();
 
   const SHOWN = 5;
   let showReviews = $state(false);
   let showComments = $state(false);
   let showCosmetics = $state(false);
 
-  const account = $derived(
-    browser
-      ? fetch(`/api/user-account/${userId}`).then((r): Promise<Account> => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
-      : null
-  );
-
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
   const CARD = 'rounded-xl border border-dark-4 bg-dark-6 p-5';
 </script>
 
-<section class="mb-4 grid gap-4 lg:grid-cols-3">
+{#snippet moreToggle(total: number, expanded: boolean, toggle: () => void)}
+  {#if total > SHOWN}
+    <button type="button" class="mt-3 text-sm {LINK_CLASS}" onclick={toggle}>
+      {expanded ? 'Show less' : `Show all ${total}`}
+    </button>
+  {/if}
+{/snippet}
+
+<section class="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
   {#await account}
-    <div class="{CARD} lg:col-span-3">
-      <p class="text-sm text-dark-2">Loading reviews, comments and cosmetics…</p>
+    <div class="{CARD} sm:col-span-2 xl:col-span-4">
+      <p class="text-sm text-dark-2">Loading reviews, comments, cosmetics and reactions…</p>
     </div>
   {:then result}
     {#if result}
@@ -77,15 +49,11 @@
               </li>
             {/each}
           </ul>
-          {#if result.reviews.length > SHOWN}
-            <button
-              type="button"
-              class="mt-3 text-sm {LINK_CLASS}"
-              onclick={() => (showReviews = !showReviews)}
-            >
-              {showReviews ? 'Show less' : `Show all ${result.reviews.length}`}
-            </button>
-          {/if}
+          {@render moreToggle(
+            result.reviews.length,
+            showReviews,
+            () => (showReviews = !showReviews)
+          )}
         {/if}
       </div>
 
@@ -116,15 +84,11 @@
               </li>
             {/each}
           </ul>
-          {#if result.comments.length > SHOWN}
-            <button
-              type="button"
-              class="mt-3 text-sm {LINK_CLASS}"
-              onclick={() => (showComments = !showComments)}
-            >
-              {showComments ? 'Show less' : `Show all ${result.comments.length}`}
-            </button>
-          {/if}
+          {@render moreToggle(
+            result.comments.length,
+            showComments,
+            () => (showComments = !showComments)
+          )}
         {/if}
       </div>
 
@@ -142,21 +106,45 @@
               </li>
             {/each}
           </ul>
-          {#if result.cosmetics.length > SHOWN}
-            <button
-              type="button"
-              class="mt-3 text-sm {LINK_CLASS}"
-              onclick={() => (showCosmetics = !showCosmetics)}
-            >
-              {showCosmetics ? 'Show less' : `Show all ${result.cosmetics.length}`}
-            </button>
+          {@render moreToggle(
+            result.cosmetics.length,
+            showCosmetics,
+            () => (showCosmetics = !showCosmetics)
+          )}
+        {/if}
+      </div>
+
+      <div class={CARD}>
+        <h3 class="mb-1 text-sm font-semibold text-white">
+          Image reactions given ({num(result.reactions.total)})
+        </h3>
+        <p class="mb-3 text-xs text-dark-2">
+          Creators reacted to most, across {num(result.reactions.creators)}
+          {result.reactions.creators === 1 ? 'creator' : 'creators'}. Concentration on one is the
+          signal. Images only — article and comment reactions are not counted.
+        </p>
+        {#if result.reactions.targets.length === 0}
+          <p class="text-sm text-dark-2">None.</p>
+        {:else}
+          <ul class="space-y-1 text-sm">
+            {#each result.reactions.targets as t (t.userId)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <span class="tabular-nums text-dark-0">{num(t.count)}</span>
+                <a href="?q={t.userId}" class={LINK_CLASS}>{t.username ?? `#${t.userId}`}</a>
+              </li>
+            {/each}
+          </ul>
+          {#if result.reactions.creators > result.reactions.targets.length}
+            <p class="mt-2 text-xs text-dark-2">
+              Top {result.reactions.targets.length} of {num(result.reactions.creators)}.
+            </p>
           {/if}
         {/if}
       </div>
     {/if}
   {:catch}
-    <div class="{CARD} lg:col-span-3">
-      <p class="text-sm text-red-300">Could not load reviews, comments or cosmetics.</p>
+    <div class="{CARD} sm:col-span-2 xl:col-span-4">
+      <p class="text-sm text-red-300">Could not load reviews, comments, cosmetics or reactions.</p>
     </div>
   {/await}
 </section>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
+  import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, num } from './format';
 
   type Counts = NonNullable<PageData['result']>['counts'];
@@ -13,7 +14,7 @@
   // Only link where the site has a page for that content type, and only when there is something to see.
   const href = (profilePath: string | null, count: number) =>
     profilePath && count > 0 && username
-      ? `${civitaiUrl}/user/${encodeURIComponent(username)}/${profilePath}`
+      ? userUrl(civitaiUrl, username, profilePath)
       : null;
 </script>
 

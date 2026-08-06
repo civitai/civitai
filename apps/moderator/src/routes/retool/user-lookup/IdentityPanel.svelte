@@ -1,14 +1,28 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { PageData } from './$types';
+  import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from './format';
 
   type Identity = NonNullable<PageData['result']>['identity'];
+  type Profile = NonNullable<PageData['result']>['profile'];
 
-  let { identity, civitaiUrl }: { identity: Identity; civitaiUrl: string } = $props();
+  let {
+    identity,
+    profile,
+    civitaiUrl,
+  }: { identity: Identity; profile: Profile; civitaiUrl: string } = $props();
+
+  const profileText = $derived(
+    [
+      ['Bio', profile?.bio],
+      ['Profile message', profile?.message],
+      ['Location', profile?.location],
+    ].filter((entry): entry is [string, string] => !!entry[1]?.trim())
+  );
 
   const profileUrl = $derived(
-    identity.username ? `${civitaiUrl}/user/${encodeURIComponent(identity.username)}` : null
+    identity.username ? userUrl(civitaiUrl, identity.username) : null
   );
 
   const fields = $derived<[string, string][]>([
@@ -87,6 +101,17 @@
       </dd>
     </div>
   </dl>
+
+  {#if profileText.length}
+    <dl class="mt-4 grid gap-x-8 gap-y-2 border-t border-dark-4 pt-4 text-sm sm:grid-cols-3">
+      {#each profileText as [label, value] (label)}
+        <div>
+          <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
+          <dd class="whitespace-pre-wrap text-dark-0">{value}</dd>
+        </div>
+      {/each}
+    </dl>
+  {/if}
 
   {#if identity.banReason || identity.banDetails}
     <div class="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PageData } from './$types';
   import type { FormResult } from './format';
+  import { fetchAccount } from './user-account';
   import AccountActionsPanel from './AccountActionsPanel.svelte';
   import ContentCounts from './ContentCounts.svelte';
   import IdentityPanel from './IdentityPanel.svelte';
@@ -23,6 +25,12 @@
   $effect(() => {
     term = data.q;
   });
+
+  // One fetch for the whole page: Subscription wants the Buzz balance and UserContent wants the lists,
+  // and each fetching for itself ran the endpoint — including the 744M-row reaction scan — twice.
+  const account = $derived(
+    browser && data.result ? fetchAccount(data.result.identity.id) : null
+  );
 
   const search = (e: SubmitEvent) => {
     e.preventDefault();
@@ -47,7 +55,11 @@
   </section>
 {:else if data.result}
   {@const result = data.result}
-  <IdentityPanel identity={result.identity} civitaiUrl={data.civitaiUrl} />
+  <IdentityPanel
+    identity={result.identity}
+    profile={result.profile}
+    civitaiUrl={data.civitaiUrl}
+  />
   <ContentCounts
     counts={result.counts}
     civitaiUrl={data.civitaiUrl}
@@ -59,12 +71,10 @@
   {#key result.identity.id}
     <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />
     <ModerationMemoryPanel userId={result.identity.id} {form} />
-    <SubscriptionPanel subscription={result.subscription} userId={result.identity.id} />
+    <SubscriptionPanel subscription={result.subscription} {account} />
     <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     <SecuritySignals userId={result.identity.id} />
-    <UserContentPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+    <UserContentPanel {account} civitaiUrl={data.civitaiUrl} />
   {/key}
-  {#if result.stats}
-    <ReputationPanel stats={result.stats} />
-  {/if}
+  <ReputationPanel stats={result.stats} scores={result.scores} />
 {/if}

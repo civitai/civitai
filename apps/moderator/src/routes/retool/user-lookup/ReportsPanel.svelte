@@ -15,6 +15,8 @@
     ['Actioned', num(reportsFiled.actioned)],
     ['Dismissed', num(reportsFiled.unactioned)],
     ['Pending', num(reportsFiled.pending)],
+    // Small (734 rows site-wide) but omitting it made the tiles not sum to Total, with no explanation.
+    ['Processing', num(reportsFiled.processing)],
   ]);
 </script>
 
@@ -24,7 +26,7 @@
     <p class="mb-3 text-xs text-dark-2">
       How often their reports hold up — the actioned share is of resolved reports only.
     </p>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
       {#each filed as [label, value] (label)}
         <div>
           <div class="text-xl font-semibold tabular-nums text-white">{value}</div>
@@ -33,7 +35,7 @@
       {/each}
     </div>
     {#if reportsFiled.actionedPercent !== null}
-      <p class="mt-3 text-sm text-dark-1">
+      <p class="mt-3 text-sm text-dark-2">
         <span class="font-semibold text-white">{reportsFiled.actionedPercent}%</span>
         of their resolved reports were actioned.
       </p>
