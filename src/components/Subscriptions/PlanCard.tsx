@@ -21,6 +21,10 @@ import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { getBuzzMembershipPrice } from '~/shared/utils/buzz-membership';
 import { numberWithCommas } from '~/utils/number-helpers';
+import Router from 'next/router';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -121,6 +125,25 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
   }) as SubscriptionProductMetadata;
+
+  const utils = trpc.useUtils();
+  // The card IS the checkout for Buzz plans — there's nothing to configure beyond the tier,
+  // so a separate confirmation step would only be a speed bump.
+  const purchaseWithBuzz = trpc.subscriptions.purchaseWithBuzz.useMutation({
+    onSuccess: async () => {
+      await utils.subscriptions.invalidate();
+      showSuccessNotification({
+        title: 'Membership activated',
+        message: 'Your perks are available now. Enjoy!',
+      });
+      Router.push('/user/membership');
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Unable to purchase membership',
+        error: new Error(error.message),
+      }),
+  });
 
   // Spotlight + border glow tracking
   const cardRef = useRef<HTMLDivElement>(null);
@@ -254,14 +277,16 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                           Membership already active
                         </Button>
                       ) : (
-                        <Button
+                        <BuzzTransactionButton
+                          buzzAmount={buzzPrice}
+                          disabled={buzzPrice <= 0}
+                          loading={purchaseWithBuzz.isPending}
+                          label={`Get ${capitalize(meta?.tier)} with Buzz`}
+                          onPerformTransaction={() =>
+                            purchaseWithBuzz.mutate({ priceId: price.id })
+                          }
                           radius="xl"
-                          {...subscribeBtnProps.subscribe}
-                          component={Link}
-                          href={`/pricing/buzz?tier=${meta.tier}`}
-                        >
-                          Get {capitalize(meta?.tier)} with Buzz
-                        </Button>
+                        />
                       )
                     ) : isActivePlan ? (
                       <Button radius="xl" {...btnProps} component={Link} href="/user/membership">

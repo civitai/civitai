@@ -44,6 +44,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { BuzzMembershipCallout } from '~/components/Subscriptions/BuzzMembershipCallout';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
 import { ReferralCallout } from '~/components/Referrals/ReferralCallout';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
@@ -324,63 +325,10 @@ export default function UserMembership() {
             <Stack gap="xl">
               <Title>My Membership Plan</Title>
               {isBuzzMembership && (
-                <Paper withBorder radius="lg" p="lg" className={styles.buzzMembershipCallout}>
-                  <Stack gap="md">
-                    <Group gap="sm" wrap="nowrap" align="flex-start">
-                      <ThemeIcon size={42} radius="md" variant="light" color="blue">
-                        <IconBolt size={26} strokeWidth={2.5} />
-                      </ThemeIcon>
-                      <Stack gap={2}>
-                        <Group gap="xs">
-                          <Text fw={700} size="lg" lh={1.2}>
-                            {capitalize(subscription.product.metadata.tier ?? '')} Perks
-                          </Text>
-                          <Badge color="blue" variant="filled" radius="sm">
-                            Buzz purchase
-                          </Badge>
-                        </Group>
-                        <Text size="sm" c="dimmed" lh={1.3}>
-                          A perks-only membership bought with Buzz — not a paid subscription.
-                        </Text>
-                      </Stack>
-                    </Group>
-
-                    <Divider />
-
-                    <Group align="flex-start" gap="xl" wrap="wrap">
-                      <Stack gap={4} style={{ flex: 1, minWidth: 220 }}>
-                        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
-                          What you get
-                        </Text>
-                        <Text size="sm" lh={1.4}>
-                          Every {capitalize(subscription.product.metadata.tier ?? '')} perk below
-                          &mdash; generation limits, priority, Vault, private models and support
-                          &mdash; through{' '}
-                          <Text component="span" fw={600}>
-                            {formatDate(subscription.currentPeriodEnd)}
-                          </Text>
-                          .
-                        </Text>
-                      </Stack>
-                      <Stack gap={4} style={{ flex: 1, minWidth: 220 }}>
-                        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
-                          What it does not include
-                        </Text>
-                        <Text size="sm" lh={1.4}>
-                          Monthly Buzz, bonus Buzz on purchases or rewards, the monthly badge, and
-                          the Creator Program.
-                        </Text>
-                      </Stack>
-                    </Group>
-
-                    <Text size="sm" c="dimmed" lh={1.4}>
-                      It <strong>does not renew automatically</strong>. When it expires you can{' '}
-                      <Anchor href="/pricing/buzz">buy another month with Buzz</Anchor> or{' '}
-                      <Anchor href="/pricing">start a paid membership</Anchor> for the full set of
-                      benefits.
-                    </Text>
-                  </Stack>
-                </Paper>
+                <BuzzMembershipCallout
+                  tier={subscription.product.metadata.tier}
+                  expiresAt={subscription.currentPeriodEnd}
+                />
               )}
               <ReferralCallout variant="compact" />
               {otherSubscription && subscription && (

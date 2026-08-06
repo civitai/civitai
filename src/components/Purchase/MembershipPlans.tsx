@@ -15,8 +15,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useState } from 'react';
 import {
+  IconArrowRight,
   IconBolt,
   IconExclamationMark,
   IconInfoCircle,
@@ -104,16 +104,12 @@ export function MembershipPlans({
   const features = useFeatureFlags();
   const redirectReason = reason ? joinRedirectReasons[reason] : undefined;
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
-  const [payWithBuzz, setPayWithBuzz] = useState(false);
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
-    interval: payWithBuzz ? 'month' : interval,
+    interval,
     buzzType: selectedBuzzType, // Filter plans by selected buzz type
-    buzzPurchase: payWithBuzz,
     paymentProvider:
-      payWithBuzz || features.disablePayments || selectedBuzzType === 'yellow'
-        ? 'Civitai'
-        : paymentProvider,
+      features.disablePayments || selectedBuzzType === 'yellow' ? 'Civitai' : paymentProvider,
   });
 
   const isLoading = productsLoading;
@@ -125,10 +121,7 @@ export function MembershipPlans({
     subscription?.product?.metadata as SubscriptionProductMetadata | undefined
   )?.buzzPurchase;
 
-  // The alerts below all compare the user's subscription against the cash catalog, so
-  // they're meaningless while the Buzz catalog is on screen.
   const currentMembershipUnavailable =
-    !payWithBuzz &&
     !subscriptionIsBuzzPurchase &&
     !features.disablePayments &&
     ((subscription && !subscription?.product?.active) ||
@@ -140,7 +133,6 @@ export function MembershipPlans({
         !(products ?? []).some((p) => p.provider === subscription.product.provider)));
 
   const activeSubscriptionIsNotDefaultProvider =
-    !payWithBuzz &&
     !subscriptionIsBuzzPurchase &&
     !features.disablePayments &&
     subscription &&
@@ -244,86 +236,64 @@ export function MembershipPlans({
             </AlertWithIcon>
           )}
           {features.buzzMemberships && (
-            <Stack gap={6} align="center">
+            <Center>
+              <div className="flex items-center gap-3 rounded-lg border border-blue-5/30 bg-gradient-to-r from-blue-5/15 via-blue-5/5 to-transparent px-4 py-2.5">
+                <ThemeIcon variant="light" color="blue" size="md" radius="xl" className="shrink-0">
+                  <IconBolt size={16} fill="currentColor" />
+                </ThemeIcon>
+                <Text size="sm" className="flex-1">
+                  Short on cash? You can buy a{' '}
+                  <Text component="span" fw={700} c="blue.4">
+                    perks-only membership
+                  </Text>{' '}
+                  with Buzz instead.
+                </Text>
+                <Button
+                  component={Link}
+                  href="/pricing/buzz"
+                  color="blue"
+                  variant="outline"
+                  size="compact-sm"
+                  radius="xl"
+                  rightSection={<IconArrowRight size={14} />}
+                  className="shrink-0"
+                >
+                  View perks memberships
+                </Button>
+              </div>
+            </Center>
+          )}
+
+          {((features.annualMemberships && !features.isGreen) || interval === 'year') && (
+            <Center>
               <SegmentedControl
                 radius="md"
+                value={interval}
+                onChange={(value) => onIntervalChange(value as 'month' | 'year')}
                 size="md"
-                value={payWithBuzz ? 'buzz' : 'cash'}
-                onChange={(value) => setPayWithBuzz(value === 'buzz')}
                 data={[
-                  { value: 'cash', label: 'Pay with Card' },
+                  { value: 'month', label: 'Monthly Plans' },
                   {
-                    value: 'buzz',
+                    value: 'year',
                     label: (
                       <Center>
-                        <IconBolt
-                          size={16}
-                          style={{ color: buzzConfig.color, marginRight: 4 }}
-                          fill="currentColor"
-                        />
-                        Pay with {buzzTypeLabel}
+                        <Box mr={6}>Annual Plans</Box>
+                        <Badge
+                          p={5}
+                          className="flex"
+                          variant="filled"
+                          radius="xl"
+                          style={{ backgroundColor: buzzConfig.color }}
+                        >
+                          1 month for free!
+                        </Badge>
                       </Center>
                     ),
                   },
                 ]}
               />
-              {payWithBuzz && (
-                <Text size="xs" c="dimmed" className="text-center">
-                  Perks only — no monthly Buzz, no bonus Buzz, no monthly badge, and no Creator
-                  Program.
-                </Text>
-              )}
-            </Stack>
+            </Center>
           )}
-
-          {payWithBuzz && !!subscription && (
-            <AlertWithIcon
-              color="yellow"
-              iconColor="yellow"
-              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-              iconSize={28}
-              py={11}
-              maw="calc(50% - 8px)"
-              mx="auto"
-            >
-              <Text lh={1.2}>
-                You already have a membership. You can purchase one with {buzzTypeLabel} once it
-                expires.
-              </Text>
-            </AlertWithIcon>
-          )}
-
-          {!payWithBuzz &&
-            ((features.annualMemberships && !features.isGreen) || interval === 'year') && (
-              <Center>
-                <SegmentedControl
-                  radius="md"
-                  value={interval}
-                  onChange={(value) => onIntervalChange(value as 'month' | 'year')}
-                  size="md"
-                  data={[
-                    { value: 'month', label: 'Monthly Plans' },
-                    {
-                      value: 'year',
-                      label: (
-                        <Center>
-                          <Box mr={6}>Annual Plans</Box>
-                          <Badge
-                            p={5}
-                            className="flex"
-                            variant="filled"
-                            radius="xl"
-                            style={{ backgroundColor: buzzConfig.color }}
-                          >
-                            1 month for free!
-                          </Badge>
-                        </Center>
-                      ),
-                    },
-                  ]}
-                />
-              </Center>
-            )}
 
           {subscription?.price?.interval === 'year' && interval === 'month' && (
             <AlertWithIcon

@@ -251,9 +251,19 @@ flag-gated but is inert until Buzz products exist in the catalog.
 
 ## Entry points
 
-- `src/pages/pricing/buzz.tsx` — purchase page (`?tier=` preselects)
+- `/pricing` — cash catalog only. Carries a blue alert (styled like the "moved to
+  civitai.red" one) pointing at the Buzz catalog. There is **no** pay-with toggle; a
+  segmented control put a second currency on a page that's about the cash plans.
+- `/pricing/buzz` — the Buzz catalog: the shared `BuzzMembershipCallout` plus the same three
+  `PlanCard`s `/pricing` uses. The card **is** the checkout — its "Get X with Buzz" button
+  runs `purchaseWithBuzz` directly, since there's nothing to configure past the tier.
+- `YellowMembershipUnavailable` (civitai.red `/pricing`) — third callout box alongside "Buy
+  Buzz" and "Green Membership", linking to `/pricing/buzz`.
+- `BuzzMembershipCallout` — the one description of what these are and aren't, shared by
+  `/pricing/buzz` (titled "Perks membership") and `/user/membership` (titled "<Tier> Perks",
+  with the expiry). Keep it shared so the two can't drift.
 - `subscriptions.purchaseWithBuzz` — tRPC mutation
 - `purchaseMembershipWithBuzz` — `src/server/services/subscriptions.service.ts`
-- `getBuzzMembershipPrice`, `BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE` —
-  `src/shared/utils/buzz-membership.ts`
+- `getBuzzMembershipPrice`, `BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE`,
+  `getSubscriptionDisplayBuzzType` — `src/shared/utils/buzz-membership.ts`
 - `scripts/oneoffs/seed-buzz-membership-products.sql` — catalog seed
