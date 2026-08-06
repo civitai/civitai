@@ -9,6 +9,7 @@ import {
   IconStar,
   IconStarOff,
   IconTrash,
+  IconUsers,
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -30,6 +31,9 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 
 const CollectionAiReviewModal = dynamic(
   () => import('~/components/Collections/CollectionAiReviewModal')
+);
+const CollectionCollaboratorsModal = dynamic(
+  () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
 );
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -321,6 +325,21 @@ export function CollectionContextMenu({
               Review items
             </Menu.Item>
           </Link>
+        )}
+        {!isBookmarkCollection && permissions?.read && (
+          <Menu.Item
+            leftSection={<IconUsers size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dialogStore.trigger({
+                component: CollectionCollaboratorsModal,
+                props: { collectionId },
+              });
+            }}
+          >
+            Collaborators
+          </Menu.Item>
         )}
         {!isOwner && (
           <ReportMenuItem
