@@ -39,6 +39,7 @@ import {
   getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   CHALLENGE_ENTRY_HOUSE_CUT,
@@ -255,11 +256,15 @@ async function filterChargedImageIds(
  * challenges with no initial prize.
  */
 /**
- * Reverse one challenge-fund prefix, tolerating the buzz service's 404 (→ TRPCError NOT_FOUND)
- * when the prefix matches no transactions. A prefix matches nothing for an entryFee challenge that
- * never took a paid entry (e.g. a cancelled challenge with zero entries), or a prize that was never
- * actually charged — there is nothing to reverse, so that is a zero-refund no-op, not a failure
- * that should abort the surrounding void/delete. Returns the count of transactions reversed.
+ * Reverse one challenge-fund prefix, tolerating both ways the buzz service can say "there is
+ * nothing left to return":
+ *   - 404 (→ NOT_FOUND): the prefix matches no transactions at all — an entryFee challenge that
+ *     never took a paid entry, or a prize that was never actually charged.
+ *   - 409 (→ BAD_REQUEST): the transactions it matches were already reversed. A refunded
+ *     externalTransactionId stays occupied in the ledger (see the header), so re-running a refund
+ *     conflicts rather than no-op'ing. Reached whenever a challenge is voided and then deleted.
+ * Either way zero Buzz is owed, so neither may abort the surrounding void/delete. Returns the
+ * count of transactions reversed.
  */
 async function refundChallengeFundsByPrefix(input: {
   externalTransactionIdPrefix: string;
@@ -270,6 +275,10 @@ async function refundChallengeFundsByPrefix(input: {
     const { refundedTransactions, totalRefunded } = await refundMultiAccountTransaction(input);
     return { count: refundedTransactions.length, amount: totalRefunded };
   } catch (e) {
+    const status = getBuzzApiStatus(e);
+    if (status === 404 || status === 409) return { count: 0, amount: 0 };
+    // Kept for a NOT_FOUND raised without a buzz cause — the tolerance predates mapError
+    // carrying one, and callers below rely on it.
     if (e instanceof TRPCError && e.code === 'NOT_FOUND') return { count: 0, amount: 0 };
     throw e;
   }
