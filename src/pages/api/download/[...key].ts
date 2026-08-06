@@ -12,9 +12,10 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   // on an address the caller supplies. Do not swap this for an inline resolver.
   //
   // Operator note before you add an entry to `ip-blacklist`: a request that did
-  // not transit the Cloudflare edge is attributed to the transport peer — the
-  // load balancer — so listing THAT address blocks all non-edge traffic to every
-  // download route at once rather than one abuser. See `parseIpBlocklist`.
+  // not transit the Cloudflare edge is attributed to the transport peer, so
+  // where that peer is a shared hop, listing its address blocks all such traffic
+  // to every download route at once rather than one abuser. See
+  // `parseIpBlocklist`.
   const ip = getTrustedClientIp(req);
   const blacklist = parseIpBlocklist(
     (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
@@ -56,7 +57,8 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       // KEEP it 5xx so a real storage/worker outage is never masked as a 404.
       if (err.statusCode === 404 || err.statusCode === 410)
         return res.status(404).json({ error: 'Not found' });
-      if (err.statusCode === 400) return res.status(400).json({ error: 'Invalid download key' });
+      if (err.statusCode === 400)
+        return res.status(400).json({ error: 'Invalid download key' });
 
       // Server-fault: a real delivery-worker/storage failure. Error-log to Axiom
       // (mirrors file.service.ts `resolve-download-url-failed`) — safeError sets

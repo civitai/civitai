@@ -58,8 +58,8 @@ export default PublicEndpoint(
       // is the download-quota bucket below. Do not swap this for an inline resolver.
       //
       // Operator note before you add an entry to `ip-blacklist`: a request that
-      // did not transit the Cloudflare edge is attributed to the transport peer
-      // — the load balancer — so listing THAT address blocks all non-edge
+      // did not transit the Cloudflare edge is attributed to the transport peer,
+      // so where that peer is a shared hop, listing its address blocks all such
       // traffic to every download route at once. See `parseIpBlocklist`.
       const ip = getTrustedClientIp(req);
       const ipBlacklist = parseIpBlocklist(
@@ -79,29 +79,28 @@ export default PublicEndpoint(
 
       // Check if user has a concerning number of downloads
       //
-      // 🔴 BEFORE YOU ENABLE THE `anon` LIMIT, READ THIS.
+      // 🔴 READ THIS BEFORE GIVING THE ANONYMOUS BUCKET A THRESHOLD.
       //
       // For an authenticated caller `userKey` is the user id and each account
-      // counts separately. For an ANONYMOUS caller it is `ip` — and `ip` comes
-      // from getTrustedClientIp, which attributes every request that did not
-      // transit the Cloudflare edge to the transport peer, i.e. the load
-      // balancer. All such callers therefore share ONE counter.
+      // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
+      // getTrustedClientIp: a request that did not transit the Cloudflare edge
+      // is attributed to the transport peer, so wherever that peer is a shared
+      // hop, every such caller lands on ONE counter.
       //
-      // That is fine for the blocklist above (a membership test against a
-      // curated list) and it is NOT fine for a counter with a threshold: a
-      // shared counter is driven by the aggregate volume of unrelated callers,
-      // so when it trips it 429s all of them together, none of whom did
-      // anything the limit was aimed at. The people it lands on are exactly the
-      // ones who reached us without edge transit.
+      // That collapse is fine for the blocklist above (a membership test
+      // against a curated list) and it is NOT fine for a counter with a
+      // threshold: a shared counter is driven by the aggregate volume of
+      // unrelated callers, so when it trips it 429s all of them together, none
+      // of whom did anything the limit was aimed at. The people it lands on are
+      // exactly the ones who reached us without edge transit.
       //
-      // This is latent, not live: `hasExceededLimit` reads its threshold from
-      // the `download:limits` redis hash, which currently has no `anon` field,
-      // and a missing limit reads as 0 which the limiter treats as "no limit".
-      // Counting happens; enforcement does not. Writing an `anon` entry into
-      // that hash re-arms this in one step, with no code change and no review.
-      // If you want a per-client anonymous download limit, give this surface a
-      // key that does not collapse (or scope the limit to edge-attested
-      // requests) FIRST — do not just populate the hash.
+      // The coupling, not its current setting, is the point: `hasExceededLimit`
+      // reads the threshold for a bucket out of a redis hash, and a bucket with
+      // no threshold is counted but not enforced. Giving the anonymous bucket a
+      // threshold therefore arms the behaviour above in one step, with no code
+      // change and no review. If you want a per-client anonymous download
+      // limit, give this surface a key that does not collapse (or scope the
+      // limit to edge-attested requests) FIRST.
       const isAuthed = !!session?.user;
       const userKey = session?.user?.id?.toString() ?? ip;
       if (!userKey) return errorResponse(403, 'Forbidden');

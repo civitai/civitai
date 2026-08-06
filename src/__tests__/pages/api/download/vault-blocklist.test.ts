@@ -117,6 +117,21 @@ describe('/api/download/vault/[vaultItemId] — IP blocklist', () => {
     expect(mockGetVaultWithStorage).not.toHaveBeenCalled();
   });
 
+  it('REGRESSION: blocks when the list is written WITH spaces after the commas', async () => {
+    // Entries are compared with exact string equality, so the address must
+    // match an entry TRIMMED. The listed address is deliberately the SECOND
+    // one: `'9.9.9.9, 203.0.113.7'.split(',')` gives `' 203.0.113.7'`, and only
+    // an entry after the first can observe whether the split trims.
+    mockFindUnique.mockResolvedValue({ value: `9.9.9.9, ${BLOCKED}` });
+    const { promise, res } = run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });
+    await promise;
+    expect(
+      res.status,
+      'a spaced ip-blacklist did not match its second entry, so this route is splitting the row without trimming it'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetVaultWithStorage).not.toHaveBeenCalled();
+  });
+
   it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({

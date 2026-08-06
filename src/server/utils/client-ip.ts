@@ -9,11 +9,23 @@ import { isIP } from 'node:net';
  * │ add/add conflict by KEEPING BOTH, not by picking one. See               │
  * │ "Choosing between the two" below.                                      │
  * │                                                                        │
- * │ WHICHEVER PR LANDS SECOND also has to fix one paragraph: #3658's copy   │
- * │ of this doc says the stricter variant "lives at                         │
- * │ src/pages/api/v1/block-tokens/ … deliberately not shared here".         │
- * │ After the union merge it IS shared — it is `getTrustedClientIp`, a few  │
- * │ dozen lines below. Delete that paragraph rather than merging it in.     │
+ * │ Two things a mechanical union gets WRONG and a reviewer has to do by    │
+ * │ hand:                                                                  │
+ * │                                                                        │
+ * │  1. Both sides import `isIP`, from DIFFERENT specifiers — this file     │
+ * │     uses `node:net`, #3658 uses `net`. Keeping both lines is a          │
+ * │     duplicate identifier (TS2300). Keep the `node:net` line and drop    │
+ * │     the other: `net` is the only builtin this repo imports with a       │
+ * │     single spelling — 3 of 3 occurrences are `node:net`, none bare.     │
+ * │                                                                        │
+ * │  2. Delete #3658's paragraph beginning "SCOPE / KNOWN LIMIT — read      │
+ * │     before extending this:" — the one whose last sentences say the      │
+ * │     stricter variant "lives with the token-minting endpoint in          │
+ * │     src/pages/api/v1/block-tokens/" and is "deliberately NOT shared     │
+ * │     here". After the union it IS shared: it is `getTrustedClientIp`,    │
+ * │     a few dozen lines below, and block-tokens now calls it. The         │
+ * │     paragraph survives a keep-both merge intact and is false the        │
+ * │     moment that merge lands, so removing it is not optional.            │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
  * Client-IP derivation for ENFORCEMENT controls (abuse blocklists, per-client
@@ -24,10 +36,11 @@ import { isIP } from 'node:net';
  * attest:
  *
  *  1. The Cloudflare edge — `cf-connecting-ip`, accepted ONLY when `cf-ray` is
- *     also present. Cloudflare stamps `cf-ray` on every request it proxies and
- *     its value identifies a specific edge datacenter request, so its presence
- *     is what establishes that the pair actually came from the edge rather than
- *     from the caller.
+ *     also present. Cloudflare stamps `cf-ray` on every request it proxies, so
+ *     requiring the pair is what stops an unaccompanied `cf-connecting-ip` —
+ *     a header carrying no corroboration whatsoever — from being read as an
+ *     edge attestation. It is a corroboration requirement, not a proof of
+ *     origin; the second source below is what the derivation falls back on.
  *  2. The transport peer — `req.socket.remoteAddress`, which is observed from
  *     the connection itself and is not part of the request the caller composes.
  *
@@ -38,8 +51,8 @@ import { isIP } from 'node:net';
  * ── THE TRADE, AND WHY ITS COST IS NOT THE SAME ON EVERY SURFACE ──────────
  *
  * Traffic that reaches the origin without edge transit is attributed to the
- * connection peer (in this deployment, the load balancer) rather than to a
- * self-declared address. That collapses ALL such traffic into ONE bucket.
+ * connection peer rather than to a self-declared address. Wherever that peer is
+ * a shared hop, this collapses ALL such traffic into ONE bucket.
  *
  * It is tempting to summarise this as "over-attributing is the safe direction".
  * That is true of a BLOCKLIST and false of a QUOTA, and the difference decides
@@ -59,9 +72,9 @@ import { isIP } from 'node:net';
  *   default; it converts a per-client limit into a shared one, and the people who
  *   feel it are the ones the limit was never aimed at.
  *
- * So: this predicate is the right key for the download blocklists. It is the
- * right key for a download quota ONLY while that quota's anonymous bucket stays
- * unconfigured — see the call-site note in
+ * So: this predicate is the right key for the download blocklists. Keying a
+ * per-client QUOTA on it is sound only where the collapsed bucket carries no
+ * threshold — see the call-site note in
  * `src/pages/api/download/models/[modelVersionId].ts`. Do not generalise the
  * blocklist's safety argument onto a counting surface.
  *
@@ -70,31 +83,30 @@ import { isIP } from 'node:net';
  * They differ in TRUST, and the weaker one is the one with the friendlier name,
  * so read the return type — it is the tell:
  *
- *   `resolveClientIp(req): string`         ← ALWAYS returns something.
- *                           NOT a validated IP. An opaque bucket label that may
- *                           be derived from headers the CALLER CHOSE. For RATE
- *                           LIMITERS spanning many procedures, where the point
- *                           is that non-edge callers (internal services, dev)
- *                           keep distinct buckets instead of 429-ing each other.
- *                           Because a caller can influence it, it must never
- *                           decide an ALLOW/DENY outcome.
+ *   `resolveClientIp(req): string`         ← ALWAYS returns something: an opaque
+ *                           bucket LABEL for ATTRIBUTION, not a validated
+ *                           address. Its job is to keep distinct callers in
+ *                           distinct rate-limit buckets across many procedures,
+ *                           so that non-edge callers (internal services, dev) do
+ *                           not 429 each other. It is not an input to an
+ *                           allow/deny decision.
  *
- *   `getTrustedClientIp(req): string | null` ← Can return `null`, and that
- *                           `null` is the whole point: it is the module
- *                           admitting it could not establish provenance. Every
- *                           returned value is edge-attested or observed off the
- *                           socket, and is a syntactically valid address. For
- *                           ENFORCEMENT controls — a blocklist, or a quota that
- *                           is the control rather than a convenience.
+ *   `getTrustedClientIp(req): string | null` ← returns a VALIDATED address, or
+ *                           `null` when provenance could not be established.
+ *                           Every non-null value is edge-attested or observed
+ *                           off the socket, and is a syntactically valid
+ *                           address. This is the one to use for an ENFORCEMENT
+ *                           decision — a blocklist, or a quota that is itself
+ *                           the control — and its `null` must be handled.
  *
  * If you are writing a check whose outcome is a 403, a 429, or anything else a
- * caller would want to change, you want `getTrustedClientIp` and you must
- * handle its `null`. A `string` arriving where you expected a trusted address
- * type-checks silently, so the compiler will not catch reaching for the wrong
- * one — this paragraph is the only guard there is.
+ * caller would want to change, you want `getTrustedClientIp`. A `string`
+ * arriving where you expected a trusted address type-checks silently, so the
+ * compiler will not catch reaching for the wrong one — this paragraph is the
+ * only guard there is.
  *
  * The distinction is the SURFACE, not a disagreement about which is better. A
- * limiter guarding ~33 procedures and a blocklist guarding four download routes
+ * limiter spanning many procedures and a blocklist guarding four download routes
  * fail in opposite directions, so they want opposite defaults.
  *
  * Whichever you pick: import it. Do not re-derive a client IP inline at a call
@@ -107,15 +119,41 @@ type IpSourceRequest = {
 };
 
 /**
- * True when `value` is a syntactically valid IPv4 or IPv6 address.
+ * True when `value` is a syntactically valid IPv4 or IPv6 address, WITHOUT a
+ * zone identifier.
  *
- * Backed by node's `net.isIP`, so it is the same parser the runtime uses. This
- * is the validation every consumer of a client IP should apply before the value
- * is allowed to reach a query, a cache key, or a comparison — see
+ * Backed by node's `net.isIP`, so it is the same parser the runtime uses —
+ * minus one thing that parser accepts and no consumer here wants: an IPv6
+ * scoped-address zone id (`fe80::1%eth0`). `net.isIP` returns 6 for those and
+ * places NO LENGTH LIMIT on the zone id; measured on node 26,
+ * `'fe80::1%' + 'a'.repeat(1e6)` is accepted and comes back verbatim.
+ *
+ * That matters because a zone id is meaningful only on the host that owns the
+ * interface — it is never part of a remote peer's identity — while every
+ * consumer of this predicate uses the returned string AS an identity: a
+ * blocklist comparand, a rate-limit bucket key, and a value interpolated into a
+ * ClickHouse query. An unbounded, freely-varying suffix on any of those is a key
+ * space nobody bounded: it mints unlimited distinct bucket keys, and it can
+ * never equal an address an operator typed into a list.
+ *
+ * The zone id is also the ONLY construct that makes an accepted value
+ * unbounded, so rejecting it is what bounds the result. With no `%`, the longest
+ * text `net.isIP` accepts is 45 characters
+ * (`0000:0000:0000:0000:0000:ffff:255.255.255.255`). The zone id's own grammar
+ * is narrow — measured, `[-.0-9:A-Za-z]` only, so it can carry no quote,
+ * whitespace or NUL — which is why this is a key-space and identity problem
+ * rather than an injection one.
+ *
+ * This is the validation every consumer of a client IP should apply before the
+ * value is allowed to reach a query, a cache key, or a comparison — see
  * `fetchDownloadCount` for a call site that depends on it.
  */
 export function isIpAddress(value: unknown): value is string {
-  return typeof value === 'string' && isIP(value) !== 0;
+  if (typeof value !== 'string') return false;
+  // Reject a scoped address outright. Cheaper and clearer than parsing the zone
+  // off, and there is no consumer here that wants one.
+  if (value.includes('%')) return false;
+  return isIP(value) !== 0;
 }
 
 /**
@@ -197,31 +235,34 @@ function normalizeIp(ip: string): string {
  * than the operator believes it does, with nothing anywhere reporting a problem.
  * Writing a list with spaces after the commas is the obvious way to write one.
  *
- * `KeyValue.value` is a `Json` column, so a non-string is representable. It is
- * reported rather than thrown on — see the note on the return of `[]` below —
- * but it must not pass silently: an empty list is an INERT control, and the
- * direction that failure falls is "allow".
+ * ── FAIL DIRECTION ────────────────────────────────────────────────────────
  *
- * @param key the `KeyValue` key, used only to make the report identify the row.
+ * `KeyValue.value` is a `Json` column, so a non-string is representable. This
+ * THROWS on one rather than reading it as an empty list, and the asymmetry is
+ * the whole reason: every caller of this helper is an enforcement control, so
+ * `[]` is indistinguishable at the call site from a genuinely empty list. A
+ * control that switches ITSELF off is the one failure mode nothing downstream
+ * can detect — the requests it should have stopped simply succeed, and look
+ * exactly like requests it was never meant to stop.
+ *
+ * Throwing surfaces a malformed row as a 5xx, which the endpoint wrappers
+ * already count (`instrumentApiResponse`) and, on the routes that wrap this in a
+ * try, log to Axiom. It is also what these routes did before the splitter was
+ * shared — the inline `(value ?? '').split(',')` threw a `TypeError` on a
+ * non-string — so a malformed row still fails the way it always has, and this
+ * PR is not the thing that changed it.
+ *
+ * An ABSENT row (`null`/`undefined`) is the ordinary "no list configured" state,
+ * not a malformed one, and yields no entries without complaint.
+ *
+ * @param key the `KeyValue` key, named in the error so the row is identifiable.
  */
 function parseKeyValueList(value: unknown, key: string): string[] {
+  if (value === null || value === undefined) return [];
   if (typeof value !== 'string') {
-    // 🔴 FAIL-OPEN, DELIBERATELY LOUD. Returning `[]` here means "no entries",
-    // and every caller of this helper is an enforcement control, so `[]` is
-    // indistinguishable at the call site from a genuinely empty list — the
-    // control is simply switched off. The previous inline form threw a
-    // `TypeError` and produced a 500, which was at least visible. Downgrading a
-    // loud denial to a silent allowance without a trace is not a trade worth
-    // making, so the trace is mandatory: if this row is malformed the control
-    // guarding these downloads is not running, and this line is the only thing
-    // that will ever say so.
-    if (value !== null && value !== undefined) {
-      console.error(
-        `[client-ip] KeyValue '${key}' is not a string (got ${typeof value}); ` +
-          `treating the list as EMPTY, which disables this control. Fix the row.`
-      );
-    }
-    return [];
+    throw new TypeError(
+      `KeyValue '${key}' is not a string (got ${typeof value}); refusing to evaluate this list.`
+    );
   }
   return value
     .split(',')
@@ -235,12 +276,12 @@ function parseKeyValueList(value: unknown, key: string): string[] {
  * 🔴 OPERATOR HAZARD, stated here because this is the function that reads the
  * list: the addresses this list is compared against come from
  * `getTrustedClientIp`, which attributes every request that did NOT transit the
- * Cloudflare edge to the transport peer — the load balancer. Adding that
- * address to `ip-blacklist` therefore 403s ALL non-edge traffic to every
- * download route at once, not one abuser. It is not an address any abuser can
- * cause to be listed, so this is a footgun rather than an exposure; but if a
- * download blocklist entry ever appears to have blocked far more than intended,
- * this is the first thing to check.
+ * Cloudflare edge to the transport peer. Where that peer is a shared hop, its
+ * address stands for many callers at once — so listing it 403s all of them on
+ * every download route, rather than one abuser. No caller can cause an address
+ * to be listed, so this is a footgun rather than an exposure; but if a download
+ * blocklist entry ever appears to have blocked far more than intended, this is
+ * the first thing to check.
  */
 export function parseIpBlocklist(value: unknown): string[] {
   return parseKeyValueList(value, 'ip-blacklist');
@@ -253,11 +294,10 @@ export function parseIpBlocklist(value: unknown): string[] {
  * `session.user.id.toString()`, not addresses, so they get their own name
  * rather than being pushed through `parseIpBlocklist`.
  *
- * The trimming matters here for the same reason and had the same defect: the
- * download routes open-coded `(value ?? '').split(',')`, so a list written
- * `123, 456` produced `' 456'` and every entry after the first silently never
- * matched. An operator writing a comma-separated list with spaces — the obvious
- * way to write one — got a blocklist that covered one user.
+ * The invariant is the same one the address list needs: the comparison is exact
+ * string equality, so every entry must be trimmed. An entry that keeps a leading
+ * space can never equal an id, and a list that does not match looks exactly like
+ * a caller who is not on it.
  */
 export function parseUserBlocklist(value: unknown): string[] {
   return parseKeyValueList(value, 'user-blacklist');

@@ -149,6 +149,21 @@ describe('/api/download/models/[modelVersionId] — IP blocklist', () => {
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
   });
 
+  it('REGRESSION: blocks when the list is written WITH spaces after the commas', async () => {
+    // Entries are compared with exact string equality, so the address must
+    // match an entry TRIMMED. The listed address is deliberately the SECOND
+    // one: `'9.9.9.9, 203.0.113.7'.split(',')` gives `' 203.0.113.7'`, and only
+    // an entry after the first can observe whether the split trims.
+    mockFindUnique.mockResolvedValue({ value: `9.9.9.9, ${BLOCKED}` });
+    const { promise, res } = run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });
+    await promise;
+    expect(
+      res.status,
+      'a spaced ip-blacklist did not match its second entry, so this route is splitting the row without trimming it'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
+  });
+
   it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({
@@ -235,13 +250,12 @@ describe('/api/download/models/[modelVersionId] — anonymous download quota buc
 
 /**
  * The user blocklist on this route — the second consumer of the shared
- * key-value list splitter, and the second site that open-coded
- * `(value ?? '').split(',')` before it was converted.
+ * key-value list splitter.
  *
  * It gets its own coverage rather than leaning on the identical suite for
- * `/attachments/[fileId]`: the two are separate call sites, and a mutation that
- * reverted only this one survived a battery in which the attachments revert was
- * killed. A shared helper is only as converted as its least-tested call site.
+ * `/attachments/[fileId]`: the two are separate call sites, and a shared helper
+ * is only as adopted as its least-tested call site. Coverage of one site says
+ * nothing about the other.
  */
 describe('/api/download/models/[modelVersionId] — user blocklist', () => {
   const LISTED_USER = 4242;
@@ -270,8 +284,8 @@ describe('/api/download/models/[modelVersionId] — user blocklist', () => {
   });
 
   it('REGRESSION: blocks a listed user when the list is written WITH spaces', async () => {
-    // `'123, 4242'.split(',')` → `['123', ' 4242']`; the space meant the entry
-    // could never equal `session.user.id.toString()`.
+    // `'123, 4242'.split(',')` → `['123', ' 4242']`, and a leading space means
+    // the entry cannot equal `session.user.id.toString()`.
     mockGetServerAuthSession.mockResolvedValue({ user: { id: LISTED_USER } });
     rows({ 'user-blacklist': `123, ${LISTED_USER}` });
     const { promise, res } = run({}, SUPPLIED);

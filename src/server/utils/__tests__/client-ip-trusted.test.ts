@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { isIP } from 'node:net';
 import {
   getTrustedClientIp,
   isIpAddress,
@@ -71,6 +72,64 @@ describe('isIpAddress', () => {
     // eslint-disable-next-line no-new-wrappers
     expect(isIpAddress(new String('1.2.3.4'))).toBe(false);
     expect(isIpAddress({ toString: () => '1.2.3.4' })).toBe(false);
+  });
+});
+
+/**
+ * An IPv6 zone identifier is the one construct `net.isIP` accepts at UNBOUNDED
+ * length, and it is not part of a remote peer's identity — it names an interface
+ * on the host that wrote it. Every consumer of this predicate uses the returned
+ * string AS an identity (blocklist comparand, quota bucket key, ClickHouse query
+ * literal), so admitting a freely-varying unbounded suffix into any of them is
+ * an unbounded key space.
+ */
+describe('isIpAddress — an IPv6 zone id is not an identity', () => {
+  it('POSITIVE CONTROL: node itself accepts these, so the rejection is this predicate doing work', () => {
+    // Without this the assertions below are indistinguishable from "these
+    // strings were never valid addresses in the first place".
+    expect(isIP('fe80::1%eth0')).toBe(6);
+    expect(isIP('fe80::1%' + 'a'.repeat(4096))).toBe(6);
+    expect(isIP('::ffff:1.2.3.4%eth0')).toBe(6);
+  });
+
+  it.each([
+    ['a link-local address with an interface zone', 'fe80::1%eth0'],
+    ['a numeric zone', 'fe80::1%1'],
+    ['a global address with a zone', '2001:db8::1%eth0'],
+    ['an IPv4-mapped address with a zone', '::ffff:1.2.3.4%eth0'],
+  ])('rejects %s', (_label, value) => {
+    expect(isIpAddress(value)).toBe(false);
+  });
+
+  it('rejects a zone id of unbounded length', () => {
+    // `net.isIP` places no ceiling on the zone id — this is the property that
+    // makes the accepted value unbounded, and the reason a bare `net.isIP` is
+    // not sufficient validation for a value used as a key.
+    for (const n of [64, 1024, 4096]) {
+      const scoped = 'fe80::1%' + 'a'.repeat(n);
+      expect(isIP(scoped)).toBe(6); // node accepts it…
+      expect(isIpAddress(scoped)).toBe(false); // …this predicate does not.
+    }
+  });
+
+  it('every value this predicate accepts is bounded to 45 characters', () => {
+    // The bound is a CONSEQUENCE of rejecting the zone id, so it is stated as a
+    // property rather than left implicit. 45 is the longest text net.isIP
+    // accepts without one.
+    const longest = '0000:0000:0000:0000:0000:ffff:255.255.255.255';
+    expect(isIpAddress(longest)).toBe(true);
+    expect(longest).toHaveLength(45);
+    for (const v of [longest, '255.255.255.255', '2001:db8::1', '::1']) {
+      expect(isIpAddress(v)).toBe(true);
+      expect(v.length).toBeLessThanOrEqual(45);
+    }
+  });
+
+  it('still accepts the unscoped forms of the same addresses', () => {
+    // The complement: the rejection is of the zone id, not of IPv6.
+    expect(isIpAddress('fe80::1')).toBe(true);
+    expect(isIpAddress('2001:db8::1')).toBe(true);
+    expect(isIpAddress('::ffff:1.2.3.4')).toBe(true);
   });
 });
 
@@ -160,6 +219,33 @@ describe('getTrustedClientIp — the transport-peer candidate is validated', () 
     ['a string that could terminate a SQL literal', "1.1.1.1' OR '1'='1"],
   ])('returns null rather than %s from the socket', (_label, remoteAddress) => {
     expect(getTrustedClientIp(req({}, remoteAddress))).toBeNull();
+  });
+
+  it('returns null rather than a zone-scoped address from the socket', () => {
+    // A scoped address would otherwise become the blocklist comparand and the
+    // quota bucket key for that request.
+    expect(getTrustedClientIp(req({}, 'fe80::1%eth0'))).toBeNull();
+    expect(getTrustedClientIp(req({}, 'fe80::1%' + 'a'.repeat(4096)))).toBeNull();
+  });
+
+  it('a zone-scoped edge address falls through to the transport peer', () => {
+    expect(
+      getTrustedClientIp(req({ 'cf-ray': '8a1b-IAD', 'cf-connecting-ip': 'fe80::1%eth0' }, PEER_IP))
+    ).toBe(PEER_IP);
+  });
+
+  it('SECURITY: varying the zone id cannot mint distinct buckets', () => {
+    // The bucket-rotation shape: if a scoped address were accepted, each of
+    // these would be a DIFFERENT key — an unbounded supply of fresh, empty
+    // quota buckets and of values no blocklist entry can equal. They must all
+    // collapse to the one value the derivation can actually attest.
+    const rotate = (n: number) =>
+      getTrustedClientIp(
+        req({ 'cf-ray': '8a1b-IAD', 'cf-connecting-ip': `fe80::1%eth${n}` }, PEER_IP)
+      );
+    const seen = new Set([rotate(0), rotate(1), rotate(2), rotate(200)]);
+    expect(seen.size, 'a varying zone id produced more than one bucket key').toBe(1);
+    expect([...seen]).toEqual([PEER_IP]);
   });
 
   it('POSITIVE CONTROL: a valid socket address IS returned', () => {
@@ -260,6 +346,19 @@ describe('getTrustedClientIp — IPv4-mapped IPv6 is folded to the dotted quad',
   ])('leaves %s untouched', (_label, ip) => {
     expect(getTrustedClientIp(req({}, ip))).toBe(ip);
   });
+
+  it.each([
+    ['the deprecated IPv4-COMPATIBLE form, which has no ffff run', '::1.2.3.4'],
+    ['the same 32 bits as hex groups, again with no ffff run', '::0102:0304'],
+  ])('leaves %s unchanged — the fold is keyed on the ffff run, not on any tail', (_label, ip) => {
+    // The fold is documented as best-effort toward the canonical mapped text,
+    // returning anything else unchanged "rather than guessed at". Nothing pinned
+    // that: a normalizer that ignored the prefix and folded whatever followed
+    // `::` passed every other case in this file, and would silently collapse
+    // these two DISTINCT addresses onto the dotted quad — making a blocklist
+    // entry for `1.2.3.4` match a peer that is not at `1.2.3.4`.
+    expect(getTrustedClientIp(req({}, ip))).toBe(ip);
+  });
 });
 
 describe('parseIpBlocklist', () => {
@@ -285,81 +384,64 @@ describe('parseIpBlocklist', () => {
     expect(parseIpBlocklist('1.2.3.4, ,')).toEqual(['1.2.3.4']);
   });
 
-  it('reads a missing or non-string row as an empty list, never as a match', () => {
+  it('reads a MISSING row as an empty list, and REFUSES a malformed one', () => {
+    // Absent is the ordinary "no list configured" state. A non-string is an
+    // operator error, and the two must not look the same: reading a malformed
+    // row as "no entries" switches the control off in the allow direction.
     expect(parseIpBlocklist(undefined)).toEqual([]);
     expect(parseIpBlocklist(null)).toEqual([]);
-    expect(parseIpBlocklist(42)).toEqual([]);
-    expect(parseIpBlocklist({ value: '1.2.3.4' })).toEqual([]);
+    expect(() => parseIpBlocklist(42)).toThrow(TypeError);
+    expect(() => parseIpBlocklist({ value: '1.2.3.4' })).toThrow(TypeError);
   });
 
-  it('REPORTS a malformed row rather than silently disabling the control', () => {
+  it('FAIL DIRECTION: a malformed row denies rather than disabling the control', () => {
     // `KeyValue.value` is a `Json` column, so a non-string is representable.
-    // Returning `[]` for one converts a loud failure (the previous inline form
-    // threw a TypeError → 500) into "no blocklist" — the fail-OPEN direction,
-    // on a security control, with nothing anywhere saying so. The report is the
-    // only signal that the control is not running.
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      expect(parseIpBlocklist(42)).toEqual([]);
-      expect(spy).toHaveBeenCalledTimes(1);
-      // The message has to identify WHICH row, or an operator cannot act on it.
-      expect(String(spy.mock.calls[0][0])).toContain('ip-blacklist');
+    // Reading one as "no entries" would switch an enforcement control off in the
+    // ALLOW direction, and a control that is off is indistinguishable at the
+    // call site from a caller who is simply not listed. It throws instead, which
+    // surfaces as a 5xx the endpoint wrappers already count.
+    expect(() => parseIpBlocklist(42)).toThrow(/ip-blacklist/);
+    expect(() => parseUserBlocklist({ nope: true })).toThrow(/user-blacklist/);
+    // The error has to identify WHICH row, or an operator cannot act on it.
+    expect(() => parseIpBlocklist(42)).toThrow(/is not a string/);
 
-      spy.mockClear();
-      expect(parseUserBlocklist({ nope: true })).toEqual([]);
-      expect(spy).toHaveBeenCalledTimes(1);
-      expect(String(spy.mock.calls[0][0])).toContain('user-blacklist');
+    // An ABSENT row is the normal "no list configured" state, not a fault.
+    expect(parseIpBlocklist(undefined)).toEqual([]);
+    expect(parseIpBlocklist(null)).toEqual([]);
+    expect(parseUserBlocklist(undefined)).toEqual([]);
+    expect(parseUserBlocklist(null)).toEqual([]);
 
-      // An ABSENT row is the normal state — no row configured — and must stay
-      // quiet, or the signal is buried in noise on every single request.
-      spy.mockClear();
-      expect(parseIpBlocklist(undefined)).toEqual([]);
-      expect(parseIpBlocklist(null)).toEqual([]);
-      expect(parseUserBlocklist(undefined)).toEqual([]);
-      expect(spy).not.toHaveBeenCalled();
-
-      // A well-formed row is likewise quiet.
-      expect(parseIpBlocklist('1.2.3.4')).toEqual(['1.2.3.4']);
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
+    // A well-formed row is likewise fine.
+    expect(parseIpBlocklist('1.2.3.4')).toEqual(['1.2.3.4']);
   });
 });
 
 describe('parseUserBlocklist', () => {
-  it('REGRESSION: trims entries, so every id after the first still matches', () => {
-    // The download routes open-coded `(value ?? '').split(',')` for this row.
-    // A list written the obvious way — `123, 456` — produced a second entry of
-    // `' 456'`, which can never equal `session.user.id.toString()`. The
-    // user-blacklist silently covered exactly one user.
+  it('trims entries, so every id after the first still matches', () => {
+    // Entries are compared with exact string equality against
+    // `session.user.id.toString()`, so an entry carrying a leading space can
+    // never match. Every entry must come out of the split trimmed, whatever
+    // spacing the operator wrote.
     const entries = parseUserBlocklist('123, 456 ,\t789\n');
     expect(entries).toEqual(['123', '456', '789']);
     expect(entries).toContain('456');
   });
 
-  it('the OLD inline form is what this replaced — pin the difference', () => {
-    // Kept as an executable statement of the defect: identical input, and the
-    // shared helper matches where the inline split did not.
-    const raw = '123, 456';
-    const inline = raw.split(',');
-    expect(inline.includes('456')).toBe(false); // the bug
-    expect(parseUserBlocklist(raw).includes('456')).toBe(true); // the fix
+  it('an entry after the first matches when the list is written with spaces', () => {
+    expect(parseUserBlocklist('123, 456')).toContain('456');
   });
 
   it('drops blanks, so an empty row never matches a user id', () => {
+    // An entry of `''` would make the list non-empty while matching no real id.
     expect(parseUserBlocklist('')).toEqual([]);
     expect(parseUserBlocklist('  ')).toEqual([]);
     expect(parseUserBlocklist('123,,456')).toEqual(['123', '456']);
-    // The old form yielded `['']` for an empty row. `''` is not a real id, but
-    // the entry existing at all is what made the list non-empty.
-    expect(''.split(',')).toEqual(['']);
     expect(parseUserBlocklist('')).not.toContain('');
   });
 
-  it('reads a missing or non-string row as an empty list, never as a match', () => {
+  it('reads a MISSING row as an empty list, and REFUSES a malformed one', () => {
     expect(parseUserBlocklist(undefined)).toEqual([]);
     expect(parseUserBlocklist(null)).toEqual([]);
-    expect(parseUserBlocklist(42)).toEqual([]);
+    expect(() => parseUserBlocklist(42)).toThrow(TypeError);
   });
 });

@@ -99,6 +99,22 @@ describe('/api/download/[...key] — IP blocklist', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' });
   });
 
+  it('REGRESSION: blocks when the list is written WITH spaces after the commas', async () => {
+    // Entries are compared with exact string equality, so the address must
+    // match an entry TRIMMED. `'9.9.9.9, 203.0.113.7'.split(',')` yields a
+    // second entry of `' 203.0.113.7'`, which cannot equal any address the
+    // derivation returns — so the listed address here is deliberately the
+    // SECOND one, which is the only position that can observe the difference.
+    mockFindUnique.mockResolvedValue({ value: `9.9.9.9, ${BLOCKED}` });
+    const { promise, res } = run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });
+    await promise;
+    expect(
+      res.status,
+      'a spaced ip-blacklist did not match its second entry, so this route is splitting the row without trimming it'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({

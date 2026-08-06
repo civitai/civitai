@@ -107,6 +107,21 @@ describe('/api/download/attachments/[fileId] — IP blocklist', () => {
     expect(res.status).toHaveBeenCalledWith(403);
   });
 
+  it('REGRESSION: blocks when the list is written WITH spaces after the commas', async () => {
+    // Entries are compared with exact string equality, so the address must
+    // match an entry TRIMMED. The listed address is deliberately the SECOND
+    // one: `'9.9.9.9, 203.0.113.7'.split(',')` gives `' 203.0.113.7'`, and only
+    // an entry after the first can observe whether the split trims.
+    mockFindUnique.mockResolvedValue({ value: `9.9.9.9, ${BLOCKED}` });
+    const { promise, res } = run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });
+    await promise;
+    expect(
+      res.status,
+      'a spaced ip-blacklist did not match its second entry, so this route is splitting the row without trimming it'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetFileWithPermission).not.toHaveBeenCalled();
+  });
+
   it('SECURITY: the blocklist is compared against the derived address, not a supplied one', async () => {
     blocklist(BLOCKED);
     const { promise, res } = run({
@@ -139,13 +154,11 @@ describe('/api/download/attachments/[fileId] — IP blocklist', () => {
  * The OTHER blocklist on this route, which the IP suite above deliberately
  * steps around by running unauthenticated.
  *
- * It had the same defect the IP list was fixed for and kept it: the route
- * open-coded `(value ?? '').split(',')`, so an operator writing the list the
- * obvious way — `123, 456` — got entries of `'123'` and `' 456'`, and the
- * leading space meant every id after the first could never equal
- * `session.user.id.toString()`. The list silently covered one user. Nothing
- * reported it, because a blocklist that does not match looks exactly like a
- * caller who is not on it.
+ * The invariant: entries are compared with exact string equality against
+ * `session.user.id.toString()`, so every id in the row must match regardless of
+ * the spacing the operator wrote it with. This needs its own coverage because a
+ * blocklist that fails to match is indistinguishable, from outside, from a
+ * caller who is not on it — there is no signal to notice.
  */
 describe('/api/download/attachments/[fileId] — user blocklist', () => {
   const LISTED_USER = 456;
@@ -195,8 +208,8 @@ describe('/api/download/attachments/[fileId] — user blocklist', () => {
   });
 
   it('REGRESSION: blocks a listed user when the list is written WITH spaces', async () => {
-    // `'123, 456'.split(',')` → `['123', ' 456']`. This is the case the inline
-    // split got wrong, and it is the way an operator would naturally write it.
+    // `'123, 456'.split(',')` → `['123', ' 456']`, so only an entry after the
+    // first can observe whether the row is trimmed as well as split.
     asUser(LISTED_USER);
     rows({ 'user-blacklist': `123, ${LISTED_USER}` });
     const { promise, res } = run({}, SUPPLIED);
@@ -208,23 +221,17 @@ describe('/api/download/attachments/[fileId] — user blocklist', () => {
     expect(mockGetFileWithPermission).not.toHaveBeenCalled();
   });
 
-  it('a malformed (non-string) user-blacklist row does not throw, and does not block', async () => {
-    // `KeyValue.value` is a Json column. The inline form called `.split` on it
-    // and produced a 500; the shared helper reports it and returns no entries.
-    // Asserted so the direction of that change is a deliberate, visible one.
+  it('FAIL DIRECTION: a malformed (non-string) user-blacklist row denies rather than allowing', async () => {
+    // `KeyValue.value` is a Json column, so a non-string row is representable
+    // and is an operator error. The direction it falls decides whether an
+    // unreadable list means "nobody is blocked" or "this request does not
+    // proceed" — and the first is undetectable from outside. It throws: the
+    // request fails and the download does NOT complete.
     asUser(LISTED_USER);
     rows({ 'user-blacklist': { not: 'a string' } });
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const { promise, res } = run({}, SUPPLIED);
-      await promise;
-      expect(res.status).not.toHaveBeenCalledWith(500);
-      expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
-      // …but it must not be silent about it.
-      expect(spy).toHaveBeenCalled();
-      expect(String(spy.mock.calls[0][0])).toContain('user-blacklist');
-    } finally {
-      spy.mockRestore();
-    }
+    const { promise, res } = run({}, SUPPLIED);
+    await expect(promise).rejects.toThrow(/user-blacklist/);
+    expect(res.redirect).not.toHaveBeenCalled();
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 });

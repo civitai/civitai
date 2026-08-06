@@ -84,6 +84,14 @@ describe('fetchDownloadCount — refused key shapes', () => {
     // unvalidated remainder through as a user id.
     '123\nDROP',
     '123\n',
+    // Zone-scoped IPv6. `net.isIP` accepts these — at UNBOUNDED length — so a
+    // key shaped like this reaches the query text unless the validation refuses
+    // the zone id specifically. It carries no quote, so this is a key-space and
+    // query-size property rather than an injection one; it is refused because
+    // an accepted key has to be bounded.
+    'fe80::1%eth0',
+    '2001:db8::1%eth0',
+    'fe80::1%' + 'a'.repeat(4096),
   ];
 
   it.each(REFUSED)('refuses %j without building a query', async (key) => {
@@ -91,6 +99,30 @@ describe('fetchDownloadCount — refused key shapes', () => {
       /rate-limit key is neither a user id nor an IP address/
     );
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL: node accepts the zone-scoped keys this refuses', async () => {
+    // Without this, refusing `fe80::1%eth0` proves nothing — it would look the
+    // same if that string were simply not an address. `net.isIP` says it is.
+    const { isIP } = await import('node:net');
+    expect(isIP('fe80::1%eth0')).toBe(6);
+    expect(isIP('fe80::1%' + 'a'.repeat(4096))).toBe(6);
+  });
+
+  it('every key that IS accepted is bounded in length', async () => {
+    // The consequence of refusing the zone id, stated as the property the query
+    // text depends on: an accepted address contributes at most 45 characters.
+    for (const key of [
+      '203.0.113.7',
+      '2001:db8::1',
+      '0000:0000:0000:0000:0000:ffff:255.255.255.255',
+    ]) {
+      vi.clearAllMocks();
+      mockQuery.mockResolvedValue([{ count: 0 }]);
+      await fetchDownloadCount(key);
+      expect(key.length).toBeLessThanOrEqual(45);
+      expect(lastQuery()).toContain(`AND ip = '${key}'`);
+    }
   });
 
   it('POSITIVE CONTROL: the harness does observe a query for an accepted key', async () => {
