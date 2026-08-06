@@ -382,11 +382,10 @@ describe('hub /admin guard shape', () => {
     expect(response.status).toBe(403);
   });
 
-  // The two arms of the guard cover different failure modes and would otherwise mask each other, so each
-  // gets a case the other cannot answer.
+  // The guard's two arms would otherwise mask each other, so each gets a case the other cannot answer.
 
-  // Routed-id arm alone: a `reroute` hook or a configured base path can route a request to an admin route
-  // from a path that does not resemble one, and no amount of decoding recovers that.
+  // Routed-id arm alone. Nothing produces this shape while the app configures no `reroute` hook and no
+  // `paths.base`; the case is here so the arm covering that eventuality cannot rot unnoticed until it does.
   it('rejects a request whose path is not admin-like but which routes to an admin route', async () => {
     const { response, actionRan } = await post(anyScenario, {
       rawPath: '/somewhere-else-entirely',
