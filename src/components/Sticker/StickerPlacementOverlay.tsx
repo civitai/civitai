@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { useMemo } from 'react';
 
 /**
@@ -69,17 +70,26 @@ export function StickerPlacementOverlay({
           </div>
         );
 
-        if (!isOwnPending) return body;
+        // Your own pending sticker keeps the tooltip explaining why it is faint.
+        // Stacking the hover card on top of that would answer a question you did
+        // not ask with the one you did buried under it, and you already know who
+        // placed it.
+        if (isOwnPending)
+          return (
+            <Tooltip
+              key={placement.id}
+              label="Waiting for the creator to approve this. Only you can see it."
+              withArrow
+              position="top"
+            >
+              {body}
+            </Tooltip>
+          );
 
         return (
-          <Tooltip
-            key={placement.id}
-            label="Waiting for the creator to approve this. Only you can see it."
-            withArrow
-            position="top"
-          >
+          <StickerPlacementHoverCard key={placement.id} placementId={placement.id}>
             {body}
-          </Tooltip>
+          </StickerPlacementHoverCard>
         );
       })}
     </div>

@@ -4,6 +4,7 @@ import {
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
+  getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
@@ -19,6 +20,7 @@ import {
   actOnStickerPlacement,
   createStickerPlacement,
   getPendingStickerPlacements,
+  getStickerPlacementDetail,
   getPlacementSettlementStates,
   getStickerPlacementCounts,
   getStickerPlacements,
@@ -67,6 +69,14 @@ export const placementRouter = router({
     .input(getStickerPlacementsSchema)
     .query(({ input, ctx }) =>
       getStickerPlacements({ imageIds: input.imageIds, viewerId: ctx.user?.id })
+    ),
+
+  // Its own query, hit only when someone hovers a sticker. Folding it into the
+  // listing would pay for it on every sticker in a feed.
+  getStickerPlacementDetail: publicProcedure
+    .input(getStickerPlacementDetailSchema)
+    .query(({ input, ctx }) =>
+      getStickerPlacementDetail({ placementId: input.placementId, viewerId: ctx.user?.id })
     ),
 
   getStickerPlacementCounts: publicProcedure

@@ -8,7 +8,12 @@ import {
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import type { PlacementStatus } from '~/shared/utils/placement';
 import type {
   PlacementSettlementState,
@@ -218,6 +223,55 @@ export type StickerPlacementView = {
   /** True only for the placer's own placement awaiting the owner. */
   isPending: boolean;
 };
+
+/**
+ * Who placed one sticker, and when.
+ *
+ * Its own query rather than a wider `getStickerPlacements`: that one runs for
+ * every image on a feed page, and joining a user onto every placement would pay
+ * for the hover card on every sticker nobody hovers.
+ *
+ * The visibility rule is repeated here on purpose. It matches
+ * `getStickerPlacements`, but a caller reaching this with an id it guessed has
+ * not been through that query, so leaving the check to the listing would make
+ * every pending placement's placer readable by anyone who could count.
+ */
+export async function getStickerPlacementDetail({
+  placementId,
+  viewerId,
+}: {
+  placementId: number;
+  viewerId?: number;
+}) {
+  const placement = await dbRead.placement.findFirst({
+    where: {
+      id: placementId,
+      surface: SURFACE,
+      OR: [
+        { status: 'approved' },
+        ...(viewerId ? [{ status: 'pending' as const, placerId: viewerId }] : []),
+      ],
+    },
+    select: {
+      id: true,
+      createdAt: true,
+      status: true,
+      placer: { select: userWithCosmeticsSelect },
+    },
+  });
+
+  if (!placement) throw throwNotFoundError('placement: that placement is not available');
+
+  return {
+    id: placement.id,
+    // When they placed it, not when it was approved: the question the card
+    // answers is who put this here and when, and an owner sitting on a review
+    // queue for two days did not change that.
+    placedAt: placement.createdAt,
+    status: placement.status as PlacementStatus,
+    placer: placement.placer,
+  };
+}
 
 /**
  * Approved placements for a set of images, plus the viewer's own pending ones.

@@ -65,3 +65,7 @@ export const getPlacementSettlementStatesSchema = z.object({
 export const countPendingPlacementsFromSchema = z.object({
   userId: z.number().int().positive(),
 });
+
+export const getStickerPlacementDetailSchema = z.object({
+  placementId: z.number().int().positive(),
+});
