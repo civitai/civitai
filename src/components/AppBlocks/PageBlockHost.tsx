@@ -817,6 +817,48 @@ export function PageBlockHost({
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
+  // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and IframeHost
+  // places it the same way. React runs effects in declaration order, so on the
+  // FIRST commit this must run while `initSentRef` is still false — otherwise
+  // the gate in it is INERT on mount and the host emits a redundant
+  // THEME_CHANGE immediately after its own BLOCK_INIT. Measured: with this
+  // effect declared after the init effect the mount sequence was
+  // BLOCK_INIT → TOKEN_REFRESH → THEME_CHANGE. (The TOKEN_REFRESH in that
+  // sequence is pre-existing and out of scope here.) Moving this effect below
+  // the init effect silently re-creates that, which is why
+  // `PageBlockHostThemeChange.browser.test.tsx` asserts the mount sequence.
+  // Push a THEME_CHANGE when the viewer toggles light/dark WHILE the block is
+  // mounted. `theme` is a PROP — the route computes it from
+  // `useComputedColorScheme`, so it changes on a toggle and re-renders us.
+  //
+  // Without this the block keeps its mount-time theme until reloaded: BLOCK_INIT
+  // is deduped SDK-side (only the first is honored) and `useBlockIframeSrc`
+  // deliberately FREEZES the URL fragment at mount, so neither existing channel
+  // can carry a later value.
+  //
+  // 🔴 THE SAME WIRING MUST EXIST IN IframeHost.tsx (the model-slot surface).
+  // The two hosts do NOT share a bridge — each registers its own postMessage
+  // handlers by hand (the gotcha-#73 class `hostHandlerParity.ts` documents) —
+  // so wiring one and not the other leaves half the blocks stuck.
+  // `hostHandlerParity` cannot catch this one: its INVENTORY covers block→host
+  // messages, and this is a host→block push. The per-surface browser tests are
+  // the coverage.
+  //
+  // Gated on `initSentRef` for the same reason TOKEN_REFRESH is: before the FIRST
+  // BLOCK_INIT post there is nothing to talk to. (Note the guard flips on that
+  // POST, not on BLOCK_READY — so a toggle between the post and the ack does
+  // push, into a frame that may not be listening yet. That is harmless and NOT
+  // the safety net: `buildInitPayload` reads `theme` fresh on every retry tick,
+  // so the BLOCK_INIT the block finally accepts carries the current theme
+  // regardless of whether any push was heard.)
+  // Deliberately NOT gated on `reviewMode`: the theme is neither
+  // side-effecting nor private, and the review sandbox should render in the
+  // moderator's own color scheme like every other surface.
+  useEffect(() => {
+    if (!initSentRef.current) return;
+    send('THEME_CHANGE', { theme });
+  }, [theme, send]);
+
   // Init handshake — start once token is present (no checkpoint dependency for
   // a page). Retry-until-BLOCK_READY via the shared controller.
   useEffect(() => {

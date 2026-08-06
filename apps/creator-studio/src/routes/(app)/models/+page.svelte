@@ -34,7 +34,7 @@
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
-  import type { CapTier } from '@civitai/buzz';
+  import { capMediaType, type CapTier } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
@@ -279,6 +279,24 @@
     return strictest ?? monetizationLimits({ tier: t });
   }
   const bulkLimits = $derived(strictestLimits(tier));
+
+  // One fee is applied across the whole selection, and the server rejects the batch if it would raise ANY
+  // version past that version's own cap — so a single "your cap is N" hides which member is binding.
+  // Grouped by the two axes that move the cap: model type and the media type of the base model.
+  const selectionFeeCaps = $derived.by(() => {
+    const byKey = new Map<string, { label: string; cap: number }>();
+    for (const m of data.models)
+      for (const v of m.versions) {
+        if (!selected.has(v.id)) continue;
+        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
+          .maxPerGeneration;
+        const media = capMediaType(v.baseModel);
+        const key = `${m.type}|${media}`;
+        if (!byKey.has(key))
+          byKey.set(key, { label: media === 'video' ? `${m.type} (video)` : m.type, cap });
+      }
+    return [...byKey.values()].sort((a, b) => a.cap - b.cap);
+  });
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
@@ -637,6 +655,7 @@
   bind:action={bulkAction}
   versionIds={selectedIds}
   limits={bulkLimits}
+  feeCapsByType={selectionFeeCaps}
   capTier={tier}
   capFor={(t, imgs) => feeMaxFor(strictestLimits(t), imgs)}
   accessCapFor={(t) => finiteOrNull(maxPaidAccessPrice(t))}

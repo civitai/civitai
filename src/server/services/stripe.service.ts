@@ -689,6 +689,17 @@ export const upsertSubscription = async (
     }),
   ]);
 
+  // This upsert is keyed on the CASH colour slot, so it leaves any Buzz-purchased
+  // membership live in its own slot. Tier resolution takes the highest across all
+  // subscriptions, so a leftover Buzz gold would keep granting gold to someone now paying
+  // for bronze. End it once the paid one is real.
+  if (['active', 'trialing'].includes(data.status)) {
+    const { supersedeBuzzMembershipForPaidSubscription } = await import(
+      '~/server/services/subscriptions.service'
+    );
+    await supersedeBuzzMembershipForPaidSubscription({ userId: user.id });
+  }
+
   const userVault = await dbRead.vault.findFirst({
     where: { userId: user.id },
   });

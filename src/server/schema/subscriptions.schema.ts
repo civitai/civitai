@@ -7,6 +7,9 @@ export const getPlansSchema = z.object({
   paymentProvider: z.enum(PaymentProvider).optional(),
   interval: z.enum(['month', 'year']).optional(),
   buzzType: z.string().optional(),
+  // Buzz-purchased (perks-only) products are a separate catalog: they're excluded from
+  // the cash plans unless this is set, and they're the ONLY thing returned when it is.
+  buzzPurchase: z.boolean().optional(),
 });
 
 export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
@@ -14,6 +17,10 @@ export const getUserSubscriptionSchema = z.object({
   userId: z.number(),
   buzzType: z.string().optional(),
   includeBadState: z.boolean().optional(),
+  // Opt in to falling back to the Buzz-membership slot when `buzzType` turns up empty.
+  // Off by default: callers that probe a SPECIFIC colour to answer "do you also have a
+  // membership over there?" must not be told yes because of a Buzz one.
+  includeBuzzPurchase: z.boolean().optional(),
   includeCanceled: z.boolean().optional(),
 });
 
@@ -39,6 +46,12 @@ export const subscriptionProductMetadataSchema = z.looseObject({
   includeWithTransaction: booleanString().optional(),
   maxPrivateModels: z.coerce.number().nonnegative().optional(),
   supportLevel: z.string().optional(),
+
+  // Perks-only membership bought with Buzz instead of money. Grants the tier's UI/limit
+  // perks but no monthly Buzz, no purchase bonus, and no Creator Program eligibility.
+  buzzPurchase: booleanString().optional(),
+  // Per-month Buzz price override; falls back to the cash price plus the standard premium.
+  buzzPrice: z.coerce.number().nonnegative().optional(),
 });
 
 export const prepaidTokenStatusSchema = z.enum(['locked', 'unlocked', 'claimed']);
@@ -63,6 +76,13 @@ export const claimPrepaidTokenSchema = z.object({
   tokenId: z.string(),
 });
 export type ClaimPrepaidTokenInput = z.infer<typeof claimPrepaidTokenSchema>;
+
+export const purchaseMembershipWithBuzzSchema = z.object({
+  priceId: z.string(),
+  // No buzzType here on purpose: the account debited is the domain's currency
+  // (getAllowedAccountTypes at the router), not something the caller gets to pick.
+});
+export type PurchaseMembershipWithBuzzInput = z.infer<typeof purchaseMembershipWithBuzzSchema>;
 
 export function getMembershipBuzzTransactionId({
   date,

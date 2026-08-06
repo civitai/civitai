@@ -12,6 +12,7 @@
   import { DEFAULT_FEE_IMAGES, feeToRatio, type MonetizationLimits } from '$lib/monetization/fee';
   import {
     DEFAULT_GENERATION_TRIAL_LIMIT,
+    GENERATION_ONLY_HINT,
     MIN_ACCESS_PRICE,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -40,6 +41,7 @@
     capFor,
     accessCapFor,
     caps,
+    feeCapsByType,
   }: {
     action: BulkAction | null;
     versionIds: number[];
@@ -50,6 +52,8 @@
     capTier: CapTier;
     capFor: (tier: CapTier, images: number) => number;
     accessCapFor: (tier: CapTier) => number | null;
+    /** Per model/media type caps across the selection, lowest first. */
+    feeCapsByType: { label: string; cap: number }[];
     caps: {
       tier: string;
       permanentUsed: number;
@@ -57,6 +61,7 @@
       maxEarlyAccessDays: number;
       earlyAccessUsed: number;
       earlyAccessCap: number;
+      canSetGenerationOnly: boolean;
     };
   } = $props();
 
@@ -384,7 +389,27 @@
                 {capFor}
                 suggested={suggestedFee != null ? feeToRatio(suggestedFee) : undefined}
               />
-              <p class="text-xs text-dark-2">Caps shown are the strictest in your selection.</p>
+              {#if feeCapsByType.length > 1}
+                <div class="rounded-lg border border-dark-4 p-2">
+                  <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-dark-2">
+                    Caps in this selection
+                  </p>
+                  <ul class="text-xs text-dark-1">
+                    {#each feeCapsByType as c (c.label)}
+                      <li class="flex justify-between gap-3">
+                        <span>{c.label}</span>
+                        <span class="tabular-nums">{c.cap} ⚡ / generation</span>
+                      </li>
+                    {/each}
+                  </ul>
+                  <p class="mt-1 text-xs text-dark-2">
+                    One fee applies to all of them, so the lowest governs — the save is rejected if
+                    it would raise any version past its own cap.
+                  </p>
+                </div>
+              {:else}
+                <p class="text-xs text-dark-2">Caps shown are the strictest in your selection.</p>
+              {/if}
             </div>
           {:else if action === 'paidAccess'}
             <PaidAccessFields
@@ -407,7 +432,13 @@
               </Alert.Root>
             {/if}
           {:else if action === 'usageControl'}
-            <UsageControlPicker bind:value={usageControl} />
+            <UsageControlPicker
+              bind:value={usageControl}
+              allowGenerationOnly={caps.canSetGenerationOnly}
+            />
+            {#if !caps.canSetGenerationOnly}
+              <p class="text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+            {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.

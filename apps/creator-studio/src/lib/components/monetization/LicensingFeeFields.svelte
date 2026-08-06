@@ -80,6 +80,7 @@
       capFor={(t: CapTier) => capFor(t, Number(images))}
       title="Licensing fee"
       perLabel="{images} generation{images === '1' ? '' : 's'}"
+      expanded={overCap}
     />
   </div>
 
