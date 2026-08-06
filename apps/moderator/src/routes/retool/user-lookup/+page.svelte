@@ -4,6 +4,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PageData } from './$types';
+  import AccountActionsPanel from './AccountActionsPanel.svelte';
   import ContentCounts from './ContentCounts.svelte';
   import IdentityPanel from './IdentityPanel.svelte';
   import ModActivityPanel from './ModActivityPanel.svelte';
@@ -51,6 +52,7 @@
     civitaiUrl={data.civitaiUrl}
     username={result.identity.username}
   />
+  <AccountActionsPanel identity={result.identity} canAct={data.canAct} />
   <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
   {#key result.identity.id}
     <ModerationMemoryPanel userId={result.identity.id} />

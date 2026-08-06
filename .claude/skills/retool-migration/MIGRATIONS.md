@@ -10,7 +10,7 @@ left worth porting) · `dropped` (agreed not to port)
 
 | App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
-| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | in progress (8/11) |
+| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **all slices built** — not yet verified in a browser, and Retool still live |
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
@@ -107,23 +107,26 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       the time (30M of 31.5M logins), so filtering on it silently returns nothing. The main app's
       `csam.service.ts` has this wrong and is worth a look.
       `PotentialSpammer` (v1) not ported — V2 supersedes it.
-- [ ] **Account actions** — `BANAPI`, `UNBANAPI`, `ToggleMute`, `ToggleMod`, `UpdateUserDeets`,
-      `LogPurge`, `LogBan`. **Needs a decision before building** — investigated 2026-08-05:
-      - `/api/mod/ban-user` attributes every ban to `userId: -1` ("civitai user"), so it cannot record
-        WHO banned — which defeats §1.2e. It is also a *toggle* (a stale page could unban by accident)
-        and returns 200 *before* awaiting the work, so failures look like successes.
-      - Mute is not just a row update: `setUserMuted` also calls `invalidateSession`, which in the main
-        app is ~100 lines of sysRedis token-hash work, signal notifications, session-cache clearing and
-        fail-open deadlines. A spoke-side mute without it leaves the muted user posting until their
-        session refreshes — a silent failure a moderator would blame on the tool.
-      - `@civitai/auth` exposes `invalidateUserSessions`, but not the signal/cache half.
-      So: either route these through `/api/mod/retool/user` (explicit mute/unmute/forceLogout actions,
-      Bearer mod API key — but breaks the spoke-owns-its-mutations pattern), or lift session
-      invalidation into a shared package first. Not a slice-sized piece of work either way.
-- [ ] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `CurrentUTCTime`. The `TimedMutes` rows are
-      reachable through `getModeratorDb()`, but the table is **empty** — confirm the feature is still
-      used before building. Actually applying a mute to the account stays blocked on session
-      invalidation (see account actions).
+- [x] **Account actions** — `BANAPI`, `UNBANAPI`, `ToggleMute`, force logout.
+      `user-actions.service.ts`, gated on `/users` (investigating an account and acting on it are
+      different permissions), with confirmation on ban.
+      **Mute and force-logout are spoke-owned**: Kysely update plus `invalidateUserSessions` through
+      `@civitai/auth`'s session registry on the shared sysRedis — mirroring `apps/auth`'s wiring. Without
+      the revocation a mute does nothing until the session refreshes.
+      **Ban delegates** to `/api/mod/ban-user` (it also purges media/models, notifies and busts caches).
+      Two of its behaviours are worked around rather than fixed: it *toggles*, so the service re-reads
+      `bannedAt` and refuses a request that already matches; and it answers 200 before doing the work,
+      so the UI re-reads instead of trusting the response. It attributes internally to `userId: -1`, so
+      every action here also writes ModActivity with the real moderator.
+      Not ported: `ToggleMod` and `UpdateUserDeets` (privileged, and `/api/mod/retool/user` requires a
+      user API key the spoke should not hold).
+- [x] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `ViewMutes`. Timed mutes read/created/revoked
+      against `TimedMutes` in the moderator database, each also applying or lifting the account mute so
+      the schedule and the account cannot disagree.
+      Built to the schema, not to observed usage: **the table is empty**, so nothing here has run against
+      real rows. `userId` is cast to text, matching the column.
+      Not ported: expiry. Nothing expires a timed mute automatically — Retool had no scheduler either
+      (`CurrentUTCTime` was compared client-side). Needs a cron job to be more than bookkeeping.
 - [x] **Subscription + Buzz** — `UserSubscriptionStatus` (Postgres, in the page load) plus the Buzz
       balance from `GetAccountBuzz`, served via `/api/user-account/[userId]` since it is an external
       HTTP call. Buzz failures degrade to "Balance unavailable" rather than blanking the panel.
@@ -136,9 +139,11 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       account actions.
 - [x] **Cosmetics** — owned cosmetics with type and equipped state. `RemoveCosmetics` not ported for
       the same reason (destructive; the main app also refreshes entity caches and search indexes).
-- [ ] **Support context** — `GetFreshdesk`. **Blocked**: no `FRESHDESK_*` credentials in the
-      moderator app's env, and the Retool query hits `civitai.freshdesk.com/api/v2` directly. Needs an
-      API key and a decision on whether the spoke calls Freshdesk or the main app proxies it.
+- [x] **Support context** — `GetFreshdesk`. Contact lookup by email in `freshdesk.service.ts`, shown in
+      the account-actions panel with a link to the Freshdesk record.
+      **Needs `FRESHDESK_API_KEY` to return anything** — unset, it shows "no Freshdesk contact found"
+      rather than erroring, so a missing key never blocks a lookup. Documented in `.env.example`; this
+      is the one piece that has not been exercised against the real service.
 
 ## User Reports
 

@@ -1,20 +1,30 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
+import { canAccess } from '$lib/server/access';
 import { parseQuery } from '$lib/server/query';
 import { addUserNote, updateUserNote } from '$lib/server/moderation-memory.service';
+import {
+  addTimedMute,
+  forceLogout,
+  revokeTimedMute,
+  setBanned,
+  setMuted,
+} from '$lib/server/user-actions.service';
 import { getUserLookup, resolveUserId } from '$lib/server/user-lookup.service';
 
 const querySchema = z.object({ q: z.string().trim().catch('') });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { q } = parseQuery(url, querySchema);
-  if (!q) return { q, result: null, notFound: false };
+  // `canAct` gates the enforcement UI; the actions re-check it server-side regardless.
+  const canAct = canAccess(locals.user, '/users');
+  if (!q) return { q, canAct, result: null, notFound: false };
 
   const userId = await resolveUserId(q);
-  if (!userId) return { q, result: null, notFound: true };
+  if (!userId) return { q, canAct, result: null, notFound: true };
 
-  return { q, result: await getUserLookup(userId), notFound: false };
+  return { q, canAct, result: await getUserLookup(userId), notFound: false };
 };
 
 const NOTE_MAX = 5000;
@@ -54,6 +64,79 @@ export const actions: Actions = {
     // a forged id changes nothing.
     const updated = await updateUserNote({ id, notes, author });
     if (!updated) return fail(403, { error: 'You can only edit your own notes.' });
+    return { success: true };
+  },
+
+  // ENFORCEMENT. Every action below is gated on `/users` rather than this page: reaching User Lookup
+  // is an investigation permission, acting on an account is a different one.
+  setMuted: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return fail(403, { error: 'Not permitted.' });
+    const form = await request.formData();
+    const userId = Number(form.get('userId'));
+    if (!userId) return fail(400, { error: 'Missing user.' });
+    const muted = form.get('muted') === 'true';
+
+    const result = await setMuted({ userId, muted, moderatorId: locals.user.id });
+    if (!result.ok) return fail(400, { error: result.error });
+    return { success: true };
+  },
+
+  forceLogout: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return fail(403, { error: 'Not permitted.' });
+    const form = await request.formData();
+    const userId = Number(form.get('userId'));
+    if (!userId) return fail(400, { error: 'Missing user.' });
+
+    await forceLogout({ userId, moderatorId: locals.user.id });
+    return { success: true };
+  },
+
+  setBanned: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return fail(403, { error: 'Not permitted.' });
+    const form = await request.formData();
+    const userId = Number(form.get('userId'));
+    if (!userId) return fail(400, { error: 'Missing user.' });
+    const ban = form.get('ban') === 'true';
+    const reasonCode = String(form.get('reasonCode') ?? '').trim() || undefined;
+    const detailsInternal = String(form.get('detailsInternal') ?? '').trim() || undefined;
+
+    const result = await setBanned({
+      userId,
+      ban,
+      reasonCode,
+      detailsInternal,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return fail(400, { error: result.error });
+    return { success: true };
+  },
+
+  addTimedMute: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return fail(403, { error: 'Not permitted.' });
+    const author = locals.user.username;
+    if (!author) return fail(400, { error: 'Your account has no username.' });
+
+    const form = await request.formData();
+    const userId = Number(form.get('userId'));
+    const hours = Number(form.get('hours'));
+    const reason = String(form.get('reason') ?? '').trim();
+    if (!userId) return fail(400, { error: 'Missing user.' });
+    if (!Number.isFinite(hours) || hours <= 0) return fail(400, { error: 'Duration must be > 0.' });
+    if (!reason) return fail(400, { error: 'A reason is required.' });
+
+    const until = new Date(Date.now() + hours * 3_600_000);
+    await addTimedMute({ userId, until, reason, author, moderatorId: locals.user.id });
+    return { success: true };
+  },
+
+  revokeTimedMute: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return fail(403, { error: 'Not permitted.' });
+    const form = await request.formData();
+    const id = Number(form.get('id'));
+    const userId = Number(form.get('userId'));
+    if (!id || !userId) return fail(400, { error: 'Missing mute.' });
+
+    await revokeTimedMute({ id, userId, moderatorId: locals.user.id });
     return { success: true };
   },
 };
