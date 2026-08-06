@@ -71,5 +71,5 @@ pnpm --filter @civitai/orchestrator-gateway build      # tsup → dist/server.js
 
 Built by the shared Tekton `tag-webhook` → `build-and-push` pipeline (auth is its first user). Push a
 git tag `orchestrator-gateway-vX.Y.Z` on `civitai/civitai` → the webhook matches the prefix in `APP_CONFIG`
-(`datapacket-talos:clusters/production/apps/tekton-builds/tag-webhook.py`) → buildkit builds this
+(a tag webhook in the private infra repo) → buildkit builds this
 `Dockerfile` → pushes `ghcr.io/civitai/civitai-orchestrator-gateway:X.Y.Z` → Flux ImagePolicy picks it up.

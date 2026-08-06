@@ -280,7 +280,7 @@ Expected amplification when logged in:
 
 ## Reproducibility
 
-Raw artifacts live in `C:\Users\Zipp4\Downloads\perf\`:
+Raw artifacts live in `<local-path>/Downloads\perf\`:
 
 - `fresh.heapsnapshot` (125 MB)
 - `brief feed scroll.heapsnapshot` (196 MB)

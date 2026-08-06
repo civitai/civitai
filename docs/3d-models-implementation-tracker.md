@@ -127,7 +127,7 @@ See "Commit log" below.
 
 Merge order: **D → B → C → A** (least conflict risk; A touches the most, lands last).
 
-1. `cd /home/luis_rojas/Work/civitai`
+1. `cd <local-path>/Work/civitai`
 2. `git merge --no-ff worktree-agent-a7e6b0ab4d05237b9` (D)
 3. `pnpm install` (picks up three.js)
 4. `git merge --no-ff worktree-agent-a240a7c10f27a2a52` (B)

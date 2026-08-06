@@ -21,7 +21,7 @@
  * For the dp-1 side (triggerApply) we use the pod's auto-mounted token
  * (/var/run/secrets/kubernetes.io/serviceaccount/token) — civitai-pr-2319's
  * default SA is bound to the civitai-web-apps-consumer Role in civitai-apps
- * (see datapacket-talos/clusters/production/apps/civitai-apps/rbac.yaml).
+ * (see the civitai-apps RBAC manifest in the private infra repo).
  *
  * For the dc-02-a side (triggerBuild), the original W2 design parsed a
  * kubeconfig and posted PipelineRuns directly to dc-02-a's API server.
@@ -780,7 +780,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
   const jobName = `${args.slug}-apply-${args.sha.slice(0, 8)}`;
 
   // Construct the Job spec inline. Keep in sync with
-  // datapacket-talos/clusters/production/apps/civitai-apps/templates/apply-job-template.yaml
+  // apply-job template, defined in the private infra repo
   const job = {
     apiVersion: 'batch/v1',
     kind: 'Job',
