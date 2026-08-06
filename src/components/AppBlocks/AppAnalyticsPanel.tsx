@@ -41,7 +41,31 @@ type AnalyticsData = {
   range: { from: string | Date; to: string | Date; granularity: 'day' | 'week' };
   notOwned: boolean;
   unavailable?: 'notEntitled' | 'notOwned';
-  installs: { total: number; active: number; series: TimePoint[] };
+  /**
+   * Installs (`block_user_subscriptions`). `notApplicable` is a PER-SECTION
+   * flag: a page app is STATELESS by decision, so an install row cannot exist
+   * for it and the zeros are a category error, not "nobody installed me".
+   *
+   * DISTINCT from `views.unavailable` — that one means "we could not ask", this
+   * one means "we asked and the question is meaningless here". Both render an
+   * em dash rather than a number, but for different reasons, so they get
+   * different copy.
+   *
+   * 🔴 A measured zero (a model-slot app with no installs YET) arrives with the
+   * flag ABSENT and MUST still render `0` — hiding it behind "n/a" would be a
+   * new fabricated-zero bug pointing the other way. The server is what makes
+   * that distinction (it never sets the flag when a counter is non-zero, and
+   * never sets it for an installable app); this renderer must not second-guess
+   * it by inferring anything from the number itself.
+   *
+   * `installs` itself is REQUIRED (unlike `views`), so it is read directly — do
+   * not "restore" optional chaining on it. Only `notApplicable` is optional,
+   * for the same reason `views` is: tRPC output is not zod-validated on the
+   * client, so a rolling deploy can hand this bundle an older pod's payload
+   * with no `notApplicable` key. Absent → falsy → the measured branch, which is
+   * exactly today's behaviour and therefore safe.
+   */
+  installs: { total: number; active: number; series: TimePoint[]; notApplicable?: boolean };
   runs: { count: number; buzzSpent: number; series: TimePoint[] };
   buzzPurchased: { count: number; buzzAmount: number; grossCents: number };
   engagement: {
@@ -300,11 +324,34 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             cols={{ base: 1, '48em': 2, '62em': 3, '75em': 5 }}
             spacing="md"
           >
+            {/*
+              A page app CANNOT be installed — it is stateless by design, so no
+              `block_user_subscriptions` row ever exists for it. Rendering "0"
+              there is the same fabricated-zero defect as #3557/#3581, just with
+              a different cause: the author reads "nobody installed my app" from
+              a number that could never have been anything else.
+
+              🔴 The em dash is driven ONLY by the server's `notApplicable`
+              flag, never by `active === 0`. A model-slot app with no installs
+              yet is a TRUTHFUL zero and must keep rendering `0` — that is the
+              case that would regress silently if this branch ever grew a
+              "…|| active === 0" convenience.
+            */}
             <MetricCard
               label="Active installs"
-              value={analytics.installs.active.toLocaleString()}
-              sub={`${analytics.installs.total.toLocaleString()} total (all time)`}
-              tooltip="Currently-enabled installs. Total counts every install ever created."
+              value={
+                analytics.installs.notApplicable ? '—' : analytics.installs.active.toLocaleString()
+              }
+              sub={
+                analytics.installs.notApplicable
+                  ? 'Not applicable to page apps'
+                  : `${analytics.installs.total.toLocaleString()} total (all time)`
+              }
+              tooltip={
+                analytics.installs.notApplicable
+                  ? 'Page apps run standalone and are not installed onto a model, so there is nothing to count here — this is NOT a report of zero installs. Your runs, Buzz and App loads figures are unaffected.'
+                  : 'Currently-enabled installs. Total counts every install ever created.'
+              }
             />
             <MetricCard
               label="Runs (range)"
@@ -377,20 +424,34 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             <Text size="sm">
               Active users, API calls, and error rate reflect only{' '}
               <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
-              (or one with no scoped API surface) will show installs and revenue but flat
-              engagement. <strong>Views</strong> is the exception — it is measured on every load, so
-              it counts signed-out visitors and static blocks that the engagement figures cannot
-              see. Installs, runs, and Buzz figures are unaffected.
+              (or one with no scoped API surface) will show revenue but flat engagement.{' '}
+              <strong>App loads</strong> is the exception — it is measured on every load, so it
+              counts signed-out visitors and static blocks that the engagement figures cannot see.
+              Runs and Buzz figures are unaffected. The installs figure is blanked out for apps that
+              cannot be installed at all (a page app has no install slot), which is different from a
+              real zero.
             </Text>
           </Alert>
 
           <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
             <Card padding="md" radius="md" withBorder>
               <Title order={5}>New installs over time</Title>
-              <MiniLineChart
-                points={analytics.installs.series}
-                granularity={analytics.range.granularity}
-              />
+              {/*
+                Same discriminator as the card above. An empty series would
+                otherwise render MiniLineChart's "No data in this range." —
+                which reads as a measurement ("nobody installed you this
+                month") for an app that has no install path at all.
+              */}
+              {analytics.installs.notApplicable ? (
+                <Text c="dimmed" size="xs" py="sm">
+                  Not applicable — page apps are not installed.
+                </Text>
+              ) : (
+                <MiniLineChart
+                  points={analytics.installs.series}
+                  granularity={analytics.range.granularity}
+                />
+              )}
             </Card>
             <Card padding="md" radius="md" withBorder>
               <Title order={5}>Runs over time</Title>

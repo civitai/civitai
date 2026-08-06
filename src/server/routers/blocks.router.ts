@@ -962,12 +962,35 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
 /**
  * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
  * subscription path, where the slot isn't an input — it's implied by the app's
- * manifest targets. A model-slot app (the only kind that takes a subscription;
- * page apps are stateless and never subscribed) is non-launch, so a non-mod is
- * rejected. A moderator is grandfathered. An app is launch-eligible iff it
- * declares a page AND `app.page` is a launch slot (mirrors the service's
- * isAppLaunchEligible / the public-read filter, keeping the allowlist the single
- * source of truth).
+ * manifest. A moderator is grandfathered. Everyone else passes iff the app is
+ * launch-eligible: it declares a page AND `app.page` is a launch slot (mirrors
+ * the service's isAppLaunchEligible / the public-read filter, keeping the
+ * allowlist the single source of truth).
+ *
+ * 🔴 WHAT THIS DOES NOT DO — read before relying on it. An earlier version of
+ * this comment claimed a non-mod is "always rejected" here, on the reasoning
+ * that only a MODEL-slot app takes a subscription and model slots are
+ * non-launch. That is not what the code does. `app.page` IS in
+ * `LAUNCH_SLOT_IDS`, so `isLaunchSlot(PAGE_SLOT_ID)` is a compile-time-constant
+ * `true` and the predicate below reduces to `if (declaresPage) return`. Every
+ * approved app in production declares `page.path`, so this gate ADMITS all of
+ * them for a non-mod caller.
+ *
+ * That is currently harmless only because `enforceAppBlocksFlag` is mod-only —
+ * the flag, not this function, is what keeps non-mods off the path. Neither
+ * this gate nor `BlockRegistry.upsertSubscription` (which applies no slot check
+ * at all) stops a `block_user_subscriptions` row being written against a PAGE
+ * app, which is stateless by decision (`src/pages/apps/run/[slug]/
+ * [[...path]].tsx` — "STATELESS (Decision 2): no `block_user_subscriptions`
+ * row, no migration") and has no UI for managing one. So widening
+ * `app-blocks-enabled` past moderators would start writing invisible
+ * subscription rows for stateless apps unless a slot check is added first.
+ *
+ * Behaviour is deliberately UNCHANGED here — this is a comment correction plus
+ * the test that pins what actually happens (`blocks.router.subscriptions.test.
+ * ts`, "non-mod + PAGE app → ADMITTED"). If you intend to close the hole, the
+ * fix is a `hasInstallSlot(manifest)` check on the subscription path, not an
+ * edit to this doc block.
  */
 function assertLaunchAppForCaller(
   ctx: { user?: { id: number; isModerator?: boolean } },
@@ -3011,11 +3034,14 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
-      // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot
-      // app (page apps are stateless — Decision 2 — and never subscribed), so
-      // for the public (non-mod) audience this is always a non-launch app and is
-      // rejected. Moderators are grandfathered. Resolves launch-eligibility from
-      // the app's manifest (declares a page) since the slot isn't an input here.
+      // PAGE-ONLY LAUNCH GATE: resolves launch-eligibility from the app's
+      // manifest (declares a page) since the slot isn't an input here.
+      // Moderators are grandfathered; a non-mod is rejected for a MODEL-slot
+      // app. It does NOT reject a non-mod for a page app — see the 🔴 note on
+      // assertLaunchAppForCaller, and note that nothing below applies a slot
+      // check either, so a page app CAN take a subscription row today. What
+      // keeps non-mods off this path is `enforceAppBlocksFlag` (mod-only), not
+      // this call.
       assertLaunchAppForCaller(ctx, block.manifest);
       // Manifest-driven settings validation. The 4KB cap from the router-
       // level settingsSchema has already fired; this pass enforces the

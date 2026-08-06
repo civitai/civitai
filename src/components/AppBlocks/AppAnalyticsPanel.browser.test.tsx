@@ -235,6 +235,138 @@ describe('AppAnalyticsPanel — impressions: measured vs unmeasured', () => {
 });
 
 /**
+ * INSTALLS: a page app CANNOT be installed (stateless — Decision 2), so its
+ * `Installs 0` is a CATEGORY ERROR sitting next to genuinely-measured run and
+ * Buzz numbers. Same defect class as the impressions card above, different
+ * cause: there the store could not be asked, here the question is meaningless.
+ *
+ * THREE states, and the whole value of this block is that it pins all three:
+ *   1. measured non-zero — render the number;
+ *   2. measured zero     — render `0`. A model-slot app with no installs yet is
+ *                          a real, actionable answer;
+ *   3. not applicable    — render an em dash.
+ * (2) is the one that would regress SILENTLY: every visible symptom of "the fix
+ * works" looks identical if a truthful zero starts hiding too.
+ *
+ * Em dashes are asserted by COUNT, not by `expect.element`. The impressions card
+ * renders the same glyph in its own unavailable state, so an unanchored
+ * single-element assertion would be ambiguous the moment both fire — and,
+ * worse, would pass while attributing the wrong card's dash to installs.
+ */
+describe('AppAnalyticsPanel — installs: measured vs not applicable', () => {
+  const emDashCount = () => page.getByText('—', { exact: true }).elements().length;
+
+  test('(3) a PAGE app renders an em dash and says why — never a 0', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      installs: { total: 0, active: 0, series: [], notApplicable: true },
+      // Measured impressions, so any em dash on the page belongs to installs.
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not applicable to page apps', { exact: true }))
+      .toBeInTheDocument();
+    expect(emDashCount()).toBe(1);
+    // The fabricated "0 total (all time)" sub-line must be gone entirely.
+    expect(page.getByText('total (all time)').elements()).toHaveLength(0);
+
+    // PER-SECTION: everything else on the panel is measured and still renders.
+    await expect.element(page.getByText('Runs (range)')).toBeInTheDocument();
+    await expect.element(page.getByText('App loads (range)', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('124', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Analytics unavailable').elements()).toHaveLength(0);
+  });
+
+  // The runs series is deliberately NON-empty in this pair. With both series
+  // empty, MiniLineChart's own "No data in this range." fires for both cards and
+  // the two states become indistinguishable by that string — the assertion below
+  // would then be measuring the runs card, not installs.
+  const RUNS_WITH_DATA = {
+    count: 7,
+    buzzSpent: 7000,
+    series: [{ bucket: '2026-06-01T00:00:00.000Z', value: 7 }],
+  };
+
+  test('(3) the installs CHART is replaced by the explanation, not left empty', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      installs: { total: 0, active: 0, series: [], notApplicable: true },
+      runs: RUNS_WITH_DATA,
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('New installs over time')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Not applicable — page apps are not installed.', { exact: true }))
+      .toBeInTheDocument();
+    // "No data in this range." reads as a measurement of a quiet month, which is
+    // exactly the claim a page app cannot make. The runs card has data, so the
+    // only card that could emit this string is installs.
+    expect(page.getByText('No data in this range.').elements()).toHaveLength(0);
+    // Structural: the runs chart survives, the installs chart does not.
+    await expect.element(page.getByText('Runs over time')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-testid="chart"]')).toHaveLength(1);
+  });
+
+  // 🔴 THE SILENT REGRESSION. Byte-identical counters to the case above — only
+  // the flag differs. If the em dash is ever driven by `active === 0` instead of
+  // the server's flag, this is the only test that goes red.
+  test('(2) a measured ZERO still renders 0 — a model-slot app with none yet', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      installs: { total: 0, active: 0, series: [] },
+      runs: RUNS_WITH_DATA,
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('Active installs')).toBeInTheDocument();
+    await expect.element(page.getByText('0 total (all time)', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Not applicable to page apps').elements()).toHaveLength(0);
+    // No em dash ANYWHERE — installs is measured and so are impressions.
+    expect(emDashCount()).toBe(0);
+    // Same fixture as (3) apart from the flag, so the chart card is the
+    // structural discriminator: the empty installs series renders the CHART's
+    // own empty-state ("no installs this month"), never the n/a explanation.
+    await expect.element(page.getByText('No data in this range.')).toBeInTheDocument();
+    expect(page.getByText('Not applicable — page apps are not installed.').elements()).toHaveLength(
+      0
+    );
+  });
+
+  test('(1) a measured non-zero count renders the number', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      installs: { total: 3, active: 1, series: [] },
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('3 total (all time)', { exact: true })).toBeInTheDocument();
+    expect(emDashCount()).toBe(0);
+  });
+
+  test('an ABSENT notApplicable key (old pod, rolling deploy) takes the measured branch', async () => {
+    // tRPC output is not zod-validated on the client, so a new bundle can be
+    // handed an old pod's payload. Absent must behave exactly as today does —
+    // this is the no-ordering-hazard claim, asserted rather than assumed.
+    mocks.analytics.current = {
+      ...ZEROED,
+      installs: { total: 7, active: 5, series: [] },
+      views: { count: 124, uniqueViewers: 12, anonCount: 40 },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect.element(page.getByText('5', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('7 total (all time)', { exact: true })).toBeInTheDocument();
+    expect(emDashCount()).toBe(0);
+  });
+});
+
+/**
  * The two "top N" cards render the aggregates' GROUP BY keys. #3561 bounded the endpoint
  * column, which promoted the internal tokens to the TOP rows — so those cards became the
  * most prominent place raw internal strings appear on the panel.
