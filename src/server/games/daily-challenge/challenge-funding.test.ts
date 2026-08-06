@@ -1,3 +1,4 @@
+import { BuzzApiError } from '@civitai/buzz';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
@@ -475,6 +476,46 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     );
 
     await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // 409 (→ BAD_REQUEST) is what the buzz service returns for a prefix whose transactions were
+  // ALREADY reversed — a refunded externalTransactionId stays occupied in the ledger. A challenge
+  // voided first and deleted afterwards hits this on the delete, and treating it as a failure
+  // aborted the delete and left the challenge undeletable forever.
+  it('tolerates the buzz conflict when a prefix was already refunded', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 500,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'There is a conflict with the transaction',
+        cause: new BuzzApiError(409, 'Conflict'),
+      })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // Tolerance is keyed to the buzz status, not to BAD_REQUEST — a bad request from anywhere else
+  // is still a real failure.
+  it('rethrows a BAD_REQUEST that did not come from the buzz service', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'There is a conflict with the transaction' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).rejects.toThrow(
+      'There is a conflict with the transaction'
+    );
   });
 
   // A non-404 buzz failure is a real error and must still propagate.

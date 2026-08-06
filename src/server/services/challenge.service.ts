@@ -2151,8 +2151,6 @@ export async function deleteChallenge(id: number) {
         });
       }
     }
-    // Idempotent via deterministic externalTransactionId prefixes (the buzz service dedups), so
-    // re-refunding an already-Cancelled challenge is a net-zero no-op, not a double-spend.
     await refundUserChallengeFunds(id, 'delete');
   }
 
