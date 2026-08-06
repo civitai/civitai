@@ -53,47 +53,70 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
  * `urn:air:comfy:nodepack:comfyregistry:<publisher>/<pack>@<version>` — which
  * install third-party ComfyUI custom nodes into the worker's container.
  *
- * 🔴 OFF — AND NOT BECAUSE "NODEPACKS ARE UNSAFE". The reason is narrower and
- * more annoying: ENABLING THIS FLAG ALONE PRODUCES A DEADLOCK. The orchestrator
- * and this allowlist demand two DIFFERENT, MUTUALLY EXCLUSIVE spellings of the
- * same thing, and there is no third spelling that satisfies both. With the flag
- * on, the platform does not gain nodepacks; it only moves the refusal from our
- * 400 to theirs, one round-trip later.
+ * 🔴 OFF — AND NOT BECAUSE "NODEPACKS ARE UNSAFE". Turning this flag on grants
+ * the BARE PACK SPELLING, which is the one spelling the orchestrator refuses. It
+ * therefore buys nothing: the submit stops failing here and starts failing one
+ * round-trip later, with a less useful message.
  *
  * 🔴 DO NOT RE-FLIP THIS TO `true` AS A ONE-LINE WIN. That is precisely what
  * #3663 did, on the belief that this allowlist was the only gate. It is not.
- * MEASURED LIVE AGAINST PRODUCTION during a dogfood, both directions:
+ * MEASURED LIVE AGAINST PRODUCTION during a dogfood:
  *
  *   urn:air:comfy:nodepack:comfyregistry:comfyui-kjnodes@1.0.0
- *     → passes this allowlist, then 400 from the ORCHESTRATOR:
+ *     → passes this allowlist (flag on), then 400 from the ORCHESTRATOR:
  *       "Declare custom nodes as their install-layer AIR
  *        (urn:air:comfy:nodepacklayer:…). Capture it with a ComfyNodepackSnapshot
  *        step and use its output's layerAir."
  *
  *   urn:air:comfy:nodepacklayer:comfyregistry:comfyui-kjnodes@1.0.0
- *     → 400 from CIVITAI, i.e. this module:
- *       "resource AIR type 'nodepacklayer' is not permitted in an inline workflow"
+ *     → 400 from CIVITAI, i.e. THIS MODULE, because `nodepacklayer` is not in
+ *       `INLINE_ALLOWED_AIR_TYPES` and `comfyregistry` is not in
+ *       `INLINE_ALLOWED_AIR_SOURCES`.
  *
- * The orchestrator's own prescribed remediation is refused by the very next
- * guard. Four spellings were tried during that dogfood; none work.
+ * 🔴 THAT SECOND REFUSAL IS OURS ALONE — IT IS NOT A DEADLOCK. An earlier
+ * revision of this comment called it one and said re-enabling needed
+ * orchestrator-side work. That was WRONG, and the correction matters because it
+ * inverts who owns the remaining work. Verified by reading
+ * `civitai-orchestration@origin/main` directly (as of 2026-08-06):
  *
- * 🔴 WHY THE #3663 RATIONALE LOOKED SOUND AND WAS STILL WRONG — this is the part
- * worth carrying forward. It was verified against `civitai-orchestration@main`
- * SOURCE: `ComfyRegistryApiClient.cs` resolving the `comfy:nodepack` URN scheme,
+ *   - `CustomComfyInput.cs` → `ValidateNodepacksAreInstallLayers` rejects ONLY
+ *     `air.Type == "nodepack"`. It does not reject `nodepacklayer`. Introduced
+ *     2026-06-23 in `15338ffe3`, i.e. SIX WEEKS BEFORE #3663.
+ *   - `ComfyRegistryRouterResourceProvider.cs` routes `nodepacklayer` to
+ *     `NodepackLayerResourceProvider` and bare `nodepack` to the registry CDN.
+ *   - `samples/sample-customcomfy.http` carries a WORKING customComfy submit
+ *     whose `resources` is a single `urn:air:comfy:nodepacklayer:…` AIR, and
+ *     `wwwroot/openapi/v2-consumers.json` publishes `ComfyNodepackSnapshot` as a
+ *     consumer step template producing exactly that AIR.
+ *
+ * 🔴 THIS IS A CLAIM ABOUT ANOTHER REPO AND NOTHING HERE CAN KEEP IT TRUE. The
+ * `MEMBERSHIP GUARD` block in `inline-comfy.service.test.ts` explains why CI
+ * cannot pin the orchestrator's contract; that argument applies to the paragraph
+ * above too. Re-derive it before acting on it — the symbol to read is
+ * `CustomComfyInput.ValidateNodepacksAreInstallLayers`.
+ *
+ * SO THE REMAINING WORK IS ENTIRELY CIVITAI-SIDE: allow `nodepacklayer` in
+ * `INLINE_ALLOWED_AIR_TYPES`, allow `comfyregistry` in
+ * `INLINE_ALLOWED_AIR_SOURCES`, keep the bare pack refused, and give an inline
+ * body some way to OBTAIN a layer AIR (a ComfyNodepackSnapshot step, or an
+ * already-captured `layerAir` supplied by the app). Still not a one-line flip —
+ * but for that reason, not because anyone else is blocking.
+ *
+ * 🔴 AND THAT PATH IS NOT THIS FLAG. `INLINE_NODEPACKS_ENABLED` grants the BARE
+ * PACK only. Flipping it on is orthogonal to — and strictly worse than —
+ * allowlisting `nodepacklayer`. The type guard is deliberately written so it
+ * cannot shadow that work: see `inlineAirTypeRefusal`, which consults the
+ * allowlist FIRST, so permitting `nodepacklayer` takes effect immediately no
+ * matter what this constant says.
+ *
+ * 🔴 WHY THE #3663 RATIONALE LOOKED SOUND AND WAS STILL WRONG — the reusable
+ * part. It was verified against `civitai-orchestration` SOURCE:
+ * `ComfyRegistryApiClient.cs` resolving the `comfy:nodepack` URN scheme,
  * `ComfyNodepackSnapshotJob.cs`, `CustomComfyJob.cs`'s docs on carrying nodepack
  * URNs. All of that is TRUE, and none of it is the ACCEPT PATH for an inline
- * `customComfy` body. Reading the counterpart's source proved the capability
- * EXISTS; only driving the real submit revealed which AIR the inline endpoint
- * ACCEPTS. The orchestrator has since moved to a layer-based nodepack model and
- * nothing in this repo records that: `nodepacklayer` and `ComfyNodepackSnapshot`
- * appear nowhere in `src/` except in this comment.
- *
- * TURNING THIS BACK ON IS NOT A ONE-LINE CHANGE. At minimum it needs a
- * `nodepacklayer` type in the allowlists below, a way for an inline body to run a
- * ComfyNodepackSnapshot step and thread that step's output `layerAir` into
- * `resources`, and orchestrator-side confirmation that an inline body may carry a
- * layer AIR at all. That is orchestrator-side work and a separate, deliberate
- * decision — not this constant.
+ * `customComfy` body — the validator six weeks older than the PR was never
+ * opened. Reading a counterpart's source proves a capability EXISTS; only
+ * reading its VALIDATOR, or driving the real submit, tells you what it ACCEPTS.
  *
  * The two gates from the inline arm's own belt are unaffected either way and
  * still run over every entry in `resources`: entitlement
@@ -102,13 +125,12 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
  *
  * KEPT AS A CONSTANT DELIBERATELY — the one-line kill switch, in both directions.
  * Do not inline `false` and delete it. Both states are tested
- * (`inline-comfy.service.test.ts`), and the source/type allowlists below are
- * keyed off it so flipping it moves nothing else. 🔴 But note what that does and
- * does not mean: flipping it is NECESSARY-BUT-NOT-SUFFICIENT for working
- * nodepacks. The tests pin what this flag CONTROLS; no test in this repo can pin
- * that nodepacks WORK, because the other half of the contract is not in this
- * repo. The `MEMBERSHIP GUARD` block in `inline-comfy.service.test.ts` states
- * exactly how far the in-repo guard reaches, and where it stops.
+ * (`inline-comfy.service.test.ts`). 🔴 Flipping it is NOT free and the tests say
+ * so: it turns 9 of them red, because they pin the refusal. That is the intended
+ * design — a flip should have to argue with its coverage — but do not read the
+ * allowlists being keyed off this constant as "flipping it moves nothing else".
+ * It moves exactly what the tests describe, and no test here can pin that
+ * nodepacks WORK, because the other half of that contract is not in this repo.
  */
 export const INLINE_NODEPACKS_ENABLED = false;
 
@@ -138,14 +160,22 @@ export const INLINE_ALLOWED_AIR_SOURCES: ReadonlySet<string> = new Set(
  * `typeUrnMap` does not contain (it has `diffusionmodel` / `text_encoders`
  * inconsistently). Deriving from it would reject the platform's own live AIRs.
  *
- * Two exclusions are the point of the list, not incidental:
- *   - `nodepack` — see `INLINE_NODEPACKS_ENABLED`. Refused before this list is
- *                  consulted, by a dedicated guard with a message that explains
- *                  the nodepack/nodepacklayer deadlock instead of a bare "type
- *                  not permitted".
- *   - `image`    — an `urn:air:oci:image:…` OCI container image. `comfyImage` is
- *                  already unsettable via the wire schema's `.strict()`; this
- *                  stops the same capability arriving through `resources`.
+ * Three exclusions are the point of the list, not incidental:
+ *   - `nodepack`      — the BARE pack URN. See `INLINE_NODEPACKS_ENABLED`. The
+ *                       orchestrator refuses this spelling too, so permitting it
+ *                       here only moves the failure.
+ *   - `nodepacklayer` — the install-layer AIR, which the orchestrator DOES
+ *                       accept. Absent only because this bridge has no way to
+ *                       obtain one yet; **this is the entry a future fix adds**.
+ *                       Necessary but NOT sufficient on its own: a layer AIR is
+ *                       `comfyregistry`-sourced, so `INLINE_ALLOWED_AIR_SOURCES`
+ *                       needs it too. Those two edits are the whole type/source
+ *                       gate though — `inlineAirTypeRefusal` steps aside by
+ *                       itself, and no third file gates the spelling.
+ *   - `image`         — an `urn:air:oci:image:…` OCI container image.
+ *                       `comfyImage` is already unsettable via the wire schema's
+ *                       `.strict()`; this stops the same capability arriving
+ *                       through `resources`.
  */
 export const INLINE_ALLOWED_AIR_TYPES: ReadonlySet<string> = new Set([
   'checkpoint',
@@ -171,17 +201,58 @@ export const INLINE_ALLOWED_AIR_TYPES: ReadonlySet<string> = new Set([
 
 /**
  * The two AIR `type` spellings that mean "install third-party ComfyUI custom
- * nodes". Both are refused together while `INLINE_NODEPACKS_ENABLED` is off —
- * see the guard in `parseInlineAir` for why refusing only one is worse than
- * refusing both.
+ * nodes".
  *
- * 🔴 NOT the same list as the `nodepack` entry in `INLINE_ALLOWED_AIR_TYPES`
- * above. That list is what may be ACCEPTED; this one is what gets the
- * INFORMATIVE refusal. `nodepacklayer` is deliberately absent from the accept
- * list in BOTH flag states — flipping the flag on would admit `nodepack` only,
- * which is exactly the half-measure that deadlocks.
+ * 🔴 THIS IS NOT AN ACCEPT LIST AND NOT A DENY LIST — it selects which MESSAGE a
+ * refusal gets. `INLINE_ALLOWED_AIR_TYPES` above decides what is permitted;
+ * membership here only means "if this type is being refused, refuse it with the
+ * explanation instead of the bare `type not permitted`". Keeping the two
+ * concerns apart is what lets `nodepacklayer` be allowlisted later without
+ * touching this set.
  */
-const INLINE_NODEPACK_AIR_TYPES: ReadonlySet<string> = new Set(['nodepack', 'nodepacklayer']);
+export const INLINE_NODEPACK_AIR_TYPES: ReadonlySet<string> = new Set([
+  'nodepack',
+  'nodepacklayer',
+]);
+
+/**
+ * The type-level verdict for an inline AIR: the refusal message, or `null` if
+ * the type is permitted. ONE function, so there is ONE ordering.
+ *
+ * 🔴 THE ALLOWLIST IS CONSULTED FIRST, AND THAT ORDER IS THE WHOLE POINT — IT IS
+ * A GUARD AGAINST SHADOWING A FUTURE FIX. The previous shape asked
+ * "is it a nodepack spelling AND is the flag off?" *before* the allowlist, which
+ * meant a maintainer doing the CORRECT next thing — allowlisting `nodepacklayer`
+ * while leaving the bare pack refused — would have seen their change silently
+ * swallowed: the informative guard fired first and reported "nodepack resources
+ * are not permitted" for a type they had just permitted. Hours of confusion,
+ * from a guard whose only job was to be helpful.
+ *
+ * Asking the allowlist first makes that impossible by construction. Permit a
+ * type and every refusal path for it disappears in the same edit, whatever
+ * `INLINE_NODEPACKS_ENABLED` says. The `allowed` parameter is injectable so a
+ * test can prove the step-aside on a synthetic allowlist rather than assert it
+ * in prose — see `inline-comfy.service.test.ts`.
+ */
+export function inlineAirTypeRefusal(
+  type: string,
+  raw: string,
+  allowed: ReadonlySet<string> = INLINE_ALLOWED_AIR_TYPES
+): string | null {
+  if (allowed.has(type)) return null;
+  if (INLINE_NODEPACK_AIR_TYPES.has(type)) {
+    return (
+      `nodepack resources are not permitted in an inline workflow: '${raw.slice(0, 200)}' ` +
+      '— a custom node must be declared as its complete install-layer AIR ' +
+      '(urn:air:comfy:nodepacklayer:…), which the orchestrator DOES accept; the bare ' +
+      'comfy:nodepack URN it does not. This bridge permits neither yet: it has no way for an ' +
+      'inline body to obtain a layer AIR (normally a ComfyNodepackSnapshot step’s output ' +
+      '`layerAir`), so allowing the spelling alone would only move the failure. Enabling this ' +
+      'is civitai-side work — see INLINE_NODEPACKS_ENABLED.'
+    );
+  }
+  return `resource AIR type '${type || '(none)'}' is not permitted in an inline workflow`;
+}
 
 /**
  * Recursion budget for the graph walk. Same value and the same fail-closed
@@ -372,30 +443,12 @@ function parseInlineAir(raw: string): ParsedInlineAir {
   const source = match[3].toLowerCase();
   const rawVersion: string | undefined = match[5];
 
-  // 🔴 BOTH NODEPACK SPELLINGS TAKE THIS BRANCH, AND THAT IS THE POINT. It runs
-  // BEFORE the type allowlist below so the refusal a developer actually reads is
-  // this one and not the allowlist's bare `type '<x>' is not permitted`. The
-  // failure it exists to prevent is a LOOP: the orchestrator answers a bare
-  // `nodepack` AIR by telling you to send `nodepacklayer`, and `nodepacklayer`
-  // is not in the allowlist either — so a developer who follows the advice gets
-  // a second, differently-worded refusal and no way forward. One voice, one
-  // message, one place to look. See INLINE_NODEPACKS_ENABLED for the measured
-  // 400s from both sides.
-  if (INLINE_NODEPACK_AIR_TYPES.has(type) && !INLINE_NODEPACKS_ENABLED) {
-    throw badRequest(
-      `nodepack resources are not permitted in an inline workflow: '${trimmed.slice(0, 200)}' ` +
-        '— the orchestrator now requires a nodepack to be declared as its install-layer AIR ' +
-        '(urn:air:comfy:nodepacklayer:…), captured by a ComfyNodepackSnapshot step, and this ' +
-        'bridge cannot run that step yet. Declaring the bare pack AIR instead is rejected by the ' +
-        'orchestrator. Neither spelling works, so both are refused here rather than one round-trip ' +
-        'later. Re-enabling this needs orchestrator-side work, not a flag flip.'
-    );
-  }
-  if (!INLINE_ALLOWED_AIR_TYPES.has(type)) {
-    throw badRequest(
-      `resource AIR type '${type || '(none)'}' is not permitted in an inline workflow`
-    );
-  }
+  // ONE call, so there is ONE ordering and no second copy of the rule. Both
+  // nodepack spellings get the explanatory refusal; everything else unpermitted
+  // gets the bare one. See `inlineAirTypeRefusal` for why the allowlist is
+  // consulted first (it is what stops this guard shadowing a future fix).
+  const typeRefusal = inlineAirTypeRefusal(type, trimmed);
+  if (typeRefusal) throw badRequest(typeRefusal);
   if (!INLINE_ALLOWED_AIR_SOURCES.has(source)) {
     throw badRequest(
       `resource AIR source '${source || '(none)'}' is not permitted in an inline workflow`

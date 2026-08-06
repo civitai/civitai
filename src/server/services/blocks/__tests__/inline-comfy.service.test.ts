@@ -18,6 +18,7 @@ import {
   INLINE_ALLOWED_AIR_SOURCES,
   INLINE_ALLOWED_AIR_TYPES,
   INLINE_NODEPACKS_ENABLED,
+  inlineAirTypeRefusal,
 } from '~/server/services/blocks/inline-comfy.service';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
 
@@ -173,20 +174,25 @@ describe('collectInlineAuditText — the moderation sweep', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   // ───────────────────────────────────────────────────────────────────────────
-  // 🔴 NODEPACKS ARE OFF, AND THE REASON IS A DEADLOCK, NOT A SAFETY POSTURE.
-  // #3663 flipped `INLINE_NODEPACKS_ENABLED` on, and these cases asserted the
-  // ACCEPT behaviour. Measured live against production afterwards: a bare
-  // `comfy:nodepack` AIR passes this allowlist and is then 400'd by the
-  // ORCHESTRATOR, which prescribes `comfy:nodepacklayer` — which THIS module
-  // 400s. The prescribed remediation is refused by the next guard, so the flag
-  // bought nothing except a second, contradictory error message.
+  // 🔴 NODEPACKS ARE OFF BECAUSE THE FLAG GRANTS THE WRONG SPELLING, NOT AS A
+  // SAFETY POSTURE. #3663 flipped `INLINE_NODEPACKS_ENABLED` on and these cases
+  // asserted the ACCEPT behaviour. Measured live against production afterwards:
+  // a bare `comfy:nodepack` AIR passes this allowlist and is then 400'd by the
+  // ORCHESTRATOR, which prescribes `comfy:nodepacklayer`. So the flag bought
+  // nothing — it moved the failure one round-trip later, to a worse message.
+  //
+  // 🔴 THE LAYER SPELLING IS REFUSED BY US ALONE — NOT A DEADLOCK. The
+  // orchestrator ACCEPTS `nodepacklayer` (its validator rejects only the bare
+  // `nodepack`); civitai refuses it because it is in neither allowlist. Do not
+  // read the cases below as "the other side is blocking us". See
+  // `INLINE_NODEPACKS_ENABLED` for the sourced version of that claim and its
+  // staleness marker.
   //
   // 🔴 INVERTED, NOT DELETED, IN EITHER DIRECTION. The coverage below is the
   // same shape it was when the flag was on, pointed the other way: the accept
   // path, the not-widened control, and the sibling-type control all still have a
-  // case. Flipping the constant stays a one-line change with live coverage on
-  // both sides — which is exactly the property that let #3663 happen cheaply and
-  // that lets this revert be equally cheap.
+  // case. Flipping the constant back is still one line — but not a free one: it
+  // turns 9 cases red, by design, because they pin the refusal.
   // ───────────────────────────────────────────────────────────────────────────
   it('🔴 REJECTS a comfyregistry NODEPACK URN — the kill switch is off', async () => {
     expect(INLINE_NODEPACKS_ENABLED).toBe(false);
@@ -231,7 +237,8 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     // used to land on the type allowlist's bare `resource AIR type
     // 'nodepacklayer' is not permitted in an inline workflow` — a second,
     // differently-worded refusal with no way forward. Both spellings now get one
-    // message that explains the deadlock.
+    // message that names which side refuses which, and says the layer form is
+    // the one to build toward.
     const err = await assertViewerEntitledToInlineResources({
       airs: ['urn:air:comfy:nodepacklayer:comfyregistry:comfyui-kjnodes@1.0.0'],
       user: VIEWER,
@@ -655,14 +662,72 @@ describe('INVARIANT GUARD (not a contract test) — allowlist membership', () =>
     expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai', 'huggingface'].sort());
   });
 
-  it('🔴 neither nodepack spelling is in the ACCEPT list, in either flag state', () => {
-    // `INLINE_NODEPACKS_ENABLED` only ever added `nodepack`. `nodepacklayer` —
-    // the spelling the orchestrator actually prescribes — is absent from the
-    // accept list under BOTH values of the flag, which is precisely why flipping
-    // the flag alone deadlocks rather than working. Stated as an assertion so
-    // the next person reaching for the one-line flip finds it here.
+  it('records the CURRENT nodepack membership — a state, not a rule', () => {
+    // 🔴 DELIBERATELY NOT PHRASED AS "nodepacklayer MUST NOT BE ALLOWED". An
+    // earlier version of this case asserted exactly that, which would have made
+    // the correct next step — allowlisting `nodepacklayer` — look like a
+    // regression and put a red test in the way of the fix its own comment
+    // prescribes. A change-detector must not moonlight as a policy.
+    //
+    // If you are here because you just permitted `nodepacklayer`: this line and
+    // the two membership pins above are the ONLY places that need updating, and
+    // the step-aside case below already proves the refusal path yields.
     expect(INLINE_ALLOWED_AIR_TYPES.has('nodepacklayer')).toBe(false);
     expect(INLINE_ALLOWED_AIR_TYPES.has('nodepack')).toBe(INLINE_NODEPACKS_ENABLED);
     expect(INLINE_ALLOWED_AIR_TYPES.has('image')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 ANTI-SHADOWING. This is a RELATIONSHIP guard, not a membership one: it pins
+// that the explanatory nodepack refusal YIELDS to the allowlist rather than
+// pre-empting it. That ordering is load-bearing for a change nobody has made
+// yet, which is exactly the kind of property that rots silently — the previous
+// shape asked "is it a nodepack spelling AND is the flag off?" before consulting
+// the allowlist, so permitting `nodepacklayer` would have been swallowed and
+// reported as "nodepack resources are not permitted".
+//
+// `inlineAirTypeRefusal` takes the allowlist as a parameter precisely so this
+// can be MEASURED on a synthetic set instead of asserted in a comment.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('inlineAirTypeRefusal — the refusal must not shadow a future allowlisting', () => {
+  const RAW_LAYER = 'urn:air:comfy:nodepacklayer:comfyregistry:kijai/comfyui-kjnodes@1.4.0';
+  const RAW_PACK = 'urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0';
+
+  it('refuses both spellings under the REAL allowlist, with the explanatory message', () => {
+    expect(inlineAirTypeRefusal('nodepack', RAW_PACK)).toContain(
+      'nodepack resources are not permitted in an inline workflow'
+    );
+    expect(inlineAirTypeRefusal('nodepacklayer', RAW_LAYER)).toContain(
+      'nodepack resources are not permitted in an inline workflow'
+    );
+  });
+
+  it('🔴 STEPS ASIDE the moment `nodepacklayer` is allowlisted — the whole point', () => {
+    // The prescribed next step, simulated. If this returns a refusal, a
+    // maintainer who permits the layer spelling gets told "nodepack resources
+    // are not permitted" for a type they just permitted.
+    const permissive = new Set([...INLINE_ALLOWED_AIR_TYPES, 'nodepacklayer']);
+    expect(inlineAirTypeRefusal('nodepacklayer', RAW_LAYER, permissive)).toBeNull();
+  });
+
+  it('🔴 …and does NOT step aside for the bare pack in that same edit', () => {
+    // The half that must survive: permitting the layer must not quietly permit
+    // the bare URN, which the orchestrator refuses. Without this, the case above
+    // is also satisfied by a function that returns null for anything.
+    const permissive = new Set([...INLINE_ALLOWED_AIR_TYPES, 'nodepacklayer']);
+    expect(inlineAirTypeRefusal('nodepack', RAW_PACK, permissive)).toContain(
+      'nodepack resources are not permitted in an inline workflow'
+    );
+  });
+
+  it('POSITIVE CONTROL — an already-allowed type returns null, a stranger gets the BARE message', () => {
+    // Proves the function can return null at all (so the step-aside case is not
+    // vacuously green), and that a non-nodepack type does NOT get the
+    // explanatory message — the two branches are distinguishable.
+    expect(inlineAirTypeRefusal('lora', 'urn:air:sdxl:lora:civitai:1@2')).toBeNull();
+    const stranger = inlineAirTypeRefusal('image', 'urn:air:oci:image:ghcr:evil/comfy@v1');
+    expect(stranger).toContain("resource AIR type 'image' is not permitted in an inline workflow");
+    expect(stranger).not.toContain('nodepack resources are not permitted');
   });
 });
