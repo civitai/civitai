@@ -11,9 +11,15 @@ export const useNotificationSettings = (enabled = true) => {
     const hasCategory: Record<string, boolean> = {};
     for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
       hasCategory[category] = false;
-      for (const { type } of settings) {
-        const isEnabled = !userNotificationSettings.some((setting) => setting.type === type);
+      for (const { type, optIn } of settings) {
+        const hasRow = userNotificationSettings.some((setting) => setting.type === type);
+        // A row means opted-out normally, but subscribed for an opt-in type.
+        const isEnabled = optIn ? hasRow : !hasRow;
         notificationSettings[type] = isEnabled;
+        // Opt-in types are excluded from the aggregates on purpose: they are not part of the
+        // baseline every user starts with, so one shouldn't make the master switch read as "on" —
+        // and the category tree is what renders the control for turning it back off.
+        if (optIn) continue;
         if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
         if (!hasNotifications && isEnabled) hasNotifications = true;
       }

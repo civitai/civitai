@@ -58,12 +58,10 @@ export function NotificationToggle({
     return null;
   }
 
-  const isEnabled = notification.defaultDisabled
-    ? !notificationSettings[type]
-    : !!notificationSettings[type];
+  const isEnabled = !!notificationSettings[type];
 
   const onToggle = () => {
-    updateNotificationSettingMutation.mutate({ toggle: isEnabled, type: [type] });
+    updateNotificationSettingMutation.mutate({ toggle: !isEnabled, type: [type] });
   };
 
   return children({

@@ -5,6 +5,7 @@ import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
+  isOptInNotification,
   notificationCategoryTypes,
   notificationTypes,
 } from '~/server/notifications/utils.notifications';
@@ -23,16 +24,25 @@ export default function NotificationsCard() {
       await queryUtils.user.getNotificationSettings.cancel();
 
       const prevUserSettings = queryUtils.user.getNotificationSettings.getData() ?? [];
-      const currentlyDisabled = prevUserSettings.map((x) => x.type);
+      const withRow = prevUserSettings.map((x) => x.type);
       const latestSetting =
         prevUserSettings.length > 0 ? prevUserSettings[prevUserSettings.length - 1] : { id: 0 };
-      const newSettings = type
-        .filter((t) => !currentlyDisabled.includes(t))
+
+      // Mirror the split the toggle handler makes: for an opt-in type the row means subscribed, so
+      // the same `toggle` adds a row where it removes one for everything else. Guessing a single
+      // direction here made the checkbox flicker to the wrong state until the refetch landed.
+      const removing = type.filter((t) =>
+        toggle ? !isOptInNotification(t) : isOptInNotification(t)
+      );
+      const adding = type
+        .filter((t) => (toggle ? isOptInNotification(t) : !isOptInNotification(t)))
+        .filter((t) => !withRow.includes(t))
         .map((t) => ({ ...latestSetting, type: t, disabledAt: new Date() }));
 
-      queryUtils.user.getNotificationSettings.setData(undefined, (old = []) =>
-        toggle ? old?.filter((setting) => !type.includes(setting.type)) : [...old, ...newSettings]
-      );
+      queryUtils.user.getNotificationSettings.setData(undefined, (old = []) => [
+        ...old.filter((setting) => !removing.includes(setting.type)),
+        ...adding,
+      ]);
 
       return { prevUserSettings };
     },
@@ -47,8 +57,12 @@ export default function NotificationsCard() {
     updateNotificationSettingMutation.mutate({ toggle, type: notificationTypes });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]?.map((x) => x.type);
-    if (!categoryTypes) return;
+    // Same exclusion `notificationTypes` makes for toggleAll — a category switch must not decide an
+    // opt-in subscription on the user's behalf in either direction.
+    const categoryTypes = notificationCategoryTypes[category]
+      ?.filter((x) => !x.optIn)
+      .map((x) => x.type);
+    if (!categoryTypes?.length) return;
 
     updateNotificationSettingMutation.mutate({
       toggle,
@@ -100,22 +114,13 @@ export default function NotificationsCard() {
                   {hasCategory[category] && (
                     <Card.Section inheritPadding py="md">
                       <Stack>
-                        {settings.map(({ type, displayName, defaultDisabled }) => (
+                        {settings.map(({ type, displayName }) => (
                           <Checkbox
                             key={type}
                             label={displayName}
-                            checked={
-                              defaultDisabled
-                                ? !notificationSettings[type]
-                                : notificationSettings[type]
-                            }
+                            checked={notificationSettings[type]}
                             disabled={isLoading}
-                            onChange={(e) => {
-                              toggleType(
-                                type,
-                                defaultDisabled ? !e.target.checked : e.target.checked
-                              );
-                            }}
+                            onChange={(e) => toggleType(type, e.target.checked)}
                           />
                         ))}
                       </Stack>

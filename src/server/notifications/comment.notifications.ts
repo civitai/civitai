@@ -704,14 +704,11 @@ export const commentNotifications = createNotificationProcessor({
   },
   // Model3D comments — mirror the Model 3-tier (`new-comment` /
   // `new-comment-response` / `new-comment-nested`) but use the CommentV2 +
-  // Thread surface (Model3D never used the V1 `Comment` table). Pilot ships
-  // with these defaulted off (`defaultDisabled: true`) since the audience is
-  // mod-only at launch — opt-in users will subscribe explicitly.
+  // Thread surface (Model3D never used the V1 `Comment` table).
   'new-3d-model-comment': {
     displayName: 'New comments on your 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.EntityOwner,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your 3D model: "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
@@ -750,7 +747,6 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New responses to your comments on 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the 3D model "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
@@ -796,7 +792,6 @@ export const commentNotifications = createNotificationProcessor({
     displayName: 'New nested comments on your 3D models',
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.EntityOwner,
-    defaultDisabled: true,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a comment on your 3D model "${details.model3dName}"`,
       url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
