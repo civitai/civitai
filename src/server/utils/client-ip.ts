@@ -2,30 +2,35 @@ import { isIP } from 'node:net';
 
 /**
  * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ MERGE NOTE — this module is created concurrently by two PRs.            │
- * │ #3658 adds `resolveClientIp` here (moved out of public-api-rate-limit); │
- * │ this PR adds `getTrustedClientIp` + `isIpAddress`. They are DIFFERENT   │
- * │ predicates for DIFFERENT surfaces and both are wanted — resolve the     │
- * │ add/add conflict by KEEPING BOTH, not by picking one. See               │
- * │ "Choosing between the two" below.                                      │
+ * │ MERGE NOTE — #3658 created this same module and has now LANDED on main │
+ * │ (d705fbd97d). Its `resolveClientIp` and this PR's                       │
+ * │ `getTrustedClientIp` + `isIpAddress` are DIFFERENT predicates for       │
+ * │ DIFFERENT surfaces and both are wanted — resolve the add/add conflict   │
+ * │ by KEEPING BOTH, not by picking one. See "Choosing between the two"     │
+ * │ below.                                                                 │
  * │                                                                        │
- * │ Two things a mechanical union gets WRONG and a reviewer has to do by    │
- * │ hand:                                                                  │
+ * │ Three things a mechanical union gets WRONG, to do by hand:              │
  * │                                                                        │
  * │  1. Both sides import `isIP`, from DIFFERENT specifiers — this file     │
- * │     uses `node:net`, #3658 uses `net`. Keeping both lines is a          │
+ * │     uses `node:net`, main uses `net`. Keeping both lines is a           │
  * │     duplicate identifier (TS2300). Keep the `node:net` line and drop    │
  * │     the other: `net` is the only builtin this repo imports with a       │
  * │     single spelling — 3 of 3 occurrences are `node:net`, none bare.     │
  * │                                                                        │
- * │  2. Delete #3658's paragraph beginning "SCOPE / KNOWN LIMIT — read      │
- * │     before extending this:" — the one whose last sentences say the      │
- * │     stricter variant "lives with the token-minting endpoint in          │
- * │     src/pages/api/v1/block-tokens/" and is "deliberately NOT shared     │
- * │     here". After the union it IS shared: it is `getTrustedClientIp`,    │
- * │     a few dozen lines below, and block-tokens now calls it. The         │
- * │     paragraph survives a keep-both merge intact and is false the        │
- * │     moment that merge lands, so removing it is not optional.            │
+ * │  2. Fix main's paragraph beginning "NOT THE ONLY PREDICATE — CHOOSE     │
+ * │     PER SURFACE.", which says the stricter variant "lives with the      │
+ * │     token-minting endpoint in `src/pages/api/v1/block-tokens/`".        │
+ * │     After the union it does not live there: it is `getTrustedClientIp`  │
+ * │     in this file, and block-tokens calls it. The paragraph's POINT      │
+ * │     (two predicates, pick per surface) survives and is worth keeping —  │
+ * │     only its claim about WHERE the strict one lives is falsified, so    │
+ * │     repoint it here rather than deleting the paragraph.                 │
+ * │                                                                        │
+ * │  3. Both sides independently reject an IPv6 zone id and bound an        │
+ * │     accepted value to 45 characters — main in `isBareAddress`, this     │
+ * │     file in `isIpAddress`. Keep both predicates but do NOT keep two     │
+ * │     copies of that rule: they agree today and nothing makes them agree  │
+ * │     tomorrow. Fold one onto the other in a follow-up.                   │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
  * Client-IP derivation for ENFORCEMENT controls (abuse blocklists, per-client
