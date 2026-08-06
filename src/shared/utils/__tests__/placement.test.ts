@@ -279,7 +279,19 @@ describe('space resolution', () => {
       image: mode('auto'),
       user: mode('off', 250),
     });
-    expect(resolved).toEqual({ mode: 'auto', price: 250 });
+    expect(resolved).toEqual({ mode: 'auto', price: 250, settings: {} });
+  });
+
+  it('merges settings per key, with the most specific level winning', () => {
+    const resolved = resolvePlacementSpace('sticker', {
+      image: { mode: 'auto', price: null, settings: { maxScale: 0.1 } },
+      post: { mode: 'auto', price: null, settings: { maxScale: 0.3, other: 'post' } },
+      user: { mode: 'auto', price: null, settings: { maxScale: 0.4, account: true } },
+    });
+
+    // Not "the first level that has any settings at all": an owner who set one
+    // thing on their account and something else on one image keeps both.
+    expect(resolved.settings).toEqual({ maxScale: 0.1, other: 'post', account: true });
   });
 });
 

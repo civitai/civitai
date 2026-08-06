@@ -50,9 +50,11 @@ export const STICKER_PLACEMENT_DEFAULT_MAX_SCALE = 0.25;
 /**
  * The largest a sticker may be placed on this space.
  *
- * Clamped into the global bounds rather than trusted: the value is JSON on a row
- * anyone with database access can edit, and a stored `5` would otherwise mean a
- * sticker five times the width of the image.
+ * Clamped into the global bounds rather than trusted. Validating on write would
+ * be the usual answer, and there is a schema doing that — but this is JSON on a
+ * row, so it has no boundary to validate at: a support fix, a hand-edit or a
+ * migration written at speed all reach it without passing the schema. A stored
+ * `5` would otherwise mean a sticker five times the width of the image.
  */
 export function stickerMaxScale(settings?: Record<string, unknown> | null) {
   const stored = settings?.[STICKER_MAX_SCALE_KEY];

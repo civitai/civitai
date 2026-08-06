@@ -4,6 +4,7 @@ import {
   Group,
   NumberInput,
   SegmentedControl,
+  Slider,
   Stack,
   Text,
   Title,
@@ -13,6 +14,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  STICKER_PLACEMENT_DEFAULT_MAX_SCALE,
+  STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_SCALE,
+  stickerMaxScale,
+} from '~/shared/utils/sticker-placement';
 
 /**
  * Account-level control over who may place stickers on this creator's images,
@@ -41,11 +48,13 @@ export function PlacementSpaceCard() {
   const stored = spaces?.[0];
   const [mode, setMode] = useState('off');
   const [price, setPrice] = useState<number | ''>('');
+  const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
 
   useEffect(() => {
     if (!stored) return;
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
   }, [stored]);
 
   const save = trpc.placement.setSpace.useMutation({
@@ -62,9 +71,10 @@ export function PlacementSpaceCard() {
   const cap = range?.max ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
 
-  const commit = (nextMode: string, nextPrice: number | '') => {
+  const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) => {
     if (!currentUser) return;
     save.mutate({
+      settings: { maxScale: nextMaxScale },
       surface: 'sticker',
       entityType: 'user',
       // The account-level space is keyed by the owner's own id; the service
@@ -113,6 +123,26 @@ export function PlacementSpaceCard() {
             w={280}
           />
         </Group>
+
+        <Stack gap={4}>
+          <Text size="xs" fw={600}>
+            Largest sticker allowed
+          </Text>
+          <Text size="xs" c="dimmed">
+            As a share of the image&apos;s width. Placements already on your work keep the size they
+            were accepted at.
+          </Text>
+          <Slider
+            value={maxScale}
+            onChange={setMaxScale}
+            onChangeEnd={(value) => commit(mode, price, value)}
+            min={STICKER_PLACEMENT_MIN_SCALE}
+            max={STICKER_PLACEMENT_MAX_SCALE}
+            step={0.01}
+            label={(value) => `${Math.round(value * 100)}%`}
+            maw={280}
+          />
+        </Stack>
 
         {overCap && (
           <Alert color="yellow" p="xs">

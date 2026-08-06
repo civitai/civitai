@@ -176,6 +176,71 @@ describe('every guard refuses the mutation rather than filtering a listing', () 
   });
 });
 
+describe("the creator's size limit", () => {
+  const OVERSIZE = { ...placeInput.data, scale: 0.35 };
+  const capped = { ...OPEN_SPACE, settings: { maxScale: 0.2 } };
+
+  it('refuses a sticker larger than the creator allows', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(capped);
+    givenStickerAndBalance();
+
+    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
+      /up to 20%/
+    );
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator exceed it', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(capped);
+    givenStickerAndBalance();
+
+    await expect(
+      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true })
+    ).resolves.toMatchObject({ placementId: PLACEMENT });
+  });
+
+  it('applies the default when the creator has set nothing', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, settings: {} });
+    givenStickerAndBalance();
+
+    // 0.35 is inside the global ceiling and outside the default, so this fails
+    // only if the default is being applied rather than the hard maximum.
+    await expect(createStickerPlacement({ ...placeInput, data: OVERSIZE })).rejects.toThrow(
+      /up to 25%/
+    );
+  });
+
+  /**
+   * The limit binds at placement and never afterwards.
+   *
+   * This is a test aimed at a change nobody has made yet, which is the point.
+   * Someone will see a placement rendering above the creator's current limit,
+   * read it as stale data, and clamp on read — **that change would look like a
+   * bug fix and would be one.** A creator lowering their limit does not get to
+   * shrink placements people already paid for, and nothing else fails when it
+   * happens: the sticker just quietly gets smaller.
+   */
+  it('leaves an existing placement at the size it was accepted at', async () => {
+    placementFindMany.mockResolvedValueOnce([
+      {
+        id: 7,
+        targetId: IMAGE,
+        placerId: PLACER,
+        ownerId: OWNER,
+        status: 'approved',
+        amount: PRICE,
+        data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.35, rotation: 0 },
+      },
+    ]);
+    // The creator has since tightened the limit well below that placement.
+    resolvePlacementSpaceFor.mockResolvedValue(capped);
+
+    const [placed] = await getStickerPlacements({ imageIds: [IMAGE] });
+
+    expect(placed.data.scale).toBe(0.35);
+  });
+});
+
 describe('the order money and uses move in', () => {
   it('creates the row, then holds, then spends the use', async () => {
     givenStickerAndBalance();
@@ -247,9 +312,10 @@ describe('what gets written to the row', () => {
 
     await createStickerPlacement({
       ...placeInput,
-      // Past both bounds: a drag that left the image is a normal gesture, so it
-      // clamps rather than rejecting.
-      data: { cosmeticId: COSMETIC, x: 1.4, y: -0.3, scale: 0.9, rotation: 15 },
+      // Past the edges: a drag that left the image is a normal gesture, so the
+      // position clamps rather than rejecting. Size is a different matter — it
+      // is refused above the creator's limit, so it stays inside one here.
+      data: { cosmeticId: COSMETIC, x: 1.4, y: -0.3, scale: 0.2, rotation: 15 },
     });
 
     expect(placementCreate).toHaveBeenCalledWith(
@@ -260,7 +326,7 @@ describe('what gets written to the row', () => {
           sellerId: SELLER,
           amount: PRICE,
           status: 'pending',
-          data: { cosmeticId: COSMETIC, x: 1, y: 0, scale: 0.4, rotation: 15 },
+          data: { cosmeticId: COSMETIC, x: 1, y: 0, scale: 0.2, rotation: 15 },
         }),
       })
     );
