@@ -172,26 +172,27 @@ describe('AppsSubmitEditView — routing', () => {
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });
 
-  // 🔴 ABSORBING-STATE RULE for the two retry tests below. This file lost the same
-  // race twice, in two different tests, and the second loss is what made
-  // `preview / component-tests` intermittently red (~1 in 3) with no PR to blame.
+  // 🔴 ABSORBING-STATE RULE for the two retry tests below. The test these replaced
+  // awaited a state that DELETES ITSELF, which is a race the matcher cannot win.
   //
   // `expect.element` polls (first attempt immediate, then every 50ms, 15s budget).
   // Waiting for a state to ARRIVE is safe: load only makes it arrive later and the
-  // matcher keeps polling. Waiting for a state that will LEAVE is a race the matcher
-  // CANNOT win — once the state is gone it never comes back, so every remaining poll
-  // is also too late. The test then burns the FULL 15s budget before failing, which
-  // is the signature to look for (a ~15.0s failing test inside an otherwise-healthy
-  // ~80s suite).
+  // matcher keeps polling. Waiting for a state that will LEAVE cannot be won — once
+  // the state is gone it never comes back, so every remaining poll is also too late.
   //
-  // Measured on this component (component instrumented with `performance.now()`
-  // timestamps): after the retry click the spinner is observable for exactly
-  // `loaderCeilingMs`, and the matcher's first poll lands 40-78ms into that window on
-  // an idle box. At the `loaderCeilingMs={200}` this test used to ship with, that is
-  // a ~150ms margin — and a saturated CI box (the same box builds the preview image;
-  // its cold `import` costs 228s vs 0.3s locally) erases it. Proof the value governed
-  // the outcome: at `loaderCeilingMs={1}` the window measured 3.3ms and the test went
-  // 3-of-5 RED at 14986-15021ms, byte-identical to the CI failure.
+  // Measured on this component (instrumented with `performance.now()` timestamps):
+  // after the retry click the spinner is observable for exactly `loaderCeilingMs`,
+  // and the matcher's first poll lands 40-78ms into that window on an idle box. At
+  // `loaderCeilingMs={200}` that is a ~150ms margin, which a saturated CI box erases.
+  // Proof the value governed the outcome: at `loaderCeilingMs={1}` the window
+  // measured 3.3ms and the test went red at ~15.0s, matching the CI signature.
+  //
+  // ⚠️ That ~15.0s wall is a weak signal on its own — it only means SOME
+  // `expect.element` was never satisfied. It does not distinguish "arrived and left"
+  // from "never arrived", and healthy tests elsewhere legitimately run ~15s while
+  // waiting out a real product timeout. To tell the two apart, read the observable
+  // SYNCHRONOUSLY right after the action (present-then-gone vs never-present), or
+  // enlarge the component's own window and see whether the failure disappears.
   //
   // So: NEVER assert the transient spinner while a short ceiling is live. Either
   // widen the ceiling so the spinner cannot delete itself (test 1), or don't assert
@@ -259,16 +260,20 @@ describe('AppsSubmitEditView — routing', () => {
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
 
     await page.getByTestId('apps-offsite-edit-retry').click();
-    // The click resolved, so `handleRetry` ran (React flushes a discrete event's
-    // state updates synchronously inside the dispatch, before the click RPC returns)
-    // — which means `loaderExpired` was cleared and the spinner was committed.
-    // We deliberately do NOT assert the spinner: it deletes itself 30ms later, and
-    // asserting it here is precisely the unwinnable race described above.
+    // We deliberately do NOT assert the spinner here: it deletes itself 30ms later,
+    // and asserting it is precisely the unwinnable race described above.
     expect(refetch).toHaveBeenCalledTimes(1);
 
-    // The FRESH ceiling elapses and re-lands the alert. ABSORBING — and since the
-    // spinner provably went up, the alert can only be back because a re-armed timer
-    // fired.
+    // 🔴 Read this test honestly: its terminal state is textually IDENTICAL to its
+    // initial state (the alert), so nothing INSIDE this test proves the alert ever
+    // left. That the spinner really does go up, and that the alert returning
+    // therefore requires a freshly-armed timer, is established ELSEWHERE — by test 1
+    // above (which asserts the spinner directly against an absorbing ceiling) and by
+    // the mutation matrix: dropping `retryNonce` from the deps, or bumping it to a
+    // value that never changes, both red THIS test 3/3 while leaving test 1 green.
+    // Keep that pairing intact; this test is not self-sufficient without it.
+    //
+    // The FRESH ceiling elapses and re-lands the alert. ABSORBING.
     await expect.element(page.getByTestId('apps-offsite-edit-not-found')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-loading').elements()).toHaveLength(0);
   });

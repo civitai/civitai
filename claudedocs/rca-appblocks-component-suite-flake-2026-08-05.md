@@ -26,8 +26,30 @@ await expect.element(page.getByTestId('apps-offsite-edit-loading')).toBeInTheDoc
 > matcher cannot win — once it is gone it never comes back, so *every* remaining poll is also
 > too late. The failure is **unwinnable**, so it burns the **full 15s budget**.
 
-**That 15s burn is the search key for this whole class**: a ~15.0s failing test inside an
-otherwise-healthy ~80s suite. A test failing *fast* is a different shape.
+### ⚠️ The ~15s wall is a CANDIDATE FILTER, not a diagnosis
+
+An earlier draft of this document promoted "a ~15.0s failing test" to a triage heuristic for
+this class. **That under-discriminates badly, and the correction is measured:**
+
+- **All four** mutation-injected failures used to verify this fix — none of which is a race —
+  also failed at **14.97–15.09s**. Any never-satisfied `expect.element` burns the full budget.
+- Two **healthy, passing** tests legitimately run **15.06s / 15.26s**
+  (`IframeHostReadyTransition` and `PageBlockHostLaunchReveal` `no_token` terminals, which
+  `vi.waitFor` out a real `TOKEN_WAIT_TIMEOUT_MS = 15s`).
+
+So the signature is **necessary but nowhere near sufficient**. It tells you only that *some*
+matcher was never satisfied. Use it to shortlist, never to conclude.
+
+**To actually discriminate a self-deleting state from a never-arriving one:**
+1. **Read the observable synchronously immediately after the action**, before the matcher
+   polls — *present-then-gone* is a self-deleting state; *never present* is a state that
+   never arrived. (This is what `PROBE-T` did; see Appendix B for the shape.)
+2. **Enlarge the component's own window** — the ceiling/debounce/timeout driving the state —
+   by orders of magnitude. If the failure disappears, the state was self-deleting; if it
+   persists, it never arrived. Diagnostic only: shipping that widening is the papering-over
+   this document argues against.
+3. Best of all, **instrument the component with `performance.now()` timestamps** and read the
+   timeline. That is what settled this case when re-running knobs did not.
 
 ### Traced timeline (component instrumented with `performance.now()`)
 
@@ -47,7 +69,13 @@ costs 228s against 0.3s locally.
 At `loaderCeilingMs={1}` the window measured **3.3ms** and the assertion missed it, failing at
 14986–15021ms — byte-identical to the CI signature.
 
-🔴 The shipped `200` was itself a **previous widening** of this window. It treated the knob.
+📌 **Correction (audit).** An earlier draft claimed the shipped `200` was itself a *previous
+widening* of this window. **Git contradicts that**: `loaderCeilingMs={200}` was introduced
+*with the test* at `eab627cdac` (#3432), commented "A comfortable ceiling…", and was never
+raised from a smaller value; the earlier flake fix `72b1485034` (#3544) **deleted** a racing
+assertion rather than widening one. The "widening loses eventually" argument is still sound,
+but it rests on the marketplace example in §4 — which genuinely was widened and lost again —
+**not** on this test.
 
 ---
 
@@ -109,8 +137,32 @@ so neither passes for the other's reason:
 
 | mutation | test 1 | test 2 |
 |---|---|---|
-| delete `setLoaderExpired(false)` from `handleRetry` | **3/3 RED** — `Cannot find element … apps-offsite-edit-loading` | green (test 1 owns it) |
-| drop `retryNonce` from the effect deps | green (correctly unaffected) | **3/3 RED** — `Cannot find element … apps-offsite-edit-not-found` |
+| M1 · delete `setLoaderExpired(false)` from `handleRetry` | **3/3 RED** — `Cannot find element … apps-offsite-edit-loading` | green (test 1 owns it) |
+| M2 · drop `retryNonce` from the effect deps | green (correctly unaffected) | **3/3 RED** — `Cannot find element … apps-offsite-edit-not-found` |
+
+Two further axes, constructed by an independent audit rather than by me — both reproduce the
+separation and one closes a gap I had left open:
+
+| mutation | test 1 | test 2 | what it proves |
+|---|---|---|---|
+| M3 · unconditional `setLoaderExpired(false)` at the top of the effect | **3/3 RED**, in the **negative control's own assertion** | green | the negative control in test 1 is load-bearing, not decorative |
+| M4 · `setRetryNonce((n) => n)` — deps correct, value never changes | green | **3/3 RED** | test 2 pins the nonce's *value changing*, not merely its presence in the deps |
+
+M3 matters because a negative control is the easiest thing in a test to write and never
+exercise; it now has a killing mutation of its own.
+
+🔴 **I re-ran M3 and M4 myself rather than citing them, and M4's reported result was
+incomplete.** M4 reds **two** tests, not one: test 2 *and* the pre-existing
+`error retry shows a disabled "Retrying…" state … (isFetching)`, which also depends on the
+nonce bump forcing a re-render (with `(n) => n` React bails out of the re-render, so the
+in-flight state never paints). The *separation* claim is unaffected — test 1 survives M4 —
+but M4 is not a single-test discriminator, and a summary saying it "reds test 2" understates
+its blast radius. Verified: M3 `1 failed | 9 passed` ×3; M4 `2 failed | 8 passed` ×3.
+
+Independent verification also confirmed every awaited state in both tests as absorbing against
+`AppsSubmitEditView.tsx:63-70`, ran the whole `component` project green at HEAD
+(**1254/1254**), and recorded the split as **faster** than what it replaced:
+**113 + 147 ms vs 450–494 ms**.
 
 ---
 
@@ -151,16 +203,29 @@ without its own cycle):**
 - Verify with the same instrument: shrink the debounce (accelerated control), N≥10 each side,
   plus a mutation that wires the input straight through.
 
-### Strongly suspected further members
+### ~~Strongly suspected further members~~ — 📌 RETRACTED (audit)
 
-A paired full-suite control (§5) showed failures **on both refs** at **~15.2–15.8s** — the
-full-matcher-budget signature — in files nobody has examined:
-`the icon form is the one SHOWN at 280 and the text form at 460`,
-`the Generations label stays unambiguous even with the Runs tooltip mounted`,
-`does NOT clobber a name the user already typed`,
-`selecting a category shows "Explore all apps"`.
+An earlier draft listed four tests as suspected further members purely because they appeared
+at ~15.2–15.8s in the §5 run: `the icon form is the one SHOWN at 280 and the text form at
+460`, `the Generations label stays unambiguous even with the Runs tooltip mounted`, `does NOT
+clobber a name the user already typed`, `selecting a category shows "Explore all apps"`.
 
-**Use "failing test at ~15.0s" as the search key rather than chasing test names.**
+**On a clean re-run all four pass, at 27 / 330 / 325 / 240 ms.** Given §1's correction — the
+~15s wall does not imply a race — naming them as suspects on that evidence was unjustified.
+**No further live member is known.**
+
+### 🔴 An independently-constructed sweep found no additional member either
+
+My own sweep grepped for the *ceiling-prop spelling*, which finds only one shelf of the
+hazard — a real weakness. An adversarial audit built the inverse instrument: enumerate
+**167 timer-owning modules** → **18** browser tests whose component owns a wall-clock timer →
+read every short-window candidate by hand (`ReportTabs.tsx:745`, the scan badge,
+`DeleteCard.tsx:57`, `BaseModelInput.tsx:193`, `PageBlockHost`, the four 300ms debounce
+components), with a positive control proving the instrument could see a known member.
+
+**Result: no additional live member.** A differently-constructed instrument reaching the same
+answer is the strongest form this claim can take — but note it is a claim about *current*
+members, not that the class is closed.
 
 ### Same shape, but NOT at risk — and the discriminator is the MARGIN, not the shape
 
@@ -174,21 +239,23 @@ margin** over the measured 40–78ms poll, against the **~2.6×** that actually 
 
 ## 5. Control — the fix does not destabilise the rest of the suite
 
+**Conclusion: confirmed. The supporting numbers: do not quote them forward.**
+
 A full-suite run at HEAD showed ~12 failures and briefly looked like collateral damage. It is
-not. Whole 125-file `component` suite at BASE and at HEAD, back-to-back, same box:
+not — but my measurement of *how much* ambient flake there is did not hold up.
 
-| ref | failing tests | wall | load at start |
-|---|---|---|---|
-| BASE `54c2ff8e4b` | 12 | 153s | 98.87 |
-| HEAD (this PR) | 12 | 139s | 77.59 |
+I ran the whole 125-file suite at BASE and at HEAD back-to-back and counted 12 failures each,
+9 of them the same tests, with neither rewritten test in either list. **My instrument was
+degraded**: the runner's `Tests` summary line did not survive the capture, so I was counting
+`×` lines rather than reading the runner's own totals, and I flagged that at the time.
 
-**9 of the 12 are the same tests on both refs**, including one that lives in the edited file
-but was never touched. **Neither rewritten test appears in either failure list.** At load
-80–120 with other processes competing, this suite flakes ~12 tests per run regardless of ref.
+📌 **An independent clean run at HEAD reported `1254/1254` passing at load 64 — zero
+failures.** That is almost certainly the truth and my "~12 ambient flakes per run regardless
+of ref" figure an artifact of the degraded capture (and of a far more contended box: load
+80–120 with 26+ competing processes). **The ~12 figure is withdrawn — do not cite it.**
 
-*Instrument caveat:* the runner's `Tests` summary line did not survive the capture, so these
-are counts of `×` lines. Both sides were counted identically, so the comparison holds, but
-suite totals cannot be quoted from it.
+What survives, and is now confirmed from two directions: **this PR does not destabilise the
+suite.** The whole `component` project is green at HEAD.
 
 ---
 
@@ -206,6 +273,16 @@ suite totals cannot be quoted from it.
   aged out. So the current mix of causes is not known.
 - Verification ran at base `54c2ff8e4b`, not on the merged tree. Mitigating: neither edited
   file, nor `test/component-setup.tsx`, changed on `main` in the intervening commits.
+- 🔴 **The before-rate is load-dependent and is NOT a general figure.** I measured **8/12 red**
+  at load 99–114; an independent reproduction measured **2/12** at load 65–75. Direction and
+  signature match exactly (both reds are the racing test at ~15.0s; zero reds on the
+  after-set), and the gap is what the load-dependence thesis predicts — but **quote it as
+  "8/12 under contention at load 99–114", never as "the flake rate".**
+- **Test 2 does not `await` its `renderWithProviders(...)`** (`:257`) while test 1 does
+  (`:216`), and `render` in `vitest-browser-react@2.2.0` is async. The bare form is the
+  repo-wide norm (~1021 bare vs 62 awaited) so this is not a defect introduced here, but it
+  is the mechanism by which test 2's terminal assertion could read a not-yet-committed DOM.
+  Worth fixing if that test is ever touched again.
 
 ---
 
@@ -215,8 +292,10 @@ suite totals cannot be quoted from it.
    would block merges on known-unfixed intermittent failures. Sequence: fix
    `AppListingsMarketplaceBody` (diagnosed above) → diagnose `MySubmissionsList` → soak
    report-only until clean over a defined window → then flip.
-2. **Adopt the ~15.0s triage heuristic** — a component test failing at the full matcher budget
-   is almost certainly an unwinnable race, not a slow test.
+2. **Use the ~15.0s wall to shortlist, not to diagnose** (see §1). It only means some matcher
+   was never satisfied — four non-race mutations produce it, and two healthy tests hit ~15s
+   and pass. Discriminate with a synchronous read right after the action, or by enlarging the
+   component's own window and seeing whether the failure disappears.
 3. **Retain CI task logs (or ship the failure summary into the check) long enough to attribute
    a flake.** Two of three failures here were unattributable purely because logs aged out.
 4. **Consider documenting the absorbing-state rule in `CLAUDE.md`** under `### Testing`, which
@@ -229,9 +308,11 @@ suite totals cannot be quoted from it.
 
 ````markdown
 #### Never `await` a browser-test state that DELETES ITSELF
-`expect.element` polls (first attempt immediate, then every 50ms, 15s budget). Waiting for a state to **arrive** is safe — load only makes it arrive later and the matcher keeps polling. Waiting for a state that will **leave** is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. The test then burns the **full 15s budget** before failing — that ~15.0s failing test inside an otherwise-healthy ~80s suite is the signature. It is red on a busy box, green on a quiet one, and has no PR to blame.
+`expect.element` polls (first attempt immediate, then every 50ms, 15s budget). Waiting for a state to **arrive** is safe — load only makes it arrive later and the matcher keeps polling. Waiting for a state that will **leave** is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is red on a busy box, green on a quiet one, and has no PR to blame.
 
-Measured on `AppsSubmitEditView` (component instrumented with `performance.now()` timestamps): after an awaited `.click()`, a state the component deletes `N` ms later is observable for **exactly** `N` ms, and the matcher's first poll lands **40–78ms** into that window on an idle box. A test asserting it at `N=200` therefore ran on a ~150ms margin, which a saturated CI box erases. Shrinking `N` to 1ms is an accelerated equivalent (the failure condition is `RPC return leg > window`) and reproduced the CI failure exactly: **8 of 12 runs red at ~15.0s**, versus **12 of 12 green at ~1s** after the fix.
+Measured on `AppsSubmitEditView` (component instrumented with `performance.now()` timestamps): after an awaited `.click()`, a state the component deletes `N` ms later is observable for **exactly** `N` ms, and the matcher's first poll lands **40–78ms** into that window on an idle box. A test asserting it at `N=200` therefore ran on a ~150ms margin, which a saturated CI box erases. Shrinking `N` to 1ms is an accelerated equivalent (the failure condition is `RPC return leg > window`) and reproduced the CI failure exactly: **8 of 12 runs red at ~15.0s under contention (load 99–114)**, versus **12 of 12 green at ~1s** after the fix.
+
+⚠️ **A ~15s failing test is a candidate filter, NOT a diagnosis.** It means only that some `expect.element` was never satisfied. Measured: four *non-race* mutations all failed at 14.97–15.09s, and two **healthy, passing** tests legitimately run 15.06s/15.26s waiting out a real 15s product timeout. To tell a self-deleting state from one that never arrived: read the observable **synchronously right after the action** (present-then-gone vs never-present), or **enlarge the component's own window** and see whether the failure disappears — as a diagnostic only, since shipping that widening is what this rule forbids.
 
 Fixes, in order of preference:
 1. **Make the state absorbing** — drive the component so nothing can take it away (e.g. `rerender` with a ceiling so large the timer can never fire), *then* assert it. Include a negative control proving the prop change alone did not produce the state.
