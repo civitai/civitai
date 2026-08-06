@@ -51,6 +51,7 @@ export type CreatorModelVersion = {
   baseModel: string;
   status: string;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   licensingFee: number | null;
   // Governs whether the version can be gated: Download (download + gen), Generation (on-site gen only,
   // no download charge), or other (no paid access). See paidAccessUsageOk in the models page.
@@ -110,11 +111,31 @@ export type CreatorModelsResult = {
 // fields the sheet shows (id is the immutable join key on re-upload).
 export type CsvVersionRow = {
   versionId: number;
+  modelId: number;
   modelName: string;
   versionName: string;
   baseModel: string;
   modelType: string;
+  status: string;
+  usageControl: string;
   licensingFee: number | null;
+  licensingFeeType: string | null;
+  licensingFeeSettlementCurrency: string | null;
+  // 'permanent' | 'early' | '' — derived, because the two raw columns disagree on 22 of ~2.8k rows and a
+  // reader of the file has no way to know which one decides. `timeframeDays == null` is the predicate the
+  // server uses (isPermanentGate); `endsAt` is not.
+  accessKind: string;
+  timeframeDays: number | null;
+  endsAt: Date | null;
+  downloadPrice: number | null;
+  generationPrice: number | null;
+  generationFree: boolean | null;
+  generationTrialLimit: number | null;
+  // At most one goal per version — checked across all 21,693 versions that have one, so these stay flat
+  // columns rather than forcing a second row.
+  donationGoalTitle: string | null;
+  donationGoalAmount: number | null;
+  donationGoalActive: boolean | null;
 };
 
 // Every version matching the page's filters (no pagination) for CSV export. Mirrors getCreatorModels' filters so
@@ -135,26 +156,72 @@ export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvV
   if (access) qb = qb.where(paidAccessFilter('mv'));
   if (fee === 'set') qb = qb.where(feeFilter('mv', 'set'));
   if (fee === 'off') qb = qb.where(feeFilter('mv', 'off'));
+  // Both joins are LEFT: a version without a gate or a goal is still a row, with those columns empty.
+  // DonationGoal's target is the polymorphic (entityType, entityId) pair; `modelVersionId` is the legacy
+  // column being dual-written until the re-key migration drops it, so it's only a fallback for older rows.
   const rows = await qb
+    .leftJoin('PaidAccess as pa', (join) =>
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
+    )
+    .leftJoin('DonationGoal as dg', (join) =>
+      join.on((eb) =>
+        eb.or([
+          eb.and([
+            eb('dg.entityType', '=', 'ModelVersion'),
+            eb(eb.ref('dg.entityId'), '=', eb.ref('mv.id')),
+          ]),
+          eb(eb.ref('dg.modelVersionId'), '=', eb.ref('mv.id')),
+        ])
+      )
+    )
     .select([
       'mv.id as versionId',
       'mv.name as versionName',
       'mv.baseModel as baseModel',
+      'mv.status as versionStatus',
+      'mv.usageControl as usageControl',
+      'm.id as modelId',
       'm.name as modelName',
       'm.type as modelType',
       'mv.licensingFee as licensingFee',
+      'mv.licensingFeeType as licensingFeeType',
+      'mv.licensingFeeSettlementCurrency as licensingFeeSettlementCurrency',
+      'pa.timeframeDays as timeframeDays',
+      'pa.endsAt as endsAt',
+      'pa.terms as terms',
+      'dg.title as donationGoalTitle',
+      'dg.goalAmount as donationGoalAmount',
+      'dg.active as donationGoalActive',
     ])
     .orderBy('m.name', 'asc')
     .orderBy('mv.index', 'asc')
     .execute();
-  return rows.map((r) => ({
-    versionId: r.versionId,
-    modelName: r.modelName,
-    versionName: r.versionName,
-    baseModel: r.baseModel,
-    modelType: r.modelType,
-    licensingFee: r.licensingFee == null ? null : Number(r.licensingFee),
-  }));
+  return rows.map((r) => {
+    const config = paidAccessToConfig(r.timeframeDays, r.terms);
+    return {
+      versionId: r.versionId,
+      modelId: r.modelId,
+      modelName: r.modelName,
+      versionName: r.versionName,
+      baseModel: r.baseModel,
+      modelType: r.modelType,
+      status: r.versionStatus,
+      usageControl: r.usageControl,
+      licensingFee: r.licensingFee == null ? null : Number(r.licensingFee),
+      licensingFeeType: r.licensingFeeType ?? null,
+      licensingFeeSettlementCurrency: r.licensingFeeSettlementCurrency ?? null,
+      accessKind: config ? (config.permanent ? 'permanent' : 'early') : '',
+      timeframeDays: r.timeframeDays ?? null,
+      endsAt: r.endsAt ?? null,
+      downloadPrice: config?.accessPrice ?? null,
+      generationPrice: config?.generationPrice ?? null,
+      generationFree: config ? !!config.freeGeneration : null,
+      generationTrialLimit: config?.freePreviewGenerations ?? null,
+      donationGoalTitle: r.donationGoalTitle ?? null,
+      donationGoalAmount: r.donationGoalAmount == null ? null : Number(r.donationGoalAmount),
+      donationGoalActive: r.donationGoalActive ?? null,
+    };
+  });
 }
 
 export const MODELS_PER_PAGE = 20;
@@ -249,6 +316,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       'mv.baseModel',
       'mv.status',
       'mv.publishedAt',
+      'mv.initialPublishedAt',
       'mv.licensingFee',
       'mv.usageControl',
       'mv.meta as meta',
@@ -261,8 +329,17 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       eb
         .selectFrom('DonationGoal as dg')
         .select('dg.goalAmount')
-        .whereRef('dg.entityId', '=', 'mv.id')
-        .where('dg.entityType', '=', 'ModelVersion')
+        // Matches the CSV join and versionsWithDonationGoal: `modelVersionId` is the legacy column still
+        // being dual-written, so entityId alone misses goals created before the re-key.
+        .where((eb) =>
+          eb.or([
+            eb.and([
+              eb('dg.entityType', '=', 'ModelVersion'),
+              eb(eb.ref('dg.entityId'), '=', eb.ref('mv.id')),
+            ]),
+            eb(eb.ref('dg.modelVersionId'), '=', eb.ref('mv.id')),
+          ])
+        )
         .orderBy('dg.active', 'desc')
         .orderBy('dg.createdAt', 'desc')
         .limit(1)
@@ -323,12 +400,13 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       baseModel: v.baseModel,
       status: v.status,
       publishedAt: v.publishedAt,
+      initialPublishedAt: v.initialPublishedAt,
       // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
       licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
       usageControl: v.usageControl,
       hasPaidAccess: paidAccessConfig !== null,
       paidAccessConfig,
-      rightsAffirmed: hasCurrentRightsAffirmation(v.meta),
+      rightsAffirmed: hasCurrentRightsAffirmation(v.meta, userId),
     });
     byModel.set(v.modelId, list);
   }

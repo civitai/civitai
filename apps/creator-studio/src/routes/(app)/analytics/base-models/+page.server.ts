@@ -26,5 +26,12 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
       }).catch(() => null)
     : null;
   const ownBaseModels = baseModels ? [...new Set(baseModels.map((b) => b.baseModel))] : [];
-  return { baseModels, platformTrends, platformTrendsCompare, ownBaseModels, range , tableSort: readTableSort(cookies, 'base-models') };
+  return {
+    baseModels,
+    platformTrends,
+    platformTrendsCompare,
+    ownBaseModels,
+    range,
+    tableSort: readTableSort(cookies, 'base-models'),
+  };
 };

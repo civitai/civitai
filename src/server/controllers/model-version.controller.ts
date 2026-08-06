@@ -422,11 +422,7 @@ export const upsertModelVersionHandler = async ({
       versionId: input.id,
     });
 
-    if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
-      throw throwBadRequestError(
-        'Cannot charge for download if downloads are disabled for this model version'
-      );
-    }
+    // The service migrates the price onto the surviving tier; nothing to reject here.
 
     if (input.licensingFee != null && input.licensingFee > 0) {
       const existing = input.id

@@ -364,6 +364,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |

@@ -3,6 +3,7 @@ import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membership';
+import { TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 
 // Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it. The logout
 // URL points at the hub because a spoke can't clear the shared cookie itself.
@@ -18,6 +19,7 @@ export const load: LayoutServerLoad = ({ locals, url, cookies }) => {
     user: { id: user.id, username: user.username ?? null, image: user.image ?? null },
     isModerator: user.isModerator === true,
     testMembership,
+    testModelsScore: cookies.get(TEST_MODELS_SCORE_COOKIE) ?? null,
     membership,
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
   };

@@ -53,14 +53,14 @@ beforeEach(() => {
 });
 
 describe('writePaidAccessForModelVersion — gate state machine', () => {
-  it('NOT gated (null input): deletes the row, resets EarlyAccess->Public availability, and busts', async () => {
+  it('NOT gated (null input): deletes the row and busts, leaving availability alone', async () => {
     await writePaidAccessForModelVersion(5, null);
 
     expect(mockDbWrite.paidAccess.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'ModelVersion', entityId: 5 },
     });
-    // The availability reconciliation UPDATE — the fix that un-strands migrated EarlyAccess versions.
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    // Gating is decoupled from `availability`; clearing a gate must not rewrite the creator's setting.
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(mockDbWrite.paidAccess.upsert).not.toHaveBeenCalled();
     expect(mockBust).toHaveBeenCalledWith([5]);
   });
