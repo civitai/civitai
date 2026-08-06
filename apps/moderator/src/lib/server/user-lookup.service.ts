@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { getClickhouse } from './clickhouse';
+import { getBuzz } from './buzz';
 
 // Ported from Retool's "User Lookup v2" (UserIDByUsername / UserIDByEmail / UserContent /
 // AllCountsUnion / UserStats). Investigation only — every read goes to the replica so looking a user up
@@ -43,6 +45,9 @@ export type UserLookupResult = {
   identity: UserIdentity;
   counts: UserCounts;
   stats: UserStats | null;
+  reportsFiled: ReportsFiled;
+  reportedContent: ReportedContent[];
+  subscription: UserSubscription | null;
 };
 
 // Retool used three separate queries behind three inputs; one resolver keeps the caller from having to
@@ -71,12 +76,15 @@ export async function resolveUserId(term: string): Promise<number | null> {
 }
 
 export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
-  const [identity, counts, stats] = await Promise.all([
+  const [identity, counts, stats, reportsFiled, reportedContent, subscription] = await Promise.all([
     getIdentity(userId),
     getCounts(userId),
     getStats(userId),
+    getReportsFiled(userId),
+    getReportedContent(userId),
+    getSubscription(userId),
   ]);
-  return identity ? { identity, counts, stats } : null;
+  return identity ? { identity, counts, stats, reportsFiled, reportedContent, subscription } : null;
 }
 
 async function getIdentity(userId: number): Promise<UserIdentity | null> {
@@ -157,4 +165,411 @@ async function getStats(userId: number): Promise<UserStats | null> {
     thumbsDown: Number(row.thumbsDownCountAllTime ?? 0),
     generations: Number(row.generationCountAllTime ?? 0),
   };
+}
+
+// Reports FILED BY this user. Retool showed the actioned/unactioned split because it is a credibility
+// signal: a reporter whose reports mostly get actioned is worth trusting, one whose mostly get dismissed
+// is noise.
+export type ReportsFiled = {
+  total: number;
+  actioned: number;
+  unactioned: number;
+  pending: number;
+  actionedPercent: number | null;
+};
+
+export async function getReportsFiled(userId: number): Promise<ReportsFiled> {
+  const row = await dbRead
+    .selectFrom('Report')
+    .select((eb) => [
+      eb.fn.countAll<string>().as('total'),
+      eb.fn.count<string>(sql`CASE WHEN "status" = 'Actioned' THEN 1 END`).as('actioned'),
+      eb.fn.count<string>(sql`CASE WHEN "status" = 'Unactioned' THEN 1 END`).as('unactioned'),
+      eb.fn.count<string>(sql`CASE WHEN "status" = 'Pending' THEN 1 END`).as('pending'),
+    ])
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+
+  const total = Number(row?.total ?? 0);
+  const actioned = Number(row?.actioned ?? 0);
+  const unactioned = Number(row?.unactioned ?? 0);
+  // Percentage is of RESOLVED reports — pending ones have not been judged yet, and counting them as
+  // "not actioned" would make an active reporter look unreliable.
+  const resolved = actioned + unactioned;
+  return {
+    total,
+    actioned,
+    unactioned,
+    pending: Number(row?.pending ?? 0),
+    actionedPercent: resolved > 0 ? Math.round((actioned / resolved) * 100) : null,
+  };
+}
+
+// Content OF THIS USER that others reported. Counts distinct pieces of content, not report rows —
+// Retool counted rows, so ten reports on one image read as ten. "How much of their content drew
+// complaints" is the question a moderator is actually asking.
+const REPORTED_SOURCES = [
+  ['Images', 'Image', 'ImageReport', 'imageId'],
+  ['Models', 'Model', 'ModelReport', 'modelId'],
+  ['Posts', 'Post', 'PostReport', 'postId'],
+  ['Articles', 'Article', 'ArticleReport', 'articleId'],
+  ['Model comments', 'Comment', 'CommentReport', 'commentId'],
+  ['Image comments', 'CommentV2', 'CommentV2Report', 'commentV2Id'],
+] as const;
+
+export type ReportedContent = { label: string; count: number };
+
+export async function getReportedContent(userId: number): Promise<ReportedContent[]> {
+  return Promise.all(
+    REPORTED_SOURCES.map(async ([label, table, reportTable, fk]) => {
+      const r = await dbRead
+        .selectFrom(table as 'Image')
+        .innerJoin(
+          reportTable as 'ImageReport',
+          `${reportTable}.${fk}` as 'ImageReport.imageId',
+          `${table}.id` as 'Image.id'
+        )
+        .select((eb) =>
+          eb.fn
+            .count<string>(`${table}.id` as 'Image.id')
+            .distinct()
+            .as('count')
+        )
+        .where(`${table}.userId` as 'Image.userId', '=', userId)
+        .executeTakeFirst();
+      return { label, count: Number(r?.count ?? 0) };
+    })
+  );
+}
+
+// SECURITY SIGNALS
+//
+// `userActivities` is ClickHouse. Use `targetUserId`, NOT `userId`: for Login and Registration rows
+// `userId` is empty ~95% of the time (30M of 31.5M logins), so filtering on it silently finds nothing.
+//
+// The ClickHouse helper interpolates values with NO escaping (formatSqlType returns strings verbatim), so
+// only numbers we control and IPs matched against IP_PATTERN are ever put into a query.
+const INTERNAL_IP_RANGE = '10.124.0.0/16';
+const IP_PATTERN = /^[0-9a-fA-F.:]{3,45}$/;
+
+export type UserIp = {
+  ip: string;
+  type: string;
+  first: string;
+  last: string;
+  events: number;
+};
+
+export async function getUserIps(userId: number): Promise<UserIp[]> {
+  const rows = await getClickhouse().$query<{
+    ip: string;
+    type: string;
+    first: string;
+    last: string;
+    events: string;
+  }>(`
+    SELECT ip, type, min(time) AS first, max(time) AS last, count() AS events
+    FROM default.userActivities
+    WHERE targetUserId = ${userId}
+      AND NOT isIPAddressInRange(ip, '${INTERNAL_IP_RANGE}')
+      AND type != 'Banned'
+    GROUP BY ip, type
+    ORDER BY last DESC
+    LIMIT 100
+  `);
+  return rows.map((r) => ({ ...r, events: Number(r.events) }));
+}
+
+export type SharedIpAccount = {
+  userId: number;
+  username: string | null;
+  bannedAt: Date | null;
+  ip: string;
+  type: string;
+  last: string;
+};
+
+// Ban-evasion signal: other accounts seen on the IPs this user REGISTERED or SUBSCRIBED from. Retool
+// filtered to those two types deliberately — a login IP is often a shared/carrier address, while the
+// address an account was created from is far more identifying.
+//
+// Capped hard at both ends: a carrier NAT can carry thousands of unrelated accounts, and returning them
+// all would be slow and useless. A truncated result is reported rather than silently trimmed.
+export async function getSharedIpAccounts(
+  userId: number,
+  ips: UserIp[]
+): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
+  const identifying = [
+    ...new Set(
+      ips
+        .filter((i) => i.type === 'Registration' || i.type === 'Subscribe')
+        .map((i) => i.ip)
+        .filter((ip) => IP_PATTERN.test(ip))
+    ),
+  ].slice(0, 25);
+  if (!identifying.length) return { accounts: [], truncated: false };
+
+  const LIMIT = 100;
+  const list = identifying.map((ip) => `'${ip}'`).join(', ');
+  const rows = await getClickhouse().$query<{
+    userId: string;
+    ip: string;
+    type: string;
+    last: string;
+  }>(`
+    SELECT targetUserId AS userId, ip, type, max(time) AS last
+    FROM default.userActivities
+    WHERE ip IN (${list})
+      AND targetUserId != ${userId}
+      AND targetUserId > 0
+    GROUP BY targetUserId, ip, type
+    ORDER BY last DESC
+    LIMIT ${LIMIT + 1}
+  `);
+
+  const truncated = rows.length > LIMIT;
+  const page = rows.slice(0, LIMIT);
+  const ids = [...new Set(page.map((r) => Number(r.userId)))];
+  if (!ids.length) return { accounts: [], truncated };
+
+  const users = await dbRead
+    .selectFrom('User')
+    .select(['id', 'username', 'bannedAt'])
+    .where('id', 'in', ids)
+    .execute();
+  const byId = new Map(users.map((u) => [u.id, u]));
+
+  return {
+    accounts: page.map((r) => {
+      const u = byId.get(Number(r.userId));
+      return {
+        userId: Number(r.userId),
+        username: u?.username ?? null,
+        bannedAt: u?.bannedAt ?? null,
+        ip: r.ip,
+        type: r.type,
+        last: r.last,
+      };
+    }),
+    truncated,
+  };
+}
+
+// Retool's PotentialSpammer/V2 (Postgres, despite sitting beside the ClickHouse queries): a burst of
+// comments in a short window. V2 supersedes V1 by summing both comment tables instead of returning a row
+// per table, so only that behaviour is ported.
+export async function getCommentBurst(userId: number): Promise<number> {
+  const [v2, v1] = await Promise.all(
+    (['CommentV2', 'Comment'] as const).map(async (table) => {
+      const r = await dbRead
+        .selectFrom(table)
+        .select((eb) => eb.fn.countAll<string>().as('count'))
+        .where('userId', '=', userId)
+        .where('createdAt', '>', sql<Date>`now() - interval '2 days'`)
+        .executeTakeFirst();
+      return Number(r?.count ?? 0);
+    })
+  );
+  return v2 + v1;
+}
+
+// MODERATOR ACTIVITY (ticket §1.2e — "what was done to this account, and who did it")
+//
+// ModActivity keys content actions by CONTENT id, not user id, so there are two shapes: rows that point
+// at the user directly (`user`, `impersonate`), and rows that point at something they own, reached by
+// joining their content. Both use the (entityType, entityId, createdAt) index added when the table was
+// made append-only.
+//
+// History only accrues from that migration forward — earlier rows were deduped in place by the unique
+// index it dropped, so older accounts will look sparser than they were.
+export type ModActivityRow = {
+  activity: string;
+  entityType: string;
+  entityId: number | null;
+  createdAt: Date;
+  moderatorId: number | null;
+  moderatorUsername: string | null;
+};
+
+const ACTIVITY_CONTENT = [
+  ['image', 'Image'],
+  ['model', 'Model'],
+  ['article', 'Article'],
+] as const;
+
+export async function getModActivity(userId: number, limit = 40): Promise<ModActivityRow[]> {
+  const select = [
+    'ma.activity',
+    'ma.entityType',
+    'ma.entityId',
+    'ma.createdAt',
+    'ma.userId',
+  ] as const;
+
+  const direct = dbRead
+    .selectFrom('ModActivity as ma')
+    .select(select)
+    .where('ma.entityType', 'in', ['user', 'impersonate'])
+    .where('ma.entityId', '=', userId)
+    .orderBy('ma.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+
+  const viaContent = ACTIVITY_CONTENT.map(([entityType, table]) =>
+    dbRead
+      .selectFrom('ModActivity as ma')
+      .innerJoin(`${table} as c` as 'Image as c', 'c.id', 'ma.entityId')
+      .select(select)
+      .where('ma.entityType', '=', entityType)
+      .where('c.userId', '=', userId)
+      .orderBy('ma.createdAt', 'desc')
+      .limit(limit)
+      .execute()
+  );
+
+  const rows = (await Promise.all([direct, ...viaContent]))
+    .flat()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, limit);
+
+  const modIds = [
+    ...new Set(rows.map((r) => r.userId).filter((id): id is number => !!id && id > 0)),
+  ];
+  const mods = modIds.length
+    ? await dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', modIds).execute()
+    : [];
+  const byId = new Map(mods.map((m) => [m.id, m.username]));
+
+  return rows.map((r) => ({
+    activity: r.activity,
+    entityType: r.entityType ?? '',
+    entityId: r.entityId,
+    createdAt: r.createdAt,
+    moderatorId: r.userId,
+    moderatorUsername: r.userId ? byId.get(r.userId) ?? null : null,
+  }));
+}
+
+// SUBSCRIPTION (Retool's UserSubscriptionStatus). Postgres only and cheap, so it rides the page load.
+export type UserSubscription = {
+  productName: string | null;
+  provider: string | null;
+  status: string;
+  cancelAtPeriodEnd: boolean | null;
+  canceledAt: Date | null;
+  currentPeriodEnd: Date | null;
+};
+
+export async function getSubscription(userId: number): Promise<UserSubscription | null> {
+  const row = await dbRead
+    .selectFrom('CustomerSubscription as cs')
+    .leftJoin('Product as p', 'p.id', 'cs.productId')
+    .select([
+      'p.name as productName',
+      'p.provider',
+      'cs.status',
+      'cs.cancelAtPeriodEnd',
+      'cs.canceledAt',
+      'cs.currentPeriodEnd',
+    ])
+    .where('cs.userId', '=', userId)
+    .orderBy('cs.currentPeriodEnd', 'desc')
+    .executeTakeFirst();
+  return row ?? null;
+}
+
+// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
+//
+// Retool paired these lists with bulk delete / ToS actions. Those are NOT ported: they are destructive,
+// and the delete path carries side effects (search-index sync, cache busting) that the spoke does not own
+// yet — see the account-actions note in the migration tracker.
+export type UserReview = {
+  id: number;
+  createdAt: Date;
+  rating: number | null;
+  modelId: number | null;
+  tosViolation: boolean | null;
+  exclude: boolean | null;
+  modelCreator: string | null;
+};
+
+export async function getReviews(userId: number, limit = 25): Promise<UserReview[]> {
+  return dbRead
+    .selectFrom('ResourceReview as rr')
+    .innerJoin('Model as m', 'm.id', 'rr.modelId')
+    .innerJoin('User as u', 'u.id', 'm.userId')
+    .select([
+      'rr.id',
+      'rr.createdAt',
+      'rr.rating',
+      'rr.modelId',
+      'rr.tosViolation',
+      'rr.exclude',
+      'u.username as modelCreator',
+    ])
+    .where('rr.userId', '=', userId)
+    .orderBy('rr.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+export type UserComment = {
+  id: number;
+  createdAt: Date;
+  content: string;
+  nsfw: boolean | null;
+  tosViolation: boolean | null;
+  modelId: number | null;
+};
+
+export async function getComments(userId: number, limit = 25): Promise<UserComment[]> {
+  return dbRead
+    .selectFrom('Comment')
+    .select(['id', 'createdAt', 'content', 'nsfw', 'tosViolation', 'modelId'])
+    .where('userId', '=', userId)
+    .orderBy('createdAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+// COSMETICS — read-only. Retool's RemoveCosmetics is deliberately not ported (destructive, and the
+// main app's equivalent also refreshes entity caches and search indexes).
+export type UserCosmeticRow = {
+  id: number;
+  name: string;
+  type: string;
+  equipped: boolean;
+  obtainedAt: Date | null;
+};
+
+export async function getCosmetics(userId: number, limit = 50): Promise<UserCosmeticRow[]> {
+  const rows = await dbRead
+    .selectFrom('UserCosmetic as uc')
+    .innerJoin('Cosmetic as c', 'c.id', 'uc.cosmeticId')
+    .select(['c.id', 'c.name', 'c.type', 'uc.equippedToId', 'uc.obtainedAt'])
+    .where('uc.userId', '=', userId)
+    .orderBy('uc.obtainedAt', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    type: String(r.type),
+    equipped: r.equippedToId !== null,
+    obtainedAt: r.obtainedAt,
+  }));
+}
+
+// BUZZ balance (Retool's GetAccountBuzz → buzz.civitai.com/account/user/<id>). An external HTTP call, so
+// it never rides the page load. Best-effort: Buzz being down should not blank the rest of the panel.
+export type UserBuzz = { balance: number; lifetimeBalance: number } | null;
+
+export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
+  try {
+    const account = await getBuzz().getAccount(userId);
+    return { balance: account.balance, lifetimeBalance: account.lifetimeBalance };
+  } catch (e) {
+    console.error('[user-lookup] buzz balance unavailable', e);
+    return null;
+  }
 }
