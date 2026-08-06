@@ -109,6 +109,27 @@ describe('drift --dump-catalog stamps capturedAt', { timeout: 60_000 }, () => {
     expect(output).toEqual(input);
   });
 
+  it('refuses to dump a catalog its own sanity check would reject', async () => {
+    // `assertCatalogSanity` used to run AFTER the --dump-catalog return, so the recapture
+    // command the STALE message recommends could happily emit a catalog the very next
+    // `drift` run would reject. Deleting the call, or moving it back behind the return, both
+    // survived the whole suite — the fix worked and a straight revert was invisible. This is
+    // the regression coverage for the move itself.
+    //
+    // The motivating read: `SELECT a.attnotnull notnull` parses as the postfix IS NOT NULL
+    // operator and returns a constant true for every column.
+    const uniform = join(dir, 'uniform-notnull.json');
+    const broken = JSON.parse(readFileSync(snapshot, 'utf8')) as DbCatalog;
+    for (const column of broken.columns) column.notNull = true;
+    writeFileSync(uniform, JSON.stringify(broken));
+
+    const result = await dump(['--catalog', uniform]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/all \d+ columns report notNull=true/);
+    // and it must not have emitted the catalog anyway
+    expect(result.stdout).toBe('');
+  });
+
   it('emits indented JSON, so a re-dump of the committed snapshot is a zero-line diff', async () => {
     // The format is load-bearing, not cosmetic. Single-line output made a content-identical
     // re-dump of the committed fixture a 21,522-line diff — and the gate's own STALE message

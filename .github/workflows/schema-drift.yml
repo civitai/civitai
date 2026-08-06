@@ -64,11 +64,25 @@ jobs:
 
       - name: Schema drift gate
         run: |
-          # NOT `set -e`. The gate exits 1 when it finds new drift, and with `-e` the step
-          # aborted right there — skipping the no-verdict guard and the STALE annotation
-          # below PRECISELY when the gate fires, which is when they matter most. The comment
-          # under the guard used to claim it runs "including when it blocks"; it could not.
-          set -uo pipefail
+          # `set +e` EXPLICITLY, not merely the absence of `set -e`. GitHub runs a `run:` step
+          # with no `shell:` key as `bash -e {0}` — errexit is already on before the first
+          # line of this script, so `set -uo pipefail` does not clear it, and adding pipefail
+          # actively makes it worse: the pipeline below now returns the gate's non-zero
+          # status, so errexit fires on it and the step dies at `tee`. `rc=${PIPESTATUS[0]}`
+          # is never reached and the STALE annotation is skipped PRECISELY when the gate
+          # fires, which is when it matters most.
+          #
+          # Measured with a stubbed gate exiting 1 and printing a STALE line — and the
+          # measurement has to be taken under `bash -e`, because under plain `bash` both
+          # forms look correct, which is exactly how this shipped:
+          #
+          #   form            bash          bash -e
+          #   set -uo         1 annotation  0 annotations   <- what CI actually ran
+          #   set +e -uo      1 annotation  1 annotation
+          #
+          # Positive control: with a PASSING gate all four combinations emit 1, so the
+          # harness can observe an annotation under `-e`.
+          set +e -uo pipefail
           pnpm --filter @civitai/db-schema drift:gate | tee drift-gate.log
           rc=${PIPESTATUS[0]}
           # `pnpm --filter` prints "No projects matched the filters" and EXITS 0. A renamed

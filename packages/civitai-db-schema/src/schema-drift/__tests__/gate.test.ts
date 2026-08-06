@@ -139,33 +139,51 @@ describe('tierOf', () => {
     expect(tierOf(onNewColumns, catalog)).toBe('pending');
   });
 
-  it('cannot confuse (table, column) pairs that would collide under a printable separator', () => {
-    // Pins the NUL tuple separator in columnKey. With `_` (or any character legal in a
-    // Postgres identifier) `A_B` + `C` and `A` + `B_C` produce the same key, so a foreign key
-    // on a column the database does NOT have would be tiered `enforced` off a different
-    // table's column — a wrong verdict, in the blocking direction. NUL cannot appear in an
-    // identifier, so the collision is unrepresentable.
-    const colliding: DbCatalog = {
-      tables: ['A_B', 'A'],
-      columns: [{ table: 'A', column: 'B_C', notNull: false }],
+  it.each([
+    { name: 'empty', sep: '' },
+    { name: 'underscore', sep: '_' },
+    { name: 'pipe', sep: '|' },
+    { name: 'dot', sep: '.' },
+    { name: 'space', sep: ' ' },
+  ])('cannot confuse (table, column) pairs that collide under a $name separator', ({ sep }) => {
+    // Pins the PROPERTY — distinct (table, column) pairs must produce distinct keys — rather
+    // than one character. The previous version used a single `A_B`+`C` vs `A`+`B_C` fixture,
+    // which only collides under `_`: mutating the separator to `|` or to empty both SURVIVED.
+    // That is a guard spelled to a character instead of asserting the invariant, and this
+    // file already had one instance of that class.
+    //
+    // Each case builds the pair that collides under ITS separator, so any separator drawn
+    // from a Postgres identifier's legal alphabet fails at least one of them. NUL is the one
+    // character that cannot appear in an identifier, so it alone passes all of them.
+    const table = `A${sep}B`;
+    const column = 'C';
+    const otherTable = 'A';
+    const otherColumn = `B${sep}C`;
+
+    const catalogWithOther: DbCatalog = {
+      tables: [table, otherTable],
+      // ONLY the other pair exists in the database
+      columns: [{ table: otherTable, column: otherColumn, notNull: false }],
       foreignKeys: [],
       uniqueIndexes: [],
     };
-    const onMissingColumn = finding({
+
+    const onAbsentColumn = finding({
       kind: 'missing-foreign-key',
-      table: 'A_B',
-      columns: ['C'],
+      table,
+      columns: [column],
       model: 'AB',
       field: 'c',
       declared: 'FOREIGN KEY -> Other(id) ON DELETE Cascade ON UPDATE Cascade',
     });
-    // `A_B`.`C` is not in the catalog — only `A`.`B_C` is.
-    expect(tierOf(onMissingColumn, colliding)).toBe('pending');
-    // positive control: the column that IS present tiers enforced, so the assertion above
-    // cannot pass because the lookup is broken outright.
-    expect(tierOf({ ...onMissingColumn, table: 'A', columns: ['B_C'] }, colliding)).toBe(
-      'enforced'
-    );
+
+    // The catalog does NOT have (table, column); a colliding key would wrongly say it does.
+    expect(tierOf(onAbsentColumn, catalogWithOther)).toBe('pending');
+    // Positive control: the pair that IS present must still resolve, so the assertion above
+    // cannot pass merely because every lookup fails.
+    expect(
+      tierOf({ ...onAbsentColumn, table: otherTable, columns: [otherColumn] }, catalogWithOther)
+    ).toBe('enforced');
   });
 
   it('a COMPOSITE foreign key is pending unless EVERY column exists', () => {
@@ -696,7 +714,6 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   // killed here. Written against a COPY of the real baseline in a temp dir, so no case can
   // touch the committed artefact.
   describe('--update-baseline', () => {
-    let workBaseline: string;
     let committed: Baseline;
 
     beforeAll(() => {
@@ -710,7 +727,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     };
 
     it('rewrites the baseline and reports what it compared against', async () => {
-      workBaseline = freshCopy(committed.entries);
+      const workBaseline = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', workBaseline]);
       expect(result.code).toBe(0);
       expect(result.stdout).toMatch(/Wrote 61 accepted finding\(s\)/);

@@ -189,11 +189,15 @@ async function main(): Promise<number> {
     // the same unreviewable-diff problem `drift-baseline.json` was fixed for — and worse
     // here, because the gate's own STALE message tells you to run this command. Prettier
     // cannot be the owner instead: it collapses short arrays (`"columns": ["userId"]`) in a
-    // way `JSON.stringify` will not reproduce, so the two disagree by 3,589 lines and the
+    // way `JSON.stringify` will not reproduce, so the two disagree by 3,598 lines and the
     // artefact only stays clean if every operator remembers to run a formatter afterwards.
     // Nothing enforces that, and `prettier --check` on a MODIFIED file is report-only here.
     // One owner, no discipline required: a re-dump of the committed snapshot is a zero-line
     // diff.
+    //
+    // (3,598 is measured with the file IN the repo, where `.prettierrc` resolves and sets
+    // printWidth 100. Copying it to /tmp first gives 3,589 — prettier's default width 80 —
+    // which is a fact about where the measurement was taken, not about these two formats.)
     process.stdout.write(`${JSON.stringify(stamped, null, 2)}\n`);
     return 0;
   }
