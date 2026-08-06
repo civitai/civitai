@@ -2,8 +2,8 @@ import { error, redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { isHubAdmin } from '$lib/server/auth/admin';
 
-// Gate for the whole /admin area. Runs for every route under /admin, so the 403 here protects the
-// landing page AND every sub-page (e.g. /admin/spoke-domains) — no per-page check needed.
+// Second layer only. The gate for /admin is in hooks.server.ts, which is what covers form actions and any
+// other non-GET request; a layout `load` does not run early enough to be relied on for that.
 export const load: LayoutServerLoad = async ({ locals, url }) => {
   if (!locals.user) {
     redirect(303, `/login?returnUrl=${encodeURIComponent(url.pathname + url.search)}`);

@@ -17,3 +17,11 @@ export const ADMIN_USER_IDS: ReadonlySet<number> = new Set(
 export function isHubAdmin(user: Pick<SessionUser, 'id'> | undefined | null): boolean {
   return !!user && ADMIN_USER_IDS.has(user.id);
 }
+
+/**
+ * Paths belonging to the admin area. Matched on the path prefix rather than against the route table so that
+ * a route added under /admin later is covered by the guard without anyone having to remember to list it.
+ */
+export function isAdminPath(pathname: string): boolean {
+  return pathname === '/admin' || pathname.startsWith('/admin/');
+}

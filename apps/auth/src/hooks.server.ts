@@ -3,8 +3,14 @@ import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
+import { isAdminPath, isHubAdmin } from '$lib/server/auth/admin';
 import { unhandledErrorsTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+// One body for every rejection, so the response says nothing about which admin routes exist.
+const forbidden = () => new Response('Forbidden', { status: 403 });
 
 // CORS preflight headers — credentialed, so Allow-Origin MUST echo the exact origin (never `*`).
 const preflightHeaders = (origin: string) => ({
@@ -40,6 +46,28 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
       event.locals.impersonatedBy = claims.impersonatedBy;
+    }
+  }
+
+  // Authorization for the admin area. This is the gate: it runs ahead of routing, so one check covers every
+  // request method and every route under /admin, including routes added after this was written.
+  // +layout.server.ts keeps its own equivalent check as a second layer.
+  if (isAdminPath(event.url.pathname)) {
+    // Scoped stand-in for SvelteKit's form-origin check, which is disabled app-wide for the OAuth machine
+    // endpoints (see svelte.config.js).
+    const origin = event.request.headers.get('origin');
+    if (MUTATING_METHODS.has(event.request.method) && origin !== event.url.origin)
+      return forbidden();
+
+    if (!isHubAdmin(event.locals.user)) {
+      if (!event.locals.user && event.request.method === 'GET') {
+        const returnUrl = encodeURIComponent(event.url.pathname + event.url.search);
+        return new Response(null, {
+          status: 303,
+          headers: { location: `/login?returnUrl=${returnUrl}` },
+        });
+      }
+      return forbidden();
     }
   }
 
