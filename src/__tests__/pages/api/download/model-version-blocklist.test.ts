@@ -190,6 +190,45 @@ describe('/api/download/models/[modelVersionId] — IP blocklist', () => {
     // Positive control: the request completed as a real download.
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
   });
+
+  /**
+   * 🔴 THE DISCRIMINATING INPUT — `cf-connecting-ip` with NO `cf-ray`.
+   *
+   * Every other fixture in this suite pairs those two headers, and that pairing
+   * is the one input on which the trusted predicate and the looser
+   * `resolveClientIp` AGREE, so none of them can tell which derivation the route
+   * took. A predicate swap on this route WAS caught before this pair existed —
+   * but only by the QUOTA seam suite next door, which is a different assertion
+   * about a different decision. The blocklist verdict is pinned here, by this
+   * route's own suite, so it does not depend on a neighbouring surface
+   * happening to observe the same variable.
+   *
+   * Both directions are pinned, because each fails differently: a block that can
+   * be evaded, and a block an innocent caller can be pushed into.
+   */
+  it('SECURITY: cf-connecting-ip WITHOUT cf-ray is not trusted — a listed caller cannot spoof past the block', async () => {
+    // The peer is the listed address; the caller declares an unlisted one.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': SUPPLIED }, BLOCKED);
+    await promise;
+    expect(
+      res.status,
+      'the unattested cf-connecting-ip was trusted, so the transport peer — which IS on the ' +
+        'blocklist — was never compared. This is the predicate swap.'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an unattested cf-connecting-ip cannot get an innocent caller blocked either', async () => {
+    // The mirror direction: the declared address is listed, the real peer is
+    // not. A derivation that trusted the header would 403 a caller who is not
+    // on the list.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': BLOCKED }, SUPPLIED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+  });
 });
 
 describe('/api/download/models/[modelVersionId] — anonymous download quota bucket', () => {

@@ -79,7 +79,7 @@ export default PublicEndpoint(
 
       // Check if user has a concerning number of downloads
       //
-      // 🔴 READ THIS BEFORE GIVING THE ANONYMOUS BUCKET A THRESHOLD.
+      // 🔴 READ THIS BEFORE KEYING AN ANONYMOUS DOWNLOAD LIMIT ON THIS BUCKET.
       //
       // For an authenticated caller `userKey` is the user id and each account
       // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
@@ -94,13 +94,17 @@ export default PublicEndpoint(
       // of whom did anything the limit was aimed at. The people it lands on are
       // exactly the ones who reached us without edge transit.
       //
-      // The coupling, not its current setting, is the point: `hasExceededLimit`
-      // reads the threshold for a bucket out of a redis hash, and a bucket with
-      // no threshold is counted but not enforced. Giving the anonymous bucket a
-      // threshold therefore arms the behaviour above in one step, with no code
-      // change and no review. If you want a per-client anonymous download
-      // limit, give this surface a key that does not collapse (or scope the
-      // limit to edge-attested requests) FIRST.
+      // The COUPLING is the point. `hasExceededLimit` reads a bucket's
+      // threshold out of a redis hash, and the two cases are symmetric: a
+      // bucket whose threshold is unset is counted but not enforced, and a
+      // bucket whose threshold is set shares one counter across every
+      // non-edge-attested anonymous caller. Neither is a property of this
+      // file — the hash decides which one applies, so this code is correct
+      // under both and the design question is unaffected by which holds.
+      //
+      // Before setting a threshold for the anonymous bucket, give this surface
+      // a key that does not collapse, or scope the limit to edge-attested
+      // requests.
       const isAuthed = !!session?.user;
       const userKey = session?.user?.id?.toString() ?? ip;
       if (!userKey) return errorResponse(403, 'Forbidden');

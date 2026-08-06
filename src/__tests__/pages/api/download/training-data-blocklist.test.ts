@@ -163,6 +163,55 @@ describe('/api/download/[...key] — IP blocklist', () => {
     }
   });
 
+  /**
+   * 🔴 THE DISCRIMINATING INPUT — `cf-connecting-ip` with NO `cf-ray`.
+   *
+   * Every other fixture in this suite pairs those two headers, and that pairing
+   * is the one input on which the trusted predicate and the looser
+   * `resolveClientIp` AGREE. So none of them can tell which derivation the route
+   * took. Measured: a mutant that keeps the `getTrustedClientIp` import AND a
+   * call to it, but makes the blocklist decision from `resolveClientIp`,
+   * survived this entire suite — and the ledger's binding check could not see it
+   * either, because the weak call was ADDED rather than substituted.
+   *
+   * Unpaired, the two derivations disagree: `getTrustedClientIp` rejects the
+   * unattested header and falls through to the transport peer, while a
+   * derivation that trusts `cf-connecting-ip` on its own returns whatever the
+   * caller wrote. Which is the concrete cost — an abuser on the blocklist
+   * escapes it by sending a `cf-connecting-ip` of their choosing on a request
+   * that does not transit the edge.
+   *
+   * Both directions are pinned, because each fails differently: a block that can
+   * be evaded, and a block an innocent caller can be pushed into.
+   */
+  it('SECURITY: cf-connecting-ip WITHOUT cf-ray is not trusted — a listed caller cannot spoof past the block', async () => {
+    // The peer is the listed address; the caller declares an unlisted one.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': NOT_BLOCKED }, BLOCKED);
+    await promise;
+    expect(
+      res.status,
+      'the unattested cf-connecting-ip was trusted, so the transport peer — which IS on the ' +
+        'blocklist — was never compared. This is the predicate swap.'
+    ).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an unattested cf-connecting-ip cannot get an innocent caller blocked either', async () => {
+    // The mirror direction: the declared address is listed, the real peer is
+    // not. A derivation that trusted the header would 403 a caller who is not
+    // on the list.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': BLOCKED }, NOT_BLOCKED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    // Positive control on what the request DID do — unauthenticated, so it is
+    // sent to login. Proves the handler ran past the blocklist rather than
+    // failing somewhere unobserved.
+    expect(res.redirect).toHaveBeenCalledWith('/login?returnUrl=/api/download/some/file.zip');
+  });
+
   it('an empty blocklist blocks nobody', async () => {
     mockFindUnique.mockResolvedValue(null);
     const { promise, res } = run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });

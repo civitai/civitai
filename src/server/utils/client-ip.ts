@@ -208,11 +208,13 @@ export function resolveClientIp(req: NextApiRequest): string {
  *   default; it converts a per-client limit into a shared one, and the people who
  *   feel it are the ones the limit was never aimed at.
  *
- * So: this predicate is the right key for the download blocklists. Keying a
- * per-client QUOTA on it is sound only where the collapsed bucket carries no
- * threshold — see the call-site note in
- * `src/pages/api/download/models/[modelVersionId].ts`. Do not generalise the
- * blocklist's safety argument onto a counting surface.
+ * So: this predicate is the right key for the download blocklists. On a
+ * COUNTING surface the same value carries the trade above whichever way the
+ * threshold is configured, so the design question is settled by giving the
+ * surface a key that does not collapse, or by scoping the limit to
+ * edge-attested requests — not by reasoning about a redis hash. See the
+ * call-site note in `src/pages/api/download/models/[modelVersionId].ts`. Do
+ * not generalise the blocklist's safety argument onto a counting surface.
  *
  * ── CHOOSING BETWEEN THE TWO PREDICATES IN THIS FILE ──────────────────────
  *
@@ -338,33 +340,71 @@ function headerValue(raw: string | string[] | undefined): string | undefined {
  * operator maintaining a blocklist writes the dotted quad, so without this
  * normalization a socket-derived address would never match a list entry.
  *
- * All three spellings of the mapped form are handled, not just the canonical
- * one Node emits, because the comparison this feeds is string equality: an
- * address that is not folded to the same text as the operator's list entry is
- * an entry that silently never matches. The forms are
+ * The comparison this feeds is string EQUALITY, so an address that is not
+ * folded to the same text as the operator's list entry is an entry that
+ * silently never matches. That makes the fold a two-part job:
  *
- *   `::ffff:1.2.3.4`                   canonical — what Node produces
- *   `0:0:0:0:0:ffff:1.2.3.4`           zero groups written out
- *   `::ffff:0102:0304`                 low 32 bits as hex groups
+ *  1. CANONICALISE the IPv6 text. One address has many legal spellings —
+ *     `2001:0db8::1`, `2001:db8:0:0:0:0:0:1` and `2001:DB8::1` are the same
+ *     address as `2001:db8::1`, which is the form node reports off a socket.
+ *     The WHATWG URL host parser is a spec IPv6 serialiser and is used as one
+ *     here: zero-compression, leading zeroes and case all collapse to one text.
+ *  2. FOLD an IPv4-mapped address to its dotted quad. Step 1 rewrites every
+ *     mapped spelling to `::ffff:hhhh:hhhh`, so the hex-pair branch below is
+ *     what carries it the rest of the way to `1.2.3.4` — the form an operator
+ *     writes and node reports for a real IPv4 peer.
  *
- * Anything else — including a mapped address written with an unusual `::`
- * placement — is returned unchanged rather than guessed at. This is a
- * best-effort fold toward the canonical text, not an IPv6 canonicaliser.
+ * ⚠️ BOTH SIDES OF THE COMPARISON MUST TAKE THIS PATH. A fold applied only to
+ * the derived address makes the two sides MORE likely to disagree, not less:
+ * the derived value moves to the canonical text and a list entry written any
+ * other way stops matching an address it used to match. `parseIpBlocklist`
+ * therefore runs its entries through this same function. Pinned by the
+ * spelling-variant cases in
+ * `src/server/utils/__tests__/client-ip-trusted.test.ts`.
+ *
+ * Every transformation here is identity-preserving — it changes the SPELLING of
+ * an address and never which address it denotes — so folding cannot make one
+ * address equal to a different one. Anything that is not a parseable IPv6
+ * literal is returned unchanged rather than guessed at.
  */
 const IPV4_MAPPED_PREFIX = /^(?:::|(?:0{1,4}:){5})ffff:/i;
 const HEX_GROUP_PAIR = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i;
 
+/**
+ * One IPv6 address → its single canonical text, via the WHATWG URL host
+ * parser (an IPv6 serialiser that is already in the runtime).
+ *
+ * Returns the input unchanged if it does not round-trip. The `isIP` check on
+ * the way out is the guard that keeps this a canonicaliser and not a parser
+ * with opinions: nothing is returned that is not still an IPv6 address.
+ */
+function canonicalizeIpv6(ip: string): string {
+  try {
+    const { hostname } = new URL(`http://[${ip}]`);
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      const inner = hostname.slice(1, -1);
+      if (isIP(inner) === 6) return inner;
+    }
+  } catch {
+    // Not a parseable IPv6 host — fall through and keep the original text.
+  }
+  return ip;
+}
+
 function normalizeIp(ip: string): string {
   if (isIP(ip) !== 6) return ip;
 
-  const prefix = IPV4_MAPPED_PREFIX.exec(ip);
-  if (!prefix) return ip;
-  const tail = ip.slice(prefix[0].length);
+  const canonical = canonicalizeIpv6(ip);
+
+  const prefix = IPV4_MAPPED_PREFIX.exec(canonical);
+  if (!prefix) return canonical;
+  const tail = canonical.slice(prefix[0].length);
 
   // `::ffff:1.2.3.4` — the low 32 bits already written as a dotted quad.
   if (isIP(tail) === 4) return tail;
 
-  // `::ffff:0102:0304` — the same 32 bits as two hex groups.
+  // `::ffff:0102:0304` — the same 32 bits as two hex groups. This is the form
+  // step 1 produces for every mapped spelling.
   const hex = HEX_GROUP_PAIR.exec(tail);
   if (hex) {
     const high = parseInt(hex[1], 16);
@@ -373,7 +413,7 @@ function normalizeIp(ip: string): string {
     if (isIP(dotted) === 4) return dotted;
   }
 
-  return ip;
+  return canonical;
 }
 
 /**
@@ -403,17 +443,47 @@ function normalizeIp(ip: string): string {
  * non-string — so a malformed row still fails the way it always has, and this
  * PR is not the thing that changed it.
  *
+ * ── WHO SEES WHAT ─────────────────────────────────────────────────────────
+ *
+ * 🔴 THE THROWN MESSAGE REACHES AN UNAUTHENTICATED CALLER. Every one of these
+ * routes is public, and both paths out of a throw put `error.message` in the
+ * response body — `endpoint-helpers.ts`'s catch-all, and the model route's own
+ * `errorResponse(500, err.message)`. So the two audiences are split
+ * deliberately:
+ *
+ *   CLIENT   a fixed, content-free string. It names no internal row, no column
+ *            type, and nothing else about how these controls are configured.
+ *   OPERATOR the row's key and the type it actually held, on the server log
+ *            only — which is the audience that can act on either.
+ *
+ * Keep that split when editing this. The operator signal is the point of
+ * throwing rather than returning `[]`, so do not drop the log to make the
+ * message generic; and do not put the row's identity back in the message to
+ * make it debuggable from a response body.
+ *
  * An ABSENT row (`null`/`undefined`) is the ordinary "no list configured" state,
  * not a malformed one, and yields no entries without complaint.
  *
- * @param key the `KeyValue` key, named in the error so the row is identifiable.
+ * @param key the `KeyValue` key, named in the SERVER LOG so the row is
+ *            identifiable. Never in the thrown message.
  */
+export const MALFORMED_LIST_CLIENT_MESSAGE = 'Request could not be evaluated.';
+
+function logMalformedListRow(key: string, value: unknown): void {
+  // console.error rather than the Axiom client on purpose: this module is
+  // imported by middleware and by the tRPC rate limiter, and a logging
+  // dependency here would widen that import graph for one error path. The
+  // routes that wrap this in a try already ship their own structured log.
+  console.error(
+    `[client-ip] KeyValue '${key}' is not a string (got ${typeof value}); refusing to evaluate this list.`
+  );
+}
+
 function parseKeyValueList(value: unknown, key: string): string[] {
   if (value === null || value === undefined) return [];
   if (typeof value !== 'string') {
-    throw new TypeError(
-      `KeyValue '${key}' is not a string (got ${typeof value}); refusing to evaluate this list.`
-    );
+    logMalformedListRow(key, value);
+    throw new TypeError(MALFORMED_LIST_CLIENT_MESSAGE);
   }
   return value
     .split(',')
@@ -433,9 +503,25 @@ function parseKeyValueList(value: unknown, key: string): string[] {
  * to be listed, so this is a footgun rather than an exposure; but if a download
  * blocklist entry ever appears to have blocked far more than intended, this is
  * the first thing to check.
+ *
+ * ── ENTRIES ARE FOLDED THE SAME WAY THE DERIVED ADDRESS IS ────────────────
+ *
+ * The comparison at every call site is exact string equality between an entry
+ * and the output of `getTrustedClientIp`, which returns a NORMALIZED address.
+ * One address has many legal spellings, so an entry is only comparable once it
+ * has been through the same fold — `normalizeIp` — as the value it is compared
+ * against. Applying that fold to one side alone is worse than applying it to
+ * neither: it moves the derived value to the canonical text and leaves an entry
+ * written any other way matching nothing. Concretely, an entry of
+ * `::ffff:203.0.113.7` or `2001:0DB8::1` has to be comparable against a derived
+ * `203.0.113.7` / `2001:db8::1`, and an entry that never matches is a control
+ * an operator believes covers an address it does not.
+ *
+ * `parseUserBlocklist` deliberately does NOT do this — its entries are user
+ * ids, on which an address fold has no meaning.
  */
 export function parseIpBlocklist(value: unknown): string[] {
-  return parseKeyValueList(value, 'ip-blacklist');
+  return parseKeyValueList(value, 'ip-blacklist').map(normalizeIp);
 }
 
 /**

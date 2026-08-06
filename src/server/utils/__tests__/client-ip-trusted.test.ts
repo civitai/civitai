@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { isIP } from 'node:net';
 import {
+  MALFORMED_LIST_CLIENT_MESSAGE,
   getTrustedClientIp,
   isIpAddress,
   parseIpBlocklist,
@@ -350,14 +351,41 @@ describe('getTrustedClientIp — IPv4-mapped IPv6 is folded to the dotted quad',
   it.each([
     ['the deprecated IPv4-COMPATIBLE form, which has no ffff run', '::1.2.3.4'],
     ['the same 32 bits as hex groups, again with no ffff run', '::0102:0304'],
-  ])('leaves %s unchanged — the fold is keyed on the ffff run, not on any tail', (_label, ip) => {
-    // The fold is documented as best-effort toward the canonical mapped text,
-    // returning anything else unchanged "rather than guessed at". Nothing pinned
-    // that: a normalizer that ignored the prefix and folded whatever followed
-    // `::` passed every other case in this file, and would silently collapse
-    // these two DISTINCT addresses onto the dotted quad — making a blocklist
-    // entry for `1.2.3.4` match a peer that is not at `1.2.3.4`.
-    expect(getTrustedClientIp(req({}, ip))).toBe(ip);
+  ])(
+    'never folds %s to the dotted quad — the fold is keyed on the ffff run, not on any tail',
+    (_label, ip) => {
+      // 🔴 THE PROPERTY: a normalizer that ignored the prefix and folded
+      // whatever followed `::` passed every other case in this file, and would
+      // collapse the IPv4-COMPATIBLE address onto the dotted quad — making a
+      // blocklist entry for `1.2.3.4` match a peer that is NOT at `1.2.3.4`.
+      // That is the assertion; the exact text is not.
+      const derived = getTrustedClientIp(req({}, ip));
+      expect(derived).not.toBe('1.2.3.4');
+      expect(isIP(derived!), 'the fold must still return an address').toBe(6);
+      // It IS canonicalised, like any other IPv6 — these two labels are two
+      // spellings of ONE address, so they must land on one text or a list entry
+      // written in either spelling matches only half the peers that present it.
+      expect(derived).toBe('::102:304');
+    }
+  );
+
+  it('the fold is IDEMPOTENT — a derived address is already in its final form', () => {
+    // Both sides of the blocklist comparison run through this fold. If it were
+    // not idempotent, folding an entry that was already canonical would move it
+    // and the two sides would separate again.
+    for (const ip of [
+      '203.0.113.7',
+      '::ffff:203.0.113.7',
+      '0:0:0:0:0:ffff:203.0.113.7',
+      '2001:0DB8::1',
+      '::1.2.3.4',
+      '::1',
+    ]) {
+      const once = getTrustedClientIp(req({}, ip));
+      expect(once).not.toBeNull();
+      const twice = getTrustedClientIp(req({}, once!));
+      expect(twice, `folding ${ip} twice moved it: ${once} -> ${twice}`).toBe(once);
+    }
   });
 });
 
@@ -400,10 +428,13 @@ describe('parseIpBlocklist', () => {
     // ALLOW direction, and a control that is off is indistinguishable at the
     // call site from a caller who is simply not listed. It throws instead, which
     // surfaces as a 5xx the endpoint wrappers already count.
-    expect(() => parseIpBlocklist(42)).toThrow(/ip-blacklist/);
-    expect(() => parseUserBlocklist({ nope: true })).toThrow(/user-blacklist/);
-    // The error has to identify WHICH row, or an operator cannot act on it.
-    expect(() => parseIpBlocklist(42)).toThrow(/is not a string/);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(() => parseIpBlocklist(42)).toThrow(TypeError);
+      expect(() => parseUserBlocklist({ nope: true })).toThrow(TypeError);
+    } finally {
+      spy.mockRestore();
+    }
 
     // An ABSENT row is the normal "no list configured" state, not a fault.
     expect(parseIpBlocklist(undefined)).toEqual([]);
@@ -413,6 +444,164 @@ describe('parseIpBlocklist', () => {
 
     // A well-formed row is likewise fine.
     expect(parseIpBlocklist('1.2.3.4')).toEqual(['1.2.3.4']);
+  });
+});
+
+describe('parseIpBlocklist — an entry is folded the same way the derived address is', () => {
+  /**
+   * 🔴 THE INVARIANT: for any address, an entry written in ANY legal spelling
+   * must compare equal to the value `getTrustedClientIp` returns for a peer at
+   * that address. The comparison at every call site is exact string equality,
+   * so a fold applied to one side only makes the two MORE likely to disagree,
+   * not less — the derived value moves to the canonical text and an entry
+   * written another way stops matching an address it used to match.
+   *
+   * An entry that never matches is invisible from outside: the request simply
+   * succeeds, exactly as it would for a caller who is not listed at all.
+   *
+   * Each case below is driven end-to-end — a real request through
+   * `getTrustedClientIp`, compared against a real parsed list — rather than
+   * asserting the parser's output shape. What matters is that the two meet.
+   */
+  const derivedFrom = (remoteAddress: string) => getTrustedClientIp({ socket: { remoteAddress } });
+
+  const SPELLINGS: Array<{ label: string; entry: string; peer: string }> = [
+    // IPv4-mapped IPv6. Node reports an IPv4 peer on a dual-stack listener in
+    // the mapped form; an operator writes the dotted quad. Both spellings of
+    // the entry must reach the same place.
+    { label: 'mapped, canonical', entry: '::ffff:203.0.113.7', peer: '::ffff:203.0.113.7' },
+    { label: 'mapped entry vs dotted peer', entry: '::ffff:203.0.113.7', peer: '203.0.113.7' },
+    { label: 'dotted entry vs mapped peer', entry: '203.0.113.7', peer: '::ffff:203.0.113.7' },
+    {
+      label: 'mapped, zero groups written out',
+      entry: '0:0:0:0:0:ffff:203.0.113.7',
+      peer: '203.0.113.7',
+    },
+    { label: 'mapped, low 32 bits as hex', entry: '::ffff:cb00:7107', peer: '203.0.113.7' },
+    // Plain IPv6 written non-canonically. One address, many legal texts.
+    { label: 'IPv6 with leading zeroes', entry: '2001:0db8::1', peer: '2001:db8::1' },
+    { label: 'IPv6 fully expanded', entry: '2001:db8:0:0:0:0:0:1', peer: '2001:db8::1' },
+    { label: 'IPv6 upper case', entry: '2001:DB8::1', peer: '2001:db8::1' },
+    { label: 'IPv6 non-canonical peer', entry: '2001:db8::1', peer: '2001:0DB8:0:0:0:0:0:1' },
+  ];
+
+  it.each(SPELLINGS)('matches a $label entry', ({ entry, peer }) => {
+    const derived = derivedFrom(peer);
+    expect(derived, 'the peer did not resolve to an address at all').not.toBeNull();
+    expect(
+      parseIpBlocklist(entry).includes(derived!),
+      `entry ${entry} did not match a peer at ${peer} (derived: ${derived}) — the two sides of ` +
+        `the blocklist comparison are not folded the same way, so this entry silently covers ` +
+        `nothing`
+    ).toBe(true);
+  });
+
+  it('NEGATIVE CONTROL: folding does not make one address match a different one', () => {
+    // The fold changes the SPELLING of an address and never which address it
+    // denotes. Without this, a fold that over-normalised — mapping everything
+    // to one value — would pass every case above.
+    const derived = derivedFrom('203.0.113.7');
+    for (const other of [
+      '203.0.113.8',
+      '203.0.113.70',
+      '::ffff:203.0.113.8',
+      '2001:db8::1',
+      '0.0.0.0',
+    ]) {
+      expect(
+        parseIpBlocklist(other).includes(derived!),
+        `entry ${other} matched a peer at 203.0.113.7`
+      ).toBe(false);
+    }
+    // And an empty list still matches nobody.
+    expect(parseIpBlocklist('').includes(derived!)).toBe(false);
+  });
+
+  it('leaves a non-address entry alone rather than guessing at it', () => {
+    // Operators mistype. A fold that mangled an unparseable entry would change
+    // what the row means without saying so.
+    expect(parseIpBlocklist('not-an-ip, 203.0.113.0/24, 203.0.113.7')).toEqual([
+      'not-an-ip',
+      '203.0.113.0/24',
+      '203.0.113.7',
+    ]);
+  });
+
+  it('user-blacklist entries are NOT put through an address fold', () => {
+    // Its entries are user ids. An address fold has no meaning on one, and
+    // applying it would be a silent behaviour change on a different control.
+    expect(parseUserBlocklist('123, 456, 0:0:0:0:0:ffff:1.2.3.4')).toEqual([
+      '123',
+      '456',
+      '0:0:0:0:0:ffff:1.2.3.4',
+    ]);
+  });
+});
+
+describe('parseKeyValueList — a malformed row tells the operator, not the caller', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * 🔴 THE THROWN MESSAGE REACHES AN UNAUTHENTICATED CALLER. These lists are
+   * read by public download routes, and both paths out of a throw put
+   * `error.message` in the response body. So the row's identity and the type it
+   * held are an OPERATOR signal and belong on the server log; the client gets a
+   * fixed, content-free string.
+   *
+   * Both halves are pinned, because dropping either is a plausible edit: a
+   * message that names the row again is a leak, and a log that is removed to
+   * "clean up" takes away the only reason to throw rather than return `[]`.
+   */
+  const INTERNAL_TOKENS = ['ip-blacklist', 'user-blacklist', 'KeyValue', 'object', 'number'];
+
+  it.each([
+    ['ip-blacklist', () => parseIpBlocklist({ not: 'a string' })],
+    ['user-blacklist', () => parseUserBlocklist(42)],
+  ])('the CLIENT-VISIBLE message for a malformed %s names nothing internal', (_row, call) => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let thrown: unknown;
+    try {
+      call();
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, 'a malformed row must still fail closed').toBeInstanceOf(TypeError);
+    const message = (thrown as Error).message;
+    expect(message).toBe(MALFORMED_LIST_CLIENT_MESSAGE);
+    for (const token of INTERNAL_TOKENS) {
+      expect(message.toLowerCase(), `the client-visible message leaks '${token}'`).not.toContain(
+        token.toLowerCase()
+      );
+    }
+  });
+
+  it('the OPERATOR signal — row key and actual type — goes to the server log', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(() => parseIpBlocklist({ not: 'a string' })).toThrow(TypeError);
+    expect(
+      spy,
+      'nothing was logged, so an operator has no way to find the bad row'
+    ).toHaveBeenCalled();
+    const logged = spy.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(logged).toContain('ip-blacklist');
+    expect(logged).toContain('object');
+
+    spy.mockClear();
+    expect(() => parseUserBlocklist(42)).toThrow(TypeError);
+    const logged2 = spy.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(logged2).toContain('user-blacklist');
+    expect(logged2).toContain('number');
+  });
+
+  it('NEGATIVE CONTROL: a well-formed or absent row logs nothing and throws nothing', () => {
+    // Without this, a `console.error` on every call would satisfy the assertion
+    // above while making the log useless.
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(parseIpBlocklist('1.2.3.4')).toEqual(['1.2.3.4']);
+    expect(parseIpBlocklist(undefined)).toEqual([]);
+    expect(parseIpBlocklist(null)).toEqual([]);
+    expect(parseUserBlocklist('123')).toEqual(['123']);
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

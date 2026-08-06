@@ -50,14 +50,10 @@ export default AuthedEndpoint(
     );
     if (ip && ipBlacklist.includes(ip)) return onError(403, 'Forbidden');
 
-    // Check if user has a concerning number of downloads
     if (!user) {
       // All vault items require authorization
       return onError(401, 'Unauthorized');
     }
-
-    const userKey = user.id.toString() ?? ip;
-    if (!userKey) return onError(403, 'Forbidden');
 
     // Validate query params
 

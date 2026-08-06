@@ -32,20 +32,26 @@ import { isIpAddress } from '~/server/utils/client-ip';
  *
  * The count read here was written by the download tracker, and the two sides
  * arrive at their address INDEPENDENTLY. The value looked up here is whatever
- * the caller passed in — for an anonymous download that is `getTrustedClientIp`,
- * which trims and folds an IPv4-mapped IPv6 to its dotted quad — while the `ip`
- * column was written from the tracker's own derivation, which applies neither.
- * Before these controls shared one predicate the two sides were the same call
- * and equality held by construction; now it holds only where the two spellings
- * of an address coincide. Where they do not, the `ip =` filter matches nothing
- * and the count seeds 0 instead of the true 24h figure.
+ * the caller passed in — for an anonymous download, the enforcement derivation
+ * `getTrustedClientIp` — while the `ip` column was written from the tracker's
+ * own, which is a DIFFERENT PREDICATE, not a different rendering of the same
+ * one. The two consult different inputs and can therefore name different
+ * addresses for one request.
+ *
+ * 🔴 Note what that rules out: this is NOT a spelling mismatch, and normalising
+ * the text on either side does not close it. Wherever the two predicates
+ * disagree about which address a request came from, the `ip =` filter matches
+ * nothing however either value is written. Before these controls shared one
+ * predicate the two sides were the same call and equality held by construction;
+ * now it holds only where the two derivations agree, and the count seeds 0
+ * instead of the true 24h figure everywhere else.
  *
  * The direction is permissive — an under-count relaxes a limit, it does not
  * block anyone — and closing it means changing the WRITE side, which is a wider
  * blast radius than this module. What is pinned instead is the half this module
  * controls: `download-quota-seam.test.ts` asserts that the value used for the
- * lookup is the normalized one, so a future change to either side has something
- * to trip over.
+ * lookup is the one the trusted derivation produced, so a future change to
+ * either side has something to trip over.
  *
  * Keep the validation adjacent to the interpolation. If this function ever
  * grows a second query or a third key shape, validate the new one here too

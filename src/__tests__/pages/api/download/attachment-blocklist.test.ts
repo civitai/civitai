@@ -148,6 +148,51 @@ describe('/api/download/attachments/[fileId] — IP blocklist', () => {
     // Positive control on the completed path.
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
   });
+
+  /**
+   * 🔴 THE DISCRIMINATING INPUT — `cf-connecting-ip` with NO `cf-ray`.
+   *
+   * Every other fixture in this suite pairs those two headers, and that pairing
+   * is the one input on which the trusted predicate and the looser
+   * `resolveClientIp` AGREE. So none of them can tell which derivation the route
+   * took. Measured: a mutant that keeps the `getTrustedClientIp` import AND a
+   * call to it, but makes the blocklist decision from `resolveClientIp`,
+   * survived this entire suite — and the ledger's binding check could not see it
+   * either, because the weak call was ADDED rather than substituted.
+   *
+   * Unpaired, the two derivations disagree: `getTrustedClientIp` rejects the
+   * unattested header and falls through to the transport peer, while a
+   * derivation that trusts `cf-connecting-ip` on its own returns whatever the
+   * caller wrote. Which is the concrete cost — an abuser on the blocklist
+   * escapes it by sending a `cf-connecting-ip` of their choosing on a request
+   * that does not transit the edge.
+   *
+   * Both directions are pinned, because each fails differently: a block that can
+   * be evaded, and a block an innocent caller can be pushed into.
+   */
+  it('SECURITY: cf-connecting-ip WITHOUT cf-ray is not trusted — a listed caller cannot spoof past the block', async () => {
+    // The peer is the listed address; the caller declares an unlisted one.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': SUPPLIED }, BLOCKED);
+    await promise;
+    expect(
+      res.status,
+      'the unattested cf-connecting-ip was trusted, so the transport peer — which IS on the ' +
+        'blocklist — was never compared. This is the predicate swap.'
+    ).toHaveBeenCalledWith(403);
+    expect(mockGetFileWithPermission).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an unattested cf-connecting-ip cannot get an innocent caller blocked either', async () => {
+    // The mirror direction: the declared address is listed, the real peer is
+    // not. A derivation that trusted the header would 403 a caller who is not
+    // on the list.
+    blocklist(BLOCKED);
+    const { promise, res } = run({ 'cf-connecting-ip': BLOCKED }, SUPPLIED);
+    await promise;
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/attachment.pdf');
+  });
 });
 
 /**
@@ -227,11 +272,33 @@ describe('/api/download/attachments/[fileId] — user blocklist', () => {
     // unreadable list means "nobody is blocked" or "this request does not
     // proceed" — and the first is undetectable from outside. It throws: the
     // request fails and the download does NOT complete.
-    asUser(LISTED_USER);
-    rows({ 'user-blacklist': { not: 'a string' } });
-    const { promise, res } = run({}, SUPPLIED);
-    await expect(promise).rejects.toThrow(/user-blacklist/);
-    expect(res.redirect).not.toHaveBeenCalled();
-    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+    //
+    // The message it fails WITH is deliberately content-free. This route is
+    // public and the throw reaches the caller's response body, so the row's
+    // identity is an OPERATOR signal and goes to the server log instead. Both
+    // halves are asserted: the caller learns nothing internal, the operator
+    // learns which row.
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      asUser(LISTED_USER);
+      rows({ 'user-blacklist': { not: 'a string' } });
+      const { promise, res } = run({}, SUPPLIED);
+      const thrown = await promise.then(
+        () => null,
+        (e: Error) => e
+      );
+      expect(thrown, 'a malformed row must fail closed').toBeInstanceOf(TypeError);
+      expect(thrown!.message, 'the client-visible message names an internal row').not.toMatch(
+        /user-blacklist|ip-blacklist|KeyValue/i
+      );
+      expect(res.redirect).not.toHaveBeenCalled();
+      expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+      expect(
+        errorLog.mock.calls.map((c) => c.join(' ')).join('\n'),
+        'the operator has no server-side signal identifying the bad row'
+      ).toContain('user-blacklist');
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });

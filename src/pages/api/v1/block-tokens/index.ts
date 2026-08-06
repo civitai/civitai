@@ -233,7 +233,7 @@ function setSameOriginCors(req: NextApiRequest, res: NextApiResponse): 'handled'
 /**
  * Returns the IP used for per-IP rate limiting.
  *
- * Audit M-4 introduced this derivation here as a file-local helper. It is now
+ * This derivation started out here as a file-local helper. It is now
  * the shared `getTrustedClientIp` in `~/server/utils/client-ip` — same rule
  * (cf-connecting-ip only alongside cf-ray, otherwise the socket peer), one
  * definition, so the download endpoints and this one cannot drift apart. The
