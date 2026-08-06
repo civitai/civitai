@@ -64,8 +64,13 @@ jobs:
 
       - name: Schema drift gate
         run: |
-          set -euo pipefail
+          # NOT `set -e`. The gate exits 1 when it finds new drift, and with `-e` the step
+          # aborted right there — skipping the no-verdict guard and the STALE annotation
+          # below PRECISELY when the gate fires, which is when they matter most. The comment
+          # under the guard used to claim it runs "including when it blocks"; it could not.
+          set -uo pipefail
           pnpm --filter @civitai/db-schema drift:gate | tee drift-gate.log
+          rc=${PIPESTATUS[0]}
           # `pnpm --filter` prints "No projects matched the filters" and EXITS 0. A renamed
           # package, or a filter typo, would therefore report this gate as passing having
           # produced no verdict at all. The gate always prints its match line, including when
@@ -84,3 +89,6 @@ jobs:
               echo "::warning title=Schema drift gate: stale catalog snapshot::$note"
             done
           fi
+          # Now propagate the gate's own verdict. Last statement in the step, so everything
+          # above runs on both the passing and the failing path.
+          exit "$rc"

@@ -368,8 +368,8 @@ by looking **every** one of its constrained columns up in the catalog: a composi
 column migrated and one not is still pending, because there is nothing to put a constraint on.
 
 **A tier can rise, and a rise fails the check.** A finding accepted as `pending` — "that column does not
-exist yet" — becomes enforceable the moment the migration lands _without_ its constraint, which
-is the shape of 37 of the 61 baseline findings. The fingerprint does not change, so the gate
+exist yet" — becomes enforceable the moment the migration lands _without_ its constraint. The
+fingerprint does not change, so the gate
 compares the current tier against the tier recorded in the baseline and reports
 `pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
 count and the run exits 0.

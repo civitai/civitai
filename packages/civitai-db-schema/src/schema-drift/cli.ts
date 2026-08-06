@@ -168,6 +168,13 @@ async function main(): Promise<number> {
   }
 
   const catalog = await loadCatalog(options);
+  // Sanity-check BEFORE dumping, not only before comparing. The STALE message this tool
+  // prints tells an operator to recapture with `--dump-catalog`, and without this that
+  // recapture could happily emit a catalog the very next `drift` run would reject — the
+  // reserved-word `NOTNULL` read, which succeeds and returns a constant `true` for every
+  // column, being the motivating case. Failing at capture time is the cheap end.
+  assertCatalogSanity(catalog);
+
   if (options.dumpCatalog) {
     // Stamp the capture instant. A frozen catalog decays — every column created after it is
     // invisible to a comparison against it — and without a date on the artefact that decay
@@ -182,7 +189,7 @@ async function main(): Promise<number> {
     // the same unreviewable-diff problem `drift-baseline.json` was fixed for — and worse
     // here, because the gate's own STALE message tells you to run this command. Prettier
     // cannot be the owner instead: it collapses short arrays (`"columns": ["userId"]`) in a
-    // way `JSON.stringify` will not reproduce, so the two disagree by 3,598 lines and the
+    // way `JSON.stringify` will not reproduce, so the two disagree by 3,589 lines and the
     // artefact only stays clean if every operator remembers to run a formatter afterwards.
     // Nothing enforces that, and `prettier --check` on a MODIFIED file is report-only here.
     // One owner, no discipline required: a re-dump of the committed snapshot is a zero-line
@@ -190,9 +197,6 @@ async function main(): Promise<number> {
     process.stdout.write(`${JSON.stringify(stamped, null, 2)}\n`);
     return 0;
   }
-
-  // Fails loudly on a catalog read that answered uniformly — see compare.ts.
-  assertCatalogSanity(catalog);
 
   const schema = parsePrismaSchema(readFileSync(options.schemaPath, 'utf8'));
   const report = compareSchemaToCatalog(schema, catalog);

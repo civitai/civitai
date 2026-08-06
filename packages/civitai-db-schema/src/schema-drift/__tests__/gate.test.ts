@@ -689,6 +689,106 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     expect(output).toMatch(/redacted-connection-string/);
   });
 
+  // --update-baseline had NO test of any kind: not the write, not the escalation report, not
+  // the previous-baseline read. Two mutants passed the whole suite green — `absorbed = []`,
+  // which makes the entire escalation remedy inert, and reading `previous` AFTER the write
+  // instead of before, which is the single most likely real edit to that block. Both are
+  // killed here. Written against a COPY of the real baseline in a temp dir, so no case can
+  // touch the committed artefact.
+  describe('--update-baseline', () => {
+    let workBaseline: string;
+    let committed: Baseline;
+
+    beforeAll(() => {
+      committed = JSON.parse(readFileSync(join(packageRoot, baselineRelative), 'utf8')) as Baseline;
+    });
+
+    const freshCopy = (entries: Baseline['entries']): string => {
+      const path = join(dir, `baseline-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(path, `${JSON.stringify({ ...committed, entries }, null, 2)}\n`);
+      return path;
+    };
+
+    it('rewrites the baseline and reports what it compared against', async () => {
+      workBaseline = freshCopy(committed.entries);
+      const result = await gate(['--update-baseline', '--baseline', workBaseline]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toMatch(/Wrote 61 accepted finding\(s\)/);
+      // The PAIR, not a bare zero: "0 absorbed" and "nothing was compared" must not be the
+      // same output. This is what makes the escalation report falsifiable.
+      expect(result.stdout).toMatch(/escalations absorbed: 0 \(compared against 61 previous/);
+    });
+
+    it('is byte-idempotent — a no-op refresh rewrites the same file', async () => {
+      const path = freshCopy(committed.entries);
+      const before = readFileSync(path, 'utf8');
+      await gate(['--update-baseline', '--baseline', path]);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+
+    it('REPORTS an escalation it absorbs, reading the previous file BEFORE overwriting it', async () => {
+      // Kills both survivors. `absorbed = []` fails the count and the named line; reading
+      // `previous` after the write makes it identical to the new baseline, so no transition
+      // is visible and the count is 0.
+      const target = committed.entries.find((e) => e.tier === 'enforced');
+      expect(target).toBeDefined();
+      const path = freshCopy(
+        committed.entries.map((e) =>
+          e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' as const } : e
+        )
+      );
+
+      const result = await gate(['--update-baseline', '--baseline', path]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toMatch(/1 finding\(s\) ROSE from pending to enforced/);
+      expect(result.stdout).toContain(`${target?.table}.${target?.columns.join('+')}`);
+      expect(result.stdout).toMatch(/escalations absorbed: 1 /);
+
+      // and the write really happened, with the tier corrected
+      const written = JSON.parse(readFileSync(path, 'utf8')) as Baseline;
+      expect(written.entries.find((e) => e.fingerprint === target?.fingerprint)?.tier).toBe(
+        'enforced'
+      );
+    });
+
+    it('says it SKIPPED the comparison when the previous baseline is unusable', async () => {
+      // Valid JSON, wrong shape — a truncated write or a bad merge resolution. This used to
+      // throw `Cannot read properties of undefined (reading 'map')` and exit 2 AFTER the new
+      // baseline had already been written: a refresh reporting failure having succeeded.
+      const path = join(dir, 'malformed-baseline.json');
+      writeFileSync(path, '{}');
+      const result = await gate(['--update-baseline', '--baseline', path]);
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toMatch(/Escalation check SKIPPED/);
+      expect(result.stdout).toMatch(/not "no escalations found"/);
+      expect(result.stderr).not.toMatch(/Cannot read properties/);
+      // the refresh still completed
+      expect((JSON.parse(readFileSync(path, 'utf8')) as Baseline).entries).toHaveLength(61);
+    });
+
+    it('says it SKIPPED when there was no previous baseline at all', async () => {
+      const path = join(dir, 'does-not-exist-yet.json');
+      const result = await gate(['--update-baseline', '--baseline', path]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toMatch(/Escalation check SKIPPED: no previous baseline existed/);
+    });
+
+    it('prints the snapshot age, which is the command run right after a recapture', async () => {
+      const path = freshCopy(committed.entries);
+      const result = await gate(['--update-baseline', '--baseline', path]);
+      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-08-03 \(\d+ day\(s\) old\)/);
+    });
+  });
+
+  it('names BOTH kinds in the pending-tier guidance, since a recapture treats them differently', async () => {
+    // Prose, but load-bearing prose: it is what someone reads at the moment they decide to
+    // accept a pending finding, and it was wrong for missing-foreign-key until round 2.
+    const result = await gate(['--schema', pendingSchema]);
+    expect(result.stdout).toMatch(/missing-column\s+the column arrives, and the finding goes away/);
+    expect(result.stdout).toMatch(/missing-foreign-key.*becomes ENFORCED/s);
+  });
+
   it('prints usage on --help and exits 0', async () => {
     const result = await gate(['--help']);
     expect(result.code).toBe(0);

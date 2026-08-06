@@ -164,14 +164,37 @@ function main(): number {
   if (options.updateBaseline) {
     const baseline = buildBaseline(report, catalog, catalogRelative);
 
-    // Read the OUTGOING baseline before overwriting it, so a refresh can report what it is
-    // about to absorb. Best-effort: a first-ever run has nothing to compare against.
+    // Read AND VALIDATE the outgoing baseline BEFORE overwriting it, so a refresh can report
+    // what it is about to absorb.
+    //
+    // Validated, not merely parsed: a file that is valid JSON but the wrong shape (`{}` is
+    // the realistic case — a truncated write, a bad merge resolution) used to reach
+    // `absorbedEscalations` and throw `Cannot read properties of undefined (reading 'map')`
+    // AFTER the new baseline had already been written. That is the worst combination
+    // available: a stack-shaped message, exit 2, and the write it claims to have failed
+    // already on disk.
+    //
+    // `note` is why there is nothing to compare against, and it is printed. Otherwise
+    // "0 escalations absorbed" and "could not read the previous baseline" are byte-identical
+    // output — a reassuring zero indistinguishable from a probe wired to nothing, which is
+    // the exact failure `assertMeasuredSomething` and the `matched of N` pair exist to
+    // prevent everywhere else in this tool.
     let previous: Baseline | null = null;
-    if (existsSync(baselinePath)) {
+    let previousNote: string | null = null;
+    if (!existsSync(baselinePath)) {
+      previousNote = 'no previous baseline existed, so nothing could be compared';
+    } else {
       try {
-        previous = JSON.parse(readFileSync(baselinePath, 'utf8')) as Baseline;
+        const parsed = JSON.parse(readFileSync(baselinePath, 'utf8')) as Partial<Baseline>;
+        if (!Array.isArray(parsed.entries)) {
+          previousNote =
+            'the previous baseline is valid JSON but has no `entries` array, so no ' +
+            'escalation comparison was possible';
+        } else {
+          previous = parsed as Baseline;
+        }
       } catch {
-        previous = null;
+        previousNote = 'the previous baseline could not be parsed, so nothing was compared';
       }
     }
 
@@ -191,6 +214,19 @@ function main(): number {
     // finding can turn enforceable. Absorbing that silently would let the one case the
     // escalation guard exists for disappear into a routine regeneration.
     const absorbed = previous ? absorbedEscalations(previous, baseline) : [];
+    if (previousNote) {
+      process.stdout.write(
+        `\n  Escalation check SKIPPED: ${previousNote}.\n` +
+          '  This is not "no escalations found" — nothing was compared.\n'
+      );
+    } else {
+      process.stdout.write(
+        `  escalations absorbed: ${absorbed.length} (compared against ` +
+          `${previous?.entries.length ?? 0} previous entr${
+            previous?.entries.length === 1 ? 'y' : 'ies'
+          })\n`
+      );
+    }
     if (absorbed.length > 0) {
       process.stdout.write(
         `\n  ${absorbed.length} finding(s) ROSE from pending to enforced in this refresh.\n` +
