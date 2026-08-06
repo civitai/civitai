@@ -74,9 +74,11 @@
 // Today nothing changes these three values for a MOUNTED block:
 //   - `renderMode` is a per-install constant (`'iframe'` at every iframe call
 //     site) and cannot change without a remount;
-//   - `theme` CAN change (the viewer toggles dark mode) but the host has never
-//     propagated that to a live block — `BLOCK_INIT` is deduped by the SDK, so
-//     a later theme value never reaches it;
+//   - `theme` CAN change (the viewer toggles dark mode), and the host DOES now
+//     propagate it — over the `THEME_CHANGE` postMessage push, NOT through this
+//     fragment (`BLOCK_INIT` is deduped by the SDK, and re-writing the fragment
+//     would navigate a third-party frame; see `useBlockIframeSrc`'s freeze).
+//     Nothing here changes for a mounted block;
 //   - `blockInstanceId` is immutable per mount.
 // So the hosts FREEZE the fragment at mount (see `useBlockIframeSrc.ts`) and
 // the observable behaviour of a running block is unchanged by this module. The

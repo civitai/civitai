@@ -6315,26 +6315,62 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
     });
 
-    // 🔴 INVERTED, NOT DELETED — see `inline-comfy.service.test.ts`. The kill
-    // switch is on, so a nodepack must now reach the orchestrator INTACT. That
-    // last word is the point: it is not enough that the submit succeeds, the
-    // URN has to actually arrive in the step input the worker reads. A flip that
-    // stopped rejecting but silently dropped the URN would look identical from
-    // the caller's side and fail only at ComfyUI load time.
-    it('🔴 a nodepack URN now reaches the orchestrator INTACT in the step input', async () => {
+    // 🔴 INVERTED, NOT DELETED — see `inline-comfy.service.test.ts`. This case has
+    // now been pointed both ways: it asserted REJECT while the kill switch was
+    // off, ACCEPT while #3663 had it on, and REJECT again now that #3663 is
+    // reverted. Keeping one case that flips with the constant, rather than
+    // deleting and re-adding coverage, is what makes the flag a genuine one-line
+    // switch in both directions.
+    //
+    // 🔴 THE REVERT'S REASON IS THAT THE FLAG GRANTS THE WRONG SPELLING, NOT A
+    // SAFETY POSTURE — AND THAT IS WHY THIS IS A ROUTER TEST AND NOT ONLY A
+    // SERVICE TEST. Measured live against production: a bare `comfy:nodepack`
+    // AIR passes civitai's allowlist and is then 400'd by the ORCHESTRATOR,
+    // which prescribes `comfy:nodepacklayer`. Letting the submit through bought
+    // nothing except a worse error one round-trip later. What this case pins is
+    // that the refusal happens HERE, before any orchestrator call:
+    // `mockSubmitWorkflow` must not be reached at all.
+    it('🔴 a nodepack URN is REJECTED at the router, and never reaches the orchestrator', async () => {
       const NODEPACK = 'urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0';
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyInline();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: inlineBody({ resources: [NODEPACK] }),
-      });
-      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
-      const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
-      expect(input.resources).toEqual([NODEPACK]);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({ resources: [NODEPACK] }),
+        })
+      ).rejects.toThrow(/nodepack resources are not permitted/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('🔴 an OCI container-image AIR is STILL rejected at the router — the flip is nodepack-only', async () => {
+    it('🔴 …and so is the LAYER spelling the orchestrator prescribes — one voice, not a circle', async () => {
+      // 🔴 THIS REFUSAL IS CIVITAI'S ALONE — the orchestrator ACCEPTS the layer
+      // AIR. Before the revert a developer who followed the orchestrator's
+      // advice landed on the type allowlist's generic `resource AIR type
+      // 'nodepacklayer' is not permitted` and had no way to tell whose gate that
+      // was. Both spellings now take the same informative guard, which says
+      // which side refuses which; this asserts it end-to-end through the router
+      // rather than only at the service. When the layer form is eventually
+      // allowlisted, THIS is the case that should go red and be inverted.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: inlineBody({
+            resources: ['urn:air:comfy:nodepacklayer:comfyregistry:comfyui-kjnodes@1.0.0'],
+          }),
+        })
+      ).rejects.toThrow(/nodepack resources are not permitted/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('🔴 an OCI container-image AIR is rejected at the router too — unchanged by the revert', async () => {
+      // The control that keeps the two cases above honest: `image` was never
+      // keyed off the nodepack flag in either direction, so its rejection must
+      // survive the revert unchanged. Asserting the TYPE guard's own token rather
+      // than the shared tail, because the source guard's message ends in the same
+      // words and would otherwise stand in for it.
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyInline();
       await expect(
@@ -6342,7 +6378,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
           blockToken: 'tok',
           body: inlineBody({ resources: ['urn:air:oci:image:ghcr:evil/comfy@v1'] }),
         })
-      ).rejects.toThrow(/is not permitted in an inline workflow/);
+      ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 

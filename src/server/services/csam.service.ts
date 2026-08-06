@@ -761,7 +761,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   } catch (e) {
     console.log(e);
     if (e instanceof Error) {
-      const shouldUpdate = (e.message = 'training data not found');
+      const shouldUpdate = e.message === 'training data not found';
       if (shouldUpdate) {
         await dbWrite.csamReport.update({
           where: { id: report.id },

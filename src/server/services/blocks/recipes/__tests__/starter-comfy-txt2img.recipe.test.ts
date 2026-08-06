@@ -185,19 +185,29 @@ describe('starterComfyTxt2imgRecipe contract', () => {
     expect(starterComfyTxt2imgRecipe.resolveEngine(params('y', 7))).toBe('default');
   });
 
-  it('honors the post-paid ceiling contract: maxBuzz === ceil(stepTimeoutSeconds) === 30', () => {
-    expect(STARTER_BUDGET).toEqual({ stepTimeoutSeconds: 30, maxBuzz: 30 });
+  it('honors the post-paid ceiling contract: maxBuzz === ceil(stepTimeoutSeconds) === 90', () => {
+    expect(STARTER_BUDGET).toEqual({ stepTimeoutSeconds: 90, maxBuzz: 90 });
     expect(STARTER_BUDGET.maxBuzz).toBe(Math.ceil(STARTER_BUDGET.stepTimeoutSeconds));
   });
 
-  it('budgetFor / budgetForEngine both return the ceiling-30 budget', () => {
+  // Regression guard for the cold-start expiry: `stepTimeoutSeconds` is wall-clock for
+  // the WHOLE step (worker spin-up + checkpoint download + sampling), not just the few
+  // seconds a warm turbo gen takes. At 30 this recipe expired on a cold worker, so the
+  // first thing a new App developer runs failed on first use with a bare `expired`.
+  // Floor it well clear of a cold start; raising the ceiling is free because billing
+  // settles to actual GPU-seconds. See STARTER_BUDGET's note for the measurement.
+  it('keeps the ceiling clear of a cold start (must not regress toward the 30s expiry)', () => {
+    expect(STARTER_BUDGET.stepTimeoutSeconds).toBeGreaterThanOrEqual(90);
+  });
+
+  it('budgetFor / budgetForEngine both return the ceiling-90 budget', () => {
     expect(starterComfyTxt2imgRecipe.budgetFor(params('x'))).toEqual({
-      maxBuzz: 30,
-      stepTimeoutSeconds: 30,
+      maxBuzz: 90,
+      stepTimeoutSeconds: 90,
     });
     expect(starterComfyTxt2imgRecipe.budgetForEngine('default')).toEqual({
-      maxBuzz: 30,
-      stepTimeoutSeconds: 30,
+      maxBuzz: 90,
+      stepTimeoutSeconds: 90,
     });
   });
 
