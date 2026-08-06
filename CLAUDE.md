@@ -277,10 +277,31 @@ cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clea
 - Serve images through `EdgeImage`/`EdgeMedia`, not `next/image` — see Image Handling
 
 ### Security
-- Never commit secrets or API keys
-- Use environment variables
-- Sanitize user input with sanitize-html
-- Follow authentication best practices
+
+**This repository is PUBLIC and permanently world-readable — including `docs/`, `claudedocs/`, `.claude/skills/`, and every commit in history. Write all of it for strangers.**
+
+- Never commit secrets or API keys. Use environment variables; keep `.env.example` values placeholder-only.
+- Sanitize user input with sanitize-html.
+- Follow authentication best practices.
+
+#### Do not commit these — they belong in the private infra repo
+
+1. **Unfixed vulnerabilities.** No security review, audit, threat model, or handoff that lists an OPEN finding — especially not with `file:line`. A findings list is a to-do list for an attacker.
+2. **Content-safety internals.** Classifier policy text, thresholds, trigger or carve-out term lists, per-label false-positive rates, documented blind spots. Describing the *architecture* is fine; publishing the *decision rules* is an evasion guide.
+3. **Paths to production.** Bastion hosts, SSH forwards, kubectl contexts, namespaces, deployment names, port-forwards, connection recipes, canary rollback thresholds. Write "ask an infra owner for the connection recipe" instead.
+4. **Private-repo contents.** Names and internal paths of the infra/GitOps/orchestrator/flag-state repos, especially any secret file path.
+5. **Auth posture of internal services.** Never write down that a service has weak or no authentication, or which single header or secret is the only control in front of it.
+6. **People and customers.** Staff names tied to owned systems, internal ticket IDs, private DM or ticket contents, and any named user's earnings, moderation status, or content classification.
+7. **Bulk production data.** Arrays of real user IDs, emails, or account attributes — including inside one-shot `admin/temp` backfill scripts. Load them from a file at runtime; don't inline them.
+8. **Secret inventories annotated with what they unlock.** Variable names alone are fine; "this one is the salt for every API key" is not.
+
+#### Before committing a doc
+
+Ask: *if a stranger read only this file, what could they do that they couldn't before?* If the answer is anything other than "understand the product or contribute code," it goes in the private repo. Write the architecture publicly and the operational specifics privately.
+
+A useful tell: if you are documenting **why** a guard exists and **what it stops**, you are one sentence away from naming the bypass. Say what the control does, not what defeats it.
+
+**Removal is not remediation.** Git history is public and permanent. Anything already committed must be treated as disclosed — fixed and rotated on that assumption, not merely deleted.
 
 ### Before Committing
 1. Run type checking: `pnpm run typecheck`
@@ -333,7 +354,9 @@ Use EdgeImage component for optimized image loading with CDN support.
 
 ## Feature Documentation
 
-Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
+Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists.
+
+Operational runbooks, security reviews, incident handoffs, and content-policy records do **not** live in `docs/` — this repo is public. See the Security section above.
 
 ### Core Systems Reference
 | System | Documentation |

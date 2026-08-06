@@ -217,8 +217,7 @@ The `.env` you're assembling needs these for the OAuth provider (beyond the exis
 > provider surface is dormant in the main app today (id_token signing gated on `maybeCreateSessionSigner()`,
 > JWKS 404s until keys are set), so deferring is safe. **But** the swap-bridge blockers in §I's callout
 > (B1 / B4 / fail-closed-without-Redis) are NOT deferrable — the swap bridge ships now and stays until §I
-> executes, so they must be fixed in the current prod push. See
-> [../auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md).
+> executes, so they must be fixed in the current prod push.
 
 1. **Buzz spend-limit at consent** — recommend fast-follow (ship authorize without it first).
 2. **OIDC always-on** — hub always has keys, so `id_token` issuance is on by default. Confirm intended.
