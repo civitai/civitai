@@ -319,13 +319,20 @@ suite.** The whole `component` project is green at HEAD.
    component's own window and seeing whether the failure disappears.
 3. **Retain CI task logs (or ship the failure summary into the check) long enough to attribute
    a flake.** Two of three failures here were unattributable purely because logs aged out.
-4. **Consider documenting the absorbing-state rule in `CLAUDE.md`** under `### Testing`, which
-   already carries comparable harness lessons. A draft is in Appendix A — **not applied**; that
-   call belongs to the repo owners.
+4. ✅ **DONE — the absorbing-state rule is documented in `CLAUDE.md`** under `### Testing`,
+   alongside the other harness lessons. See Appendix A.
 
 ---
 
-## Appendix A — proposed `CLAUDE.md` addition (NOT applied)
+## Appendix A — the `CLAUDE.md` addition (✅ APPLIED)
+
+**Applied 2026-08-06** to the root `CLAUDE.md`, as the last `####` block of `### Testing`
+(after *Convention guards run as tests*). The applied text is a condensed form of the draft
+below — `CLAUDE.md` is loaded every session, so it carries the imperative, the two fixes, the
+anti-fix, and the ~15 s correction, and links back here for the evidence. The poll interval
+(50 ms) and the 15 s browser-mode `testTimeout` default were re-derived from the installed
+`vitest@4.0.18` before shipping. The draft is retained for the record: it is the source the
+applied wording was cut down from, not a pending proposal.
 
 ````markdown
 #### Never `await` a browser-test state that DELETES ITSELF

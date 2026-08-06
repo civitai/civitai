@@ -29,6 +29,7 @@ import {
 import {
   bulkRemoveBlockedImages,
   queueImageSearchIndexUpdate,
+  dropBlockedImageDeleteQueue,
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import {
@@ -694,6 +695,7 @@ export async function resolveEntityAppeal({
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
             // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
             await resetBlockedNsfwLevel(appeal.entityId);
+            await dropBlockedImageDeleteQueue([appeal.entityId]);
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
             // with handleUnblockImages).
@@ -759,7 +761,6 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
-
   }
 
   // Email each affected user once, listing every item they appealed in this

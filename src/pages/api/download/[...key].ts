@@ -1,17 +1,25 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { dbWrite, dbRead } from '~/server/db/client';
-import requestIp from 'request-ip';
+import { dbRead } from '~/server/db/client';
+import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
-  // Get ip so that we can block exploits we catch
-  const ip = requestIp.getClientIp(req);
-  const blacklist = (
-    ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ?? ''
-  ).split(',');
+  // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+  // (edge-attested or transport peer only) — an enforcement control must not key
+  // on an address the caller supplies. Do not swap this for an inline resolver.
+  //
+  // Operator note before you add an entry to `ip-blacklist`: a request that did
+  // not transit the Cloudflare edge is attributed to the transport peer, so
+  // where that peer is a shared hop, listing its address blocks all such traffic
+  // to every download route at once rather than one abuser. See
+  // `parseIpBlocklist`.
+  const ip = getTrustedClientIp(req);
+  const blacklist = parseIpBlocklist(
+    (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+  );
   if (ip && blacklist.includes(ip)) return res.status(403).json({ error: 'Forbidden' });
 
   const keyParts = req.query.key as string[];

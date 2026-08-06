@@ -1799,6 +1799,7 @@ model Image {
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+  @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
 }
 

@@ -165,3 +165,4 @@ docs/superpowers/
 
 # vitest JSON report written by the Package unit tests CI job
 packages-report.json
+/.opencode

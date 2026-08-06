@@ -96,5 +96,8 @@ export const CREATOR_USAGE_CONTROLS = [
 
 export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
 
+export const GENERATION_ONLY_HINT =
+  'On-site-generation-only resources require a Gold membership.';
+
 export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
   CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

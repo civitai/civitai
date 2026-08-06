@@ -210,6 +210,7 @@ import {
   AppealStatus,
   EntityType,
   ImageIngestionStatus,
+  JobQueueType,
   MediaType,
   NewOrderRankType,
   ReportStatus,
@@ -587,6 +588,7 @@ export async function handleUnblockImages({
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
       resetBlockedNsfwLevel(ids),
+      dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
@@ -763,6 +765,25 @@ export async function resetBlockedNsfwLevel(ids: number | number[]) {
     WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
   `;
   await updateNsfwLevel(ids);
+}
+
+/**
+ * Clears a pending blocked-image purge. `create_job_queue_record` is ON CONFLICT DO NOTHING and
+ * `remove-blocked-images` counts its retention window from the queue row's `createdAt`, so a row
+ * left behind by an unblock makes a later re-block inherit the *original* block's clock — the
+ * image can then be deleted with no retention at all. Call this from anything that takes an image
+ * out of `Blocked` or clears its `blockedFor`.
+ */
+export async function dropBlockedImageDeleteQueue(ids: number[]) {
+  if (!ids.length) return;
+  // ANY over an array rather than IN over a join: callers pass unbounded id lists, and one
+  // bind parameter can't hit Postgres' 65535 parameter ceiling.
+  await dbWrite.$executeRaw`
+    DELETE FROM "JobQueue"
+    WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND "entityType" = ${EntityType.Image}::"EntityType"
+      AND "entityId" = ANY(${ids})
+  `;
 }
 
 export const updateImageReportStatusByReason = ({
@@ -7834,6 +7855,7 @@ export async function getImagesByUserIdForModeration(userId: number) {
   return await dbRead.image.findMany({
     where: { userId },
     select,
+    orderBy: { id: 'desc' },
   });
 }
 

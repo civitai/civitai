@@ -22,6 +22,7 @@ const defaultBenefits = [
   { content: 'Early access to new features' },
   {
     tiers: ['bronze', 'silver', 'gold'], // Not available in supporter / founder.
+    creatorProgram: true,
     content: (
       <Text>
         <Text td="underline" component="a" href="/creator-program" target="_blank">
@@ -32,6 +33,8 @@ const defaultBenefits = [
     ),
   },
   {
+    // Deliberately NOT creatorProgram-gated: the price caps ride on the tier itself, so
+    // Buzz-purchased memberships keep them even though they get no Creator Program.
     tiers: ['bronze', 'silver', 'gold'],
     content: (
       <Text>
@@ -55,6 +58,7 @@ export const PlanBenefitList = ({
   benefits,
   useDefaultBenefits = true,
   defaultBenefitsDisabled,
+  creatorProgramDisabled,
   tier,
   buzzType,
 }: Props) => {
@@ -99,9 +103,11 @@ export const PlanBenefitList = ({
           <Divider />
           <List size="md" center>
             <Stack gap="xs">
-              {defaultBenefits.map(({ content, tiers, subType }, index) => {
+              {defaultBenefits.map(({ content, tiers, subType, creatorProgram }, index) => {
                 const isUnavailable =
-                  defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
+                  defaultBenefitsDisabled ||
+                  (tiers && (!tier || !tiers.includes(tier))) ||
+                  (creatorProgram && creatorProgramDisabled);
 
                 if (subType && buzzType !== subType) return null;
 
@@ -140,6 +146,8 @@ type Props = {
   benefits: BenefitItem[];
   useDefaultBenefits?: boolean;
   defaultBenefitsDisabled?: boolean;
+  /** Crosses out the Creator Program perks regardless of tier — for Buzz-purchased plans. */
+  creatorProgramDisabled?: boolean;
   tier?: string;
   buzzType?: string;
 };
