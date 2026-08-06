@@ -36,16 +36,43 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *
  *   GUARD 2 — the non-moderator entitlement gate for Private / epoch resources
  *     (`if (hasPrivateOrEpoch && !opts.user.isModerator)`).
- *     Cannot currently be exercised in production at all: non-moderators cannot
- *     obtain an App Blocks dev token (`POST /api/v1/blocks/dev-token` answers
- *     "Apps are restricted to the Civitai team"), so the gate built to constrain
- *     untrusted developers is unreachable by one. A test is the only coverage
- *     available, and it keeps its value after that restriction lifts.
+ *
+ *     🔴 THIS IS A LIVE GATE ON A REACHABLE, BUZZ-SPENDING PATH — NOT DEAD CODE.
+ *     An earlier draft of this comment said non-moderators cannot obtain an App
+ *     Blocks dev token, so the gate could never be reached by one. That was
+ *     WRONG, and it was wrong in the direction that invites deleting this file:
+ *     a maintainer reading "unreachable" has every reason to drop the coverage.
+ *
+ *     What the code actually says (`server/services/app-blocks-flag.ts`):
+ *     `isAppBlocksAuthorEnabled` returns true for a moderator floor **OR** a
+ *     per-user Flipt eval of `app-blocks-author`, whose rollout carries a
+ *     curated non-moderator author cohort alongside `moderators`. The mint
+ *     endpoint's own comment at `pages/api/v1/blocks/dev-token.ts` says it
+ *     plainly: "a curated non-mod cohort can mint a dev token for `dev:live`".
+ *     So a non-moderator in that cohort reaches this belt in production today.
+ *
+ *     🔴 AND THE OBSERVATION THAT PRODUCED THE WRONG CLAIM COULD NOT HAVE
+ *     SUPPORTED IT. It was a single account's 403 from that endpoint —
+ *     generalised into a claim about every non-moderator. Worse, that endpoint
+ *     returns the SAME "Apps are restricted to the Civitai team" body from the
+ *     BANNED check and from the author gate (`dev-token.ts`, two adjacent
+ *     branches), so the response cannot even distinguish which one fired, let
+ *     alone establish anything about a population of one. Sampling is not
+ *     enumerating: the authoritative surface is the flag resolver, not one
+ *     account's rejection.
  *
  * 🔴 NOTHING HERE DEPENDS ON `INLINE_NODEPACKS_ENABLED`. Both `comfyregistry`
  * (source) and `nodepack` (type) are keyed off that kill switch, so a fixture
  * naming either would change verdict when the switch flips. Every AIR below uses
  * `lora` — unconditionally allowlisted in both states.
+ *
+ * 🔴 WHAT KIND OF COVERAGE THIS IS, STATED HONESTLY. Both guards are live and
+ * CORRECT today, so every case here is green at the base ref and green at HEAD.
+ * None of it is regression coverage in the strict sense — there is no revision
+ * at which one of these went red. They are MUTATION-KILLED INVARIANT GUARDS:
+ * their worth is the recorded fact that breaking each guard makes a NAMED case
+ * fail for THAT guard's own reason, not a red-to-green transition. The mutation
+ * table lives in the PR description; do not restate it here, where it will rot.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -57,6 +84,7 @@ const MODERATOR = { id: 8181, isModerator: true };
 const PRIVATE_VERSION_ID = 55501;
 const EPOCH_VERSION_ID = 60602;
 const PUBLIC_VERSION_ID = 70703;
+const UPPERCASE_VERSION_ID = 80804;
 
 const PRIVATE_AIR = `urn:air:zeta:lora:civitai:31337@${PRIVATE_VERSION_ID}`;
 const EPOCH_AIR = `urn:air:eta:lora:civitai:31338@${EPOCH_VERSION_ID}`;
@@ -108,8 +136,9 @@ beforeEach(() => {
 describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist', () => {
   // Each of these four names an ALLOWLISTED type (`lora`), so the sibling type
   // guard is structurally unable to fire: the source guard is the only thing
-  // that can reject them. Verified live (as a moderator, against production)
-  // before this file was written — all four were refused with this message.
+  // that can reject them. All four were also confirmed refused with this exact
+  // message against the live endpoint (from a moderator session) — a check on
+  // THESE four tokens, which is all it licenses; see the KNOWN LIMIT below.
   const REJECTED_SOURCES = ['replicate', 'openai', 's3', 'evilhost'] as const;
 
   for (const source of REJECTED_SOURCES) {
@@ -122,14 +151,16 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
       );
 
       expect(code).toBe('BAD_REQUEST');
-      // The source guard's OWN wording, naming the offending token.
+      // The source guard's OWN wording, naming the offending token. The EXACT
+      // equality is what does the work: it is the assertion a loose
+      // `/is not permitted in an inline workflow/` regex would have skipped,
+      // because the sibling `type` guard emits that identical tail two lines
+      // above. (An additional `not.toMatch(/AIR type/)` used to sit here — it
+      // was DEAD: after an exact `toBe` on a fixed string it can never fail
+      // independently. Removed rather than kept as decorative defence.)
       expect(message).toBe(
         `resource AIR source '${source}' is not permitted in an inline workflow`
       );
-      // …and NOT the sibling's. This is the assertion a loose
-      // `/is not permitted in an inline workflow/` regex would have skipped —
-      // the sibling `type` guard emits the identical tail two lines above.
-      expect(message).not.toMatch(/AIR type/);
 
       // Nothing downstream ran: rejection happened during AIR parsing, before
       // the entitlement belt was consulted.
@@ -177,9 +208,62 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
         user: NON_MODERATOR,
       })
     );
+    // Exact equality again — a `not.toMatch(/AIR source/)` after it would be
+    // dead for the same reason as above.
     expect(message).toBe("resource AIR type 'image' is not permitted in an inline workflow");
-    expect(message).not.toMatch(/AIR source/);
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 CASE-FOLDING. `parseInlineAir` lowercases `source` before BOTH the
+  // allowlist test and the `source !== 'civitai'` branch. The service's own doc
+  // calls a case-SENSITIVE comparison here "a direct bypass", so dropping that
+  // `.toLowerCase()` is the highest-value mutation on this guard — and until
+  // these two cases existed, this file did not catch it at all (every fixture
+  // above is already lowercase, so it survived 13/13). Both consequences of the
+  // fold are pinned, because they fail in OPPOSITE directions.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('🔴 CASE-FOLD (reject side) — an UPPERCASE non-allowlisted source is rejected, named LOWERCASED', async () => {
+    // Without the fold this still rejects — but the message names `REPLICATE`.
+    // Asserting the lowercased token is what makes the fold observable here
+    // rather than incidental.
+    const { code, message } = await captureRejection(
+      assertViewerEntitledToInlineResources({
+        airs: ['urn:air:zeta:lora:REPLICATE:kappa/lambda@71'],
+        user: NON_MODERATOR,
+      })
+    );
+    expect(code).toBe('BAD_REQUEST');
+    expect(message).toBe("resource AIR source 'replicate' is not permitted in an inline workflow");
+  });
+
+  it('🔴 CASE-FOLD (bypass side) — an UPPERCASE `CIVITAI` source still enters the entitlement belt', async () => {
+    // THE ACTUAL BYPASS. A case-sensitive `source !== 'civitai'` sends this down
+    // the non-civitai branch and returns BEFORE any entitlement check — a gated
+    // resource waved through by spelling. Asserting the belt was CALLED (not
+    // merely that this resolves) is what distinguishes "gated and allowed" from
+    // "never gated".
+    mockGetResourceData.mockResolvedValue([row({ id: UPPERCASE_VERSION_ID })]);
+    await expect(
+      assertViewerEntitledToInlineResources({
+        airs: [`urn:air:zeta:lora:CIVITAI:31340@${UPPERCASE_VERSION_ID}`],
+        user: NON_MODERATOR,
+      })
+    ).resolves.toBeUndefined();
+    expect(mockGetResourceData).toHaveBeenCalledWith([UPPERCASE_VERSION_ID], expect.anything());
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 KNOWN LIMIT — READ THIS BEFORE CONCLUDING "the source allowlist is
+  // covered". The four cases above are a REJECTION sample, not a membership
+  // pin. They catch a widening only if it happens to collide with one of the
+  // four tokens they name: adding an UNFIXTURED token (say `evil-cdn`) to
+  // `INLINE_ALLOWED_AIR_SOURCES` leaves this file green at full count, and the
+  // sibling suite green too. The complementary assertion — pinning the SET's
+  // exact membership, so any addition or removal goes red — is deliberately not
+  // duplicated here (it lands in the follow-up PR that owns it); until that
+  // merges, treat this file as pinning "these four are refused, with this
+  // wording", nothing wider.
+  // ───────────────────────────────────────────────────────────────────────────
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
