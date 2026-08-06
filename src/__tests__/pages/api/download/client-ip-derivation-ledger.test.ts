@@ -274,6 +274,34 @@ function headerDestructuringPatterns(source: string): string[] {
   return out;
 }
 
+/**
+ * The first-argument object literal of every `run(` call in a behavioural suite
+ * — i.e. the header bag each test puts on the wire.
+ *
+ * Brace-balanced, so a nested object inside the bag does not truncate it. Used
+ * to count REAL fixtures rather than match test titles: a title is prose and a
+ * comment can spell it without any test existing.
+ */
+function requestHeaderBags(source: string): string[] {
+  const out: string[] = [];
+  const opener = /\brun\s*\(\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = opener.exec(source))) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    while (i < source.length && depth > 0) {
+      const c = source[i];
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      if (depth > 0) i++;
+    }
+    out.push(source.slice(start, i));
+    opener.lastIndex = i;
+  }
+  return out;
+}
+
 const SUPPORTED_ROUTE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
 function walk(dir: string): string[] {
@@ -519,6 +547,35 @@ describe('download endpoints — client-IP derivation ledger', () => {
     expect(headerDestructuringPatterns(`const { url } = req.query;`)).toEqual([]);
   });
 
+  it('CONTROL: the fixture extractor counts request bags, not prose', () => {
+    // POSITIVE: a real unpaired fixture is captured, with its bag intact.
+    const real = `run({ 'cf-connecting-ip': SUPPLIED }, BLOCKED);`;
+    expect(requestHeaderBags(real)).toEqual([` 'cf-connecting-ip': SUPPLIED `]);
+
+    // A paired fixture is captured too — the filter, not the extractor, is what
+    // separates them.
+    const paired = `run({ 'cf-ray': CF_RAY, 'cf-connecting-ip': BLOCKED });`;
+    const bags = requestHeaderBags(paired);
+    expect(bags).toHaveLength(1);
+    expect(bags[0].includes('cf-ray')).toBe(true);
+
+    // A nested object must not truncate the bag at the first `}`.
+    expect(requestHeaderBags(`run({ a: { b: 1 }, 'cf-connecting-ip': X });`)[0]).toContain(
+      'cf-connecting-ip'
+    );
+
+    // 🔴 NEGATIVE: prose describing the fixture must NOT count as one. This is
+    // the hole the title-matching form of this check had.
+    const prose = stripComments(
+      `// it('cf-connecting-ip WITHOUT cf-ray is not trusted', …)\n` +
+        `/* run({ 'cf-connecting-ip': X }, Y) */\n`
+    );
+    expect(requestHeaderBags(prose)).toEqual([]);
+
+    // A `run(` with no object literal is not a header bag.
+    expect(requestHeaderBags('run(headers, peer);')).toEqual([]);
+  });
+
   it('CONTROL: the dot-access detector covers the one identifier-safe name', () => {
     expect(SENSITIVE_HEADER_DOT_ACCESS.test('const f = req.headers.forwarded;')).toBe(true);
     expect(SENSITIVE_HEADER_DOT_ACCESS.test('const f = req.headers?.forwarded;')).toBe(true);
@@ -692,16 +749,27 @@ describe('download endpoints — client-IP derivation ledger', () => {
     for (const [route, suite] of Object.entries(SUITES)) {
       const suitePath = path.join(__dirname, suite);
       expect(fs.existsSync(suitePath), `${route} has no behavioural suite at ${suite}`).toBe(true);
-      const source = fs.readFileSync(suitePath, 'utf8');
-      // The discriminating fixture: cf-connecting-ip present, cf-ray absent.
+      const source = stripComments(fs.readFileSync(suitePath, 'utf8'));
+
+      // 🔴 THE FIXTURE, NOT THE PROSE. An earlier form of this check matched the
+      // test TITLES, which a comment can spell without any test existing. This
+      // counts real `run({ … })` header bags that carry `cf-connecting-ip` and
+      // NOT `cf-ray` — the only input on which the trusted predicate and the
+      // looser one disagree. Comments are stripped first, so a docblock
+      // describing the fixture cannot stand in for one.
+      const unpaired = requestHeaderBags(source).filter(
+        (bag) => bag.includes('cf-connecting-ip') && !bag.includes('cf-ray')
+      );
       expect(
-        /cf-connecting-ip.*WITHOUT.*cf-ray/is.test(source),
-        `${suite} does not exercise cf-connecting-ip WITHOUT cf-ray — that is the only input on ` +
-          `which the trusted predicate and the looser one disagree, so without it the suite ` +
-          `cannot tell which derivation ${route} used`
-      ).toBe(true);
-      // Both directions. A block that cannot be evaded is half the contract;
-      // an innocent caller who cannot be blocked into it is the other half.
+        unpaired.length,
+        `${suite} builds ${unpaired.length} request(s) with cf-connecting-ip and no cf-ray. ` +
+          `Two are required — a listed caller who must not evade the block, and an unlisted ` +
+          `caller who must not be blocked into it. Without them the suite cannot tell which ` +
+          `derivation ${route} used: every paired-header fixture agrees under both.`
+      ).toBeGreaterThanOrEqual(2);
+
+      // Both directions, by name as well — a weaker check than the fixture count
+      // above, kept only because it names WHICH direction is missing.
       expect(
         /cannot spoof past the block/i.test(source),
         `${suite} is missing the evasion direction for ${route}`
