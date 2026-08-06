@@ -6,7 +6,7 @@ import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
 import { env } from '~/env/server';
-import { isMarkedServerFault } from '~/server/logging/server-fault-override';
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
@@ -25,7 +25,7 @@ export { safeError };
  * non-TRPCError thrown value — is treated as a SERVER fault worth an error log.
  *
  * A code in this set can still be forced to SERVER severity for one specific error
- * via `markServerFault` — see `classifyErrorFault` and `server-fault-override.ts`.
+ * via `escalateToServerFault` — see `classifyErrorFault` and `server-fault-override.ts`.
  */
 const CLIENT_FAULT_TRPC_CODES: ReadonlySet<TRPC_ERROR_CODE_KEY> = new Set([
   'BAD_REQUEST',
@@ -42,14 +42,14 @@ const CLIENT_FAULT_TRPC_CODES: ReadonlySet<TRPC_ERROR_CODE_KEY> = new Set([
  * fault (a real failure worth an error log). A non-TRPCError is always a server
  * fault — there was no deliberate validation rejection, so the cause is unknown.
  *
- * The explicit `markServerFault` override is checked FIRST, so a failure that is a
+ * The explicit `escalateToServerFault` override is checked FIRST, so a failure that is a
  * 4xx to the caller but a server-side fault in origin (an unusable response from an
  * upstream dependency) is logged at error severity without changing the HTTP status
  * the caller receives. Ordinary rejections are untouched: only errors a thrower has
  * deliberately marked take this branch.
  */
 export function classifyErrorFault(e: unknown): 'client' | 'server' {
-  if (isMarkedServerFault(e)) return 'server';
+  if (isEscalatedServerFault(e)) return 'server';
   if (e instanceof TRPCError && CLIENT_FAULT_TRPC_CODES.has(e.code)) return 'client';
   return 'server';
 }

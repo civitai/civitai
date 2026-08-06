@@ -198,6 +198,37 @@ describe('call-site ledger — every verifyCaptchaToken caller supplies meta', (
     .filter((rel) => rel !== 'server/recaptcha/client.ts')
     .sort();
 
+  /**
+   * Does this call's argument object supply `name` with a real value?
+   *
+   * Matches at a PROPERTY position (`{` or `,` immediately before the key) in either
+   * of the two ways the argument can legally be written:
+   *
+   *   - `name: <value>`, with a negative lookahead on `undefined` — a bare
+   *     `/\bmeta\s*:/` is satisfied by `meta: undefined`, which passes nothing and
+   *     defeats the whole ledger.
+   *   - the ES6 SHORTHAND `{ token, ip, meta }` — the same argument written
+   *     differently. The previous form required a literal `:` and so would have
+   *     FALSE-FAILED a future call site that used shorthand, which is a gate going red
+   *     on correct code: the fastest way to teach everyone to delete the gate.
+   *
+   * KNOWN LIMITATION — this is a regex over source text, not a parse:
+   *
+   *   - A key of the same name nested one level down (`meta: { source, ip }`) satisfies
+   *     the check for `ip`. Anchoring to a property position removes the `ctx.ip`
+   *     value-side false match but cannot see nesting depth.
+   *   - Spread-supplied arguments (`verifyCaptchaToken({ ...args })`) are invisible to
+   *     it entirely.
+   *
+   * Both are acceptable because this ledger is the SECOND guard, not the only one: the
+   * behavioural tests above drive the real handlers and assert the values that actually
+   * reach `verifyCaptchaToken`. The ledger exists solely to catch a NEW call site that
+   * those tests structurally cannot see. If it ever needs to be exact, replace it with
+   * a TypeScript AST walk rather than a longer regex.
+   */
+  const supplies = (name: string) =>
+    new RegExp(`[{,]\\s*${name}\\b\\s*(?::\\s*(?!undefined\\b)\\S|[,}])`);
+
   it('finds exactly the known call sites (positive control on the scan)', () => {
     // Positive control: if the scan matched nothing, the per-site assertion below
     // would iterate an empty array and pass — a zero indistinguishable from a
@@ -225,14 +256,36 @@ describe('call-site ledger — every verifyCaptchaToken caller supplies meta', (
 
     expect(invocations.length).toBeGreaterThan(0);
     for (const args of invocations) {
-      // The negative lookahead matters: a bare `/\bmeta\s*:/` is satisfied by
-      // `meta: undefined`, which passes nothing and defeats the whole ledger.
-      expect(args, `a verifyCaptchaToken call in ${rel} omits meta`).toMatch(
-        /\bmeta\s*:\s*(?!undefined\b)\S/
-      );
-      expect(args, `a verifyCaptchaToken call in ${rel} omits ip`).toMatch(
-        /\bip\s*:\s*(?!undefined\b)\S/
-      );
+      expect(args, `a verifyCaptchaToken call in ${rel} omits meta`).toMatch(supplies('meta'));
+      expect(args, `a verifyCaptchaToken call in ${rel} omits ip`).toMatch(supplies('ip'));
     }
+  });
+
+  /**
+   * The matcher is the ledger's whole verdict, so it gets its own cases rather than
+   * being trusted because the three current call sites happen to pass it. Both
+   * directions are represented: a matcher that always returned `true` would pass the
+   * ledger above forever, and one that always returned `false` would look like a
+   * real finding.
+   */
+  describe('the supplies() matcher', () => {
+    it.each([
+      ['{ token, ip, meta }', 'ip', 'shorthand, mid-object'],
+      ['{ token, ip, meta }', 'meta', 'shorthand, last key'],
+      ['{ token, meta, ip }', 'ip', 'shorthand, last key with no trailing comma'],
+      ['{ token: t, secret: s, ip: ctx.ip, meta: { a: 1 } }', 'ip', 'explicit value'],
+      ['{ token: t, ip: ctx.ip, meta: { source: "x", userId: 1 } }', 'meta', 'object value'],
+    ])('accepts %s for `%s` (%s)', (src, name) => {
+      expect(src).toMatch(supplies(name));
+    });
+
+    it.each([
+      ['{ token: t, meta: undefined, ip: ctx.ip }', 'meta', 'explicit undefined'],
+      ['{ token: t, ip: undefined }', 'ip', 'explicit undefined'],
+      ['{ token: t }', 'meta', 'key absent entirely'],
+      ['{ token: t, remoteip: ctx.ip }', 'ip', 'a longer key merely ENDING in the name'],
+    ])('rejects %s for `%s` (%s)', (src, name) => {
+      expect(src).not.toMatch(supplies(name));
+    });
   });
 });

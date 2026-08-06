@@ -6,7 +6,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
-import { markServerFault } from '~/server/logging/server-fault-override';
+import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 // Taken from package as they don't export it :shrug:
@@ -132,7 +132,10 @@ export async function createRecaptchaAssesment({
  * way, but would silently change what the non-prod `console.log` branch prints.
  */
 type SiteVerifyResponse = z.infer<typeof siteVerifyResponseSchema>;
-const siteVerifyResponseSchema = z.looseObject({
+// Exported ONLY so the suite can enumerate `.shape` and enforce the tolerance rule
+// above on every field — including fields that do not exist yet. A per-field test
+// cannot see a field added tomorrow; iterating the shape can. Nothing else imports it.
+export const siteVerifyResponseSchema = z.looseObject({
   success: z.boolean(),
   challenge_ts: z.string().optional().catch(undefined),
   hostname: z.string().optional().catch(undefined),
@@ -152,26 +155,37 @@ const siteVerifyResponseSchema = z.looseObject({
  * we fail closed, and keeping the status means no caller has a new failure class to
  * handle. But the ORIGIN of the fault is ours-and-upstream's, not the caller's — the
  * user submitted a perfectly good token and can do nothing differently. So the error is
- * marked a SERVER fault, which flips only the LOG SEVERITY (`type:'error'`) at the
+ * escalated to a SERVER fault, which flips only the LOG SEVERITY (`type:'error'`) at the
  * central tRPC chokepoint, putting it in the `detected_level="error"` stream operators
  * actually watch.
  *
- * That asymmetry is the whole point, and it is deliberately NOT applied to a genuine
- * failed verification (`success:false`) further down: that one really is client-side
- * feedback — a stale, replayed or forged token — and must stay `type:'info'` or it
- * would drown the error stream in routine rejections.
+ * That asymmetry is deliberately NOT applied to a genuine failed verification
+ * (`success:false`) further down. Be precise about what it does and does not change,
+ * because there are TWO log lines per failure and the marking governs only one of them:
+ *
+ *   - The `captcha-failure` line this module emits directly is hardcoded `type:'error'`
+ *     on EVERY failure path, genuine rejections included (see the log at the end of
+ *     `verifyCaptchaToken`). Marking changes nothing about it.
+ *   - The CENTRAL line the tRPC chokepoint emits derives its severity from
+ *     `classifyErrorFault`. That is the only line marking moves.
+ *
+ * So leaving a genuine rejection unmarked is not about keeping it out of the error
+ * stream — it is already there on the line above. It is about the central line
+ * continuing to say what it is: a caller-side outcome, not a fault of ours. Marking it
+ * would make the chokepoint attribute a routine rejection to the server, and the
+ * chokepoint's severity is exactly the signal used to tell those two apart.
  *
  * NOTE: this keeps the 400, so `civitai_app_http_errors_total` still does not count it
  * (that counter is 5xx-only by construction). The error stream is the compensating
- * signal; an alert on a sustained `captcha-failure` rate is the other half and has to
- * be added outside this repo.
+ * signal, and a sustained rise in error-level lines is already alerted on by signature —
+ * getting these lines INTO that stream is exactly what this severity fix buys.
  *
  * Built with `new TRPCError` rather than `throwBadRequestError` because that helper
  * THROWS instead of returning, so its result cannot be marked before it propagates.
  * The constructed error is otherwise identical to what the helper produces.
  */
 function upstreamFaultError(message: string): TRPCError {
-  return markServerFault(new TRPCError({ code: 'BAD_REQUEST', message }));
+  return escalateToServerFault(new TRPCError({ code: 'BAD_REQUEST', message }));
 }
 
 type CaptchaMeta = {
@@ -220,7 +234,8 @@ export async function verifyCaptchaToken({
           tokenPrefix,
           verifyLatencyMs,
           cfRay,
-          // CLIENT-SUPPLIED AND UNVERIFIED — see the note at the failure log below.
+          // Client-supplied and unverified. Never treat this as forensic evidence,
+          // and never use it to block, rate-limit, or attribute.
           clientReportedIp: ip,
           meta,
         },
@@ -254,7 +269,8 @@ export async function verifyCaptchaToken({
           tokenPrefix,
           verifyLatencyMs,
           cfRay,
-          // CLIENT-SUPPLIED AND UNVERIFIED — see the note at the failure log below.
+          // Client-supplied and unverified. Never treat this as forensic evidence,
+          // and never use it to block, rate-limit, or attribute.
           clientReportedIp: ip,
           meta,
         },
@@ -307,16 +323,8 @@ export async function verifyCaptchaToken({
         tokenPrefix,
         verifyLatencyMs,
         cfRay,
-        // 🔴 CLIENT-SUPPLIED AND UNVERIFIED. This is `requestIp.getClientIp`, which
-        // reads `x-forwarded-for` BEFORE the edge-stamped header, so a caller can
-        // choose what appears here. It is validated as an IP (so it cannot pollute
-        // the log sink) but it does NOT identify the caller and must never be read
-        // as forensic evidence — do not block, rate-limit or attribute abuse on it.
-        // The field name carries the caveat so a dashboard cannot present it as fact.
-        //
-        // Recorded on FAILURE only. The success path (including its 1% sample above)
-        // deliberately omits it: a per-request address on every successful
-        // verification is PII volume for no diagnostic gain.
+        // Client-supplied and unverified. Never treat this as forensic evidence, and
+        // never use it to block, rate-limit, or attribute.
         clientReportedIp: ip,
         meta,
       },
