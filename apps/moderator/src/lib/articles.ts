@@ -28,4 +28,3 @@ export type ArticleMetadata = {
 } | null;
 
 export const articleUrl = (base: string, id: number) => `${base}/articles/${id}`;
-export const userUrl = (base: string, username: string) => `${base}/user/${username}`;

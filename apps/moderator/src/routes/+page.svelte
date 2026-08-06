@@ -11,6 +11,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { entityUrl } from '$lib/entity-url';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import type { PageData } from './$types';
 
@@ -42,17 +43,7 @@
     }
   });
 
-  const ENTITY_PATH: Record<string, string> = {
-    image: 'images',
-    model: 'models',
-    post: 'posts',
-    article: 'articles',
-  };
-
-  const contentUrl = (row: Reported) =>
-    row.entityId && ENTITY_PATH[row.entity]
-      ? `${data.civitaiUrl}/${ENTITY_PATH[row.entity]}/${row.entityId}`
-      : null;
+  const contentUrl = (row: Reported) => entityUrl(data.civitaiUrl, row.entity, row.entityId);
 
   const age = (iso: string) => {
     const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000);

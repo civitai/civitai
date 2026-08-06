@@ -19,7 +19,8 @@
     PaginationPrevious,
   } from '@civitai/ui/components/ui/pagination/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { articleUrl, userUrl } from '$lib/articles';
+  import { articleUrl } from '$lib/articles';
+  import { userUrl } from '$lib/entity-url';
   import {
     ratingReviewStatusFilters,
     ratingReviewStatusBadge,

@@ -22,8 +22,8 @@
     articleStatusBadge,
     humanizeUnpublishReason,
     articleUrl,
-    userUrl,
   } from '$lib/articles';
+  import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();

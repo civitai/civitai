@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { entityUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from './format';
 
   export type ModActivityRow = {
@@ -28,16 +29,7 @@
       : null
   );
 
-  const ENTITY_PATH: Record<string, string> = {
-    image: 'images',
-    model: 'models',
-    article: 'articles',
-  };
-
-  const entityUrl = (row: ModActivityRow) =>
-    row.entityId && ENTITY_PATH[row.entityType]
-      ? `${civitaiUrl}/${ENTITY_PATH[row.entityType]}/${row.entityId}`
-      : null;
+  const rowUrl = (row: ModActivityRow) => entityUrl(civitaiUrl, row.entityType, row.entityId);
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -55,7 +47,7 @@
     {:else}
       <ul class="space-y-1.5 text-sm">
         {#each expanded ? rows : rows.slice(0, COLLAPSED) as row (row.id)}
-          {@const url = entityUrl(row)}
+          {@const url = rowUrl(row)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-dark-2">{dateTime(row.createdAt)}</span>
             <Badge variant="secondary">{row.activity}</Badge>

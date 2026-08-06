@@ -122,6 +122,10 @@ states only. `text-dark-0` for primary values, `text-white` for headings.
 Reuse the shapes already on the page rather than inventing spacing: panels are
 `rounded-xl border border-dark-4 bg-dark-6 p-5`, links are `LINK_CLASS`.
 
+**Don't add `cursor-pointer` to a button.** Tailwind v4's preflight drops the pointer cursor from
+`<button>`; `@civitai/ui`'s `theme.css` puts it back for every button, `[role="button"]` and `summary`
+(and `not-allowed` when disabled). Per-element overrides just diverge from it.
+
 ## Component placement
 
 - **Page-level components are siblings of `+page.svelte`**, in the route directory

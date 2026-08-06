@@ -10,7 +10,7 @@ left worth porting) · `dropped` (agreed not to port)
 
 | App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
-| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — every export-derived slice built (unverified in a browser); 8 items from the ticket wishlist unbuilt |
+| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — every export-derived slice built (unverified in a browser); 4 of 8 ticket-wishlist items now built, 4 left |
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
@@ -107,6 +107,15 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       the time (30M of 31.5M logins), so filtering on it silently returns nothing. The main app's
       `csam.service.ts` has this wrong and is worth a look.
       `PotentialSpammer` (v1) not ported — V2 supersedes it.
+> **Reviewed 2026-08-06** by the three `moderator-review` agents, after the slice had already shipped and
+> passed an ad-hoc review. It found that **muting did not work**: session revocation landed but nothing
+> busted `session:data2`, which caches `muted` for 4h and which the hub's login path reads cache-first —
+> so a muted user logged back in and kept posting. Also: the ban reason code was free text against an
+> endpoint that parses a strict enum (any typed reason = 500 and no ban); no destructive submit had an
+> in-flight guard, and because the ban endpoint toggles, a double-click unbanned; timed mutes logged as
+> plain `mute`/`unmute`; and unmute/revoke could leave the account and the moderator database disagreeing.
+> Run the review on a slice even when it has already shipped.
+
 - [x] **Account actions** — `BANAPI`, `UNBANAPI`, `ToggleMute`, force logout.
       `user-actions.service.ts`, gated on `/users` (investigating an account and acting on it are
       different permissions), with confirmation on ban.
@@ -145,10 +154,11 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       rather than erroring, so a missing key never blocks a lookup. Documented in `.env.example`; this
       is the one piece that has not been exercised against the real service.
 
-### Asked for in the ticket, not built
+### Asked for in the ticket
 
 The slices above were scoped from the Retool export. `868kn6x1b`'s description is a **wishlist**, and it
-asks for eight things the export-driven slices never covered. None are blocked — they are unbuilt.
+asked for eight things the export-driven slices never covered. Four are now built (profile & reputation
+slice); the four left are unbuilt rather than blocked.
 
 - [ ] **LoRA trainings** — `ModelVersionsAllTraining` etc. The largest omission: training status, base
       model, epoch progress, workflow/job id and the Buzz transaction per training run. Roughly a panel
@@ -156,15 +166,44 @@ asks for eight things the export-driven slices never covered. None are blocked �
 - [ ] **Buzz history** — `Receipts` / `Payments` (ClickHouse) plus `ReceiptsUsers` / `PaymentsUsers` to
       name the counterparties. Only the *balance* is shipped. "Add / subtract buzz" the ticket itself
       flags as probably a separate app — leave it there.
-- [ ] **Reactions** — `ReactionsGrouped`, `ReactionsAll` over `ImageReaction`. Straight read.
-- [ ] **Civitai score** — `SocialScore`, from `User.meta->scores` (total / users / images / models /
-      articles / reportsAgainst / reportsActioned). Cheap, and it belongs in `ReputationPanel`.
-- [ ] **Bio, profile message and location** — `UserBio` over `UserProfile`. Read is trivial; the ticket
-      also wants **edit**, which is `/api/mod/retool/user` and carries the same API-key blocker as
-      `UpdateUserDeets`.
-- [ ] **Socials** — `AccountSocialQuery` (`UserLink`), and the cross-user matching (`UsersWithSocials`,
-      `DistinctUsersWithSocialLinks`) that is a ban-evasion signal in the same class as shared IPs.
-      Belongs beside Security signals, not in the profile.
+- [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", in
+      `/api/user-account`. The concentration is the signal; a normal account spreads reactions over
+      hundreds of creators.
+      **`UserStat.reactionCountAllTime` is NOT this number** — it counts reactions *received*
+      (measured: 51,775 received against 312 given on the same account). The total comes from a
+      `sum(count(*)) over ()` window instead, which totals every group before `LIMIT` trims them.
+      `ImageReaction` is 744M rows but indexed on `userId`: ~47ms at 49K reactions, ~605ms for the
+      heaviest account on the site (6M). Off the page load for that reason.
+      `ReactionsAll` (every raw reaction row) not ported — unbounded, and the grouped view answers
+      what the raw rows were being scanned for.
+- [x] **Civitai score** — `SocialScore`, in the page load, rendered in `ReputationPanel`.
+      **The `meta->scores` keys are sparse**: ~49% of users have no scores object at all, and most
+      that do carry only `total` plus one component. A missing key is "not scored", not zero, so
+      absent components are omitted rather than rendered as 0.
+      `ReputationPanel` no longer hides behind `{#if result.stats}` — a user can have a score and no
+      `UserStat` row.
+- [x] **Bio, profile message and location** — `UserBio` over `UserProfile`, in the page load, shown in
+      `IdentityPanel` only when non-empty. Retool also selected the cover image; not ported, the panel
+      links to the profile.
+      Not ported: **editing**. That is `/api/mod/retool/user`, which needs a user API key the spoke
+      should not hold — the same blocker as `UpdateUserDeets`.
+- [x] **Socials** — `AccountSocialQuery` plus the cross-user matching, in `/api/user-signals` beside
+      the shared-IP signal rather than in the profile. The most-shared single URL in the table is held
+      by 55 accounts and they are spam networks, which is exactly the intended signal.
+      Retool's `UsersWithSocials` SELECTs the **entire** `UserLink` table and matches in the browser.
+      Matching in SQL as a self-join is worse — 21s for a link-heavy user, because it drives a
+      sequential scan per link. Two statements instead (collect this user's URLs, then one scan
+      matching all of them): ~36ms. `url` has no index; `lower()` keeps casing from hiding a match.
+      `DistinctUsersWithSocialLinks` not ported — a site-wide count, not per-user.
+      **`UserLink` has no uniqueness on (userId, url)** — one account holds the same link 19 times — so
+      every read dedupes. Undeduped it produced a duplicate `{#each}` key, which Svelte throws on **in
+      production**, from inside the `:then` branch where the `{:catch}` cannot catch it: the panel broke
+      on precisely the spam-network accounts it exists to find.
+      The cap counts accounts, not rows. Capping rows let one account holding 25 shared links fill the
+      window and report "25+ accounts" for a single alt, hiding every other one.
+      Matching normalises scheme, `www.` and trailing slash: one domain is held by 35 accounts with a
+      trailing slash and 25 without, **disjoint sets** — exact matching reported 24 alts on a 60-account
+      ring.
 - [ ] **Blocked prompts** — `GetBlockedPrompts` (ClickHouse). Also `GeneratorCount` / `GenRateLimited`;
       generation abuse is a signal group we have none of.
 - [ ] **"Has this user talked to a mod before?"** — `FindChats` / `FindChatsWithMods` / `UserChats`.
