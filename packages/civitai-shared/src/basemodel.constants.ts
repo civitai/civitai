@@ -185,6 +185,11 @@ export const ECO = {
   Anima: 59,
   Grok: 61,
   HappyHorse: 52,
+  // FLUX-3 ships as separate weight releases per modality (Video now, Image and
+  // the open-weight Dev backbone later) off a shared multimodal architecture.
+  // Shared architecture is not shared weights, so each gets its own ecosystem —
+  // a LoRA is trained against weights. Same reasoning as the Flux2Klein variants.
+  Flux3Video: 79,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -305,6 +310,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 1,
     sortOrder: 7,
     parentEcosystemId: ECO.Flux2,
+  },
+  {
+    id: ECO.Flux3Video,
+    key: 'Flux3Video',
+    displayName: 'Flux.3 Video',
+    familyId: 1,
+    sortOrder: 8,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -1071,6 +1083,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
+  { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Anima - checkpoint, LORA, DoRA and VAE generation, LORA training
   {
     ecosystemId: ECO.Anima,
@@ -1501,6 +1516,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
       model: { id: 2864671 },
       modelLocked: true,
       engine: 'seedance',
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Video,
+    defaults: {
+      model: { id: 3204701 },
+      modelLocked: true,
+      engine: 'flux',
     },
   },
   {
@@ -2027,6 +2050,7 @@ export const BM = {
   Hunyuan3D: 95,
   Reve: 96,
   MageFlow: 97,
+  Flux3Video: 98,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2291,6 +2315,11 @@ export const licenses: LicenseRecord[] = [
     name: 'Reve AI Terms of Service',
     url: 'https://app.reve.com/terms',
   },
+  {
+    id: 39,
+    name: 'Black Forest Labs Terms of Service',
+    url: 'https://bfl.ai/legal/terms-of-service',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2553,6 +2582,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
     licenseId: 13,
+  },
+  {
+    id: BM.Flux3Video,
+    name: 'Flux 3 Video',
+    description: "Black Forest Labs' FLUX.3 video generation model with native audio",
+    type: 'video',
+    ecosystemId: ECO.Flux3Video,
+    licenseId: 39,
   },
 
   // Grok

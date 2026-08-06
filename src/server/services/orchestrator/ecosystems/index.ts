@@ -75,6 +75,7 @@ import { createVeo3Input } from './veo3.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createHappyHorseInput } from './happy-horse.handler';
+import { createFlux3VideoInput } from './flux3-video.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -218,6 +219,9 @@ export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
 /** HappyHorse context */
 export type HappyHorseCtx = EcosystemGraphOutput & { ecosystem: 'HappyHorse' };
 
+/** Flux 3 Video context */
+export type Flux3VideoCtx = EcosystemGraphOutput & { ecosystem: 'Flux3Video' };
+
 /** AceAudio context */
 export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'Ace' };
 
@@ -271,6 +275,7 @@ export { createVeo3Input } from './veo3.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createSeedanceInput } from './seedance.handler';
 export { createHappyHorseInput } from './happy-horse.handler';
+export { createFlux3VideoInput } from './flux3-video.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -499,6 +504,10 @@ async function createEcosystemStep(
     // HappyHorse
     case 'HappyHorse':
       return createHappyHorseInput(normalizedData, handlerCtx);
+
+    // Flux 3 Video (BFL via FAL)
+    case 'Flux3Video':
+      return createFlux3VideoInput(normalizedData, handlerCtx);
 
     // Grok (image + video)
     case 'Grok': {
