@@ -1404,7 +1404,8 @@ describe('containsAirReference — the entitlement probe', () => {
   // (`additionalNetworks` is documented "Use the AIR of the network as the key";
   // `WorkflowCost.fees` is keyed by resource AIR). This helper is the shared
   // choke point, so the miss was simultaneously a request-time entitlement hole
-  // (`screenSubmittedStepResources`) and a weakened registry clause-7 load probe.
+  // (the re-assert in `blocks.router.ts`'s step submit branch) and a weakened
+  // registry clause-7 load probe.
   it('finds an AIR carried in an object KEY, at every depth', () => {
     const air = 'urn:air:sd1:lora:civitai:1234@5678';
     // the literal orchestrator shape
