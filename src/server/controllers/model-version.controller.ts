@@ -7,6 +7,8 @@ import {
 } from '~/server/services/paid-access.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
+import { resolveGenerationOnlyGate } from '~/server/utils/model-version-usage-control';
+import { logToAxiom } from '~/server/logging/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
@@ -380,9 +382,39 @@ export const upsertModelVersionHandler = async ({
       );
     }
 
-    if (!ctx.features.generationOnlyModels && input.usageControl !== ModelUsageControl.Download) {
-      // People without access to thje generationOnlyModels feature can only create download models
-      input.usageControl = ModelUsageControl.Download;
+    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
+    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
+    // memoized because the usage-control audit, paid-access and licensing-fee checks all need it:
+    // getAllUserSubscriptions is uncached and hits the primary.
+    let capTier: string | null | undefined;
+    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
+
+    if (input.usageControl !== ModelUsageControl.Download) {
+      const requestedUsageControl = input.usageControl;
+      const gate = resolveGenerationOnlyGate({
+        requested: requestedUsageControl,
+        hasFeature: !!ctx.features.generationOnlyModels,
+        isModerator: !!ctx.user.isModerator,
+        permissions: ctx.user.permissions,
+      });
+      input.usageControl = gate.usageControl;
+
+      // The gate coerces instead of rejecting, so a write that passes on the wrong branch produces no
+      // record anywhere. Emit the deciding branch, and on the membership branch the fresh subscription
+      // tier next to the session one — ctx.features resolves off the session tier, which lags a
+      // membership change (CU 868kmy9f3).
+      logToAxiom({
+        name: 'model-version-usage-control-gate',
+        type: 'info',
+        outcome: gate.outcome,
+        userId,
+        modelId: input.modelId,
+        modelVersionId: input.id ?? null,
+        requestedUsageControl: requestedUsageControl ?? null,
+        appliedUsageControl: input.usageControl ?? null,
+        sessionTier: ctx.user.tier ?? null,
+        subscriptionTier: gate.outcome === 'tier' ? await actorTier() : null,
+      }).catch(() => null);
     }
 
     if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
@@ -396,13 +428,6 @@ export const upsertModelVersionHandler = async ({
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
-
-    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
-    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
-    // memoized because both the paid-access and licensing-fee checks need it: getAllUserSubscriptions is
-    // uncached and hits the primary.
-    let capTier: string | null | undefined;
-    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
 
     await assertPaidAccessCaps({
       userId: ctx.user.id,

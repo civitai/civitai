@@ -11,6 +11,7 @@ import {
 import {
   resolveMembership,
   cappedTier,
+  canSetGenerationOnly,
   displayTier,
   TEST_MEMBERSHIP_COOKIE,
 } from '$lib/server/membership';
@@ -156,6 +157,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
+      canSetGenerationOnly: canSetGenerationOnly(locals.user),
     },
     query: {
       q: q ?? '',
@@ -424,7 +426,13 @@ export const actions: Actions = {
       return fail(400, { bulk: true, error: 'Invalid usage control.' });
 
     const cookie = request.headers.get('cookie') ?? '';
-    const result = await bulkSetUsageControl(locals.user.id, versionIds.data, usageControl, cookie);
+    const result = await bulkSetUsageControl(
+      locals.user.id,
+      versionIds.data,
+      usageControl,
+      cookie,
+      canSetGenerationOnly(locals.user)
+    );
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
     await bustVersionCache(cookie, versionIds.data);
     return {
@@ -454,7 +462,8 @@ export const actions: Actions = {
       locals.user.id,
       [versionId.data],
       usageControl,
-      request.headers.get('cookie') ?? ''
+      request.headers.get('cookie') ?? '',
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
@@ -485,8 +494,16 @@ export const actions: Actions = {
       (!permanent && (!Number.isFinite(rawTimeframe) || rawTimeframe <= 0));
     if (turnOff) {
       const usageOnly = form.get('usageControl');
-      if (isCreatorUsageControl(usageOnly))
-        await setUsageControl(locals.user.id, versionId.data, usageOnly);
+      if (isCreatorUsageControl(usageOnly)) {
+        const usageResult = await setUsageControl(
+          locals.user.id,
+          versionId.data,
+          usageOnly,
+          canSetGenerationOnly(locals.user)
+        );
+        if (!usageResult.ok)
+          return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
+      }
       const result = await setPaidAccessConfig(cookie, versionId.data, null);
       if (!result.ok)
         return fail(result.status, { versionId: versionId.data, error: result.error });
@@ -526,8 +543,16 @@ export const actions: Actions = {
     const genOnly = usageControl === 'Generation';
     // Persisted BEFORE the gate write: the main-app endpoint validates the terms against the STORED
     // usage control, so a gen-only save would otherwise be judged against the old Download value.
-    if (isCreatorUsageControl(usageControl))
-      await setUsageControl(locals.user.id, versionId.data, usageControl);
+    if (isCreatorUsageControl(usageControl)) {
+      const usageResult = await setUsageControl(
+        locals.user.id,
+        versionId.data,
+        usageControl,
+        canSetGenerationOnly(locals.user)
+      );
+      if (!usageResult.ok)
+        return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
+    }
 
     // Only an INCREASE is rejected: the editor resubmits the stored price on every save, so capping the
     // submitted value outright would make an over-cap version uneditable after a lapse (the same class of

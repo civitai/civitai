@@ -12,6 +12,7 @@
   import { DEFAULT_FEE_IMAGES, feeToRatio, type MonetizationLimits } from '$lib/monetization/fee';
   import {
     DEFAULT_GENERATION_TRIAL_LIMIT,
+    GENERATION_ONLY_HINT,
     MIN_ACCESS_PRICE,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -57,6 +58,7 @@
       maxEarlyAccessDays: number;
       earlyAccessUsed: number;
       earlyAccessCap: number;
+      canSetGenerationOnly: boolean;
     };
   } = $props();
 
@@ -407,7 +409,13 @@
               </Alert.Root>
             {/if}
           {:else if action === 'usageControl'}
-            <UsageControlPicker bind:value={usageControl} />
+            <UsageControlPicker
+              bind:value={usageControl}
+              allowGenerationOnly={caps.canSetGenerationOnly}
+            />
+            {#if !caps.canSetGenerationOnly}
+              <p class="text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+            {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.
