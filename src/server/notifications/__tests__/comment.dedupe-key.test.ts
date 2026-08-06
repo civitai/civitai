@@ -27,6 +27,7 @@ const sqlFor = (type: string) => defs[type].prepareQuery!({ lastSent: '2026-01-0
 const V2_TYPES = [
   'new-review-response',
   'new-image-comment',
+  'new-post-comment',
   'new-article-comment',
   'new-bounty-comment',
   'new-challenge-comment',
@@ -204,6 +205,12 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, reviewId: 3, modelId: 1, modelName: 'M' }];
       case 'new-image-comment':
         return [{ ...base, version: 2, imageId: 9, modelName: 'M', modelId: 1 }];
+      // Post.title is nullable, so both shapes have to render.
+      case 'new-post-comment':
+        return [
+          { ...base, version: 2, postId: 6, postTitle: 'P' },
+          { ...base, version: 2, postId: 6, postTitle: null },
+        ];
       case 'new-article-comment':
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':

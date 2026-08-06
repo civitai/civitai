@@ -522,6 +522,47 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
     `,
   },
+  'new-post-comment': {
+    displayName: 'New comments on your posts',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      // Post.title is nullable, and an untitled post is the common case.
+      message: details.postTitle
+        ? `${details.username} commented on your post: "${details.postTitle}"`
+        : `${details.username} commented on your post`,
+      url: `/posts/${details.postId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_post_comment AS (
+        SELECT DISTINCT
+          p."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'postId', p.id,
+            'postTitle', p.title,
+            'commentId', c.id,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."postId" IS NOT NULL
+        JOIN "Post" p ON p.id = t."postId"
+        WHERE p."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != p."userId"
+      )
+      SELECT
+        concat('new-comment-post:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-post-comment' "type",
+        details
+      FROM new_post_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
+    `,
+  },
   'new-article-comment': {
     displayName: 'New comments on your articles',
     category: NotificationCategory.Comment,
