@@ -19,6 +19,7 @@ import {
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
+  toHostGateStatus,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
@@ -870,5 +871,41 @@ describe('MID_SESSION_LOSS_ERROR_CLASS survives the server-side allowlist', () =
     // Control: an unknown class really does collapse, so the assertion above is
     // proving membership rather than proving normalizeErrorClass is a no-op.
     expect(normalizeErrorClass('error', 'not_a_real_class')).toBe('other');
+  });
+});
+
+/**
+ * `toHostGateStatus` — the ONE copy of the status shim the five status-gated
+ * PageBlockHost message handlers share (REQUEST_CONSENT, OPEN_BUZZ_PURCHASE,
+ * REQUEST_SIGN_IN, OPEN_IMAGE_UPLOAD, NAVIGATE). It used to be open-coded at every
+ * one of them.
+ *
+ * The property that actually matters is NOT the specific `'error' → 'no_token'`
+ * pairing — it is that `'ready'` is the ONLY input that survives as `'ready'`.
+ * Every gate is `=== 'ready'`, so any mapping that invented a `'ready'` would
+ * open a money/permission gate on a terminal host. That is asserted
+ * exhaustively over the whole `PageHostStatus` union below rather than by
+ * spot-checking, so a future variant added to the union cannot slip through
+ * unmapped.
+ */
+describe('toHostGateStatus', () => {
+  const ALL: PageHostStatus[] = ['loading', 'ready', 'timeout', 'fatal', 'no_token', 'error'];
+
+  it("maps PageBlockHost's extra terminal 'error' onto a non-ready sentinel", () => {
+    expect(toHostGateStatus('error')).toBe('no_token');
+  });
+
+  it('passes every other variant through unchanged', () => {
+    for (const s of ALL.filter((v) => v !== 'error')) {
+      expect(toHostGateStatus(s)).toBe(s);
+    }
+  });
+
+  it("yields 'ready' for 'ready' and for NOTHING else (the gate-opening property)", () => {
+    // Positive control first: the mapping can produce 'ready' at all, so the
+    // zero below is a measurement and not a function that returns a constant.
+    expect(toHostGateStatus('ready')).toBe('ready');
+    const openers = ALL.filter((s) => toHostGateStatus(s) === 'ready');
+    expect(openers).toEqual(['ready']);
   });
 });
