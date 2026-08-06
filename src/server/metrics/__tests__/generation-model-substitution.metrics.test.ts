@@ -31,12 +31,13 @@ import {
  *      500 — observability causing the outage.
  *
  * 🔴 CARDINALITY is the other load-bearing property: `reason` (3 values) x
- * `surface` (3 values) = 9 series, total, forever, across ~130 scraped pods
+ * `surface` (4 values) = 12 series, total, across ~130 scraped pods
  * where prom-client retains every distinct label set in the Node heap for the
  * process lifetime. Widening it has to get past these tests.
  *
  * 🔴 SURFACE is load-bearing for a different reason: `validateInput` is shared
- * by the on-site generator, the App Blocks bridge and preset generation, and
+ * by the on-site generator, bearer-token API callers, the App Blocks bridge and
+ * preset generation, and
  * #3520 calls the substitution CORRECT on-site and unobservable through the
  * bridge. Summed into one series the counter measures a contaminated quantity,
  * which is exactly what phase 2 is supposed to produce a clean number for.
@@ -74,6 +75,63 @@ describe('civitai_generation_model_substitutions_total', () => {
   it('is registered on the default registry that /api/metrics scrapes', () => {
     ensureRegisterGenerationModelSubstitutionMetrics();
     expect(client.register.getSingleMetric(METRIC)).toBeDefined();
+  });
+
+  it('🔴 the help string documents EVERY declared surface and reason', async () => {
+    // The help text is what Grafana's metric browser shows, i.e. the definition
+    // a phase-3 consumer actually reads before writing a query. `api` was added
+    // to the union in #3665 and initially NOT to the help string, so the label
+    // this metric exists to expose was undocumented where it is consumed.
+    // Derived from the unions rather than hardcoded, so a future 5th surface
+    // cannot be added without describing it.
+    //
+    // 🔴 WHAT THIS DOES NOT CHECK: that each description is CORRECT, or even
+    // attached to the right label. `toContain` is satisfied by any occurrence of
+    // `<surface> = `, so a help string reading `api = block; block = …` passes
+    // (verified). It catches the regression it was written for — a surface added
+    // to the union and not to the help — and nothing more. Do not cite it as
+    // evidence that the help text is right.
+    ensureRegisterGenerationModelSubstitutionMetrics();
+    const metric = client.register.getSingleMetric(METRIC) as unknown as { help: string };
+    for (const surface of GENERATION_SURFACES) expect(metric.help).toContain(`${surface} = `);
+    for (const reason of MODEL_SUBSTITUTION_REASONS) expect(metric.help).toContain(`${reason} = `);
+  });
+
+  it('🔴 registration SEEDS all 12 series at 0 — an absent series must not read as a real zero', async () => {
+    // A pod only materialises a prom-client child on its first inc(), so before
+    // seeding `…{surface="api"}` simply did not exist until that pod happened to
+    // serve an API substitution — and PromQL returns `no data`, which looks
+    // exactly like "the instrument was never wired". This counter exists to be
+    // read as a GATE, so that ambiguity is the same defect the `api` split was
+    // made to fix (#3665), one level down.
+    ensureRegisterGenerationModelSubstitutionMetrics();
+    const metric = client.register.getSingleMetric(METRIC) as unknown as {
+      get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }>;
+    };
+    const { values } = await metric.get();
+
+    expect(values).toHaveLength(MODEL_SUBSTITUTION_REASONS.length * GENERATION_SURFACES.length);
+    expect(values.every((v) => v.value === 0)).toBe(true);
+    // Named explicitly: `api` is the surface this PR adds and the one a phase-3
+    // read will query first, so its presence-at-zero is the point.
+    expect(await readSeries('unrecognized', 'api')).toBe(0);
+    // Every declared combination, not just the one we thought of.
+    for (const reason of MODEL_SUBSTITUTION_REASONS)
+      for (const surface of GENERATION_SURFACES) expect(await readSeries(reason, surface)).toBe(0);
+  });
+
+  it('seeding is idempotent — re-registering does not reset or double-count a live series', async () => {
+    // `ensureRegister…` is documented as safe to call on every request, and
+    // `recordGenerationModelSubstitution` does call it every time. If seeding
+    // reset the counters, the metric would read ~0 forever under real traffic —
+    // a failure that a single-shot test would never show.
+    recordGenerationModelSubstitution('unrecognized', 'api');
+    recordGenerationModelSubstitution('unrecognized', 'api');
+    expect(await readSeries('unrecognized', 'api')).toBe(2);
+
+    ensureRegisterGenerationModelSubstitutionMetrics();
+    ensureRegisterGenerationModelSubstitutionMetrics();
+    expect(await readSeries('unrecognized', 'api')).toBe(2);
   });
 
   it.each(
@@ -159,16 +217,17 @@ describe('civitai_generation_model_substitutions_total', () => {
     for (const v of values) expect(Object.keys(v.labels).sort()).toEqual(['reason', 'surface']);
   });
 
-  it('🔴 both unions are EXACTLY these values — 3 x 3 = 9 series is the whole budget', () => {
+  it('🔴 both unions are EXACTLY these values — 3 x 4 = 12 series is the whole budget', () => {
     // Literal, not derived: the reason union is simultaneously the metric label
     // AND the `BlockWorkflowSnapshot.modelSubstitutions[].reason` wire contract,
     // so a fourth value added on either side has to come through here. The
-    // surface union bounds the other axis.
+    // surface union bounds the other axis — it went 3 → 4 in #3665, which is what
+    // this assertion is for: the widening had to be written down, not noticed later.
     expect([...MODEL_SUBSTITUTION_REASONS]).toEqual(['wrong-workflow', 'unrecognized', 'gated']);
-    expect([...GENERATION_SURFACES]).toEqual(['block', 'onsite', 'preset']);
+    expect([...GENERATION_SURFACES]).toEqual(['api', 'block', 'onsite', 'preset']);
   });
 
-  it('🔴 emits AT MOST 9 series no matter how many substitutions land', async () => {
+  it('🔴 emits AT MOST 12 series no matter how many substitutions land', async () => {
     for (let i = 0; i < 100; i++) {
       for (const reason of MODEL_SUBSTITUTION_REASONS) {
         for (const surface of GENERATION_SURFACES) {
@@ -180,7 +239,7 @@ describe('civitai_generation_model_substitutions_total', () => {
       get(): Promise<{ values: Array<{ labels: Record<string, string> }> }>;
     };
     const { values } = await metric.get();
-    expect(values).toHaveLength(9);
+    expect(values).toHaveLength(12);
     expect(await readSeries('wrong-workflow', 'block')).toBe(100);
   });
 
@@ -246,8 +305,8 @@ describe('emitModelSubstitutions — the drain the generation path calls', () =>
   });
 
   it("🔴 labels every increment with the COLLECTOR's surface, not a guess", async () => {
-    // The emitter sits inside `validateInput`, which is shared by all three
-    // surfaces; the only surface information that exists at that point is the one
+    // The emitter sits inside `validateInput`, which is shared by every
+    // surface; the only surface information that exists at that point is the one
     // the caller fixed when it built the context. Two collectors, two surfaces,
     // same reason — they must not merge.
     await emitModelSubstitutions(collectorWith('onsite', 'unrecognized'));
