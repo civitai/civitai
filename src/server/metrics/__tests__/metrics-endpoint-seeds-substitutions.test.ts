@@ -17,16 +17,22 @@ import { describe, expect, it, vi } from 'vitest';
  *
  * 🔴 THIS IS BEHAVIOURAL ON PURPOSE, AND AN EARLIER REVISION WAS NOT. That
  * revision asserted the seam by PARSING `metrics.ts` for a module-scope call,
- * with a comment claiming the behavioural route was unavailable because
- * importing the page throws `env.TRPC_ORIGINS is not iterable`. That claim was
- * wrong: the repo already has the pattern for exactly this
- * (`src/server/utils/__tests__/public-endpoint-maxage.test.ts` stubs the
- * heavy module-load imports), and an audit used it to load the real page. The
- * source check also false-failed at least six CORRECT refactors — `void f()`,
+ * justified by a comment saying the behavioural route was unavailable because
+ * importing the page throws `env.TRPC_ORIGINS is not iterable`.
+ *
+ * 🔴 BE EXACT ABOUT WHICH HALF OF THAT WAS WRONG, since this file exists to stop
+ * comments overstating things. The MEASUREMENT was right — an unmocked import of
+ * the page really does throw exactly that. The CONCLUSION drawn from it ("so a
+ * behavioural test is not possible") was wrong: the repo already had the pattern
+ * for precisely this case, `src/server/utils/__tests__/public-endpoint-maxage.test.ts`,
+ * which stubs the heavy module-load imports. "My first attempt failed" is not
+ * "it cannot be done", and that is the whole error.
+ *
+ * The source check also false-failed at least six CORRECT refactors — `void f()`,
  * a module-scope helper, a locally-aliased import, a relative specifier — while
- * passing an `import type` + call, which only `tsc` would catch. It is replaced
- * by this, which asks the question that actually matters: after the module
- * loads, are the series there?
+ * PASSING an `import type` + call, which only `tsc` would catch. So it was both
+ * stricter and weaker than the property it stood for. This asks the question
+ * that actually matters instead: after the module loads, are the series there?
  */
 
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper
