@@ -1,4 +1,5 @@
-import { HoverCard, Loader, Stack, Text } from '@mantine/core';
+import { Group, HoverCard, Skeleton, Text } from '@mantine/core';
+import { IconSticker } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
@@ -11,6 +12,18 @@ import { trpc } from '~/utils/trpc';
 const SmartCreatorCard = dynamic(() =>
   import('~/components/CreatorCard/CreatorCard').then((m) => m.SmartCreatorCard)
 );
+
+/**
+ * Wide enough that the creator card's top row never wraps.
+ *
+ * The card is fluid — it takes its width entirely from its parent — and the row
+ * of rank badge, up to three stat badges and the cosmetic badge needs about
+ * 385px before the badge drops to its own line. Elsewhere in the app it renders
+ * at 426–450 (the image-detail sidebar, and the "profile width" the cosmetic
+ * preview caps at), so this is the narrowest value that still looks like the
+ * card people know.
+ */
+const HOVER_CARD_WIDTH = 400;
 
 /**
  * Who placed a sticker, and when.
@@ -35,25 +48,39 @@ export function StickerPlacementHoverCard({
 
   return (
     <HoverCard
-      width={330}
+      width={HOVER_CARD_WIDTH}
       shadow="sm"
       withArrow
       withinPortal
       openDelay={300}
       position="bottom"
+      // Closer than the default, so the card reads as belonging to the sticker
+      // rather than floating near it.
+      offset={4}
       onOpen={() => setOpened(true)}
     >
       <HoverCard.Target>{children}</HoverCard.Target>
-      <HoverCard.Dropdown p="xs">
+      {/* The creator card carries its own padding and fills the dropdown edge to
+          edge. Its border is dropped rather than the dropdown's, so there is one
+          outline instead of two nested ones a pixel apart. */}
+      <HoverCard.Dropdown p={0}>
+        <Group gap={6} px="sm" py={6} wrap="nowrap">
+          <IconSticker size={14} className="text-yellow-6" />
+          <Text size="xs" c="dimmed">
+            {data ? `Placed ${formatDate(data.placedAt)}` : 'Placed'}
+          </Text>
+        </Group>
+
+        {/* A skeleton rather than a spinner: the card's size is known before its
+            data is, so holding the shape stops the dropdown resizing under the
+            cursor the moment it loads — which on a hover card can move the
+            target out from under you. */}
         {isLoading || !data ? (
-          <Loader size="sm" />
+          <div className="p-3">
+            <Skeleton height={92} radius="md" />
+          </div>
         ) : (
-          <Stack gap={6}>
-            <Text size="xs" c="dimmed">
-              Placed {formatDate(data.placedAt)}
-            </Text>
-            <SmartCreatorCard user={data.placer} withActions={false} />
-          </Stack>
+          <SmartCreatorCard user={data.placer} withActions={false} withBorder={false} />
         )}
       </HoverCard.Dropdown>
     </HoverCard>

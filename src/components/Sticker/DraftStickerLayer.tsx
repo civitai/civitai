@@ -20,6 +20,9 @@ import {
 /** Where the rotate knob sits above the sticker, as a fraction of its height. */
 const KNOB_OFFSET = 0.22;
 
+/** Enough for the label and the currency badge at the smallest allowed sticker. */
+const BUY_BUTTON_MIN_WIDTH = 132;
+
 const CORNERS = [
   { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
   { sx: 1, sy: -1, className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
@@ -233,13 +236,20 @@ export function DraftStickerLayer() {
       />
 
       <div
-        className="absolute left-1/2 top-full mt-2 -translate-x-1/2 cursor-auto whitespace-nowrap"
+        // `w-max` and the floor together: an absolutely positioned child is
+        // shrink-to-fit against its containing block, which here is the sticker
+        // itself — so a small sticker was squeezing the button until its label
+        // clipped and its currency badge lost its padding. The button's size
+        // must not be a function of the sticker's.
+        className="absolute left-1/2 top-full mt-2 w-max -translate-x-1/2 cursor-auto whitespace-nowrap"
+        style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
         // The button is inside the draggable body, so without this every press
         // on it would also start a move and the click would land mid-drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
         <BuzzTransactionButton
-          size="compact-sm"
+          size="sm"
+          style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
           buzzAmount={space?.price ?? 0}
           // Yellow and Green only, matching what the escrow will actually draw.
           // The mutation refuses Blue regardless; this keeps the button from

@@ -1,5 +1,4 @@
-import { Alert, Button, Group, ScrollArea, Text } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
 import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
@@ -12,14 +11,17 @@ import {
 import { trpc } from '~/utils/trpc';
 
 /**
- * The placement affordance: a strip along the bottom of the viewport holding the
+ * The placement affordance: a panel at the bottom of the viewport holding the
  * stickers you own, which you drag onto the image.
  *
- * Deliberately not a modal. A modal has to show its own copy of the image, which
- * is a different size from the real one and puts a scrollbar between you and the
- * thing you are decorating — you end up positioning a sticker on a picture of
- * the picture. Dragging onto the actual image is both simpler and the only way
- * the result is what you saw.
+ * Deliberately not a modal. A modal has to show its own copy of the image, at a
+ * different size from the real one and behind a scrollbar — you end up
+ * positioning a sticker on a picture of the picture. Dragging onto the actual
+ * image is both simpler and the only way the result is what you saw.
+ *
+ * Centred and capped rather than spanning the viewport: full-width made a row of
+ * three stickers sit in a field of empty panel, and pushed the instructions so
+ * far from them that they read as unrelated.
  */
 export function StickerPlacementTray() {
   const currentUser = useCurrentUser();
@@ -58,12 +60,29 @@ export function StickerPlacementTray() {
   };
 
   const price = space?.price ?? 0;
+  const instruction = draft
+    ? 'Drag it where you want it, then buy it under the sticker.'
+    : 'Drag a sticker onto the image.';
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-3 bg-white p-3 shadow-lg dark:border-dark-4 dark:bg-dark-7">
-      <Group justify="space-between" align="start" wrap="nowrap" gap="md">
-        <ScrollArea.Autosize mah={110} className="flex-1">
-          <Group gap="xs" wrap="nowrap">
+    <div className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
+      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
+        <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+          <div className="flex-1">
+            <Text size="sm" fw={600}>
+              {instruction}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {price} Buzz + one use
+              {space?.mode === 'review' &&
+                ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
+            </Text>
+          </div>
+          <CloseButton onClick={close} aria-label="Cancel placing a sticker" />
+        </div>
+
+        <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
+          <Group gap="xs" wrap="nowrap" p="xs">
             {isLoading && <Text size="sm">Loading your stickers…</Text>}
             {!isLoading && !sticker.length && (
               <Text size="sm" c="dimmed">
@@ -99,36 +118,7 @@ export function StickerPlacementTray() {
             })}
           </Group>
         </ScrollArea.Autosize>
-
-        <div className="shrink-0">
-          <Group gap="xs" align="center">
-            <Text size="sm">
-              <Text span fw={700}>
-                {price}
-              </Text>{' '}
-              Buzz + one use
-            </Text>
-            <Button variant="subtle" color="gray" onClick={close} leftSection={<IconX size={16} />}>
-              Cancel
-            </Button>
-          </Group>
-
-          {space?.mode === 'review' && (
-            <Alert color="yellow" p={6} mt={6} maw={340}>
-              <Text size="xs">
-                This creator reviews placements. Only you see it until they approve — and if they
-                decline, part of what you paid stays with them.
-              </Text>
-            </Alert>
-          )}
-
-          <Text size="xs" c="dimmed" mt={6}>
-            {draft
-              ? 'Drag it where you want it, then press Place under the sticker.'
-              : 'Drag a sticker onto the image.'}
-          </Text>
-        </div>
-      </Group>
+      </div>
     </div>
   );
 }
