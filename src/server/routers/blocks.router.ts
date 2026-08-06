@@ -136,6 +136,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -1090,9 +1091,7 @@ async function createBlockTextToImageStep(opts: {
   // object — so it describes THIS submit and no one else's. Behaviour is
   // unchanged; the caller folds this into the snapshot so the block can detect
   // that it was billed for a model it did not ask for.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
   // A block renders from the TERMINAL POLL (the only snapshot carrying

@@ -48,6 +48,7 @@ import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
 import {
   createModelSubstitutionCollector,
+  projectModelSubstitutions,
   readModelSubstitutionsFromMetadata,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
   type GenerationSurface,
@@ -1556,9 +1557,7 @@ export async function generateFromGraph({
   // this function (#3520 / #3665). Read off THIS request's per-request collector
   // — never a shared or cached object — so it describes this submit and no one
   // else's. `ecosystem`/`workflow` are dropped: the caller knows what it sent.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   // 🔴 PERSIST, not just reply. `formatGenerationResponse2` recovers this from
   // the workflow's own metadata on EVERY later read, which is what lets a caller
@@ -1607,7 +1606,15 @@ export async function generateFromGraph({
   //
   // Additive: the key is absent when nothing was substituted, so the response is
   // unchanged in the common case.
-  return modelSubstitutions?.length ? { ...formatted, modelSubstitutions } : formatted;
+  //
+  // 🔴 A CONDITIONAL SPREAD, NOT A TERNARY OVER THE WHOLE OBJECT. Writing
+  // `cond ? { ...formatted, modelSubstitutions } : formatted` produces a UNION
+  // return type, and TypeScript will not let a consumer read a property that
+  // exists on only one arm — `result.modelSubstitutions` fails with TS2339 from
+  // the typed tRPC client, so the field ships looking done and is unusable from
+  // the web app. The spread form below infers the optional property instead, and
+  // matches what `whatIfFromGraph` does.
+  return { ...formatted, ...(modelSubstitutions?.length ? { modelSubstitutions } : {}) };
 }
 
 // =============================================================================
@@ -1685,9 +1692,7 @@ export async function whatIfFromGraph({
   //
   // Nothing is persisted on this path, so unlike the submit path the reply is
   // the only carrier; there is no metadata round-trip to fall back on.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   return {
     allowMatureContent: workflow.allowMatureContent,
@@ -1945,6 +1950,17 @@ export interface NormalizedWorkflowMetadata {
    * is built from an explicit key ALLOWLIST, so persisting the key is not enough
    * on its own: before #3665 the generation path could write it and the formatter
    * would silently drop it on read-back. If you add a field here, add it there.
+   *
+   * 🔴 WHERE AN INTEGRATOR READS IT — three places, and they are not the same:
+   *   - `whatIfFromGraph`      → TOP-LEVEL `modelSubstitutions` on the reply.
+   *                              Nothing is persisted on that path, so the reply
+   *                              is the only carrier.
+   *   - `generateFromGraph`    → BOTH top-level (authoritative for the validation
+   *                              just performed) AND here under `metadata`.
+   *   - any LATER read (poll / queryGeneratedImages / history) → HERE ONLY.
+   * A client that only reads the top-level field will see substitutions on the
+   * submit and never again; one that only reads `metadata` will miss the whatIf
+   * entirely. Read both.
    */
   modelSubstitutions?: PersistedModelSubstitution[];
 }

@@ -179,6 +179,32 @@ export type PersistedModelSubstitution = {
 };
 
 /**
+ * Project a request's collector onto the wire shape.
+ *
+ * 🔴 ONE PLACE, because it had become three. The App Blocks bridge, the
+ * generation submit and the whatIf estimate each open-coded the identical
+ * `?.list().map(...)`. That is the same duplication the reader below was
+ * consolidated to remove, and the same argument applies: a projection copied at
+ * N sites is wrong at N−1 of them the day the wire shape changes.
+ *
+ * Returns `undefined` when there is no collector (a client-built context), and
+ * `[]` when a collector recorded nothing — deliberately NOT collapsing the two.
+ * `snapshotFromWorkflow` distinguishes them: an explicit `[]` means "this
+ * request validated and substituted nothing", which SUPPRESSES the fallback read
+ * of the persisted metadata, whereas `undefined` lets that fallback run.
+ * Collapsing them here would silently change the block path's poll behaviour.
+ */
+export function projectModelSubstitutions(
+  collector: Pick<ModelSubstitutionCollector, 'list'> | undefined
+): PersistedModelSubstitution[] | undefined {
+  return collector?.list().map(({ requested, applied, reason }) => ({
+    requested,
+    applied,
+    reason,
+  }));
+}
+
+/**
  * The key silent substitutions are persisted under on an orchestrator workflow's
  * `metadata`.
  *
@@ -211,11 +237,14 @@ export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
  * it dependency-free so both a server service and shared graph code can use it.
  */
 export function readModelSubstitutionsFromMetadata(
-  metadata: unknown
+  // 🔴 NOT `unknown`. This used to take the whole `Workflow` and was moved here
+  // to take its metadata instead, which makes `read…(workflow)` — the exact slip
+  // the move invites — a silent no-op that returns `undefined` forever. Typing
+  // the bag rather than accepting anything makes that a compile error. Both
+  // call sites already pass this shape.
+  metadata: Record<string, unknown> | null | undefined
 ): PersistedModelSubstitution[] | undefined {
-  const raw = (metadata as Record<string, unknown> | null | undefined)?.[
-    WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY
-  ];
+  const raw = metadata?.[WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY];
   if (!Array.isArray(raw)) return undefined;
   const out: PersistedModelSubstitution[] = [];
   for (const entry of raw) {
