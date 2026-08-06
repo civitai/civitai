@@ -162,6 +162,15 @@ export interface CatalogUniqueIndex {
 }
 
 export interface DbCatalog {
+  /**
+   * ISO-8601 instant the catalog was captured, stamped by `--dump-catalog`.
+   *
+   * Optional because captures predating the field exist. A CONSUMER OF A CAPTURED CATALOG
+   * MUST TREAT ITS ABSENCE AS A PROBLEM, not as a default: a frozen catalog's age determines
+   * how much of the schema a comparison against it can still say anything sharp about, and
+   * without a date that decay is invisible. `snapshotAge` in `gate.ts` is the guard.
+   */
+  capturedAt?: string;
   /** Ordinary + partitioned tables. Views are deliberately absent: see the README. */
   tables: string[];
   columns: CatalogColumn[];
