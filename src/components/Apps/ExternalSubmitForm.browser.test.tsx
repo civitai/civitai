@@ -502,7 +502,42 @@ describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', 
 
   test('the manual "Pull from site" button is GONE (auto-trigger replaces it)', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    const url = page.getByTestId('apps-offsite-submit-url');
+    await url.fill('https://vitrine.civitai.com');
+
+    // 🔴 POSITIVE CONTROL for a PARTIAL render. This test's real assertion is a
+    // ZERO, so something has to establish that the query mechanism observes a
+    // NON-zero on this same render — otherwise the zero reads as "the button is
+    // gone" when it may equally mean "nothing was queried".
+    //
+    // 🔴 BE PRECISE ABOUT WHAT THIS COVERS. The first version of this comment
+    // claimed the test was "green whether or not the wizard rendered at all", and
+    // a mutation matrix falsified that:
+    //   - "NOTHING rendered" was ALREADY covered before this line existed. The
+    //     `.fill()` above waits for the element and throws, so rendering
+    //     `<div data-testid="NOTHING-RENDERED" />` in place of the form fails at
+    //     the `.fill()` on BOTH the old and the new body (measured: TimeoutError,
+    //     `locator.fill`). This control does not even EXECUTE in that case, so it
+    //     can claim no credit for it.
+    //   - What it DOES catch is a PARTIALLY rendered form: the URL input present
+    //     (so `.fill()` succeeds) but the rest of the step missing. Measured with
+    //     `renderWithProviders(<input data-testid="apps-offsite-submit-url" />)` —
+    //     GREEN without this line, RED with it (`expected [] to have a length of 1
+    //     but got +0`). That is the gap this closes, and the only one.
+    expect(page.getByTestId('apps-offsite-wizard-next-url').elements()).toHaveLength(1);
+
+    // 🔴 `apps-offsite-submit-autofill` is the testid the manual "Pull from site"
+    // button REALLY carried until #3427 removed it — verified against the blob at
+    // 0f1cc11330 (`ExternalSubmitForm.tsx`, `data-testid="apps-offsite-submit-autofill"`
+    // on the Button). It is NOT a name nothing ever used, which is what an
+    // absence-assertion has to establish to mean anything.
+    //
+    // 🔴 And the match is EXACT, not a prefix: measured in this browser tier,
+    // `getByTestId('apps-offsite-submit-url')` finds 1 while
+    // `getByTestId('apps-offsite-submit')` finds 0. So this assertion is NOT
+    // satisfied by the four surviving `apps-offsite-submit-autofill-*` status
+    // notes, and equally it would NOT catch the button coming back under a
+    // suffixed id — it pins exactly the id that was removed.
     expect(page.getByTestId('apps-offsite-submit-autofill').elements()).toHaveLength(0);
   });
 
