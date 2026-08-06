@@ -24,7 +24,6 @@ import {
   GenerationFooter,
   useHasGenerationSlots,
 } from '~/components/generation_v2/GenerationLayout';
-import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -137,12 +136,8 @@ export function EnhanceTab({
 
   const buildMutationInput = () => {
     const values = form.getValues();
-    let orchestratorEcosystem = ecosystem;
-    try {
-      orchestratorEcosystem = getRootEcosystem(ecosystem).key.toLowerCase();
-    } catch {}
     return {
-      ecosystem: orchestratorEcosystem,
+      ecosystem,
       prompt: values.prompt,
       negativePrompt: values.negativePrompt || null,
       instruction: values.instruction || null,

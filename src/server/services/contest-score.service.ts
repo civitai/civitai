@@ -27,6 +27,11 @@
 import type { Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import {
+  isDatabaseEnvironmentConfigured,
+  isNonProductionDatabase,
+  warnIfDatabaseEnvironmentUnset,
+} from '~/env/database-target';
+import {
   CacheTTL,
   CONTEST_SCORE_CODE_VERSION,
   CONTEST_SNAPSHOT_KEY_PREFIX,
@@ -1168,13 +1173,35 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
 // ---------------------------------------------------------------------------
 
 /**
- * Which deployment produced a snapshot, derived from the ENVIRONMENT and never from
- * mutation input — an operator cannot forget it and a client cannot spoof it.
- * Preview namespaces carry these vars; production carries none of them.
+ * The marker that says a snapshot describes THROWAWAY DATA. Derived from the environment
+ * and never from mutation input — an operator cannot forget it and a client cannot spoof it.
+ *
+ * 🔴 IT MARKS THE DATABASE, NOT THE DEPLOYMENT. This used to fire on `IS_PREVIEW`, which is
+ * a claim about environment identity, not about which database is behind it. A non-production
+ * deployment that runs against the PRODUCTION database was therefore stamping `preview` onto
+ * rows computed from REAL production entries — rows that are legitimate judging artifacts, are
+ * badged as disposable in the moderator UI, and sort into a key namespace the docblock below
+ * advertises as safe to prefix-delete. Deleting them would destroy real evidence.
+ *
+ * So the marker is now gated on the database, via `isNonProductionDatabase()` — which falls back
+ * to the legacy `IS_PREVIEW` / `NEXT_PUBLIC_IS_PR_PREVIEW` reading until `DATABASE_ENVIRONMENT`
+ * is configured, so nothing moves before then. See src/env/database-target.ts.
+ *
+ * A snapshot taken from a non-production deployment against the PRODUCTION database gets NO
+ * marker, the same as one taken from production. That is the correct answer for what this field
+ * means: its data is real and it must survive a cleanup of scratch rows. If "which deployment
+ * took this" is ever wanted, it needs its OWN field — do not re-overload this one.
+ *
+ * Exported for tests: it is the whole decision, and the alternative is exercising it through a
+ * distributed lock and a full scoring run.
  */
-function snapshotSource() {
-  if (process.env.IS_PREVIEW !== 'true' && process.env.NEXT_PUBLIC_IS_PR_PREVIEW !== 'true')
-    return null;
+export function snapshotSource() {
+  warnIfDatabaseEnvironmentUnset();
+  // The PR-preview flag is a second spelling of the same legacy heuristic, so it only gets a
+  // say while `DATABASE_ENVIRONMENT` is unconfigured. Once it is set, it is the sole authority.
+  const legacyPrPreview =
+    !isDatabaseEnvironmentConfigured() && process.env.NEXT_PUBLIC_IS_PR_PREVIEW === 'true';
+  if (!isNonProductionDatabase() && !legacyPrPreview) return null;
   const pr = process.env.NEXT_PUBLIC_PR_NUMBER;
   return pr ? `preview-${pr}` : 'preview';
 }
@@ -1244,7 +1271,8 @@ export type ContestSnapshotSummary = Omit<StoredContestSnapshot, 'config' | 'sco
   entryCount: number;
 };
 
-const snapshotKey = (collectionId: number, takenAt: string, source: string | null) =>
+/** Exported for tests: pairs with `snapshotSource` to pin the stored key literally. */
+export const snapshotKey = (collectionId: number, takenAt: string, source: string | null) =>
   [CONTEST_SNAPSHOT_KEY_PREFIX, collectionId, ...(source ? [source] : []), takenAt].join(':');
 
 function toSnapshotSummary(key: string, snapshot: StoredContestSnapshot): ContestSnapshotSummary {

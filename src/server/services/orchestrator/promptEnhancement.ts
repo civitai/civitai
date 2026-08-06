@@ -4,6 +4,7 @@ import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { getAirEcosystem } from '~/shared/utils/air';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
@@ -16,6 +17,11 @@ const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
  *
  * Pass `suppressOutput: true` to keep the enhancement off user-visible
  * results (typical when the enhancement is an intermediate step).
+ *
+ * `ecosystem` is normalized here rather than at the call sites: the orchestrator
+ * looks the guide up by this exact string and registers whatever it is handed,
+ * so an unnormalized value both misses the ecosystem's guide and permanently
+ * adds a bogus entry to its registry.
  */
 export function createPromptEnhancementStep(
   input: PromptEnhancementSchema,
@@ -26,7 +32,7 @@ export function createPromptEnhancementStep(
     $type: 'promptEnhancement',
     name: options?.name,
     input: {
-      ecosystem: input.ecosystem,
+      ecosystem: getAirEcosystem(input.ecosystem),
       prompt: input.prompt,
       negativePrompt: input.negativePrompt ?? undefined,
       temperature: input.temperature ?? undefined,

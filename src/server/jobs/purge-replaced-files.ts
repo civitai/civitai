@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteModelFileObject } from '~/utils/s3-utils';
@@ -31,19 +32,22 @@ export async function processReplacedFiles(rows: ReplacedRow[]) {
   return { purged, failed };
 }
 
-export const purgeReplacedFilesJob = createJob(
-  'purge-replaced-files',
-  '15 11 * * *',
-  async () => {
-    const rows = await dbWrite.$queryRaw<ReplacedRow[]>`
-      SELECT id, url
-      FROM "ModelFile"
-      WHERE "replacedAt" < now() - make_interval(days => ${GRACE_DAYS})
-        AND "dataPurged" IS NOT TRUE
-    `;
-    if (rows.length === 0) return { status: 'ok' };
-    const { purged, failed } = await processReplacedFiles(rows);
-    logJob({ type: 'info', message: 'finished', data: { purged, failed } });
-    return { status: 'ok' };
-  }
-);
+// The grace period is inlined as a literal: Prisma binds a JS number as int8 and
+// `make_interval` only takes int4, so an interpolated parameter fails to resolve the
+// function (42883) at plan time — the statement throws before any row is examined.
+export function buildReplacedFilesQuery(): Prisma.Sql {
+  return Prisma.sql`
+    SELECT id, url
+    FROM "ModelFile"
+    WHERE "replacedAt" < now() - make_interval(days => ${Prisma.raw(String(GRACE_DAYS))})
+      AND "dataPurged" IS NOT TRUE
+  `;
+}
+
+export const purgeReplacedFilesJob = createJob('purge-replaced-files', '15 11 * * *', async () => {
+  const rows = await dbWrite.$queryRaw<ReplacedRow[]>(buildReplacedFilesQuery());
+  if (rows.length === 0) return { status: 'ok' };
+  const { purged, failed } = await processReplacedFiles(rows);
+  logJob({ type: 'info', message: 'finished', data: { purged, failed } });
+  return { status: 'ok' };
+});

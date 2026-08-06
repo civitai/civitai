@@ -465,6 +465,43 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
+export function getLatestModelAppeal(modelId: number, userId: number) {
+  return dbRead.appeal.findFirst({
+    where: { entityType: EntityType.Model, entityId: modelId, userId },
+    orderBy: { createdAt: 'desc' },
+    select: { status: true, resolvedAt: true },
+  });
+}
+
+// `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
+// review a second time can only ever be an update of the row they already have.
+export function reopenModelAppeal({
+  entityId,
+  userId,
+  message,
+}: {
+  entityId: number;
+  userId: number;
+  message: string;
+}) {
+  return dbWrite.appeal.update({
+    where: {
+      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
+    },
+    data: {
+      status: AppealStatus.Pending,
+      appealMessage: message,
+      // The moderator queue sorts and displays on createdAt, so leaving the
+      // original request's stamp puts a months-old row ahead of fresh ones under
+      // a date that describes a request nobody is being asked to review.
+      createdAt: new Date(),
+      resolvedAt: null,
+      resolvedBy: null,
+      resolvedMessage: null,
+    },
+  });
+}
+
 export function getAppealCount({
   userId,
   status,
@@ -496,6 +533,12 @@ export async function getAppealDetails({ id }: GetByIdInput) {
         select: { id: true, url: true, userId: true },
       });
       break;
+    case EntityType.Model:
+      entityDetails = await dbRead.model.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
     default:
       // Do nothing
       break;
@@ -513,35 +556,38 @@ export async function createEntityAppeal({
   message,
   userId,
   buzzType,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
+  skipFee,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
   let buzzTransactionId: string | null = null;
 
-  // check if user has more than 3 pending or rejected appeal in the last 30 days
-  const appealsCount = await getAppealCount({
-    userId,
-    startDate: dayjs().subtract(30, 'days').toDate(),
-    status: [AppealStatus.Pending, AppealStatus.Rejected],
-  });
+  if (!skipFee) {
+    // check if user has more than 3 pending or rejected appeal in the last 30 days
+    const appealsCount = await getAppealCount({
+      userId,
+      startDate: dayjs().subtract(30, 'days').toDate(),
+      status: [AppealStatus.Pending, AppealStatus.Rejected],
+    });
 
-  if (appealsCount >= 3) {
-    const prefix = getAppealPrefix(userId);
-    const data = await withRetries(() =>
-      createMultiAccountBuzzTransaction({
-        amount: 100,
-        fromAccountId: userId,
-        toAccountId: 0,
-        type: TransactionType.Appeal,
-        fromAccountTypes: [buzzType],
-        description: `Appeal fee for ${entityType} ${entityId}`,
-        externalTransactionIdPrefix: prefix,
-      })
-    );
+    if (appealsCount >= 3) {
+      const prefix = getAppealPrefix(userId);
+      const data = await withRetries(() =>
+        createMultiAccountBuzzTransaction({
+          amount: 100,
+          fromAccountId: userId,
+          toAccountId: 0,
+          type: TransactionType.Appeal,
+          fromAccountTypes: [buzzType],
+          description: `Appeal fee for ${entityType} ${entityId}`,
+          externalTransactionIdPrefix: prefix,
+        })
+      );
 
-    if (data.transactionCount === 0) {
-      throw new Error('There was an error creating the appeal transaction.');
+      if (data.transactionCount === 0) {
+        throw new Error('There was an error creating the appeal transaction.');
+      }
+
+      buzzTransactionId = prefix;
     }
-
-    buzzTransactionId = prefix;
   }
 
   try {
@@ -577,8 +623,8 @@ export async function createEntityAppeal({
 }
 
 // Display label + (when the entity is publicly reachable) a link for an
-// appealed item, surfaced in the resolution email. Only Image is linkable today;
-// other entity types fall back to a label-only reference.
+// appealed item, surfaced in the resolution email. Entity types with no public
+// URL fall back to a label-only reference.
 function appealEntityLink(
   entityType: EntityType,
   entityId: number
@@ -586,6 +632,8 @@ function appealEntityLink(
   switch (entityType) {
     case EntityType.Image:
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+    case EntityType.Model:
+      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }

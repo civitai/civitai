@@ -187,8 +187,14 @@ jobs:
     runs-on: ubuntu-latest
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
-    # on purpose: they need Chromium and carry the cold-optimizeDeps flake
-    # documented at vitest.config.mts:98-124.
+    # on purpose: they need Chromium, which this job does not install. That is
+    # the whole reason. This comment used to add "and carry the cold-optimizeDeps
+    # flake documented at vitest.config.mts:98-124", which was wrong: those lines
+    # document the FIX for that flake, not an open one. vitest.config.mts:109-127
+    # dedupes React and pre-bundles `vitest-browser-react` + the JSX runtimes so
+    # the optimize pass happens BEFORE the run instead of reloading mid-run, and
+    # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
+    # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
     # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
     # timed out 5 tests under machine load; every one of them passed in isolation
