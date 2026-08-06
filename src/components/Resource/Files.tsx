@@ -128,6 +128,7 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
     case ModelType.Upscaler:
       return 'Upscaler';
     case ModelType.Workflows:
+    case ModelType.ComfyWorkflows:
       return 'Workflow';
     case ModelType.Other:
     default:

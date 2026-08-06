@@ -789,6 +789,7 @@ enum ModelType {
   Poses
   Wildcards
   Workflows
+  ComfyWorkflows
   Detection
   VisionLanguage
   CLIP
