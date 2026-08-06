@@ -82,6 +82,22 @@ export default defineConfig({
       // DATABASE_URL from the root `.env` so its DB-backed tier self-skips without one.
       'packages/*/vitest.config.ts',
       'packages/*/vitest.config.mts',
+      // The `apps/*` suites, for exactly the same reason and by exactly the same mechanism.
+      // `pnpm-workspace.yaml` has included `apps/*` all along, and four of the seven apps
+      // carry a vitest config — but the globs above only ever reached `packages/`, so 42
+      // files / 361 tests across apps/{auth,notifications,orchestrator-gateway,storage} were
+      // run by nobody: not the `unit` project (root-relative `include`), not this job.
+      //
+      // They land in the SAME `--project '@civitai/*'` selection because every one of those
+      // four package.json `name`s is already `@civitai/`-scoped (`@civitai/auth-app`,
+      // `@civitai/notifications-app`, `@civitai/orchestrator-gateway`, `@civitai/storage-app`)
+      // — no filter change, and no name collision with the `packages/` projects.
+      //
+      // Same config-file glob rather than a directory glob, same reason: `apps/creator-studio`,
+      // `apps/event-engine` and `apps/moderator` have no vitest config and must not be adopted
+      // under a default `include` they were never written against.
+      'apps/*/vitest.config.ts',
+      'apps/*/vitest.config.mts',
       {
         resolve: { alias },
         test: {

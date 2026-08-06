@@ -255,11 +255,11 @@ The root `unit` Vitest project globs `src/**` and `scripts/**` — both root-rel
 package's suite, or any of the eight other `packages/*` suites. 616 tests, 81 of them this
 tool's, ran only for whoever remembered `pnpm --filter <pkg> test` by hand.
 
-They now run in the `Package unit tests` job, from the `packages/*/vitest.config.*` entries in
-the root `vitest.config.mts`:
+They now run in the `Workspace unit tests` job, from the `packages/*/vitest.config.*` and
+`apps/*/vitest.config.*` entries in the root `vitest.config.mts`:
 
 ```bash
-pnpm run test:packages:run          # all nine package suites
+pnpm run test:packages:run          # all 13 workspace suites (9 packages/* + 4 apps/*)
 pnpm --filter @civitai/db-schema test   # just this one
 ```
 
@@ -270,14 +270,16 @@ so does a suite that skips itself entirely.
 
 Two things it is worth being precise about, because both are easy to overstate:
 
-- **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
-  a red `Package unit tests` does not prevent a merge. It renders red rather than
-  red-but-ignored, which is the real difference from the `Unit tests` job.
-- **The workspace gap is not closed, only the `packages/*` part of it.** `apps/*` has four
-  more vitest configs and ~43 test files that still no CI job runs. Same one-line fix — another
-  glob in the same `projects` array — plus teaching the ledger script about `apps/`, which
-  currently hardcodes `packages/`. Deliberately left to a follow-up rather than widened into
-  the change that closed the first part.
+- **It is not an interlock.** `main` has branch protection but no `required_status_checks`
+  (and its one active ruleset only forbids branch deletion), so a red `Workspace unit tests`
+  does not prevent a merge. It renders red rather than red-but-ignored, which is the real
+  difference from the `Unit tests` job.
+- **The workspace gap is now closed on both roots.** The `apps/*` half followed in a second
+  change: four more vitest configs, 42 files and 361 tests
+  (`apps/{auth,notifications,orchestrator-gateway,storage}`), brought in by two more globs in
+  the same `projects` array, and the ledger script — which hardcoded `packages/` and so could
+  not have observed an `apps/*` dropout — now scans both roots from a single `WORKSPACE_ROOTS`
+  list. The run is 13 projects / 114 files / 1318 tests.
 
 ## Gating a pull request
 

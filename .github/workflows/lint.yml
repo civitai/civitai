@@ -227,31 +227,50 @@ jobs:
         run: pnpm run test:unit:run
 
   packages:
-    name: Package unit tests
+    name: Workspace unit tests
     runs-on: ubuntu-latest
-    # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
-    # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
-    # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
-    # suite. That is not a small gap: the schema-drift detector shipped 81 tests into it,
-    # and two of them had been RED on `main` since #3592 corrected the schema out from under
-    # their assertions, with nothing to say so.
+    # Every workspace suite that is not the root app: the nine `packages/*` projects and the
+    # four `apps/*` ones — 13 projects, 114 files, 1318 tests (1314 executed, 4 skipped).
+    # Neither group had ever been run by CI. The `unit` job above runs
+    # `vitest run --project unit`, whose `include` is root-relative (`src/**`, `scripts/**`),
+    # so nothing in this repo ever invoked a workspace package's suite. That is not a small
+    # gap: the schema-drift detector shipped 81 tests into it, and two of them had been RED on
+    # `main` since #3592 corrected the schema out from under their assertions, with nothing to
+    # say so.
+    #
+    # ONE job rather than a second one for `apps/*`. This job is dominated by checkout +
+    # install; the apps add ~12s of test time to it (11.6s -> 23.9s measured locally) against
+    # the ~1-2min a duplicate install would cost. The usual argument for splitting —
+    # attribution — does not apply here, because vitest's reporter already prefixes every file
+    # and every failure with its project name (`FAIL @civitai/storage-app src/...`) and the
+    # ledger step below prints a per-package table.
     #
     # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
-    # buy: `main` has branch protection but NO required_status_checks, so a red check here
-    # does not prevent a merge. The difference from `unit` is that this renders RED rather
-    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
-    # hides. Making it an actual interlock means adding "Package unit tests" to the required
+    # buy: `main` has branch protection but NO required_status_checks (and the one active
+    # ruleset only forbids deletion), so a red check here does NOT prevent a merge — it is
+    # advisory. The difference from `unit` is that this renders RED rather than
+    # red-but-ignored — a signal someone has to look at and dismiss, not one the UI hides.
+    # Making it an actual interlock means adding "Workspace unit tests" to the required
     # checks, which is a repo-settings change, not a workflow one.
     #
     # The reasoning that made `unit` report-only still does not transfer, which is why this
     # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
-    # import/transform phase per file, and it timed out five tests under load. This is 616
-    # tests with no browser, no database and no Next module graph — ~15s locally.
+    # import/transform phase per file, and it timed out five tests under load. These 1318
+    # tests have no browser, no database and no Next module graph — ~24s locally.
+    #
+    # The four app suites clear the same bar as the packages, which is why they were allowed
+    # into a blocking job: `apps/{orchestrator-gateway,storage,notifications}` exercise their
+    # Fastify apps through `app.inject()` (an in-process request — no port is bound, so no
+    # port collision on a shared runner), their backends/DB/redis clients are `vi.mock`ed,
+    # `apps/auth` stubs SvelteKit's `$env`/`$app` virtual modules in its own vitest config, and
+    # the tests that care about environment set and delete their own `process.env` keys rather
+    # than reading ambient ones. Nothing reaches the network, a real clock, or a real database.
     #
     # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
     # `.env`, which does not exist on a runner, so its 4 DB-backed tests across two files
     # (3 in tag.db.explain, 1 in enum-array-parsers.explain) report as skipped. They are
-    # visible as skips in the summary rather than as a silent absence.
+    # visible as skips in the summary rather than as a silent absence. The `apps/*` suites
+    # contribute zero skips.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -268,14 +287,16 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Package unit tests
+      - name: Workspace unit tests
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 
       # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
       # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
-      # workspace package with a vitest config and a test file on disk must appear in the
-      # results — so the job fails when the executed set shrinks, which is the regression the
-      # totals cannot see.
-      - name: Assert every package suite actually ran
+      # workspace package under `packages/` AND `apps/` with a vitest config and a test file on
+      # disk must appear in the results with at least one EXECUTED test — so the job fails when
+      # the executed set shrinks, which is the regression the totals cannot see. Until the
+      # `apps/*` suites were brought in, the ledger scanned only `packages/`, which means it
+      # could not have observed an `apps/*` dropout even once those suites were running.
+      - name: Assert every workspace suite actually ran
         if: always()
         run: node scripts/ci/assert-package-suites-ran.mjs packages-report.json

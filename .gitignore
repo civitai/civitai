@@ -163,5 +163,5 @@ mockups/
 # superpowers skill scratch (specs/plans) — implementation detail, not shipped to main
 docs/superpowers/
 
-# vitest JSON report written by the Package unit tests CI job
+# vitest JSON report written by the Workspace unit tests CI job
 packages-report.json
