@@ -262,12 +262,17 @@ describe('withSignedInFlag (shared BLOCK_INIT viewer stamper)', () => {
    * `undefined` object values are DROPPED by structured clone, so a passed-through
    * `undefined` reaches the block as a MISSING `username` — and the deployed
    * `isValidBlockInitPayload` guard treats missing and `null` differently: an
-   * explicit `null` is accepted, an absent key is REJECTED (16 of 16 extracted
-   * guards), which blanks the block entirely. The parameter type forbids
-   * `undefined` and all three call sites already coalesce, so this is unreachable
-   * TODAY — the point is that this helper is the single choke point both hosts
-   * funnel through, and the whole PR rests on the deployed guard being
-   * unforgiving.
+   * explicit `null` is accepted, an absent key is REJECTED, which blanks the
+   * block entirely. (An earlier draft cited "16 of 16 extracted guards"; 16
+   * reconciles with none of the enumerated populations and has been withdrawn —
+   * see the helper's docstring in ../projectBlockInit.ts.)
+   *
+   * The parameter type forbids `undefined` and BOTH call sites arrive coalesced
+   * (`projectBlockInitViewer` coalesces itself; `PageBlockHost` relies on the
+   * /apps/run route doing it), so this is unreachable TODAY — the point is that
+   * this helper is the single choke point both hosts funnel through, one of them
+   * on a guarantee held by a route this module does not own, and the whole PR
+   * rests on the deployed guard being unforgiving.
    */
   it('🔴 coalesces an undefined username to an explicit null (an ABSENT key fails the deployed guard)', () => {
     const stamped = withSignedInFlag({

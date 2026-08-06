@@ -8,9 +8,11 @@
 // UNCONDITIONAL append the wrong default:
 //
 //   1. 🔴 NO DEPLOYED BLOCK CAN DECODE IT. Across all 20 DEPLOYED bundles — the
-//      full `app_blocks` deployed set (21 rows), not just the 9 currently
-//      `approved`/serving, which is the right population for a "nobody can
-//      decode this" claim since a suspension is reversible —
+//      full `app_blocks` deployed set (21 rows), which is the right population
+//      for a "nobody can decode this" claim since a suspension is reversible,
+//      rather than the 9 currently `approved` (and `approved` is itself only a
+//      CEILING on what serves — see the population note above
+//      `BlockInitPayload` in types.ts) —
 //      `civitai-block=v1` x0 and `BLOCK_HELLO` x0. The SDK half is merged but
 //      NOT published (npm latest is still `@civitai/app-sdk@0.30.0`). So the
 //      fast path currently buys exactly nothing, and "zero benefit" is the

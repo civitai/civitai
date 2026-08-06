@@ -204,11 +204,33 @@ export function slotRemountKey(args: {
  *     the bundle starts serving again unchanged. A field removed while a block
  *     is suspended breaks it the moment it is restored.
  *
- *   9 approved — the CURRENTLY-SERVED set, and all a "what happens today" claim
- *     covers. Both serving surfaces gate on `status: 'approved'`
- *     (`BlockRegistry.resolvePageBlockBySlug` for the page, the
- *     `known-app-blocks` query for the model slot), so a suspended block
+ *   9 approved — the APPROVED set: a CEILING on what is served today, and all a
+ *     "what happens today" claim covers. Both serving surfaces gate on
+ *     `status: 'approved'` — `BlockRegistry.resolvePageBlockBySlug` for the
+ *     page, and for the model slot the slot-resolution SQL in
+ *     `BlockRegistry.listForModel`
+ *     (src/server/services/block-registry.service.ts, the four source-rank
+ *     branches around lines 803 / 864 / 942 / 1016) — so a suspended block
  *     receives no BLOCK_INIT at all right now.
+ *
+ *     🔴 NOT the `known-app-blocks` query, which an earlier draft of this note
+ *     cited for the model slot. That module
+ *     (src/server/services/blocks/known-app-blocks.service.ts) is a 5-minute TTL
+ *     cache whose stated job is to BOUND the `app_block_id` Prometheus label on
+ *     the public /api/track/block-render beacon. It gates a metric label, not
+ *     serving, and nothing in the render path consults it.
+ *
+ *     🔴 AND "9 approved" OVERSTATES what actually receives a BLOCK_INIT.
+ *     `approved` is necessary, not sufficient. Each of those four model-slot
+ *     branches ANDs a DEPLOY GATE on top of it —
+ *     `(ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT
+ *     NULL)` — and additionally needs a row that puts the block on the slot (a
+ *     `block_user_subscriptions` row or a `platform_default_blocks` row) plus a
+ *     manifest slot match. The page surface likewise adds
+ *     `manifestDeclaresPage(manifest)`. So the actually-serving set on either
+ *     surface is a strict-or-equal SUBSET of the 9, and its size was NOT
+ *     enumerated here. Read "9 approved" as an upper bound, never as a count of
+ *     what renders.
  *
  *   what was EXECUTED — the `isValidBlockInitPayload` guard was extracted and
  *     RUN against synthetic payloads for the 9 approved bundles; the runtime
@@ -285,10 +307,13 @@ export interface BlockInitPayload {
      * @deprecated Identity disclosed to the block UNCONDITIONALLY, at load,
      * before the viewer has interacted with it at all — every block that renders
      * learns who is looking at it whether or not it ever needed to know, and
-     * nothing records that it happened. The replacement is the scope-gated,
-     * per-call-auditable `GET_VIEWER` message (host-mediated
-     * `blocks.getMyViewer`), which requires the block to ASK, checks its token,
-     * and leaves an audit row per call.
+     * nothing records that it happened. The replacement is `GET_VIEWER`
+     * (host-mediated `blocks.getMyViewer`), which requires the block to ASK: a
+     * server round-trip that verifies the token, requires the block to have
+     * DECLARED and been GRANTED the `user:read:self` scope, self-binds the id off
+     * the token subject, and is rate-limited per block instance. (It does not
+     * write an audit row — an earlier draft of this note said it did. The gain is
+     * the consent scope and the round-trip, not a persisted trail.)
      *
      * Still sent because the deployed guard requires the object shape (see the
      * `viewer` doc above) AND because 5 of the 9 currently-approved apps read
@@ -296,12 +321,15 @@ export interface BlockInitPayload {
      * optimistic row authorship. Removing it silently breaks those five.
      *
      * 🔴 SCOPE OF WHAT THIS DEPRECATION ACTUALLY BUYS — it is NOT the whole
-     * identity story, and this note exists so nobody reads it as one:
+     * identity story, and this note exists so nobody reads it as one. THREE
+     * channels in a BLOCK_INIT carry viewer identity; this deprecation covers
+     * one of them:
      *
-     *   - MODEL SLOT (`IframeHost`): this object is the ONLY identity channel.
-     *     `projectBlockInitContext`'s allowlist already drops `viewerUserId` /
-     *     `viewerUsername` from `BLOCK_INIT.context`, so retiring these two
-     *     fields does end unconditional identity disclosure on that surface.
+     *   - MODEL SLOT (`IframeHost`): `projectBlockInitContext`'s allowlist
+     *     already drops `viewerUserId` / `viewerUsername` from
+     *     `BLOCK_INIT.context`, so on this surface the `viewer` object is the
+     *     only identity channel IN THE CONTEXT. It is NOT the only one in the
+     *     PAYLOAD — see the token below.
      *   - FULL PAGE (`PageBlockHost`): it buys NOTHING today. That host does not
      *     project its context — `buildContext()` emits `viewerUserId` and
      *     `viewerUsername` into `BLOCK_INIT.context` verbatim, an undeprecated
@@ -309,6 +337,33 @@ export interface BlockInitPayload {
      *     on `PageContext.viewerUserId` for why they were not removed here
      *     (published SDK contract fields; the deployed-population enumeration
      *     that backs this file's other claims was never run for them).
+     *   - BOTH SURFACES — `token.raw`. The block token is a plain RS256 JWT, not
+     *     an opaque handle: its payload is base64url and its `sub` claim is
+     *     `user:<id>` for a signed-in viewer (`block-token.service.ts` builds it,
+     *     and docs/features/app-blocks.md "Tokens" states the claim). Every
+     *     BLOCK_INIT ships it — IframeHost's and PageBlockHost's
+     *     `buildInitPayload` both set `token.raw` — so any block can read the
+     *     viewer's numeric id by decoding a string it was handed, with no scope
+     *     check, no round-trip, and nothing server-side able to observe that it
+     *     happened. This channel is UNDEPRECATED and is not a defect to be
+     *     closed: it is the auth mechanism, and the block needs the token.
+     *
+     * So retiring `viewer.id` / `viewer.username` does NOT end unconditional
+     * identity disclosure on either surface — including the model slot. Stated
+     * at the scope it actually holds, what it buys is:
+     *
+     *   1. the USERNAME leaves the unconditional payload on the model slot (the
+     *      token's `sub` carries the numeric id only); and
+     *   2. the numeric id stops being a convenient, typed, obviously-intended
+     *      field read and becomes a deliberate JWT decode.
+     *
+     * Both are real narrowings of the CONVENIENT channel. Neither is an end to
+     * disclosure. The token channel is co-extensive with this object in WHEN it
+     * discloses — `sub` is `anon` for an anonymous viewer, exactly when `viewer`
+     * is `null` — so a signed-in viewer's id reaches the block either way.
+     * Ending disclosure would take a token-subject change (an opaque,
+     * per-instance pairwise subject), which is a token-design decision, not a
+     * payload-field one, and is not part of this PR.
      */
     id: number;
     /**

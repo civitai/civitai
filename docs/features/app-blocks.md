@@ -165,19 +165,40 @@ never appears.
 `viewer.id` / `viewer.username` are **deprecated but still sent, and will keep
 being sent**. Deprecated because identity reaches the block unconditionally at
 load, before the viewer has interacted with it, with nothing recording that it
-happened; the replacement is the scope-gated, per-call-audited `GET_VIEWER`
-message (`blocks.getMyViewer`), which requires the block to ask. Still sent
-because the `isValidBlockInitPayload` guard compiled into already-deployed
-bundles **rejects the whole payload** without a numeric `viewer.id` — removing it
-would blank every deployed block at once. Same story for `blockId` / `appId`.
+happened; the replacement is `GET_VIEWER` (`blocks.getMyViewer`), which requires
+the block to **ask** — a round-trip gated on the block having declared and been
+granted the `user:read:self` scope, self-bound to the token subject, and
+rate-limited per block instance. Still sent because the `isValidBlockInitPayload`
+guard compiled into already-deployed bundles **rejects the whole payload** without
+a numeric `viewer.id` — removing it would blank every deployed block at once.
+Same story for `blockId` / `appId`.
 
-⚠️ **The deprecation does NOT reduce what a full-page app sees today.**
-`PageBlockHost` does not project its context: `BLOCK_INIT.context` on the
-`app.page` surface still carries `viewerUserId` and `viewerUsername`, an
-undeprecated second channel carrying the same identity. (The model-slot host
-*does* project and drops both.) Those page-context fields are deprecated too —
-treat `GET_VIEWER` as the supported way to learn who the viewer is on either
-surface — but nothing has been removed from the wire.
+⚠️ **Deprecating those two fields does not end identity disclosure — on either
+surface.** A BLOCK_INIT carries viewer identity through **three** channels, and
+the deprecation covers one:
+
+1. `viewer.id` / `viewer.username` — deprecated (this section).
+2. `context.viewerUserId` / `context.viewerUsername` — **full-page surface only.**
+   `PageBlockHost` does not project its context, so `BLOCK_INIT.context` on the
+   `app.page` surface still carries both verbatim. (The model-slot host *does*
+   project, and drops both.) Those page-context fields are deprecated too, but
+   nothing has been removed from the wire.
+3. `token.raw` — **both surfaces, undeprecated, and not going away.** The block
+   token is a plain RS256 JWT, not an opaque handle: its `sub` claim is
+   `user:<id>` for a signed-in viewer (see "Tokens" above), so any block can read
+   the viewer's numeric id by base64url-decoding a value it was handed — no
+   scope, no round-trip, and nothing server-side can observe that it did. This is
+   not a bug to be closed: the token *is* the auth mechanism and the block needs
+   it.
+
+So what the deprecation actually buys is narrower than "identity is no longer
+disclosed": on the model slot it removes the **username** from the unconditional
+payload (the token's `sub` carries only the id), and on both surfaces it turns a
+convenient typed field read into a deliberate JWT decode. The token discloses on
+exactly the same condition the `viewer` object does — `sub` is `anon` for an
+anonymous viewer, precisely when `viewer` is `null`. Treat `GET_VIEWER` as the
+**supported** way to learn who the viewer is, and expect the id to remain
+derivable from the token regardless.
 
 ### Theme changes
 

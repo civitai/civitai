@@ -149,13 +149,28 @@ export function projectBlockInitMaturity(input: {
  * username serialises to an ABSENT key over postMessage (structured clone drops
  * `undefined` object values), and the deployed `isValidBlockInitPayload` guard
  * distinguishes the two: an explicit `null` is accepted, an ABSENT `username` is
- * rejected. Executed against the guards extracted from the deployed bundles, an
- * absent `username` was rejected by 16 of 16 and an explicit `null` accepted by
- * all 16. A rejected payload means the block never initialises at all. No
- * current caller can pass `undefined` (the parameter type forbids it and all
- * three call sites already coalesce), but this helper is the single choke point
- * BOTH hosts funnel through, so the coalesce lives here rather than depending on
- * every future caller remembering it.
+ * rejected. A rejected payload means the block never initialises at all.
+ *
+ * 🔴 THE POPULATION THAT WAS MEASURED FOR *THIS* FIELD IS NOT ON RECORD. An
+ * earlier draft of this note claimed "16 of 16 extracted guards". 16 matches
+ * NONE of the three counts the population note above `BlockInitPayload` in
+ * types.ts defines (9 guard-executed / 20 deployments / 21 rows), appears
+ * nowhere else in the repo, and could not be reconciled to any of them — so it
+ * has been withdrawn rather than rounded to whichever neighbour looked closest.
+ * Do not re-introduce a count here without saying which enumeration produced it.
+ * The coalesce stands regardless of the number: it is unconditionally correct,
+ * costs nothing, and is the safe side of a distinction the guard demonstrably
+ * makes.
+ *
+ * No current caller can pass `undefined`: the parameter type forbids it, and
+ * BOTH call sites arrive already coalesced — `projectBlockInitViewer` below does
+ * it itself (`source.viewerUsername ?? null`), while `PageBlockHost` passes its
+ * `viewer` PROP straight into this helper and depends on the /apps/run route
+ * having coalesced upstream (`src/pages/apps/run/[slug]/[[...path]].tsx`, where
+ * `viewer` is built as `{ id, username: currentUser.username ?? null }`). That
+ * second one is precisely why the coalesce lives HERE: the guarantee is held by
+ * a route this module does not own and one refactor away from lapsing, and this
+ * helper is the single choke point BOTH hosts funnel through.
  *
  * 🔴 THE FIELDS ARE PICKED EXPLICITLY, NEVER SPREAD. `{ ...viewer, signedIn }`
  * would pass every shape assertion written against a narrow fixture while
