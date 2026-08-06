@@ -625,6 +625,40 @@ export const purchaseMembershipWithBuzz = async ({
   };
 };
 
+/**
+ * Ends a Buzz-purchased membership because the user now has a real one.
+ *
+ * Nothing else does this: the cash flows upsert keyed on `userId_buzzType` with the CASH
+ * colour, so they never touch the `buzzPurchase` slot and the user would silently hold
+ * both. Since tier resolution takes the HIGHEST across all subscriptions, a leftover Buzz
+ * gold would keep granting gold perks to someone paying for bronze.
+ *
+ * Cancelled rather than deleted so the purchase stays auditable; `getAllUserSubscriptions`
+ * filters cancelled rows, so it stops granting tier immediately either way.
+ */
+export const supersedeBuzzMembershipForPaidSubscription = async ({
+  userId,
+}: {
+  userId: number;
+}) => {
+  const now = new Date();
+  const { count } = await dbWrite.customerSubscription.updateMany({
+    where: {
+      userId,
+      buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+      status: { notIn: ['canceled', 'incomplete_expired'] },
+    },
+    data: { status: 'canceled', canceledAt: now, endedAt: now, updatedAt: now },
+  });
+
+  if (!count) return { superseded: 0 };
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+
+  return { superseded: count };
+};
+
 export const claimPrepaidToken = async ({
   tokenId,
   userId,

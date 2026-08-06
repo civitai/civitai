@@ -249,6 +249,32 @@ Gated on the `buzzMemberships` feature flag (`buzz-memberships` in Flipt; mods b
 default). It gates the pricing-page toggle and `/pricing/buzz`; the server mutation is not
 flag-gated but is inert until Buzz products exist in the catalog.
 
+## Buying a cash membership ends the Buzz one
+
+The cash flows (`upsertSubscription` for Stripe, `consumeRedeemableCode` for membership
+codes) upsert keyed on `userId_buzzType` with the **cash** colour, so they never touch the
+`buzzPurchase` slot. Left alone, a user would hold both — and since tier resolution takes
+the HIGHEST tier across all subscriptions, a leftover Buzz gold would keep granting gold
+perks to someone now paying for bronze.
+
+Both paths therefore call `supersedeBuzzMembershipForPaidSubscription({ userId })` once the
+paid subscription is active (`active`/`trialing` only — a cancellation webhook must not
+trigger it). It sets the Buzz row to `canceled` with `canceledAt`/`endedAt`, then busts the
+caches. Cancelled rather than deleted so the purchase stays auditable;
+`getAllUserSubscriptions` filters cancelled rows either way.
+
+Note this means a user who upgrades to cash **forfeits the remainder of the Buzz month**.
+The original discussion left that unresolved — Justin didn't want people losing time they'd
+paid for, but never landed on a way to track the overlap. If you want the remainder honoured
+instead, this function is the single place to change.
+
+## Cache invalidation
+
+`purchaseMembershipWithBuzz` and `supersedeBuzzMembershipForPaidSubscription` both call
+`invalidateSubscriptionCaches(userId)` — the same fan-out every other subscription mutation
+uses: session refresh, reward/purchase multipliers, vault size, the Creator Program cap
+cache, the Civitai-user cache, and the creator-membership-validity cache.
+
 ## Entry points
 
 - `/pricing` — cash catalog only. Carries a blue alert (styled like the "moved to
