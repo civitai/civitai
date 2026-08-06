@@ -21,6 +21,7 @@ export const reconcileCollectionCollaboration = createJob(
             OR EXISTS (
               SELECT 1 FROM "CollectionContributor" cc
               WHERE cc."collectionId" = c.id
+                AND cc."userId" <> c."userId"
                 AND cc.permissions && ARRAY['ADD','MANAGE']::"CollectionContributorPermission"[]
             )
           )
