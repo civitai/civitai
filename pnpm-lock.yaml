@@ -1172,6 +1172,9 @@ importers:
       '@tabler/icons-svelte':
         specifier: ^3.28.1
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
+      kysely:
+        specifier: ^0.28.7
+        version: 0.28.17
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0

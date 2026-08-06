@@ -7,6 +7,7 @@
   import ContentCounts from './ContentCounts.svelte';
   import IdentityPanel from './IdentityPanel.svelte';
   import ModActivityPanel from './ModActivityPanel.svelte';
+  import ModerationMemoryPanel from './ModerationMemoryPanel.svelte';
   import ReportsPanel from './ReportsPanel.svelte';
   import ReputationPanel from './ReputationPanel.svelte';
   import SecuritySignals from './SecuritySignals.svelte';
@@ -52,6 +53,7 @@
   />
   <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
   {#key result.identity.id}
+    <ModerationMemoryPanel userId={result.identity.id} />
     <SubscriptionPanel subscription={result.subscription} userId={result.identity.id} />
     <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
     <SecuritySignals userId={result.identity.id} />
