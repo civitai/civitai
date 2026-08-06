@@ -279,3 +279,60 @@ describe('blockWorkflowBodySchema — inline arm bounds', () => {
     ).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE ACCEPT/REJECT BOUNDARY, PINNED AS A TABLE.
+//
+// The arms now carry a custom `error` map so a rejected `customComfy` body is
+// told which arm it landed on and what the other one is (see the ARM-AWARE
+// REJECTION MESSAGES block in `workflow.schema.ts`; the message text itself is
+// asserted at the router seam in `blocks.router.workflow.test.ts`).
+//
+// A custom error map is not supposed to move the boundary — but "not supposed
+// to" is a claim, and the whole reason `.strict()` is here is that on this arm
+// it is a security gate rather than hygiene. So the VERDICT is pinned
+// independently of the text: every row below is a boolean that must not move,
+// whatever a message says. This is an INVARIANT GUARD, deliberately labelled as
+// one — it was green before the message change and must stay green after.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 blockWorkflowBodySchema — customComfy accept/reject boundary is unchanged', () => {
+  const RECIPE_BODY = { kind: 'customComfy', recipe: RECIPE_ID, params: { prompt: 'x' } };
+
+  const cases: Array<[string, unknown, boolean]> = [
+    ['recipe body, no `mode` (every deployed app)', RECIPE_BODY, true],
+    ['recipe body, explicit `mode:"recipe"`', { ...RECIPE_BODY, mode: 'recipe' }, true],
+    ['recipe body + an unknown key', { ...RECIPE_BODY, graph: {} }, false],
+    ['recipe body + an unregistered recipe id', { ...RECIPE_BODY, recipe: 'nope' }, false],
+    ['inline body', inlineBody(), true],
+    ['inline body + an unknown key', inlineBody({ graph: {} }), false],
+    ['inline body, maxBuzz over the ceiling', inlineBody({ maxBuzz: INLINE_MAX_BUZZ + 1 }), false],
+    ['inline body, maxBuzz at the ceiling', inlineBody({ maxBuzz: INLINE_MAX_BUZZ }), true],
+    ['inline body missing maxBuzz', inlineBody({ maxBuzz: undefined }), false],
+    ['a body naming BOTH arms', inlineBody({ recipe: RECIPE_ID, params: {} }), false],
+    ['an unknown `mode` value', { ...RECIPE_BODY, mode: 'graph' }, false],
+    ['`mode:"inline"` on a recipe-shaped body', { ...RECIPE_BODY, mode: 'inline' }, false],
+    ['a bare string where a body is expected', 'customComfy', false],
+    ['a null body', null, false],
+  ];
+
+  it.each(cases)('%s → %s', (_label, body, accepted) => {
+    expect(blockWorkflowBodySchema.safeParse(body).success).toBe(accepted);
+  });
+
+  // The seven `CustomComfyInput` fields an app must never set are pinned as
+  // REJECTED in their own table above (`inline arm rejects every
+  // CustomComfyInput field an app must not set`) — the error map cannot have
+  // moved them, because it never runs before the verdict is decided. This asserts
+  // the same for the RECIPE arm, which had no such table.
+  it.each([
+    'sessionOwnerApiToken',
+    'comfyImage',
+    'minVramGb',
+    'sessionId',
+    'useSageAttention',
+    'minimumDurationSeconds',
+    'trace',
+  ])('the RECIPE arm also rejects `%s`', (field) => {
+    expect(blockWorkflowBodySchema.safeParse({ ...RECIPE_BODY, [field]: 'x' }).success).toBe(false);
+  });
+});
