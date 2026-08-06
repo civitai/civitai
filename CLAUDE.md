@@ -342,7 +342,7 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
-| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
+| Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
