@@ -37,10 +37,12 @@ vi.mock('@civitai/client', () => {
   //
   // vitest validates each NAMED import against the mock and refuses the module
   // if one is missing — including names used only as types, which esbuild does
-  // not always elide. A missing one does not fail the suite: the file collects
-  // ZERO tests and reports `no tests`, which reads as "nothing to see" rather
-  // than as breakage. So the list is exhaustive rather than discovered one
-  // error at a time.
+  // not always elide. A missing one DOES fail the run (`Test Files 1 failed`,
+  // non-zero exit) — an earlier version of this comment wrongly said it did
+  // not — but the `Tests` line reads `no tests`, which is uninformative: it is
+  // a collection error, not an assertion failure, so nothing tells you WHICH
+  // symbol is missing until you read the error above it. Hence an exhaustive
+  // list rather than discovering them one error at a time.
   //
   // Regenerate with:
   //   grep -rhoP "import\s+(type\s+)?\{\K[^}]*(?=\}\s+from\s+'@civitai/client')" src \

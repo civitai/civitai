@@ -187,12 +187,22 @@ export type PersistedModelSubstitution = {
  * consolidated to remove, and the same argument applies: a projection copied at
  * N sites is wrong at N−1 of them the day the wire shape changes.
  *
- * Returns `undefined` when there is no collector (a client-built context), and
- * `[]` when a collector recorded nothing — deliberately NOT collapsing the two.
- * `snapshotFromWorkflow` distinguishes them: an explicit `[]` means "this
- * request validated and substituted nothing", which SUPPRESSES the fallback read
- * of the persisted metadata, whereas `undefined` lets that fallback run.
- * Collapsing them here would silently change the block path's poll behaviour.
+ * Returns `undefined` when there is no collector (a client-built context) and
+ * `[]` when a collector recorded nothing.
+ *
+ * 🔴 THOSE TWO ARE CURRENTLY INTERCHANGEABLE, and an earlier version of this
+ * comment claimed otherwise — that an explicit `[]` suppresses
+ * `snapshotFromWorkflow`'s fallback read of the persisted metadata while
+ * `undefined` allows it. That is FALSE and was measured: the fallback is guarded
+ * by `extra?.modelSubstitutions?.length` (`services/blocks/workflow.service.ts`),
+ * and `[].length` is `0`, so an empty array takes the same branch as `undefined`.
+ * Every consumer tests `?.length`, so nothing distinguishes them today.
+ *
+ * They are still not collapsed here, for the narrow reason that this function is
+ * a pure extraction of what three call sites already did — collapsing would be a
+ * behaviour change smuggled into a refactor. If you ever want one, check every
+ * consumer for a PRESENCE test (`!== undefined`, `in`, `?? `) first; that is what
+ * would make the distinction real.
  */
 export function projectModelSubstitutions(
   collector: Pick<ModelSubstitutionCollector, 'list'> | undefined
@@ -237,11 +247,21 @@ export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
  * it dependency-free so both a server service and shared graph code can use it.
  */
 export function readModelSubstitutionsFromMetadata(
-  // 🔴 NOT `unknown`. This used to take the whole `Workflow` and was moved here
-  // to take its metadata instead, which makes `read…(workflow)` — the exact slip
-  // the move invites — a silent no-op that returns `undefined` forever. Typing
-  // the bag rather than accepting anything makes that a compile error. Both
-  // call sites already pass this shape.
+  // Narrower than `unknown` — a primitive is now rejected — but 🔴 BE CLEAR
+  // ABOUT WHAT THIS DOES NOT BUY, because an earlier version of this comment
+  // claimed the opposite. This function used to take the whole `Workflow` and
+  // now takes its metadata, so `read…(workflow)` is the slip the move invites,
+  // and it is a silent no-op that returns `undefined` forever.
+  //
+  // That slip STILL COMPILES. `Workflow` is a type ALIAS, so TypeScript grants
+  // it an implicit index signature and it is assignable to
+  // `Record<string, unknown>` — measured, with a negative control to prove the
+  // probe compiled. Shaping the parameter to exclude it (`& { steps?: never }`)
+  // would also reject the legitimate callers, which pass a plain
+  // `Record<string, unknown>` whose index signature makes `steps` `unknown`.
+  //
+  // So the type is not the guard here; the tests are. If you are calling this,
+  // pass `something.metadata`, not `something`.
   metadata: Record<string, unknown> | null | undefined
 ): PersistedModelSubstitution[] | undefined {
   const raw = metadata?.[WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY];
