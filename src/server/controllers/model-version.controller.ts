@@ -9,6 +9,8 @@ import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import { resolveGenerationOnlyGate } from '~/server/utils/model-version-usage-control';
 import { logToAxiom } from '~/server/logging/client';
+import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
+import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
@@ -363,6 +365,9 @@ export const toggleNotifyEarlyAccessHandler = async ({
   }
 };
 
+const asUserTier = (tier: string | null): SessionUser['tier'] =>
+  (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
+
 export const upsertModelVersionHandler = async ({
   input: { bountyId, ...input },
   ctx,
@@ -386,8 +391,11 @@ export const upsertModelVersionHandler = async ({
     // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
     // memoized because the usage-control audit, paid-access and licensing-fee checks all need it:
     // getAllUserSubscriptions is uncached and hits the primary.
-    let capTier: string | null | undefined;
-    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
+    // Memoize the PROMISE, not the value: getCapTier returns null for anyone without a good-standing
+    // subscription, and `??=` re-assigns on null — so the users this gate denies would re-run an uncached
+    // primary-DB query on every call.
+    let capTierPromise: Promise<string | null> | undefined;
+    const actorTier = () => (capTierPromise ??= getCapTier(ctx.user.id));
 
     // Only MOVING a version off Download is a new grant, matching the Creator Studio rule. Coercing on
     // every non-Download save would strip generation-only from the versions whose owners aren't entitled
@@ -414,9 +422,20 @@ export const upsertModelVersionHandler = async ({
 
     if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
+      // `ctx.features` resolves off the SESSION tier, which lags a membership change, so a creator who
+      // just upgraded is denied something they now pay for. Re-evaluate the SAME flag with the fresh
+      // subscription tier rather than comparing the tier ourselves: env overrides (the deploy-free kill
+      // switch), region rules and domain gating all still apply, and the availability list stays the one
+      // source of truth for which tiers qualify.
+      const hasFeature =
+        !!ctx.features.generationOnlyModels ||
+        !!getFeatureFlagsLazy({
+          user: { ...ctx.user, tier: asUserTier(await actorTier()) },
+          req: ctx.req,
+        }).generationOnlyModels;
       const gate = resolveGenerationOnlyGate({
         requested: requestedUsageControl,
-        hasFeature: !!ctx.features.generationOnlyModels,
+        hasFeature,
         isModerator: !!ctx.user.isModerator,
         permissions: ctx.user.permissions,
       });
@@ -437,7 +456,8 @@ export const upsertModelVersionHandler = async ({
         storedUsageControl: storedUsageControl ?? null,
         appliedUsageControl: input.usageControl ?? null,
         sessionTier: ctx.user.tier ?? null,
-        subscriptionTier: gate.outcome === 'tier' ? await actorTier() : null,
+        subscriptionTier:
+          gate.outcome === 'tier' || gate.outcome === 'denied' ? await actorTier() : null,
       }).catch(() => null);
     }
 
