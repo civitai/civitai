@@ -253,10 +253,17 @@ describe('download quota — the lookup key is the normalized derived address', 
   });
 
   it('CONSEQUENCE: two spellings of one address are two different lookups', async () => {
-    // This is the read/write asymmetry stated executably. The read side folds an
-    // IPv4-mapped address; a writer that does not fold stores the mapped text,
-    // and these two queries show the filters never meet. Pinned here so that
-    // changing either side has something to trip over.
+    // The lookup is LITERAL: the key text becomes the filter text, so two keys
+    // that differ at all are two different queries and one of them matches
+    // nothing. That is what makes the key's provenance load-bearing, and it is
+    // pinned here so a change to how the key is derived has something to trip
+    // over.
+    //
+    // ⚠️ This is NOT the cause of the read/write divergence, and reading it as
+    // such is the mistake the `download-count.ts` docblock now warns about: the
+    // two sides run DIFFERENT predicates, not one predicate rendered two ways,
+    // so they can name different addresses however either is spelled.
+    // Normalising text on either side does not close that.
     await fetchDownloadCount(FOLDED);
     const folded = lastQuery();
     await fetchDownloadCount('::ffff:203.0.113.7');
