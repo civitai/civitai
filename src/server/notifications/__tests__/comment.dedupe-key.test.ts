@@ -98,6 +98,51 @@ describe('comment notifications — shared dedupe key', () => {
   });
 });
 
+/**
+ * `dedupeKey` collisions are guarded above; `key` collisions have the same blast radius and were not
+ * guarded anywhere. `Notification.key` is UNIQUE, and the drain looks a key up and REUSES the stored
+ * row's `type` and `details` rather than inserting. So two processors sharing a key prefix don't
+ * error — one silently serves the other's message and URL to the wrong recipient.
+ */
+describe('every processor owns a distinct notification key namespace', () => {
+  const keyPrefixes = Object.entries(notificationProcessors).flatMap(([type, def]) => {
+    const query = def.prepareQuery?.({
+      lastSent: '2026-01-01',
+      lastSentDate: new Date('2026-01-01'),
+      clickhouse: undefined,
+    });
+    if (typeof query !== 'string') return [];
+    // The literal that opens the concat feeding the `key` column.
+    const prefix = query
+      .split('"key"')[0]
+      ?.match(/concat\(\s*'([^']*)'/g)
+      ?.pop()
+      ?.match(/'([^']*)'/)?.[1];
+    return prefix ? [{ type, prefix }] : [];
+  });
+
+  it('finds a key prefix for the comment-family processors it is meant to cover', () => {
+    // Guards the extraction above from silently matching nothing and passing vacuously.
+    const covered = keyPrefixes.map((k) => k.type);
+    expect(covered).toContain('new-post-comment');
+    expect(covered).toContain('new-image-comment');
+    expect(keyPrefixes.length).toBeGreaterThan(10);
+  });
+
+  it('no processor can be confused for another by key', () => {
+    for (const a of keyPrefixes) {
+      for (const b of keyPrefixes) {
+        if (a.type === b.type) continue;
+        // Keys are prefix + id, so one prefix being a prefix of another is enough to collide.
+        expect(
+          a.prefix.startsWith(b.prefix),
+          `${a.type} ("${a.prefix}") collides with ${b.type} ("${b.prefix}")`
+        ).toBe(false);
+      }
+    }
+  });
+});
+
 describe('comment notifications — priority decides which duplicate survives', () => {
   it('orders mention > direct response > thread response > entity owner', () => {
     const { Mention, DirectResponse, ThreadResponse, EntityOwner } = CommentNotificationPriority;
