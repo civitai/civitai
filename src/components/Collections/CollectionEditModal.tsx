@@ -135,9 +135,10 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     }
   };
 
-  const permissions = queryPermissions ?? { manage: false, write: false };
+  const permissions = queryPermissions ?? { manage: false, write: false, isOwner: false };
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
+  const isOwner = isCreate || permissions.isOwner;
   const isImageCollection = collection?.type === CollectionType.Image;
   const isContestMode = collection?.mode === CollectionMode.Contest;
   const joinUrl =
@@ -168,11 +169,13 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
               rows={3}
               autosize
             />
-            <InputSelect
-              name="read"
-              label="Privacy"
-              data={Object.values(collectionReadPrivacyData)}
-            />
+            {(isOwner || currentUser?.isModerator) && (
+              <InputSelect
+                name="read"
+                label="Privacy"
+                data={Object.values(collectionReadPrivacyData)}
+              />
+            )}
             {isCreate && (
               <InputSelect
                 name="type"
@@ -187,7 +190,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
               />
             )}
 
-            {(isMember || currentUser?.isModerator) && (
+            {((isMember && isOwner) || currentUser?.isModerator) && (
               <InputSelect
                 name="write"
                 label="Who can add to this collection"
