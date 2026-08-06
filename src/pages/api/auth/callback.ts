@@ -84,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // So on the internal path this is a per-end-user bucket key on the far side, and
     // the seam is pinned from BOTH ends: the spoke half — that what is forwarded is
     // this predicate's answer — by
-    // `src/pages/api/auth/__tests__/callback.client-ip.test.ts`; the hub half — that
+    // `src/__tests__/pages/api/auth/callback.client-ip.test.ts`; the hub half — that
     // the hub derives that same value back out of the forwarded header — by
     // `apps/auth/src/lib/server/auth/__tests__/request.client-ip.test.ts`, in the
     // `app:auth` Vitest project. Neither half alone covers the seam.

@@ -22,6 +22,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * 🔴 BOTH SIDES ARE ASSERTED: an independently written expected literal per
  * fixture (which a predicate-only check would not give, since both sides could
  * collapse to one constant) AND the property against the predicate's own answer.
+ *
+ * 🔴 WHY THIS FILE IS HERE AND NOT NEXT TO THE HANDLER. Every `.ts`/`.tsx` under
+ * `src/pages/**` is enumerated by Next as a route — `isPageFile` is a bare
+ * extension test with no test-file exclusion — so a suite co-located in
+ * `src/pages/api/mod/retool/__tests__/` becomes the API route
+ * `/api/mod/retool/__tests__/comment.client-ip.test`, and `next build` then
+ * asserts it satisfies `ApiRouteConfig`, which requires a `default` export. It has
+ * none, so the PRODUCTION BUILD fails while every correctness gate stays green
+ * (see the guard in `src/__tests__/pages/no-test-files-in-pages-tree.test.ts` for
+ * the full mechanism). `src/__tests__/pages/api/**` mirrors the route tree without
+ * being inside it, which is the convention the sibling API suites already follow.
  */
 
 const { mockGetSession, mockRedis, mockRetoolAudit } = vi.hoisted(() => ({
@@ -70,7 +81,7 @@ vi.mock('~/server/services/commentsv2.service', () => ({
   })),
 }));
 
-import handler from '../comment';
+import handler from '~/pages/api/mod/retool/comment';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 function createMocks(headers: Record<string, string | string[]>, remoteAddress?: string) {

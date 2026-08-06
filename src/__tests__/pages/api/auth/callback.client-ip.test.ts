@@ -25,6 +25,17 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * The value matters because on the internal path the far side keys a per-IP
  * bucket on it. This suite makes no claim about that bucket's configuration —
  * only about which address arrives.
+ *
+ * 🔴 WHY THIS FILE IS HERE AND NOT NEXT TO THE HANDLER. Every `.ts`/`.tsx` under
+ * `src/pages/**` is enumerated by Next as a route — `isPageFile` is a bare
+ * extension test with no test-file exclusion — so a suite co-located in
+ * `src/pages/api/auth/__tests__/` becomes the API route
+ * `/api/auth/__tests__/callback.client-ip.test`, and `next build` then asserts it
+ * satisfies `ApiRouteConfig`, which requires a `default` export. It has none, so
+ * the PRODUCTION BUILD fails while every correctness gate stays green (see the
+ * guard in `src/__tests__/pages/no-test-files-in-pages-tree.test.ts` for the full
+ * mechanism). `src/__tests__/pages/api/**` mirrors the route tree without being
+ * inside it, which is the convention the sibling API suites already follow.
  */
 
 const { bridgeSpy } = vi.hoisted(() => ({ bridgeSpy: vi.fn() }));
@@ -48,7 +59,7 @@ vi.mock('~/server/auth/civ-cookie', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
-import handler from '../callback';
+import handler from '~/pages/api/auth/callback';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 function reqWith(

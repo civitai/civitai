@@ -44,9 +44,10 @@ import path from 'path';
  * key), `src/server/clickhouse/__tests__/tracker.client-ip.test.ts` (the address
  * on the analytics wire),
  * `src/server/services/__tests__/image-search.client-ip.test.ts` (the address in
- * the search-actor hash), `src/pages/api/mod/retool/__tests__/comment.client-ip.test.ts`
+ * the search-actor hash),
+ * `src/__tests__/pages/api/mod/retool/comment.client-ip.test.ts`
  * (the address in the moderation audit trail),
- * `src/pages/api/auth/__tests__/callback.client-ip.test.ts` (the address the
+ * `src/__tests__/pages/api/auth/callback.client-ip.test.ts` (the address the
  * spoke forwards), and the four suites beside
  * `src/__tests__/pages/api/download/client-ip-derivation-ledger.test.ts`.
  * Neither kind substitutes for the other.

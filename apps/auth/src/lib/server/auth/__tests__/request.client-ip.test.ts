@@ -23,7 +23,7 @@ import { getClientIp } from '../request';
  *
  * The spoke half — that what is forwarded IS the shared attribution
  * derivation's answer — is pinned by
- * `src/pages/api/auth/__tests__/callback.client-ip.test.ts`. Neither half covers
+ * `src/__tests__/pages/api/auth/callback.client-ip.test.ts`. Neither half covers
  * the seam alone: this one would stay green if the spoke stopped sending the
  * header, and that one would stay green if the hub stopped reading it.
  */
