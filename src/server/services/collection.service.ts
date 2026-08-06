@@ -101,6 +101,8 @@ export type CollectionContributorPermissionFlags = {
   manage: boolean;
   follow: boolean;
   isContributor: boolean;
+  isCollaborator: boolean;
+  collaborationDisabled: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -198,6 +200,7 @@ export async function getUserCollectionPermissionsByIds({
     type: CollectionType | null;
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
+    collaborationDisabledAt: Date | null;
   };
 
   const collections = await dbRead.$queryRaw<CollectionPermissionRow[]>`
@@ -208,6 +211,7 @@ export async function getUserCollectionPermissionsByIds({
       c."userId",
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
+      c."collaborationDisabledAt",
       ${
         userId
           ? Prisma.sql`cc.permissions as "contributorPermissions"`
@@ -239,6 +243,8 @@ export async function getUserCollectionPermissionsByIds({
       manage: false,
       follow: false,
       isContributor: false,
+      isCollaborator: false,
+      collaborationDisabled: !!collection.collaborationDisabledAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -268,6 +274,16 @@ export async function getUserCollectionPermissionsByIds({
       permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
     }
 
+    if (collection.collaborationDisabledAt) {
+      permissions.write = false;
+      permissions.writeReview = false;
+      permissions.followPermissions = permissions.followPermissions.filter(
+        (p) =>
+          p !== CollectionContributorPermission.ADD &&
+          p !== CollectionContributorPermission.ADD_REVIEW
+      );
+    }
+
     if (!userId) {
       return permissions;
     }
@@ -293,6 +309,14 @@ export async function getUserCollectionPermissionsByIds({
     }
 
     permissions.isContributor = true;
+
+    const freelyGranted = new Set(permissions.followPermissions);
+    permissions.isCollaborator = contributorPermissions.some(
+      (p) =>
+        (p === CollectionContributorPermission.ADD ||
+          p === CollectionContributorPermission.MANAGE) &&
+        !freelyGranted.has(p)
+    );
 
     if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
       permissions.read = true;
@@ -338,6 +362,8 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     manage: false,
     follow: false,
     isContributor: false,
+    isCollaborator: false,
+    collaborationDisabled: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
