@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Button,
   Divider,
@@ -47,7 +48,9 @@ export default function CollectionCollaboratorsModal({ collectionId }: { collect
 function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }) {
   const currentUser = useCurrentUser();
   const { collection, permissions } = useCollection(collectionId);
-  const { data, isLoading } = trpc.collection.getCollaborators.useQuery({ id: collectionId });
+  const { data, isLoading, isError } = trpc.collection.getCollaborators.useQuery({
+    id: collectionId,
+  });
   const utils = trpc.useUtils();
 
   const [selectedUser, setSelectedUser] = useState<{ id: number; username: string } | null>(null);
@@ -117,6 +120,10 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
         <Group justify="center" p="xl">
           <Loader />
         </Group>
+      ) : isError ? (
+        <Alert color="red" variant="light">
+          The collaborator roster could not be loaded.
+        </Alert>
       ) : (
         <Stack gap={4}>
           {collection?.user && (
@@ -145,7 +152,7 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
         </Stack>
       )}
 
-      {canManage && (
+      {canManage && !isError && (
         <>
           <Divider label="Pending invites" labelPosition="left" />
           {invites.length ? (

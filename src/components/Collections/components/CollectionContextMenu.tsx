@@ -326,7 +326,7 @@ export function CollectionContextMenu({
             </Menu.Item>
           </Link>
         )}
-        {!isBookmarkCollection && permissions?.read && (
+        {!isBookmarkCollection && features.collaborativeCollections && permissions?.read && (
           <Menu.Item
             leftSection={<IconUsers size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {
