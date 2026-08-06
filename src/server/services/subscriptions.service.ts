@@ -315,11 +315,6 @@ export const getHighestTierSubscription = async (userId: number) =>
   pickHighestTier(await getAllUserSubscriptions(userId));
 
 /**
- * The tier monetization CAPS resolve against — null when there's no good-standing subscription, which the
- * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
- * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
- */
-/**
  * Highest tier among subscriptions the user actually paid money for. Buzz-purchased
  * (perks-only) memberships are excluded, so cash-gated perks — Creator Program
  * membership, banking, cash out — never resolve off one.
@@ -329,6 +324,11 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
     (await getAllUserSubscriptions(userId)).filter((s) => !s.productMeta.buzzPurchase)
   );
 
+/**
+ * The tier monetization CAPS resolve against — null when there's no good-standing subscription, which the
+ * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
+ * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
+ */
 export const getCapTier = async (userId: number): Promise<string | null> => {
   const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
   return pickHighestTier(subscriptions)?.tier ?? null;
@@ -508,6 +508,7 @@ export const purchaseMembershipWithBuzz = async ({
     select: {
       id: true,
       interval: true,
+      intervalCount: true,
       unitAmount: true,
       product: { select: { id: true, name: true, metadata: true, provider: true, active: true } },
     },
@@ -516,7 +517,8 @@ export const purchaseMembershipWithBuzz = async ({
   if (!price || !price.product.active) throw new Error('Membership is not available');
   if (price.product.provider !== PaymentProvider.Civitai)
     throw new Error('This membership cannot be purchased with Buzz');
-  if (price.interval !== 'month')
+  // The grant below is hard-coded to one month, so a multi-month price would be sold short.
+  if (price.interval !== 'month' || (price.intervalCount ?? 1) !== 1)
     throw new Error('Memberships can only be purchased with Buzz one month at a time');
 
   const productMeta = subscriptionProductMetadataSchema.parse(price.product.metadata);

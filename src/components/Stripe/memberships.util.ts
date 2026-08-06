@@ -59,9 +59,17 @@ export const useActiveSubscription = ({
     ? allSubscriptions?.find((s) => s.buzzType === BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE)
     : undefined;
 
-  // Shapes differ only in that getAllUserSubscriptions leaves product.metadata unparsed;
-  // every field the consumers read is present on both.
-  const activeSubscription = subscription ?? (buzzMembership as typeof subscription) ?? null;
+  // getAllUserSubscriptions leaves product.metadata as raw JSON and exposes the parsed copy
+  // as productMeta; getUserSubscription puts the parsed copy on product.metadata. Reshape so
+  // consumers of this hook read parsed metadata regardless of which query answered.
+  const activeSubscription =
+    subscription ??
+    (buzzMembership
+      ? {
+          ...buzzMembership,
+          product: { ...buzzMembership.product, metadata: buzzMembership.productMeta },
+        }
+      : null);
 
   const meta = activeSubscription?.product?.metadata as SubscriptionProductMetadata;
 

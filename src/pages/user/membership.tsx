@@ -1,13 +1,11 @@
 import {
   Alert,
   Anchor,
-  Badge,
   Box,
   Button,
   Card,
   Center,
   Container,
-  Divider,
   Grid,
   Group,
   Loader,
@@ -19,7 +17,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
-  IconBolt,
   IconGift,
   IconInfoCircle,
   IconInfoTriangleFilled,
@@ -69,7 +66,6 @@ import {
   getSubscriptionDisplayBuzzType,
 } from '~/shared/utils/buzz-membership';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

@@ -150,7 +150,8 @@ finishes with a SELECT showing what each tier will cost. Nothing to edit and no 
 config — run it once per database and both sites get the catalog.
 
 Nothing becomes visible just from running it: `getPlans` only returns these products when
-asked for the Buzz catalog, which only happens behind the `buzzMemberships` flag. The
+asked for the Buzz catalog, and that request is rejected unless the caller has the
+`buzzMemberships` flag. The
 script's footer has the "pull it back off sale" statements (deactivate, never delete —
 live `CustomerSubscription` rows reference these products).
 
@@ -246,8 +247,10 @@ and is _meant_ to see the Buzz membership.
 ## Rollout
 
 Gated on the `buzzMemberships` feature flag (`buzz-memberships` in Flipt; mods by
-default). It gates the pricing-page toggle and `/pricing/buzz`; the server mutation is not
-flag-gated but is inert until Buzz products exist in the catalog.
+default). It gates the pricing-page toggle and `/pricing/buzz`, and the server enforces it
+too: `subscriptions.purchaseWithBuzz` and `getPlans({ buzzPurchase: true })` both return
+`FORBIDDEN` when the flag is off, so the rollout can't be bypassed by calling tRPC
+directly.
 
 ## Buying a cash membership ends the Buzz one
 

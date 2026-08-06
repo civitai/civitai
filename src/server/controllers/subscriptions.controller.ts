@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';
@@ -16,6 +17,9 @@ export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; c
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&
     !!env.NEXT_PUBLIC_PADDLE_TOKEN &&
     !!env.PADDLE_SECRET_KEY;
+
+  if (input.buzzPurchase && !ctx.features.buzzMemberships)
+    throw new TRPCError({ code: 'FORBIDDEN' });
 
   const fallbackToStripe = !paddleSupported;
 

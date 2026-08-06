@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
   getPlansSchema,
@@ -21,6 +22,13 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
+const buzzMembershipProcedure = protectedProcedure
+  .meta({ requiredScope: TokenScope.UserWrite })
+  .use(({ ctx, next }) => {
+    if (!ctx.features.buzzMemberships) throw new TRPCError({ code: 'FORBIDDEN' });
+    return next();
+  });
+
 export const subscriptionsRouter = router({
   getPlans: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -39,8 +47,7 @@ export const subscriptionsRouter = router({
     .mutation(async ({ input, ctx }) => {
       return claimPrepaidToken({ tokenId: input.tokenId, userId: ctx.user.id });
     }),
-  purchaseWithBuzz: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+  purchaseWithBuzz: buzzMembershipProcedure
     .input(purchaseMembershipWithBuzzSchema)
     .mutation(async ({ input, ctx }) => {
       // Domain decides the currency: green on .com, yellow on .red. Resolved here rather
