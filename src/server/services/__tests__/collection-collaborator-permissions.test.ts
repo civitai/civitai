@@ -112,4 +112,32 @@ describe('collection collaborator permissions', () => {
     expect(permissions.manage).toBe(true);
     expect(permissions.write).toBe(true);
   });
+
+  it('does not treat a lapsed Public-write follower as a collaborator', async () => {
+    arrange({
+      write: 'Public',
+      contributorPermissions: ['VIEW', 'ADD'],
+      collaborationDisabledAt: new Date('2026-08-01'),
+    });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(false);
+    expect(permissions.write).toBe(false);
+  });
+
+  it('does not treat a lapsed Review-write follower as a collaborator', async () => {
+    arrange({
+      write: 'Review',
+      contributorPermissions: ['VIEW', 'ADD_REVIEW'],
+      collaborationDisabledAt: new Date('2026-08-01'),
+    });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.isCollaborator).toBe(false);
+    expect(permissions.writeReview).toBe(false);
+  });
 });

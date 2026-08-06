@@ -274,6 +274,10 @@ export async function getUserCollectionPermissionsByIds({
       permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
     }
 
+    // Snapshot before the lapse block below filters `followPermissions` — this must reflect
+    // the collection's structural free-tier grant, not what's left after a lapse closes it.
+    const freelyGranted = new Set(permissions.followPermissions);
+
     if (collection.collaborationDisabledAt) {
       permissions.write = false;
       permissions.writeReview = false;
@@ -310,7 +314,6 @@ export async function getUserCollectionPermissionsByIds({
 
     permissions.isContributor = true;
 
-    const freelyGranted = new Set(permissions.followPermissions);
     permissions.isCollaborator = contributorPermissions.some(
       (p) =>
         (p === CollectionContributorPermission.ADD ||
@@ -322,11 +325,21 @@ export async function getUserCollectionPermissionsByIds({
       permissions.read = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD)) {
+    // A contributor row that merely mirrors the free-tier grant (e.g. a follower auto-added
+    // with the collection's own followPermissions) must not resurrect access the lapse block
+    // just closed — only a grant beyond the free tier survives a lapse.
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD) &&
+      (!collection.collaborationDisabledAt || !freelyGranted.has(CollectionContributorPermission.ADD))
+    ) {
       permissions.write = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW) &&
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD_REVIEW))
+    ) {
       permissions.writeReview = true;
     }
 
