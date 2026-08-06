@@ -56,6 +56,8 @@ import {
   emptyAnalytics,
   getMyAppAnalytics,
   getOwnedAppBlockIds,
+  getOwnedAppBlocks,
+  installsNotApplicable,
   resolveRange,
 } from '../app-analytics.service';
 
@@ -63,6 +65,17 @@ const OWNER_ID = 42;
 const OWNED_ID = 'apb_owned';
 const OWNED_ID_2 = 'apb_owned2';
 const FOREIGN_ID = 'apb_someone_else';
+
+/**
+ * Manifest fixtures for the installs applicability discriminator. Shapes are
+ * copied from PROD (measured 2026-08-05 against `app_blocks.manifest`): every
+ * approved app declares `page.path` and carries NO `targets` key at all, while
+ * the model-slot apps carry a `targets` array and no `page`.
+ */
+const MODEL_MANIFEST = { targets: [{ slotId: 'model.sidebar_top', priority: 100 }] };
+const PAGE_MANIFEST = { page: { path: '/' } };
+/** A page app that DOES list its page slot as a target — same verdict. */
+const PAGE_TARGET_MANIFEST = { page: { path: '/' }, targets: [{ slotId: 'app.page' }] };
 
 function routeQueryRaw() {
   // The three raw queries are distinguished by a unique table token in
@@ -87,8 +100,13 @@ function routeQueryRaw() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: caller owns one app.
-  mockDbRead.appBlock.findMany.mockResolvedValue([{ id: OWNED_ID }, { id: OWNED_ID_2 }]);
+  // Default: caller owns two INSTALLABLE (model-slot) apps, so the installs
+  // counters in every generic test below are a real measurement and the
+  // applicability discriminator stays off. The page-app cases override this.
+  mockDbRead.appBlock.findMany.mockResolvedValue([
+    { id: OWNED_ID, manifest: MODEL_MANIFEST },
+    { id: OWNED_ID_2, manifest: MODEL_MANIFEST },
+  ]);
   mockDbRead.blockUserSubscription.count
     .mockResolvedValueOnce(20) // installs total
     .mockResolvedValueOnce(12); // installs active
@@ -163,7 +181,10 @@ describe('getOwnedAppBlockIds (ownership resolution)', () => {
     expect(ids).toEqual([OWNED_ID, OWNED_ID_2]);
     expect(mockDbRead.appBlock.findMany).toHaveBeenCalledWith({
       where: { app: { userId: OWNER_ID } },
-      select: { id: true },
+      // `manifest` rides along on this one query — the installs applicability
+      // discriminator needs it, and getMyAppAnalytics is on a per-app fan-out
+      // path where a second round trip would be paid N times per page load.
+      select: { id: true, manifest: true },
     });
   });
 
@@ -419,5 +440,234 @@ describe('getMyAppAnalytics (fabricated-zero discriminator)', () => {
     expect(measured.installs).toEqual(notOwned.installs);
     expect(measured.runs).toEqual(notOwned.runs);
     expect(measured.engagement).toEqual(notOwned.engagement);
+  });
+});
+
+/**
+ * INSTALLS APPLICABILITY — the THIRD state, kept distinct from the other two.
+ *
+ * 1. measured non-zero — a model-slot app with installs;
+ * 2. measured zero     — a model-slot app with none YET. Must still render 0;
+ * 3. not applicable    — a page app, where an install row CANNOT exist.
+ *
+ * (3) collapsing into (2) is the defect this fixes. (2) collapsing into (3) is
+ * the regression it must not introduce, and is the one that would go silent:
+ * every visible symptom would look like the fix working.
+ */
+describe('installsNotApplicable (the three-state predicate)', () => {
+  it('(3) flags a set whose every app is page-only', () => {
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: PAGE_MANIFEST }], total: 0, active: 0 })
+    ).toBe(true);
+  });
+
+  it('(3) flags a page app that lists app.page as an explicit target', () => {
+    expect(
+      installsNotApplicable({
+        ownedApps: [{ manifest: PAGE_TARGET_MANIFEST }],
+        total: 0,
+        active: 0,
+      })
+    ).toBe(true);
+  });
+
+  it('(2) does NOT flag a model-slot app with a truthful zero', () => {
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: MODEL_MANIFEST }], total: 0, active: 0 })
+    ).toBe(false);
+  });
+
+  it('(1) does NOT flag a model-slot app with installs', () => {
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: MODEL_MANIFEST }], total: 3, active: 1 })
+    ).toBe(false);
+  });
+
+  // The state-(1) guard. Not hypothetical: upsertSubscription applies no slot
+  // check and assertLaunchAppForCaller admits any page-declaring app, so a row
+  // CAN exist against a stateless app. If one does, the author must see the
+  // number rather than an "n/a" that hides it.
+  it('(1) NEVER hides a non-zero count behind "not applicable", even for a page app', () => {
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: PAGE_MANIFEST }], total: 2, active: 0 })
+    ).toBe(false);
+    // `active` alone is enough — a disabled-but-present install is still a row.
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: PAGE_MANIFEST }], total: 0, active: 2 })
+    ).toBe(false);
+  });
+
+  // "All my apps": one installable app makes the aggregate a real measurement.
+  it('does NOT flag a MIXED set (one page app + one model app)', () => {
+    expect(
+      installsNotApplicable({
+        ownedApps: [{ manifest: PAGE_MANIFEST }, { manifest: MODEL_MANIFEST }],
+        total: 0,
+        active: 0,
+      })
+    ).toBe(false);
+    // Order-independent — `some`, not "look at the first one".
+    expect(
+      installsNotApplicable({
+        ownedApps: [{ manifest: MODEL_MANIFEST }, { manifest: PAGE_MANIFEST }],
+        total: 0,
+        active: 0,
+      })
+    ).toBe(false);
+  });
+
+  it('flags a set of SEVERAL page apps (every one inapplicable)', () => {
+    expect(
+      installsNotApplicable({
+        ownedApps: [{ manifest: PAGE_MANIFEST }, { manifest: PAGE_TARGET_MANIFEST }],
+        total: 0,
+        active: 0,
+      })
+    ).toBe(true);
+  });
+
+  // An empty set is not a claim about anything. The owns-nothing / notOwned
+  // payloads carry their own honesty (see emptyAnalytics); asserting
+  // inapplicability on top of them would fabricate a different claim.
+  it('does NOT flag an empty owned set', () => {
+    expect(installsNotApplicable({ ownedApps: [], total: 0, active: 0 })).toBe(false);
+  });
+
+  // Manifest shapes that are absent or junk are page-app-shaped in the only way
+  // that matters: no model target ⇒ no install affordance ⇒ no row can exist.
+  it('treats a missing / malformed manifest as inapplicable', () => {
+    expect(installsNotApplicable({ ownedApps: [{ manifest: null }], total: 0, active: 0 })).toBe(
+      true
+    );
+    expect(installsNotApplicable({ ownedApps: [{}], total: 0, active: 0 })).toBe(true);
+    expect(
+      installsNotApplicable({ ownedApps: [{ manifest: { targets: [] } }], total: 0, active: 0 })
+    ).toBe(true);
+  });
+});
+
+describe('getOwnedAppBlocks (manifest resolution)', () => {
+  it('returns id + manifest for every owned app', async () => {
+    await expect(getOwnedAppBlocks({ ownerUserId: OWNER_ID })).resolves.toEqual([
+      { id: OWNED_ID, manifest: MODEL_MANIFEST },
+      { id: OWNED_ID_2, manifest: MODEL_MANIFEST },
+    ]);
+  });
+
+  it('narrows to the requested id and drops a foreign one (no cross-owner leak)', async () => {
+    await expect(
+      getOwnedAppBlocks({ ownerUserId: OWNER_ID, appBlockId: OWNED_ID })
+    ).resolves.toEqual([{ id: OWNED_ID, manifest: MODEL_MANIFEST }]);
+    await expect(
+      getOwnedAppBlocks({ ownerUserId: OWNER_ID, appBlockId: FOREIGN_ID })
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('getMyAppAnalytics (installs applicability wiring)', () => {
+  /** Zero every counter so `installs` is all-zero regardless of the fixture. */
+  function zeroInstalls() {
+    mockDbRead.blockUserSubscription.count.mockReset();
+    mockDbRead.blockUserSubscription.count.mockResolvedValue(0);
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  }
+
+  it('(3) flags a PAGE app whose installs are structurally impossible', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: OWNED_ID, manifest: PAGE_MANIFEST }]);
+    zeroInstalls();
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+
+    expect(result.installs.notApplicable).toBe(true);
+    // The counters still ride along (a client may want them) — the flag is what
+    // says not to read them as behaviour.
+    expect(result.installs.total).toBe(0);
+    expect(result.installs.active).toBe(0);
+    // PER-SECTION: the rest of the payload is genuinely measured and unflagged.
+    expect(result.unavailable).toBeUndefined();
+    expect(result.notOwned).toBe(false);
+    expect(result.views.unavailable).toBeUndefined();
+  });
+
+  // 🔴 The regression that would go silent. A model-slot app with no installs
+  // yet is a REAL zero and must arrive with NO flag at all — not `false`, so a
+  // client cannot tell it apart from an old server only by the key's absence.
+  it('(2) leaves a model-slot app with a truthful zero UNflagged', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: OWNED_ID, manifest: MODEL_MANIFEST }]);
+    zeroInstalls();
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+
+    expect(result.installs.total).toBe(0);
+    expect(result.installs.active).toBe(0);
+    expect(result.installs.notApplicable).toBeUndefined();
+    expect('notApplicable' in result.installs).toBe(false);
+  });
+
+  it('(1) leaves a model-slot app WITH installs unflagged and reports the count', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: OWNED_ID, manifest: MODEL_MANIFEST }]);
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+
+    expect(result.installs.total).toBe(20);
+    expect(result.installs.active).toBe(12);
+    expect('notApplicable' in result.installs).toBe(false);
+  });
+
+  it('(1) reports a page app that somehow HAS rows, rather than hiding them', async () => {
+    // The write hole is real (see assertLaunchAppForCaller): a page app can take
+    // a block_user_subscriptions row. If one exists the author sees the number.
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: OWNED_ID, manifest: PAGE_MANIFEST }]);
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+
+    expect(result.installs.total).toBe(20);
+    expect(result.installs.active).toBe(12);
+    expect('notApplicable' in result.installs).toBe(false);
+  });
+
+  it('does not flag the "All my apps" read when ONE owned app is installable', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      { id: OWNED_ID, manifest: PAGE_MANIFEST },
+      { id: OWNED_ID_2, manifest: MODEL_MANIFEST },
+    ]);
+    zeroInstalls();
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID });
+
+    expect('notApplicable' in result.installs).toBe(false);
+  });
+
+  it('flags the "All my apps" read when EVERY owned app is page-only', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      { id: OWNED_ID, manifest: PAGE_MANIFEST },
+      { id: OWNED_ID_2, manifest: PAGE_MANIFEST },
+    ]);
+    zeroInstalls();
+
+    const result = await getMyAppAnalytics({ userId: OWNER_ID });
+
+    expect(result.installs.notApplicable).toBe(true);
+  });
+
+  // The two placeholder payloads make a DIFFERENT claim ("we never asked"), and
+  // neither resolved a manifest, so neither may assert inapplicability on top.
+  it('never flags the notOwned / owns-nothing placeholders', async () => {
+    const notOwned = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: FOREIGN_ID });
+    expect(notOwned.unavailable).toBe('notOwned');
+    expect('notApplicable' in notOwned.installs).toBe(false);
+
+    mockDbRead.appBlock.findMany.mockResolvedValue([]);
+    const ownsNothing = await getMyAppAnalytics({ userId: OWNER_ID });
+    expect(ownsNothing.unavailable).toBeUndefined();
+    expect('notApplicable' in ownsNothing.installs).toBe(false);
+  });
+
+  it('never flags the notEntitled placeholder', () => {
+    const range = { from: new Date(0), to: new Date(0), granularity: 'day' as const };
+    const notEntitled = emptyAnalytics(range, false, 'notEntitled');
+    expect(notEntitled.unavailable).toBe('notEntitled');
+    expect('notApplicable' in notEntitled.installs).toBe(false);
   });
 });
