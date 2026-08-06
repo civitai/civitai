@@ -55,6 +55,7 @@ import {
 import {
   calculateWeightedCategoryScore,
   FIXED_JUDGING_CATEGORIES,
+  normalizeJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
   getIsSafeBrowsingLevel,
@@ -990,7 +991,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
-        score: review.score,
+        // Never persist a non-object score. `review.score` is whatever the model returned (the
+        // response is cast, not parsed), and a safety-rejected entry comes back as null; stored
+        // raw it reaches every ranking path and takes the whole challenge's winner-pick down.
+        score: normalizeJudgeScore(review.score),
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
         ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),

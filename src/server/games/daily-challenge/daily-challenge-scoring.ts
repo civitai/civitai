@@ -52,8 +52,25 @@ export const FIXED_JUDGING_CATEGORIES: JudgingCategory[] = [
  * - Theme < THEME_DISQUALIFY_THRESHOLD → null (auto-disqualified)
  * - Theme < THEME_GATE_THRESHOLD → capped at THEME_GATE_MAX_SCORE
  */
-export function calculateWeightedScore(score: Score): number | null {
+export function calculateWeightedScore(score: JudgeScoreInput): number | null {
   return calculateWeightedCategoryScore(score, FIXED_JUDGING_CATEGORIES);
+}
+
+/**
+ * What a judged entry's stored `score` can actually be, as opposed to what the AI review schema
+ * claims: the response is a TypeScript cast, never a runtime parse, and a judge that declines to
+ * score an entry returns `score: null`.
+ */
+export type JudgeScoreInput = Score | Record<string, number> | null | undefined;
+
+/**
+ * Coerce a stored score to something every ranking path can read. An entry the judge refused to
+ * score becomes `{}`, which the theme gate then excludes — it must never reach a caller as null,
+ * because one unscorable entry used to take its whole challenge's winner-pick down with it.
+ */
+export function normalizeJudgeScore(score: unknown): Record<string, number> {
+  if (!score || typeof score !== 'object' || Array.isArray(score)) return {};
+  return score as Record<string, number>;
 }
 
 /**
@@ -63,8 +80,10 @@ export function calculateWeightedScore(score: Score): number | null {
  * are clamped to 0-10 defensively (the LLM output is not trusted). Returns null if there are
  * no category scores to average.
  */
-export function calculateCategoryScore(scores: Record<string, number>): number | null {
-  const values = Object.values(scores).filter((v) => typeof v === 'number' && !Number.isNaN(v));
+export function calculateCategoryScore(scores: JudgeScoreInput): number | null {
+  const values = Object.values(normalizeJudgeScore(scores)).filter(
+    (v) => typeof v === 'number' && !Number.isNaN(v)
+  );
   if (values.length === 0) return null;
   const clamped = values.map((v) => Math.min(10, Math.max(0, v)));
   return clamped.reduce((a, b) => a + b, 0) / clamped.length;
@@ -77,9 +96,9 @@ const clampScore = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
  * as JSON keys, so normalize both sides — minor case/whitespace drift from the LLM must not read
  * back as a 0 (which would disqualify every entry via the theme gate).
  */
-export function lookupCategoryScore(scores: Record<string, number>, label: string): number {
+export function lookupCategoryScore(scores: JudgeScoreInput, label: string): number {
   const target = sanitizeCategoryLabel(label).toLowerCase();
-  for (const [key, value] of Object.entries(scores)) {
+  for (const [key, value] of Object.entries(normalizeJudgeScore(scores))) {
     if (sanitizeCategoryLabel(key).toLowerCase() === target) return clampScore(value);
   }
   return 0;
@@ -91,7 +110,7 @@ export function lookupCategoryScore(scores: Record<string, number>, label: strin
  * so its gate rules always apply: theme <= disqualify → null; theme < gate → cap.
  */
 export function calculateWeightedCategoryScore(
-  scores: Record<string, number>,
+  scores: JudgeScoreInput,
   categories: JudgingCategory[]
 ): number | null {
   const scoreFor = (label: string) => lookupCategoryScore(scores, label);
@@ -108,8 +127,9 @@ export function calculateWeightedCategoryScore(
 const FIXED_SCORE_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
 
 /** True when a review result uses the fixed daily key set rather than creator-defined labels. */
-export function isFixedJudgeScore(score: Score | Record<string, number>): score is Score {
-  return FIXED_SCORE_KEYS.every((key) => typeof score[key] === 'number');
+export function isFixedJudgeScore(score: JudgeScoreInput): score is Score {
+  const record = normalizeJudgeScore(score);
+  return FIXED_SCORE_KEYS.every((key) => typeof record[key] === 'number');
 }
 
 /**
@@ -117,7 +137,7 @@ export function isFixedJudgeScore(score: Score | Record<string, number>): score 
  * same entry, or the displayed leaderboard contradicts who actually wins.
  */
 export function resolveDisplayScore(
-  score: Score | Record<string, number>,
+  score: JudgeScoreInput,
   categories?: JudgingCategory[] | null
 ): number | null {
   if (categories?.length) return calculateWeightedCategoryScore(score, categories);
