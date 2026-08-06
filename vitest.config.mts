@@ -82,6 +82,24 @@ export default defineConfig({
       // DATABASE_URL from the root `.env` so its DB-backed tier self-skips without one.
       'packages/*/vitest.config.ts',
       'packages/*/vitest.config.mts',
+      // The `apps/*` suites, on exactly the same footing and for exactly the same reason:
+      // nothing in CI invoked them either. Same CONFIG-FILE glob, same rationale — a bare
+      // `apps/*` glob would adopt `event-engine` and `moderator`, which have no vitest
+      // config, and hand them a default `include` they were never written against.
+      // (`apps/event-engine` does own one test file, but it is a `node:test` suite by
+      // deliberate choice — see its header — so Vitest is the wrong runner for it.)
+      //
+      // Unlike the packages, these set `test.name` themselves (`app:auth`,
+      // `app:notifications`, ...) rather than inheriting their `package.json` name. That is
+      // load-bearing, not cosmetic: every app is ALSO published as `@civitai/*`
+      // (`@civitai/auth-app`, and `@civitai/orchestrator-gateway` with no suffix at all), so
+      // on the default naming there is no pattern that selects apps without packages or
+      // packages without apps — `--project '@civitai/*'` would silently start sweeping the
+      // apps into the "Package unit tests" job. An `app:` prefix keeps the two selectors
+      // disjoint and structural. Drop a `name` and that app falls back into the packages
+      // bucket; scripts/ci/assert-workspace-suites-ran.mjs fails the apps job when it does.
+      'apps/*/vitest.config.ts',
+      'apps/*/vitest.config.mts',
       {
         resolve: { alias },
         test: {
