@@ -275,9 +275,19 @@ export async function getOwnedAppBlockIds(args: {
  *
  * `hasInstallSlot` is the SHARED predicate — the same one the marketplace card
  * (`components/Apps/AppBlockCard.tsx`) and the app detail page use to decide
- * whether to show the Install CTA. Reusing it is the point: "the panel says
- * installs are n/a" and "the product offers no way to install this" can then
- * never disagree, because they are the same function over the same manifest.
+ * whether to show the Install CTA. Reusing it keeps the manifest half of that
+ * question in one place.
+ *
+ * 🔴 It is NOT the whole CTA predicate, so do not read this as "the panel and
+ * the product can never disagree". Both CTA sites gate on
+ * `!isExternal && hasInstallSlot(...)`, and this function deliberately omits
+ * BOTH extra conditions: it ignores `isExternal`, and `getOwnedAppBlocks`
+ * applies no `status` filter. So an EXTERNAL listing with model targets, or a
+ * model-slot app that is not yet approved, gets no Install CTA while this
+ * reports a measurement. Both are latent today (prod holds zero external and
+ * zero pending rows) and both are strictly today's behaviour rather than a
+ * regression — but if you widen this, widen it deliberately and say which of
+ * the three axes you are adding.
  *
  * The `total`/`active` guard is not belt-and-braces, it is the state-(1) guard —
  * a real count is ALWAYS reported, even for an app whose slots say it should not

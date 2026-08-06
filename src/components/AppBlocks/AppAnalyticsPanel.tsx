@@ -58,10 +58,12 @@ type AnalyticsData = {
    * never sets it for an installable app); this renderer must not second-guess
    * it by inferring anything from the number itself.
    *
-   * Read through `?.` for the same reason `views` is optional: tRPC output is
-   * not zod-validated on the client, so a rolling deploy can hand this bundle an
-   * older pod's payload with no `notApplicable` key. Absent → falsy → the
-   * measured branch, which is exactly today's behaviour and therefore safe.
+   * `installs` itself is REQUIRED (unlike `views`), so it is read directly — do
+   * not "restore" optional chaining on it. Only `notApplicable` is optional,
+   * for the same reason `views` is: tRPC output is not zod-validated on the
+   * client, so a rolling deploy can hand this bundle an older pod's payload
+   * with no `notApplicable` key. Absent → falsy → the measured branch, which is
+   * exactly today's behaviour and therefore safe.
    */
   installs: { total: number; active: number; series: TimePoint[]; notApplicable?: boolean };
   runs: { count: number; buzzSpent: number; series: TimePoint[] };
@@ -422,10 +424,12 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             <Text size="sm">
               Active users, API calls, and error rate reflect only{' '}
               <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
-              (or one with no scoped API surface) will show installs and revenue but flat
-              engagement. <strong>Views</strong> is the exception — it is measured on every load, so
-              it counts signed-out visitors and static blocks that the engagement figures cannot
-              see. Installs, runs, and Buzz figures are unaffected.
+              (or one with no scoped API surface) will show revenue but flat engagement.{' '}
+              <strong>App loads</strong> is the exception — it is measured on every load, so it
+              counts signed-out visitors and static blocks that the engagement figures cannot see.
+              Runs and Buzz figures are unaffected. The installs figure is blanked out for apps that
+              cannot be installed at all (a page app has no install slot), which is different from a
+              real zero.
             </Text>
           </Alert>
 
