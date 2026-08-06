@@ -13,6 +13,7 @@
   import {
     MIN_ACCESS_PRICE,
     DEFAULT_GENERATION_TRIAL_LIMIT,
+    GENERATION_ONLY_HINT,
     monetizationLimits,
     type CreatorUsageControl,
   } from '$lib/monetization/paid-access';
@@ -191,7 +192,13 @@
     </div>
     <form method="POST" action="?/setUsageControl" use:enhance={usageEnhance}>
       <input type="hidden" name="versionId" value={version.id} />
-      <UsageControlPicker bind:value={usageControl} />
+      <UsageControlPicker
+        bind:value={usageControl}
+        allowGenerationOnly={caps.canSetGenerationOnly}
+      />
+      {#if !caps.canSetGenerationOnly}
+        <p class="mt-2 text-xs text-dark-2">{GENERATION_ONLY_HINT}</p>
+      {/if}
       {#if usageControl !== storedUsageControl}
         <div class="mt-3 flex items-center gap-3">
           <Button type="submit" size="sm">Save usage control</Button>
