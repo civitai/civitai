@@ -245,14 +245,35 @@ A full-suite run at HEAD showed ~12 failures and briefly looked like collateral 
 not — but my measurement of *how much* ambient flake there is did not hold up.
 
 I ran the whole 125-file suite at BASE and at HEAD back-to-back and counted 12 failures each,
-9 of them the same tests, with neither rewritten test in either list. **My instrument was
-degraded**: the runner's `Tests` summary line did not survive the capture, so I was counting
-`×` lines rather than reading the runner's own totals, and I flagged that at the time.
+9 of them the same tests, with neither rewritten test in either list. I noted at the time that
+the runner's `Tests` summary line "did not survive the capture" and counted `×` lines instead.
 
-📌 **An independent clean run at HEAD reported `1254/1254` passing at load 64 — zero
-failures.** That is almost certainly the truth and my "~12 ambient flakes per run regardless
-of ref" figure an artifact of the degraded capture (and of a far more contended box: load
-80–120 with 26+ competing processes). **The ~12 figure is withdrawn — do not cite it.**
+🔴 **That workaround was the bug. Diagnosed properly on re-run: the summary line was never
+printed because THE RUN NEVER FINISHED.** The full-suite run aborts partway with
+
+```
+Caused by: Error: [birpc] rpc is closed, cannot call "resolveManualMock"
+```
+
+— the browser↔runner WebSocket closes mid-run. Measured on a clean re-capture: **0 summary
+lines, only 44 of 125 test files reported, 10 `×` lines.** So my §5 "control" compared two
+**truncated, crashing** runs covering roughly a third of the suite, and the `×` counts were
+never a failure total at all.
+
+📌 An independent clean run at HEAD reported **`1254/1254` passing at load 64**. That is the
+real number. **The "~12 ambient flakes per run" figure is withdrawn — do not cite it.**
+
+**The transferable lesson, which is stronger than the original one:** "count the tests, never
+read the exit code" is necessary but not sufficient — *a **missing** summary line is itself
+the signal that the run did not complete.* Treating its absence as a capture nuisance to be
+worked around, rather than as a failure, is what produced a confident comparison between two
+partial runs. Assert the summary line exists **and** that the file count matches expectation
+before believing any suite-level number.
+
+⚠️ Scope of the damage: this affects **only** the §5 full-suite control. Every other figure in
+this document comes from single-file runs that printed a proper `Tests N passed` line, which
+was read directly — the accelerated matrix, the mutation tables, and the MySubmissionsList
+hunt are unaffected.
 
 What survives, and is now confirmed from two directions: **this PR does not destabilise the
 suite.** The whole `component` project is green at HEAD.
