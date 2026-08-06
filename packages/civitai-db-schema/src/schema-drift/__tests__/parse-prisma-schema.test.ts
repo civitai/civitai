@@ -195,14 +195,30 @@ describe('parsePrismaSchema', () => {
       );
     });
 
-    it('applies Restrict — not Cascade — to TagsOnImageNew.imageId', () => {
+    it('defaults every UNWRITTEN onDelete the way Prisma does — never to Cascade', () => {
       // The regression this pins: `image Image @relation(fields: [imageId], references: [id])`
-      // with no onDelete. Reading that as a cascade mis-describes what the database would
-      // do to an Image delete on the largest table in the schema.
-      const relation = parsed.models
-        .find((m) => m.name === 'TagsOnImageNew')
-        ?.relations.find((r) => r.field === 'image');
-      expect(relation).toMatchObject({ onDelete: 'Restrict', onDeleteExplicit: false });
+      // with no onDelete. Reading that as a cascade mis-describes what the database would do
+      // to a parent delete — on a required relation the truth is the opposite of a cascade,
+      // the delete is REJECTED.
+      //
+      // Asserted over the whole POPULATION of bare relations rather than at one named model.
+      // This test used to pin `TagsOnImageNew.image`, and #3589 gave that relation an
+      // explicit `onDelete: Cascade` — which made the assertion fail while saying nothing
+      // about the parser. A single named site decays every time someone annotates it; the
+      // population cannot be retired by an ordinary schema edit.
+      const bare = parsed.models.flatMap((m) => m.relations).filter((r) => !r.onDeleteExplicit);
+      const bareRequired = bare.filter((r) => !r.optional);
+      const bareOptional = bare.filter((r) => r.optional);
+
+      // Positive control: an empty population would satisfy every `every()` below.
+      expect(bareRequired.length).toBeGreaterThan(0);
+      expect(bareOptional.length).toBeGreaterThan(0);
+
+      expect(bareRequired.every((r) => r.onDelete === 'Restrict')).toBe(true);
+      expect(bareOptional.every((r) => r.onDelete === 'SetNull')).toBe(true);
+      expect(bare.some((r) => r.onDelete === 'Cascade')).toBe(false);
+      // onUpdate's default IS Cascade, for both — the asymmetry is the whole point.
+      expect(bare.every((r) => r.onUpdate === 'Cascade')).toBe(true);
     });
 
     it('finds relations that reference a column other than id', () => {
