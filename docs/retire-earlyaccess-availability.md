@@ -10,14 +10,10 @@ Not a Prisma migration. Run the SQL by hand and delete this file when the last s
 
 Verified 2026-08-05:
 
-|                                                       | count                               |
-| ----------------------------------------------------- | ----------------------------------- |
-| Model versions with `availability = 'EarlyAccess'`    | **0** — step 2 run 2026-08-05 ✅    |
-| …permanent gate (`endsAt IS NULL`) — never expires    | 16                                  |
-| …timed, still active — clears itself on expiry        | 130                                 |
-| …timed, already expired — should have cleared, didn't | 6                                   |
-| …not `Published` — the job skips these                | 9                                   |
-| Rows with no gate at all                              | **0** ✅ _(285 cleared 2026-08-05)_ |
+|                                                    | count                               |
+| -------------------------------------------------- | ----------------------------------- |
+| Model versions with `availability = 'EarlyAccess'` | **0** — step 2 run 2026-08-05 ✅    |
+| Rows with no gate at all                           | **0** ✅ _(285 cleared 2026-08-05)_ |
 
 **No writer remains.** `early_access_trigger.sql` would set it, but that trigger is **not installed** — only
 `trigger_comic_chapter_early_access_ends_at` exists, and comics are a separate entity. `earlyAccessConfig`,
@@ -30,7 +26,7 @@ today only because all 13 gates are permanent and never reach that query.
 
 ---
 
-## Step 2 — clear the remaining 152 — DONE 2026-08-05 (verified 0 rows)
+## Step 2 — clear the remaining rows — DONE 2026-08-05 (verified 0 rows)
 
 The 130 active timed gates will clear themselves as they expire, but there's no reason to wait, and the 16
 permanent ones never will.
@@ -38,7 +34,7 @@ permanent ones never will.
 Safe because gating no longer depends on this column: `hasEntityAccess` computes `paidGatedIds` from
 `PaidAccess` and gates on that independently, so these versions stay gated after the update.
 
-Count first — expect 152:
+Count first:
 
 ```sql
 SELECT count(*) FROM "ModelVersion" WHERE "availability" = 'EarlyAccess';

@@ -71,13 +71,11 @@ expiry `process-ending-early-access` bumps `publishedAt` — resurfacing an old 
 
 **The test is `initialPublishedAt <= now() OR status = 'Published'`.**
 
-- **Not `publishedAt`** — the expiry job rewrites it on republish. 27,101 versions already have the two
-  diverged.
+- **Not `publishedAt`** — the expiry job rewrites it on republish. tens of thousands of versions already have the two diverged.
 - **`<= now()` matters** — the `set_initial_published_at` trigger copies _future_ timestamps, so a
   Scheduled version carries an anchor for a release that hasn't happened. Without the comparison, the
   pre-release case the feature exists for is refused.
-- **`status` alone is wrong in the other direction** — 121,096 `Unpublished` and 1,615 `Draft` versions
-  have been published before.
+- **`status` alone is wrong in the other direction** — a large number of `Unpublished` and `Draft` versions have been published before.
 
 **Carve-out**: a version with an **active** timed window may be re-priced. That's an edit, not a start.
 Tombstones don't qualify.
@@ -142,9 +140,7 @@ server-side. Ids outside the current page are conservatively treated as needing 
 - **Create-once.** The endpoint never updates or removes one, and `active: false` is written in exactly
   one place: goal completion. **There is no cancel path**, for creators or moderators.
 - **Early-access purchases count toward the goal.** Every purchase writes a `Donation` row for the full
-  amount and then trips the completion check. A goal can therefore complete on sales alone. Verified:
-  of 41.5M Buzz sitting against goals on permanent-gated versions, **41.30M (99.5%) came from buyers**,
-  not donors.
+  amount and then trips the completion check. A goal can therefore complete on sales alone. In practice the overwhelming majority of what sits against these goals came from purchases, not donations.
 - **On completion**, the goal closes and _a timed gate ends immediately_. A **permanent gate is exempt** —
   by design (`isTimedGateActive`), so a funded goal cannot wipe a permanent paywall.
 
@@ -164,7 +160,7 @@ change the gate kind. Both the bulk path and the single-version editor go throug
 - Switching a version that gives generation away free to `Generation` **removes the free grant** — it
   can't both charge via generation and give it away. Disclosed with the affected list before applying.
 
-Verified: of 3,188 live gates, **none** has neither price, so a migration always has something to move.
+Every live gate carries at least one price, so a migration always has something to move.
 
 ### Timed ↔ permanent
 
@@ -206,29 +202,26 @@ one of them is not enforced.**
 via kysely — they never reach the main app, so any rule about them has to be implemented there too. The
 affirmation check on that path is owner-scoped, matching `resolveRightsAffirmation`.
 
-| Rule                                                 | Lives in                      | Covers both paths    |
-| ---------------------------------------------------- | ----------------------------- | -------------------- |
-| R1 publish restriction                               | `assertUserEarlyAccessLimits` | ✅                   |
-| Window length + concurrent caps                      | `assertUserEarlyAccessLimits` | ✅                   |
-| Price + permanent-slot caps                          | `assertPaidAccessCaps`        | ✅                   |
-| Rights affirmation                                   | `resolveRightsAffirmation`    | ✅                   |
-| "Permanent only from Creator Studio" (webhook token) | the REST endpoint             | ❌ **endpoint only** |
+| Rule                            | Lives in                      | Covers both paths |
+| ------------------------------- | ----------------------------- | ----------------- |
+| R1 publish restriction          | `assertUserEarlyAccessLimits` | ✅                |
+| Window length + concurrent caps | `assertUserEarlyAccessLimits` | ✅                |
+| Price + permanent-slot caps     | `assertPaidAccessCaps`        | ✅                |
+| Rights affirmation              | `resolveRightsAffirmation`    | ✅                |
 
-Client-side checks in either app are affordances, not controls — the studio posts to the same endpoint a
-creator can call with a session cookie.
+Permanent paid access is reachable from both the main app form and Creator Studio; the tier price and slot
+caps in `assertPaidAccessCaps` apply to both.
 
 ---
 
 ## Known gaps
 
-- **17,259 active donation goals are attached to versions with no gate at all** — goals are never
+- **Active donation goals accumulate on versions with no gate at all** — goals are never
   deactivated when a window ends naturally.
-- **1,715 currently-gated versions have no rights-affirmation record**, predating the requirement. Any
+- **Some currently-gated versions have no rights-affirmation record**, predating the requirement. Any
   write path that re-saves their gate without passing an affirmation will 400.
-- **The webhook-token restriction on permanent access is endpoint-only**; tRPC upsert can set
-  `permanent: true` without it, bounded only by the tier slot cap (3 even on free).
 - **`paidAccessToConfig` still returns `donationGoalEnabled: false`** — the models-page loader patches it
   from a `DonationGoal` subquery, so the sidebar's lock engages. The CSV export doesn't use that flag; it
   reads the goal columns from its own join.
 
-See [paid-access-issues-2026-08-05.md](../paid-access-issues-2026-08-05.md) for the full list and status.
+The full findings list and its status are kept privately — ask a maintainer.
