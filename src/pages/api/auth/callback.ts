@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import { sessionCookieName } from '@civitai/auth';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
@@ -62,26 +62,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
-    // The real end-user IP (request-ip resolver, same as createContext/tracker) — it reads x-forwarded-for
-    // FIRST (leftmost hop) then cf-connecting-ip. Forwarded to the hub as a single-value x-forwarded-for on the
-    // server-to-server exchange. On the INTERNAL path (no CF/proxy in front of the hub) this forwarded value is
-    // authoritative — it's what the hub's flood-guard keys on; on the PUBLIC path the hub's own cf-first
-    // getClientIp takes precedence (cf-connecting-ip = the spoke egress) and this is harmlessly shadowed. Coerce
-    // the resolver's null to undefined so the bridge omits the header when nothing resolves.
+    // The end-user address, forwarded to the hub on the server-to-server exchange
+    // (the bridge sends it as a single-value `x-forwarded-for`; see
+    // `packages/civitai-auth/src/first-party-bridge.ts`). Null is coerced to undefined
+    // so the bridge omits the header entirely when nothing resolves.
     //
-    // 🔴 DELIBERATELY NOT CONSOLIDATED onto the shared predicate, while the
-    // repo's other attribution sites were. This value does not stay here: it is
-    // forwarded to another service, and on the internal path that service keys a
-    // flood guard on it. Changing which address is sent therefore changes an
-    // input to a control whose behaviour cannot be observed, reproduced or
-    // tested from this repo — the far side is not in this tree, and nothing here
-    // would go red if the change were wrong. That is a different risk class from
-    // the sites this change did move, where the consequence is a recorded value
-    // this repo can inspect.
+    // DERIVATION: the shared attribution predicate, the same one `createContext` and
+    // the ClickHouse tracker bind. This site is on it for the same reason they are —
+    // one predicate per surface — and what leaves here is therefore a validated bare
+    // address, the same shape this repo records everywhere else.
     //
-    // An unchanged site with a stated reason beats a plausible guess. Moving it
-    // wants evidence about the hub's guard, which is a separate piece of work.
-    clientIp: requestIp.getClientIp(req) ?? undefined,
+    // WHERE IT LANDS. Both halves of this seam are in THIS monorepo, so which
+    // derivation each side applies is checkable rather than assumed:
+    //   PUBLIC path   — the hub runs its own edge-first derivation, which resolves to
+    //                   this spoke's egress and takes precedence; the forwarded value
+    //                   is shadowed and does not decide anything.
+    //   INTERNAL path — the hub has no edge value to prefer, so it falls through to
+    //                   the address forwarded here and keys its per-IP session bucket
+    //                   on it (`apps/auth/src/lib/server/oauth/rate-limit.ts`).
+    //
+    // So on the internal path this is a per-end-user bucket key on the far side, and
+    // the seam is pinned from BOTH ends: the spoke half — that what is forwarded is
+    // this predicate's answer — by
+    // `src/pages/api/auth/__tests__/callback.client-ip.test.ts`; the hub half — that
+    // the hub derives that same value back out of the forwarded header — by
+    // `apps/auth/src/lib/server/auth/__tests__/request.client-ip.test.ts`, in the
+    // `app:auth` Vitest project. Neither half alone covers the seam.
+    clientIp: resolveClientIpOrNull(req) ?? undefined,
   });
 
   if ('error' in result) {

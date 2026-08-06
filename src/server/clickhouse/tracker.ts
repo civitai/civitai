@@ -254,12 +254,12 @@ export class Tracker {
       // resolves, which is the same value this field is initialised to — so the
       // `?? this.actor.ip` coalesce it replaces has no remaining case to cover.
       //
-      // ⚠️ SEAM: `fetchDownloadCount` READS this column back with a
-      // `WHERE ip = …` built from `getTrustedClientIp`. The two sides derive
-      // independently and a row written under one derivation is invisible to a
-      // lookup under the other. Moving this off the library resolver narrows
-      // that gap but does NOT close it — see the note in
-      // `~/server/utils/download-count`, which owns the read half.
+      // ⚠️ SEAM: this column is READ back by `fetchDownloadCount` under a
+      // different derivation. That seam — how far this change narrows it and
+      // what remains — is described ONCE, in `~/server/utils/download-count`,
+      // which owns the read half. Do not restate it here; two copies of a
+      // seam description drift, and the read side is where the gap is
+      // actionable.
       this.actor.ip = resolveClientIp(req);
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
     }

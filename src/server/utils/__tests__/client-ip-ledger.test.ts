@@ -26,12 +26,13 @@ import path from 'path';
  *     enforces. That is the failure this second ledger exists for.
  *
  * 🔴 WHY THE WALK COVERS `src/` AND NOT `src/server/`. It used to be rooted at
- * `src/server`, and two of the derivation sites live under `src/pages` — so the
- * library edges at `src/pages/api/auth/callback.ts` and
- * `src/pages/api/mod/retool/comment.ts` were invisible to it. A ledger that
- * cannot see half the population is not a ledger; it reports a clean set because
- * it never looked. Widening the root is what makes "the set matches exactly"
- * mean the whole tree.
+ * `src/server`, and two of the derivation sites live under `src/pages` —
+ * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/retool/comment.ts`,
+ * both of which held the library edge at the time and were invisible to it. A
+ * ledger that cannot see half the population is not a ledger; it reports a clean
+ * set because it never looked. Widening the root is what makes "the set matches
+ * exactly" mean the whole tree. (Both sites are now shared-module derivation
+ * sites in the second ledger; the reason for the wider root is unchanged.)
  *
  * WHAT IT DOES NOT PIN — stated so nobody reads a green run as more than it is.
  * This is a source-text and dependency-graph check, so it cannot see a
@@ -41,9 +42,31 @@ import path from 'path';
  * proof that any value is correct. The behavioural guards are
  * `src/server/__tests__/middleware.trpc.rate-limit-key.test.ts` (the limiter's
  * key), `src/server/clickhouse/__tests__/tracker.client-ip.test.ts` (the address
- * on the analytics wire), and the four suites beside
+ * on the analytics wire),
+ * `src/server/services/__tests__/image-search.client-ip.test.ts` (the address in
+ * the search-actor hash), `src/pages/api/mod/retool/__tests__/comment.client-ip.test.ts`
+ * (the address in the moderation audit trail),
+ * `src/pages/api/auth/__tests__/callback.client-ip.test.ts` (the address the
+ * spoke forwards), and the four suites beside
  * `src/__tests__/pages/api/download/client-ip-derivation-ledger.test.ts`.
  * Neither kind substitutes for the other.
+ *
+ * 🔴 THE SET BELOW IS NOT THE POPULATION OF CLIENT-IP DERIVATIONS. It is the
+ * population of derivations THIS DETECTOR CAN SEE — modules holding a module
+ * edge on `request-ip` or on the shared predicate. A module that reads the
+ * header bag directly holds neither edge and is counted nowhere here, so a green
+ * run is silent about it rather than evidence it does not exist. Measured at the
+ * time of writing, `src/` holds SIX such open-coded derivations —
+ * `src/server/utils/apps-catalog-rate-limit.ts`, the four
+ * `src/pages/api/v1/blocks/` endpoints (`dev-token.ts`, `withdraw.ts`,
+ * `submissions.ts`, `submit-version.ts`), and
+ * `src/server/middleware/bot-detection.middleware.ts`. The first five carry a
+ * byte-identical open-coded helper and five of the six build rate-limit keys
+ * (bot-detection is the exception; its value feeds bot verification). A seventh
+ * lives outside `src/` in `apps/auth/src/lib/server/auth/request.ts`, which this
+ * walk's root cannot reach at all. None of that is in scope for this file —
+ * it is recorded so the numbers here are read as "what is on the ledger", never
+ * as "what exists".
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -141,10 +164,6 @@ function stripComments(source: string): string {
 const REQUEST_IP_LEDGER: Record<string, string> = {
   'server/utils/client-ip.ts':
     'THE shared predicate. This is the sanctioned home for the library fallback.',
-  'pages/api/auth/callback.ts':
-    'Forwards the address to another service, whose own guard keys on it. Left on the ' +
-    'library derivation deliberately — changing which address is sent changes an input to a ' +
-    'control that cannot be observed or tested from this repo. See the call-site note.',
 };
 
 /**
@@ -179,6 +198,14 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
   'pages/api/mod/retool/comment.ts': {
     symbol: 'resolveClientIpOrNull',
     why: 'Moderation audit-trail actor. Optional field, so the undefined sentinel is preserved.',
+  },
+  'pages/api/auth/callback.ts': {
+    symbol: 'resolveClientIpOrNull',
+    why:
+      'Forwards the end-user address to the hub, which keys its per-IP session bucket on it ' +
+      'when there is no edge value to prefer. Both halves of that seam are in this monorepo ' +
+      '(apps/auth), so the relationship is pinned behaviourally from both ends rather than ' +
+      'asserted here. Falsy sentinel preserved — the bridge omits the header on undefined.',
   },
   'server/middleware.trpc.ts': {
     symbol: 'resolveClientIp',

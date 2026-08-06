@@ -128,8 +128,25 @@ describe('client-ip: the unresolvable sentinel and its adapter', () => {
     /**
      * Each site re-applies its OWN sentinel on top of the adapter. Those
      * expressions are one token long and look too small to test — which is
-     * exactly why they are pinned: getting one wrong changes a value that is
-     * carried into a keyspace, and nothing at the site would report it.
+     * exactly why they are pinned: getting one wrong silently changes the value
+     * a downstream consumer receives, and nothing at the site would report it.
+     *
+     * ⚠️ CALIBRATION, so the stake here is not overstated. The motivating
+     * consumer was a buzz idempotency key built from an address
+     * (`base.reward.ts`'s `externalTransactionId` branch for the two referral
+     * reward types). That branch is NOT reachable today: both `.apply()` calls
+     * are commented out at `src/server/services/user.service.ts:2284-2285`, and
+     * the rewards registry's bulk path calls `.process()`, which returns early
+     * for both (they are `onDemand`, so `isProcessable` is false). So no LIVE
+     * keyspace is currently fed by these sentinels; historical rows already in
+     * the ledger are a read-side concern handled elsewhere.
+     *
+     * The sentinels are still pinned, and that is deliberate rather than
+     * leftover: preserving each site's existing sentinel is what makes this a
+     * derivation change and not a value change, and the assertions cost nothing.
+     * A guard whose consequence is currently dormant is worth keeping — it is
+     * the reason re-enabling that path stays a one-line decision. Do not cite
+     * these as protecting a live money keyspace.
      */
     it("ctx.ip's empty-string sentinel survives an unresolvable request", () => {
       expect(resolveClientIpOrNull(unresolvableReq()) ?? '').toBe('');

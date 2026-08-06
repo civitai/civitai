@@ -150,11 +150,18 @@ export async function runImageSearch(
   // Using the shared predicate also puts this call site on the SAME derivation as
   // the two `ctx.ip`-fed `buildSearchActor` calls in `image.controller.ts`, which
   // it previously disagreed with — one caller could be hashed to two different
-  // actors depending on which entry point served the request.
+  // actors depending on which entry point served the request. The disagreement
+  // was in the DERIVATION, not the sentinel: this site used the library resolver
+  // while `ctx.ip` is built from the shared predicate, so any request the two
+  // resolved differently produced two different `anon:` hashes for one caller.
   //
-  // The nullable form keeps that agreement at the unresolvable end too:
-  // `buildSearchActor` hashes `ip ?? ''`, and `ctx.ip` is `''` there, so both
-  // sides must arrive as falsy or the two entry points diverge again.
+  // The `OrNull` form is chosen to match this call site's own parameter, which is
+  // nullable — NOT to preserve agreement at the unresolvable end. There is no
+  // agreement to preserve there: `buildSearchActor` hashes `ip ?? ''`, so `null`
+  // and `''` fold to the same input and hash identically. Passing
+  // `resolveClientIpOrNull(req) ?? ''` would be byte-equivalent. Do not read the
+  // sentinel choice here as load-bearing for the sibling agreement — the
+  // derivation is what carries that.
   const actor = buildSearchActor({
     userId: user?.id,
     ip: resolveClientIpOrNull(req),
