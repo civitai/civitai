@@ -518,26 +518,38 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
    *
    * POSITIVE CONTROL is load-bearing here: this asserts a ZERO (no modal, no reply),
    * and a host whose listener was never live produces that same zero. The control
-   * proves the handler is live and replying BEFORE the zero is read, so the zero is
-   * a measurement rather than an artefact of a dead listener.
+   * proves the handler is live AND that a BUZZ_PURCHASE_RESULT is observable at all
+   * before the zero is read, so the zero is a measurement rather than an artefact.
+   *
+   * 🔴 COUNT ONLY `BUZZ_PURCHASE_RESULT`, never `received.length`. The host pushes
+   * unrelated messages of its own (BLOCK_INIT, TOKEN_REFRESH, ROUTE_CHANGED) from
+   * effects, on a schedule this test does not control — so a TOTAL message count
+   * drifts for reasons that have nothing to do with the assertion. Measured: an
+   * earlier draft counting `received.length` failed on `expected 1 to be +0`
+   * against a host that was behaving perfectly, once the drive handed back inside
+   * React's commit window.
    */
   test('OPEN_BUZZ_PURCHASE with NO requestId is dropped silently (nothing to reply to)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
+    const buzzReplies = () => replies.received.filter((m) => m.type === 'BUZZ_PURCHASE_RESULT');
 
-    // POSITIVE CONTROL: a well-formed request DOES get through and open the modal.
+    // POSITIVE CONTROL: a well-formed request DOES get through and open the modal,
+    // and closing it DOES produce an observable BUZZ_PURCHASE_RESULT.
     postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_control', suggestedAmount: 10 });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    useDialogStore.getState().dialogs[0].options?.onClose?.();
+    await vi.waitFor(() => expect(buzzReplies()).toHaveLength(1));
     useDialogStore.getState().closeAll();
-    const repliesBefore = replies.received.length;
 
     // The real case: no requestId at all.
     postFromBlock('OPEN_BUZZ_PURCHASE', { suggestedAmount: 1000 });
 
     await new Promise((r) => setTimeout(r, 150));
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
-    expect(replies.received.length).toBe(repliesBefore);
+    // Still exactly the control's reply — the malformed post added none.
+    expect(buzzReplies()).toHaveLength(1);
     replies.stop();
   });
 
