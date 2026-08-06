@@ -1,5 +1,6 @@
-import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { IconPackage } from '@tabler/icons-react';
 import {
   IconArchive,
   IconArchiveOff,
@@ -13,6 +14,8 @@ import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
 import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
@@ -39,10 +42,23 @@ export type ManageColumn = {
   render: (item: CreatorShopManageItem) => ReactNode;
 };
 
+const packTiles = (item: CreatorShopManageItem) =>
+  ((item.meta ?? {}) as CosmeticShopItemMeta).coverTiles ?? [];
+
 function ItemCell({ item }: { item: CreatorShopManageItem }) {
   return (
     <Group gap="sm" wrap="nowrap" align="center">
-      <CosmeticThumb data={item.cosmetic?.data} name={item.title} bare />
+      {/* A pack has no cosmetic art, and may have no cover either — its
+          contents are the picture, with an icon when even those are missing. */}
+      {item.cosmetic ? (
+        <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+      ) : packTiles(item).length ? (
+        <PackCoverTiles tiles={packTiles(item)} size={44} className="shrink-0" />
+      ) : (
+        <ThemeIcon variant="light" color="gray" size={44} radius="md" className="shrink-0">
+          <IconPackage size={22} />
+        </ThemeIcon>
+      )}
       <Stack gap={0} className="min-w-0">
         <Text size="sm" fw={600} lineClamp={1}>
           {item.title}

@@ -8,7 +8,7 @@ import type {
   UpdateCreatorShopPackInput,
 } from '~/server/schema/creator-shop.schema';
 import {
-  CREATOR_SHOP_SUBMISSION_FEE,
+  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
   computePackAmountDue,
@@ -182,7 +182,7 @@ export const submitCreatorShopPack = async ({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,
     toAccountId: 0,
-    amount: CREATOR_SHOP_SUBMISSION_FEE,
+    amount: CREATOR_SHOP_PACK_SUBMISSION_FEE,
     type: TransactionType.Purchase,
     description: `Creator Shop pack submission fee - ${name}`,
     externalTransactionId: `creator-shop-pack-submit-${userId}-${Date.now()}`,

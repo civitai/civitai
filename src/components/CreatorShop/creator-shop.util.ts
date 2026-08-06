@@ -111,7 +111,7 @@ export const useQueryCreatorShopReviewQueue = ({
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
-  cosmeticTypes?: CosmeticType[];
+  cosmeticTypes?: (CosmeticType | 'Pack')[];
   enabled?: boolean;
 } = {}) =>
   trpc.creatorShop.getReviewQueue.useInfiniteQuery(

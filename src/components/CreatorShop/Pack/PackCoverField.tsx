@@ -32,17 +32,11 @@ export function PackCoverField({
 
   return (
     <Stack gap={6}>
-      <Group justify="space-between" align="baseline">
-        <Text size="sm" fw={500}>
-          Cover image
-        </Text>
-        <Text size="xs" c="dimmed">
-          Optional
-        </Text>
-      </Group>
+      <Text size="sm" fw={500}>
+        Cover image
+      </Text>
       <Text size="xs" c="dimmed">
-        Shown on the shop card and the pack&apos;s page. Buyers don&apos;t receive it — they get
-        what&apos;s inside. Square works best; anything else is cropped to fit.
+        Shown on the shop card. Square works best.
       </Text>
 
       {hasCover ? (

@@ -52,6 +52,12 @@ export const COSMETIC_PRICE_FLOOR_MIN = Math.min(
   ...Object.values(CosmeticType).map((type) => cosmeticPriceFloor(type))
 );
 export const CREATOR_SHOP_SUBMISSION_FEE = 10000;
+/**
+ * Packs list for less. The fee prices the review a submission costs, and a pack
+ * has no artwork to validate — every member was reviewed and paid for when it
+ * was submitted.
+ */
+export const CREATOR_SHOP_PACK_SUBMISSION_FEE = 1000;
 export const CREATOR_SHOP_MAX_FEATURED = 6;
 // Creator keeps this share of each sale; platform keeps the remainder.
 export const CREATOR_SHOP_CREATOR_SHARE = 0.7;
@@ -89,6 +95,9 @@ export const MAX_ANIMATION_FPS = 30;
 export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
 
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
+/** Review-queue filter value for packs, which have no CosmeticType of their own. */
+export const PACK_FILTER_VALUE = 'Pack' as const;
+
 export const creatorCosmeticTypes = [
   CosmeticType.Badge,
   CosmeticType.ProfileDecoration,
@@ -560,6 +569,9 @@ export type GetCommunityCosmeticsInput = z.infer<typeof getCommunityCosmeticsSch
 export const getCommunityCosmeticsSchema = z.object({
   limit: z.number().min(1).max(100).default(40),
   cursor: z.number().optional(),
+  // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
+  // It rides in this filter because to a moderator it is one more kind of thing
+  // in the same queue.
   cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
 });
 
@@ -593,7 +605,10 @@ export const getReviewQueueSchema = z.object({
   status: z.enum(CosmeticShopItemStatus).optional(),
   username: z.string().optional(),
   userId: z.number().optional(),
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
+  // It rides in this filter because to a moderator it is one more kind of thing
+  // in the same queue.
+  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)])).optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;

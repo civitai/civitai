@@ -55,7 +55,10 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
-import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
+import {
+  reviewQueueTypeOptions,
+  type ReviewQueueFilterType,
+} from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -174,7 +177,7 @@ function CreatorShopReviewPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     CosmeticShopItemStatus.PendingReview
   );
-  const [typeFilter, setTypeFilter] = useState<CosmeticType[]>([]);
+  const [typeFilter, setTypeFilter] = useState<ReviewQueueFilterType[]>([]);
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
@@ -429,9 +432,9 @@ function CreatorShopReviewPage() {
           <MultiSelect
             size="sm"
             w={230}
-            data={cosmeticTypeOptions}
+            data={reviewQueueTypeOptions}
             value={typeFilter}
-            onChange={(v) => setTypeFilter(v as CosmeticType[])}
+            onChange={(v) => setTypeFilter(v as ReviewQueueFilterType[])}
             placeholder={typeFilter.length ? undefined : 'All types'}
             clearable
             comboboxProps={{ withinPortal: true }}

@@ -75,6 +75,7 @@ import {
   PRICE_REVIEW_THRESHOLD,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
+  PACK_FILTER_VALUE,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
@@ -1177,17 +1178,47 @@ export const getCreatorShopReviewQueue = async ({
   userId,
   cosmeticTypes,
 }: GetReviewQueueInput) => {
+  // A pack has no cosmetic, so a `cosmetic` relation filter excludes it outright
+  // — which is why packs never reached this queue at all. They are matched on
+  // their lister instead.
+  const types = cosmeticTypes?.filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE) ?? [];
+  const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
+  const singlesWanted = !cosmeticTypes?.length || types.length > 0;
+
   const items = await dbRead.cosmeticShopItem.findMany({
     where: {
       // A specific status filters to it (including Archived); no status = every
       // status except Archived (the "All" option in the review queue).
       ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
-      // Only creator-submitted items (exclude official/admin cosmetics).
-      cosmetic: {
-        createdById: userId ?? { not: null },
-        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
-        ...(username ? { creator: { username: { contains: username, mode: 'insensitive' } } } : {}),
-      },
+      OR: [
+        // Only creator-submitted items (exclude official/admin cosmetics).
+        ...(singlesWanted
+          ? [
+              {
+                cosmetic: {
+                  createdById: userId ?? { not: null },
+                  ...(types.length ? { type: { in: types } } : {}),
+                  ...(username
+                    ? {
+                        creator: { username: { contains: username, mode: 'insensitive' as const } },
+                      }
+                    : {}),
+                },
+              },
+            ]
+          : []),
+        ...(packsWanted
+          ? [
+              {
+                cosmeticId: null,
+                addedById: userId ?? { not: null },
+                ...(username
+                  ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
+                  : {}),
+              },
+            ]
+          : []),
+      ],
     },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor } } : {}),

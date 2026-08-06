@@ -28,7 +28,7 @@ import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import {
-  CREATOR_SHOP_SUBMISSION_FEE,
+  CREATOR_SHOP_PACK_SUBMISSION_FEE,
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
   RIGHTS_AFFIRMATION_STATEMENT,
@@ -145,7 +145,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     !tooMany &&
     !priceTooLow &&
     !uploading &&
-    (isEdit || rightsAffirmed) &&
+    (isEdit || !imageId || rightsAffirmed) &&
     !(acceptsBlueBuzz && blueBlockers.length);
 
   const handleDrop = async (dropped: File[]) => {
@@ -363,7 +363,10 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
           </Alert>
         )}
 
-        {!isEdit && (
+        {/* The affirmation covers artwork the creator supplied. A pack with no
+            cover contributes none — its members were each affirmed when they
+            were submitted. */}
+        {!isEdit && !!imageId && (
           <Checkbox
             checked={rightsAffirmed}
             onChange={(e) => setRightsAffirmed(e.currentTarget.checked)}
@@ -383,7 +386,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
             <BuzzTransactionButton
               disabled={!canSubmit}
               loading={submitPack.isPending}
-              buzzAmount={CREATOR_SHOP_SUBMISSION_FEE}
+              buzzAmount={CREATOR_SHOP_PACK_SUBMISSION_FEE}
               label="Submit pack"
               onPerformTransaction={handleSubmit}
             />
