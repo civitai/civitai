@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { compareSchemaToCatalog } from '../compare';
 import {
+  absorbedEscalations,
   assertMeasuredSomething,
   blocking,
   buildBaseline,
@@ -136,6 +137,35 @@ describe('tierOf', () => {
     const onNewColumns = finding({ kind: 'missing-foreign-key', columns: ['noSuchColumnHere'] });
     expect(tierOf(onLiveColumns, catalog)).toBe('enforced');
     expect(tierOf(onNewColumns, catalog)).toBe('pending');
+  });
+
+  it('cannot confuse (table, column) pairs that would collide under a printable separator', () => {
+    // Pins the NUL tuple separator in columnKey. With `_` (or any character legal in a
+    // Postgres identifier) `A_B` + `C` and `A` + `B_C` produce the same key, so a foreign key
+    // on a column the database does NOT have would be tiered `enforced` off a different
+    // table's column — a wrong verdict, in the blocking direction. NUL cannot appear in an
+    // identifier, so the collision is unrepresentable.
+    const colliding: DbCatalog = {
+      tables: ['A_B', 'A'],
+      columns: [{ table: 'A', column: 'B_C', notNull: false }],
+      foreignKeys: [],
+      uniqueIndexes: [],
+    };
+    const onMissingColumn = finding({
+      kind: 'missing-foreign-key',
+      table: 'A_B',
+      columns: ['C'],
+      model: 'AB',
+      field: 'c',
+      declared: 'FOREIGN KEY -> Other(id) ON DELETE Cascade ON UPDATE Cascade',
+    });
+    // `A_B`.`C` is not in the catalog — only `A`.`B_C` is.
+    expect(tierOf(onMissingColumn, colliding)).toBe('pending');
+    // positive control: the column that IS present tiers enforced, so the assertion above
+    // cannot pass because the lookup is broken outright.
+    expect(tierOf({ ...onMissingColumn, table: 'A', columns: ['B_C'] }, colliding)).toBe(
+      'enforced'
+    );
   });
 
   it('a COMPOSITE foreign key is pending unless EVERY column exists', () => {
@@ -357,10 +387,75 @@ describe('snapshotAge', () => {
     expect(age.warnings).toHaveLength(1);
   });
 
+  it('pins the 90-day policy in ABSOLUTE terms, not relative to itself', () => {
+    // Every other staleness assertion is written in terms of STALE_AFTER_DAYS, so it moves
+    // with the constant: setting it to 999999 — which disables the only signal the gate has
+    // about its own decay — changed no test result at all. A test whose expectation is
+    // derived from the implementation cannot see the implementation change.
+    expect(STALE_AFTER_DAYS).toBe(90);
+
+    const at = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
+    expect(snapshotAge(at(120), now).warnings).toHaveLength(1);
+    expect(snapshotAge(at(30), now).warnings).toEqual([]);
+  });
+
+  it('warns AT the threshold, not one day past it', () => {
+    // The `>=` boundary. Every other case here uses STALE_AFTER_DAYS + 1, so `>=` -> `>`
+    // survived: an off-by-one that delays the only signal the gate has about its own decay.
+    const exactly = new Date(now.getTime() - STALE_AFTER_DAYS * 86_400_000).toISOString();
+    const oneLess = new Date(now.getTime() - (STALE_AFTER_DAYS - 1) * 86_400_000).toISOString();
+    expect(snapshotAge(exactly, now).ageDays).toBe(STALE_AFTER_DAYS);
+    expect(snapshotAge(exactly, now).warnings).toHaveLength(1);
+    expect(snapshotAge(oneLess, now).warnings).toEqual([]);
+  });
+
+  it('treats a FUTURE capture date as a problem, not as maximally fresh', () => {
+    // A negative age can never reach the threshold, so a skewed clock would disable the
+    // staleness signal indefinitely while looking healthier than a real capture.
+    const future = new Date(now.getTime() + 5 * 86_400_000).toISOString();
+    const age = snapshotAge(future, now);
+    expect(age.warnings).toHaveLength(1);
+    expect(age.warnings[0]).toMatch(/future/i);
+    expect(age.label).toMatch(/FUTURE/);
+  });
+
   it('the committed snapshot carries a capture date', () => {
     // The whole staleness signal is inert if the artefact has no stamp.
     expect(catalog.capturedAt).toBeTruthy();
     expect(snapshotAge(catalog.capturedAt, now).ageDays).not.toBeNull();
+  });
+});
+
+describe('absorbedEscalations', () => {
+  const baseline = buildBaseline(report, catalog, snapshotRelative);
+
+  it('reports a pending -> enforced transition a refresh would swallow', () => {
+    const target = baseline.entries.find((e) => e.tier === 'enforced');
+    expect(target).toBeDefined();
+    const previous: Baseline = {
+      catalog: snapshotRelative,
+      entries: baseline.entries.map((e) =>
+        e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' as const } : e
+      ),
+    };
+    const absorbed = absorbedEscalations(previous, baseline);
+    expect(absorbed).toHaveLength(1);
+    expect(absorbed[0].finding.table).toBe(target?.table);
+  });
+
+  it('is silent when no tier moved', () => {
+    expect(absorbedEscalations(baseline, baseline)).toEqual([]);
+  });
+
+  it('does not report enforced -> pending, or an entry that is merely new', () => {
+    const flipped: Baseline = {
+      catalog: snapshotRelative,
+      entries: baseline.entries.map((e) => ({ ...e, tier: 'enforced' as const })),
+    };
+    // every pending entry became enforced above, so the reverse direction must be silent
+    expect(absorbedEscalations(flipped, baseline)).toEqual([]);
+    // an entry absent from the previous baseline is new, not escalated
+    expect(absorbedEscalations({ catalog: snapshotRelative, entries: [] }, baseline)).toEqual([]);
   });
 });
 

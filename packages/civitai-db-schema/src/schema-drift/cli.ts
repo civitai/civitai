@@ -177,7 +177,17 @@ async function main(): Promise<number> {
       ...catalog,
       capturedAt: catalog.capturedAt ?? new Date().toISOString(),
     };
-    process.stdout.write(`${JSON.stringify(stamped)}\n`);
+    // Indented, and the committed snapshot is `.prettierignore`d to match. Single-line JSON
+    // made a CONTENT-IDENTICAL re-dump of the committed fixture a 21,522-line diff, which is
+    // the same unreviewable-diff problem `drift-baseline.json` was fixed for — and worse
+    // here, because the gate's own STALE message tells you to run this command. Prettier
+    // cannot be the owner instead: it collapses short arrays (`"columns": ["userId"]`) in a
+    // way `JSON.stringify` will not reproduce, so the two disagree by 3,598 lines and the
+    // artefact only stays clean if every operator remembers to run a formatter afterwards.
+    // Nothing enforces that, and `prettier --check` on a MODIFIED file is report-only here.
+    // One owner, no discipline required: a re-dump of the committed snapshot is a zero-line
+    // diff.
+    process.stdout.write(`${JSON.stringify(stamped, null, 2)}\n`);
     return 0;
   }
 

@@ -74,10 +74,15 @@ export interface GateResult {
    *
    * This is the same hazard the nullability fingerprint exists to close, one level up. A
    * relation on a column that did not yet exist is accepted as `pending`; when the migration
-   * lands WITHOUT its constraint — the exact shape of 37 of the 61 baseline findings — the
-   * column appears in the catalog and the finding becomes enforceable. The fingerprint is
-   * unchanged, so without this the escalation is absorbed into `matched` and the run reports
-   * `NEW enforced: 0, NEW pending: 0, exit 0`.
+   * lands WITHOUT its constraint, the column appears in the catalog and the finding becomes
+   * enforceable. The fingerprint is unchanged, so without this the escalation is absorbed
+   * into `matched` and the run reports `NEW enforced: 0, NEW pending: 0, exit 0`.
+   *
+   * PURELY FORWARD-LOOKING TODAY, and worth stating rather than implying: escalation needs an
+   * entry that is BOTH `pending` and `missing-foreign-key`, and the current baseline has ZERO
+   * of those. All 12 pending entries are `missing-column`, which `tierWith` hardcodes to
+   * `pending` and which therefore can never rise. So this guard cannot fire on anything in
+   * the baseline as it stands; it fires on relations accepted from here on.
    */
   escalated: EscalatedFinding[];
   /** Baseline entries the current run no longer reports — remediated, or gone stale. */
@@ -140,8 +145,10 @@ export function fingerprint(finding: DriftFinding): string {
  * `DriftFinding` does not carry the referenced table as a field — it lives inside the
  * `declared` string that `compare.ts` builds, `FOREIGN KEY -> Image(id) ON DELETE ...`. So
  * this parses another module's output, which is a coupling and not a free one: if that format
- * changes this silently returns `null`, every missing-FK fingerprint collapses to `?`, and
- * distinct findings quietly merge rather than erroring.
+ * changes this returns `null` and every missing-FK fingerprint collapses to `?`. Measured,
+ * that does NOT silently merge findings — the other five fields keep all 37 distinct, giving
+ * 0 collisions — so the failure mode is a LOUD one: every FK fingerprint stops matching its
+ * baseline entry, and the gate reports 37 resolved plus 37 new rather than passing quietly.
  *
  * That coupling is PINNED by a test asserting all 37 of the real report's missing-FK findings
  * parse to a non-empty target, so a format change in `compare.ts` reds the suite instead of
@@ -220,6 +227,45 @@ export function buildBaseline(
     .map((f) => toBaselineEntry(f, tierWith(f, known)))
     .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
   return { catalog: catalogPath, entries };
+}
+
+/**
+ * Tier changes a baseline REFRESH would silently absorb.
+ *
+ * THE HOLE THIS CLOSES. `evaluateGate`'s escalation guard can only fire when the catalog
+ * gains a column, and a catalog only gains a column via a recapture — at which point the
+ * documented procedure is to run `--update-baseline` in the same commit. So the guard's own
+ * trigger condition arrives bundled with the command that overwrites the evidence: the
+ * escalation becomes a `"tier": "pending"` -> `"tier": "enforced"` line inside a regenerated
+ * baseline instead of a gate failure. (With a dated filename it is worse — the catalog-pairing
+ * check exits 2 before `evaluateGate` runs at all, and its remedy is the same refresh.)
+ *
+ * A refresh is a deliberate act and should not fail, so this does not block. It makes the
+ * absorbed transitions VISIBLE at the moment they are absorbed, in the output of the command
+ * doing the absorbing, so they land in the recapture commit's log rather than nowhere.
+ */
+export function absorbedEscalations(previous: Baseline, next: Baseline): EscalatedFinding[] {
+  const before = new Map(previous.entries.map((e) => [e.fingerprint, e]));
+  const out: EscalatedFinding[] = [];
+  for (const entry of next.entries) {
+    const old = before.get(entry.fingerprint);
+    if (old && old.tier === 'pending' && entry.tier === 'enforced') {
+      out.push({
+        finding: {
+          kind: entry.kind,
+          table: entry.table,
+          columns: entry.columns,
+          model: entry.model,
+          field: entry.field,
+          declared: '(recorded in the previous baseline as pending)',
+          actual: 'the database now has these columns and still has no such constraint',
+        },
+        from: 'pending',
+        to: 'enforced',
+      });
+    }
+  }
+  return out;
 }
 
 export function evaluateGate(
@@ -350,6 +396,20 @@ export function snapshotAge(capturedAt: string | null | undefined, now: Date): S
     };
   }
   const ageDays = Math.floor((now.getTime() - captured.getTime()) / 86_400_000);
+  if (ageDays < 0) {
+    // A capture cannot be in the future. Left alone this prints a negative age and can never
+    // reach STALE_AFTER_DAYS, so a clock skew or a hand-edited stamp would disable the
+    // staleness signal indefinitely while looking healthier than a fresh capture.
+    return {
+      label: `${capturedAt.slice(0, 10)} — IN THE FUTURE by ${-ageDays} day(s)`,
+      ageDays,
+      warnings: [
+        `The snapshot claims to have been captured ${-ageDays} day(s) in the future. Its age ` +
+          'cannot be trusted, and a future stamp can never trip the staleness check. Recapture ' +
+          'it, or fix the clock that produced it.',
+      ],
+    };
+  }
   const warnings =
     ageDays >= STALE_AFTER_DAYS
       ? [
@@ -438,8 +498,15 @@ export function formatGateResult(
     lines.push(`NEW drift awaiting a migration — ${result.newPending.length} (not blocking)`);
     lines.push(
       '  The column is not in the catalog snapshot, so the schema is ahead of it. Expected ' +
-        'while a\n  migration is outstanding; it will stop being reported once the snapshot ' +
-        'is recaptured.'
+        'while a\n  migration is outstanding.\n' +
+        '  What a recapture does to these is NOT uniform, and it is worth knowing before you ' +
+        'accept one:\n' +
+        '    missing-column      the column arrives, and the finding goes away.\n' +
+        '    missing-foreign-key the column arrives and the constraint does not, so it ' +
+        'becomes ENFORCED\n' +
+        '                        and starts failing this gate. That is the migration-without-' +
+        'its-constraint\n                        case, and it is a real defect rather than a ' +
+        'bookkeeping change.'
     );
     for (const finding of result.newPending) lines.push(`  ${describe(finding)}`);
   }

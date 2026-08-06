@@ -75,3 +75,12 @@ jobs:
             echo "::error::The drift gate produced no verdict. \`pnpm --filter\` exits 0 when it matches no project, so this job would otherwise have reported success without running the gate."
             exit 1
           fi
+          # A STALE note is advisory, so the gate exits 0 and the check renders GREEN — which
+          # means the one signal telling you the gate's blocking coverage is shrinking would
+          # otherwise be a line inside a passing job's log that nobody opens. Promote it to a
+          # workflow annotation so it surfaces on the PR itself.
+          if grep -q 'STALE:' drift-gate.log; then
+            sed -n 's/^ *STALE: //p' drift-gate.log | while IFS= read -r note; do
+              echo "::warning title=Schema drift gate: stale catalog snapshot::$note"
+            done
+          fi

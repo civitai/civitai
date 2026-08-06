@@ -15980,7 +15980,9 @@
     {
       "name": "snapshot_Account_userId_fkey",
       "table": "Account",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -15989,7 +15991,9 @@
     {
       "name": "snapshot_AdToken_userId_fkey",
       "table": "AdToken",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -15998,7 +16002,9 @@
     {
       "name": "snapshot_AnnouncementUser_announcementId_fkey",
       "table": "AnnouncementUser",
-      "columns": ["announcementId"],
+      "columns": [
+        "announcementId"
+      ],
       "refTable": "Announcement",
       "refColumns": [],
       "onDelete": null,
@@ -16007,7 +16013,9 @@
     {
       "name": "snapshot_AnnouncementUser_userId_fkey",
       "table": "AnnouncementUser",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16016,7 +16024,9 @@
     {
       "name": "snapshot_Answer_questionId_fkey",
       "table": "Answer",
-      "columns": ["questionId"],
+      "columns": [
+        "questionId"
+      ],
       "refTable": "Question",
       "refColumns": [],
       "onDelete": null,
@@ -16025,7 +16035,9 @@
     {
       "name": "snapshot_Answer_userId_fkey",
       "table": "Answer",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16034,7 +16046,9 @@
     {
       "name": "snapshot_AnswerMetric_answerId_fkey",
       "table": "AnswerMetric",
-      "columns": ["answerId"],
+      "columns": [
+        "answerId"
+      ],
       "refTable": "Answer",
       "refColumns": [],
       "onDelete": null,
@@ -16043,7 +16057,9 @@
     {
       "name": "snapshot_AnswerReaction_answerId_fkey",
       "table": "AnswerReaction",
-      "columns": ["answerId"],
+      "columns": [
+        "answerId"
+      ],
       "refTable": "Answer",
       "refColumns": [],
       "onDelete": null,
@@ -16052,7 +16068,9 @@
     {
       "name": "snapshot_AnswerReaction_userId_fkey",
       "table": "AnswerReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16061,7 +16079,9 @@
     {
       "name": "snapshot_AnswerVote_answerId_fkey",
       "table": "AnswerVote",
-      "columns": ["answerId"],
+      "columns": [
+        "answerId"
+      ],
       "refTable": "Answer",
       "refColumns": [],
       "onDelete": null,
@@ -16070,7 +16090,9 @@
     {
       "name": "snapshot_AnswerVote_userId_fkey",
       "table": "AnswerVote",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16079,7 +16101,9 @@
     {
       "name": "snapshot_ApiKey_clientId_fkey",
       "table": "ApiKey",
-      "columns": ["clientId"],
+      "columns": [
+        "clientId"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -16088,7 +16112,9 @@
     {
       "name": "snapshot_ApiKey_userId_fkey",
       "table": "ApiKey",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16097,7 +16123,9 @@
     {
       "name": "snapshot_Appeal_resolvedBy_fkey",
       "table": "Appeal",
-      "columns": ["resolvedBy"],
+      "columns": [
+        "resolvedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16106,7 +16134,9 @@
     {
       "name": "snapshot_Appeal_userId_fkey",
       "table": "Appeal",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16115,7 +16145,9 @@
     {
       "name": "snapshot_Article_userId_fkey",
       "table": "Article",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16124,7 +16156,9 @@
     {
       "name": "snapshot_ArticleEngagement_articleId_fkey",
       "table": "ArticleEngagement",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16133,7 +16167,9 @@
     {
       "name": "snapshot_ArticleEngagement_userId_fkey",
       "table": "ArticleEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16142,7 +16178,9 @@
     {
       "name": "snapshot_ArticleMetric_articleId_fkey",
       "table": "ArticleMetric",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16151,7 +16189,9 @@
     {
       "name": "snapshot_ArticleRatingReview_articleId_fkey",
       "table": "ArticleRatingReview",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16160,7 +16200,9 @@
     {
       "name": "snapshot_ArticleRatingReview_resolvedBy_fkey",
       "table": "ArticleRatingReview",
-      "columns": ["resolvedBy"],
+      "columns": [
+        "resolvedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16169,7 +16211,9 @@
     {
       "name": "snapshot_ArticleRatingReview_userId_fkey",
       "table": "ArticleRatingReview",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16178,7 +16222,9 @@
     {
       "name": "snapshot_ArticleReaction_articleId_fkey",
       "table": "ArticleReaction",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16187,7 +16233,9 @@
     {
       "name": "snapshot_ArticleReaction_userId_fkey",
       "table": "ArticleReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16196,7 +16244,9 @@
     {
       "name": "snapshot_ArticleReport_articleId_fkey",
       "table": "ArticleReport",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16205,7 +16255,9 @@
     {
       "name": "snapshot_ArticleReport_reportId_fkey",
       "table": "ArticleReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16214,7 +16266,9 @@
     {
       "name": "snapshot_Auction_auctionBaseId_fkey",
       "table": "Auction",
-      "columns": ["auctionBaseId"],
+      "columns": [
+        "auctionBaseId"
+      ],
       "refTable": "AuctionBase",
       "refColumns": [],
       "onDelete": null,
@@ -16223,7 +16277,9 @@
     {
       "name": "snapshot_Bid_auctionId_fkey",
       "table": "Bid",
-      "columns": ["auctionId"],
+      "columns": [
+        "auctionId"
+      ],
       "refTable": "Auction",
       "refColumns": [],
       "onDelete": null,
@@ -16232,7 +16288,9 @@
     {
       "name": "snapshot_Bid_userId_fkey",
       "table": "Bid",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16241,7 +16299,9 @@
     {
       "name": "snapshot_BidRecurring_auctionBaseId_fkey",
       "table": "BidRecurring",
-      "columns": ["auctionBaseId"],
+      "columns": [
+        "auctionBaseId"
+      ],
       "refTable": "AuctionBase",
       "refColumns": [],
       "onDelete": null,
@@ -16250,7 +16310,9 @@
     {
       "name": "snapshot_BidRecurring_userId_fkey",
       "table": "BidRecurring",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16259,7 +16321,9 @@
     {
       "name": "snapshot_Bounty_userId_fkey",
       "table": "Bounty",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16268,7 +16332,9 @@
     {
       "name": "snapshot_BountyBenefactor_awardedToId_fkey",
       "table": "BountyBenefactor",
-      "columns": ["awardedToId"],
+      "columns": [
+        "awardedToId"
+      ],
       "refTable": "BountyEntry",
       "refColumns": [],
       "onDelete": null,
@@ -16277,7 +16343,9 @@
     {
       "name": "snapshot_BountyBenefactor_bountyId_fkey",
       "table": "BountyBenefactor",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -16286,7 +16354,9 @@
     {
       "name": "snapshot_BountyBenefactor_userId_fkey",
       "table": "BountyBenefactor",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16295,7 +16365,9 @@
     {
       "name": "snapshot_BountyEngagement_bountyId_fkey",
       "table": "BountyEngagement",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -16304,7 +16376,9 @@
     {
       "name": "snapshot_BountyEngagement_userId_fkey",
       "table": "BountyEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16313,7 +16387,9 @@
     {
       "name": "snapshot_BountyEntry_bountyId_fkey",
       "table": "BountyEntry",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -16322,7 +16398,9 @@
     {
       "name": "snapshot_BountyEntry_userId_fkey",
       "table": "BountyEntry",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16331,7 +16409,9 @@
     {
       "name": "snapshot_BountyEntryMetric_bountyEntryId_fkey",
       "table": "BountyEntryMetric",
-      "columns": ["bountyEntryId"],
+      "columns": [
+        "bountyEntryId"
+      ],
       "refTable": "BountyEntry",
       "refColumns": [],
       "onDelete": null,
@@ -16340,7 +16420,9 @@
     {
       "name": "snapshot_BountyEntryReaction_bountyEntryId_fkey",
       "table": "BountyEntryReaction",
-      "columns": ["bountyEntryId"],
+      "columns": [
+        "bountyEntryId"
+      ],
       "refTable": "BountyEntry",
       "refColumns": [],
       "onDelete": null,
@@ -16349,7 +16431,9 @@
     {
       "name": "snapshot_BountyEntryReaction_userId_fkey",
       "table": "BountyEntryReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16358,7 +16442,9 @@
     {
       "name": "snapshot_BountyEntryReport_bountyEntryId_fkey",
       "table": "BountyEntryReport",
-      "columns": ["bountyEntryId"],
+      "columns": [
+        "bountyEntryId"
+      ],
       "refTable": "BountyEntry",
       "refColumns": [],
       "onDelete": null,
@@ -16367,7 +16453,9 @@
     {
       "name": "snapshot_BountyEntryReport_reportId_fkey",
       "table": "BountyEntryReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16376,7 +16464,9 @@
     {
       "name": "snapshot_BountyMetric_bountyId_fkey",
       "table": "BountyMetric",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -16385,7 +16475,9 @@
     {
       "name": "snapshot_BountyReport_bountyId_fkey",
       "table": "BountyReport",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -16394,7 +16486,9 @@
     {
       "name": "snapshot_BountyReport_reportId_fkey",
       "table": "BountyReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16403,7 +16497,9 @@
     {
       "name": "snapshot_BuildGuide_userId_fkey",
       "table": "BuildGuide",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16412,7 +16508,9 @@
     {
       "name": "snapshot_BuzzWithdrawalRequest_userId_fkey",
       "table": "BuzzWithdrawalRequest",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16421,7 +16519,9 @@
     {
       "name": "snapshot_BuzzWithdrawalRequestHistory_requestId_fkey",
       "table": "BuzzWithdrawalRequestHistory",
-      "columns": ["requestId"],
+      "columns": [
+        "requestId"
+      ],
       "refTable": "BuzzWithdrawalRequest",
       "refColumns": [],
       "onDelete": null,
@@ -16430,7 +16530,9 @@
     {
       "name": "snapshot_BuzzWithdrawalRequestHistory_updatedById_fkey",
       "table": "BuzzWithdrawalRequestHistory",
-      "columns": ["updatedById"],
+      "columns": [
+        "updatedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16439,7 +16541,9 @@
     {
       "name": "snapshot_CashWithdrawal_userId_fkey",
       "table": "CashWithdrawal",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16448,7 +16552,9 @@
     {
       "name": "snapshot_Challenge_collectionId_fkey",
       "table": "Challenge",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -16457,7 +16563,9 @@
     {
       "name": "snapshot_Challenge_coverImageId_fkey",
       "table": "Challenge",
-      "columns": ["coverImageId"],
+      "columns": [
+        "coverImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -16466,7 +16574,9 @@
     {
       "name": "snapshot_Challenge_createdById_fkey",
       "table": "Challenge",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16475,7 +16585,9 @@
     {
       "name": "snapshot_Challenge_judgeId_fkey",
       "table": "Challenge",
-      "columns": ["judgeId"],
+      "columns": [
+        "judgeId"
+      ],
       "refTable": "ChallengeJudge",
       "refColumns": [],
       "onDelete": null,
@@ -16484,7 +16596,9 @@
     {
       "name": "snapshot_ChallengeEngagement_challengeId_fkey",
       "table": "ChallengeEngagement",
-      "columns": ["challengeId"],
+      "columns": [
+        "challengeId"
+      ],
       "refTable": "Challenge",
       "refColumns": [],
       "onDelete": null,
@@ -16493,7 +16607,9 @@
     {
       "name": "snapshot_ChallengeEngagement_userId_fkey",
       "table": "ChallengeEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16502,7 +16618,9 @@
     {
       "name": "snapshot_ChallengeEvent_coverImageId_fkey",
       "table": "ChallengeEvent",
-      "columns": ["coverImageId"],
+      "columns": [
+        "coverImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -16511,7 +16629,9 @@
     {
       "name": "snapshot_ChallengeJudge_userId_fkey",
       "table": "ChallengeJudge",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16520,7 +16640,9 @@
     {
       "name": "snapshot_ChallengeReport_challengeId_fkey",
       "table": "ChallengeReport",
-      "columns": ["challengeId"],
+      "columns": [
+        "challengeId"
+      ],
       "refTable": "Challenge",
       "refColumns": [],
       "onDelete": null,
@@ -16529,7 +16651,9 @@
     {
       "name": "snapshot_ChallengeReport_reportId_fkey",
       "table": "ChallengeReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16538,7 +16662,9 @@
     {
       "name": "snapshot_ChallengeWinner_challengeId_fkey",
       "table": "ChallengeWinner",
-      "columns": ["challengeId"],
+      "columns": [
+        "challengeId"
+      ],
       "refTable": "Challenge",
       "refColumns": [],
       "onDelete": null,
@@ -16547,7 +16673,9 @@
     {
       "name": "snapshot_ChallengeWinner_imageId_fkey",
       "table": "ChallengeWinner",
-      "columns": ["imageId"],
+      "columns": [
+        "imageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -16556,7 +16684,9 @@
     {
       "name": "snapshot_ChallengeWinner_userId_fkey",
       "table": "ChallengeWinner",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16565,7 +16695,9 @@
     {
       "name": "snapshot_Chat_ownerId_fkey",
       "table": "Chat",
-      "columns": ["ownerId"],
+      "columns": [
+        "ownerId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16574,7 +16706,9 @@
     {
       "name": "snapshot_ChatMember_chatId_fkey",
       "table": "ChatMember",
-      "columns": ["chatId"],
+      "columns": [
+        "chatId"
+      ],
       "refTable": "Chat",
       "refColumns": [],
       "onDelete": null,
@@ -16583,7 +16717,9 @@
     {
       "name": "snapshot_ChatMember_lastViewedMessageId_fkey",
       "table": "ChatMember",
-      "columns": ["lastViewedMessageId"],
+      "columns": [
+        "lastViewedMessageId"
+      ],
       "refTable": "ChatMessage",
       "refColumns": [],
       "onDelete": null,
@@ -16592,7 +16728,9 @@
     {
       "name": "snapshot_ChatMember_userId_fkey",
       "table": "ChatMember",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16601,7 +16739,9 @@
     {
       "name": "snapshot_ChatMessage_chatId_fkey",
       "table": "ChatMessage",
-      "columns": ["chatId"],
+      "columns": [
+        "chatId"
+      ],
       "refTable": "Chat",
       "refColumns": [],
       "onDelete": null,
@@ -16610,7 +16750,9 @@
     {
       "name": "snapshot_ChatMessage_referenceMessageId_fkey",
       "table": "ChatMessage",
-      "columns": ["referenceMessageId"],
+      "columns": [
+        "referenceMessageId"
+      ],
       "refTable": "ChatMessage",
       "refColumns": [],
       "onDelete": null,
@@ -16619,7 +16761,9 @@
     {
       "name": "snapshot_ChatMessage_userId_fkey",
       "table": "ChatMessage",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16628,7 +16772,9 @@
     {
       "name": "snapshot_ChatReport_chatId_fkey",
       "table": "ChatReport",
-      "columns": ["chatId"],
+      "columns": [
+        "chatId"
+      ],
       "refTable": "Chat",
       "refColumns": [],
       "onDelete": null,
@@ -16637,7 +16783,9 @@
     {
       "name": "snapshot_ChatReport_reportId_fkey",
       "table": "ChatReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16646,7 +16794,9 @@
     {
       "name": "snapshot_Club_userId_fkey",
       "table": "Club",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16655,7 +16805,9 @@
     {
       "name": "snapshot_ClubAdmin_clubId_fkey",
       "table": "ClubAdmin",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16664,7 +16816,9 @@
     {
       "name": "snapshot_ClubAdmin_userId_fkey",
       "table": "ClubAdmin",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16673,7 +16827,9 @@
     {
       "name": "snapshot_ClubAdminInvite_clubId_fkey",
       "table": "ClubAdminInvite",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16682,7 +16838,9 @@
     {
       "name": "snapshot_ClubMembership_clubId_fkey",
       "table": "ClubMembership",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16691,7 +16849,9 @@
     {
       "name": "snapshot_ClubMembership_clubTierId_fkey",
       "table": "ClubMembership",
-      "columns": ["clubTierId"],
+      "columns": [
+        "clubTierId"
+      ],
       "refTable": "ClubTier",
       "refColumns": [],
       "onDelete": null,
@@ -16700,7 +16860,9 @@
     {
       "name": "snapshot_ClubMembership_downgradeClubTierId_fkey",
       "table": "ClubMembership",
-      "columns": ["downgradeClubTierId"],
+      "columns": [
+        "downgradeClubTierId"
+      ],
       "refTable": "ClubTier",
       "refColumns": [],
       "onDelete": null,
@@ -16709,7 +16871,9 @@
     {
       "name": "snapshot_ClubMembership_userId_fkey",
       "table": "ClubMembership",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16718,7 +16882,9 @@
     {
       "name": "snapshot_ClubMetric_clubId_fkey",
       "table": "ClubMetric",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16727,7 +16893,9 @@
     {
       "name": "snapshot_ClubPost_clubId_fkey",
       "table": "ClubPost",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16736,7 +16904,9 @@
     {
       "name": "snapshot_ClubPost_createdById_fkey",
       "table": "ClubPost",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16745,7 +16915,9 @@
     {
       "name": "snapshot_ClubPostMetric_clubPostId_fkey",
       "table": "ClubPostMetric",
-      "columns": ["clubPostId"],
+      "columns": [
+        "clubPostId"
+      ],
       "refTable": "ClubPost",
       "refColumns": [],
       "onDelete": null,
@@ -16754,7 +16926,9 @@
     {
       "name": "snapshot_ClubPostReaction_clubPostId_fkey",
       "table": "ClubPostReaction",
-      "columns": ["clubPostId"],
+      "columns": [
+        "clubPostId"
+      ],
       "refTable": "ClubPost",
       "refColumns": [],
       "onDelete": null,
@@ -16763,7 +16937,9 @@
     {
       "name": "snapshot_ClubPostReaction_userId_fkey",
       "table": "ClubPostReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16772,7 +16948,9 @@
     {
       "name": "snapshot_ClubTier_clubId_fkey",
       "table": "ClubTier",
-      "columns": ["clubId"],
+      "columns": [
+        "clubId"
+      ],
       "refTable": "Club",
       "refColumns": [],
       "onDelete": null,
@@ -16781,7 +16959,9 @@
     {
       "name": "snapshot_Collection_userId_fkey",
       "table": "Collection",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16790,7 +16970,9 @@
     {
       "name": "snapshot_CollectionContributor_collectionId_fkey",
       "table": "CollectionContributor",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -16799,7 +16981,9 @@
     {
       "name": "snapshot_CollectionContributor_userId_fkey",
       "table": "CollectionContributor",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16808,7 +16992,9 @@
     {
       "name": "snapshot_CollectionItem_addedById_fkey",
       "table": "CollectionItem",
-      "columns": ["addedById"],
+      "columns": [
+        "addedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16817,7 +17003,9 @@
     {
       "name": "snapshot_CollectionItem_articleId_fkey",
       "table": "CollectionItem",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -16826,7 +17014,9 @@
     {
       "name": "snapshot_CollectionItem_collectionId_fkey",
       "table": "CollectionItem",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -16835,7 +17025,9 @@
     {
       "name": "snapshot_CollectionItem_imageId_fkey",
       "table": "CollectionItem",
-      "columns": ["imageId"],
+      "columns": [
+        "imageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -16844,7 +17036,9 @@
     {
       "name": "snapshot_CollectionItem_model3dId_fkey",
       "table": "CollectionItem",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -16853,7 +17047,9 @@
     {
       "name": "snapshot_CollectionItem_modelId_fkey",
       "table": "CollectionItem",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -16862,7 +17058,9 @@
     {
       "name": "snapshot_CollectionItem_postId_fkey",
       "table": "CollectionItem",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -16871,7 +17069,9 @@
     {
       "name": "snapshot_CollectionItem_reviewedById_fkey",
       "table": "CollectionItem",
-      "columns": ["reviewedById"],
+      "columns": [
+        "reviewedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16880,7 +17080,9 @@
     {
       "name": "snapshot_CollectionItem_tagId_fkey",
       "table": "CollectionItem",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -16889,7 +17091,9 @@
     {
       "name": "snapshot_CollectionItemScore_collectionItemId_fkey",
       "table": "CollectionItemScore",
-      "columns": ["collectionItemId"],
+      "columns": [
+        "collectionItemId"
+      ],
       "refTable": "CollectionItem",
       "refColumns": [],
       "onDelete": null,
@@ -16898,7 +17102,9 @@
     {
       "name": "snapshot_CollectionItemScore_userId_fkey",
       "table": "CollectionItemScore",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16907,7 +17113,9 @@
     {
       "name": "snapshot_CollectionMetric_collectionId_fkey",
       "table": "CollectionMetric",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -16916,7 +17124,9 @@
     {
       "name": "snapshot_CollectionReport_collectionId_fkey",
       "table": "CollectionReport",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -16925,7 +17135,9 @@
     {
       "name": "snapshot_CollectionReport_reportId_fkey",
       "table": "CollectionReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -16934,7 +17146,9 @@
     {
       "name": "snapshot_ComicChapter_projectId_fkey",
       "table": "ComicChapter",
-      "columns": ["projectId"],
+      "columns": [
+        "projectId"
+      ],
       "refTable": "ComicProject",
       "refColumns": [],
       "onDelete": null,
@@ -16943,7 +17157,9 @@
     {
       "name": "snapshot_ComicChapterRead_chapterId_fkey",
       "table": "ComicChapterRead",
-      "columns": ["chapterId"],
+      "columns": [
+        "chapterId"
+      ],
       "refTable": "ComicChapter",
       "refColumns": [],
       "onDelete": null,
@@ -16952,7 +17168,9 @@
     {
       "name": "snapshot_ComicChapterRead_userId_fkey",
       "table": "ComicChapterRead",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -16961,7 +17179,9 @@
     {
       "name": "snapshot_ComicPanel_imageId_fkey",
       "table": "ComicPanel",
-      "columns": ["imageId"],
+      "columns": [
+        "imageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -16970,7 +17190,10 @@
     {
       "name": "snapshot_ComicPanel_projectId_chapterPosition_fkey",
       "table": "ComicPanel",
-      "columns": ["projectId", "chapterPosition"],
+      "columns": [
+        "projectId",
+        "chapterPosition"
+      ],
       "refTable": "ComicChapter",
       "refColumns": [],
       "onDelete": null,
@@ -16979,7 +17202,9 @@
     {
       "name": "snapshot_ComicPanelReference_panelId_fkey",
       "table": "ComicPanelReference",
-      "columns": ["panelId"],
+      "columns": [
+        "panelId"
+      ],
       "refTable": "ComicPanel",
       "refColumns": [],
       "onDelete": null,
@@ -16988,7 +17213,9 @@
     {
       "name": "snapshot_ComicPanelReference_referenceId_fkey",
       "table": "ComicPanelReference",
-      "columns": ["referenceId"],
+      "columns": [
+        "referenceId"
+      ],
       "refTable": "ComicReference",
       "refColumns": [],
       "onDelete": null,
@@ -16997,7 +17224,9 @@
     {
       "name": "snapshot_ComicProject_coverImageId_fkey",
       "table": "ComicProject",
-      "columns": ["coverImageId"],
+      "columns": [
+        "coverImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17006,7 +17235,9 @@
     {
       "name": "snapshot_ComicProject_heroImageId_fkey",
       "table": "ComicProject",
-      "columns": ["heroImageId"],
+      "columns": [
+        "heroImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17015,7 +17246,9 @@
     {
       "name": "snapshot_ComicProject_userId_fkey",
       "table": "ComicProject",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17024,7 +17257,9 @@
     {
       "name": "snapshot_ComicProjectEngagement_projectId_fkey",
       "table": "ComicProjectEngagement",
-      "columns": ["projectId"],
+      "columns": [
+        "projectId"
+      ],
       "refTable": "ComicProject",
       "refColumns": [],
       "onDelete": null,
@@ -17033,7 +17268,9 @@
     {
       "name": "snapshot_ComicProjectEngagement_userId_fkey",
       "table": "ComicProjectEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17042,7 +17279,9 @@
     {
       "name": "snapshot_ComicProjectMetric_comicProjectId_fkey",
       "table": "ComicProjectMetric",
-      "columns": ["comicProjectId"],
+      "columns": [
+        "comicProjectId"
+      ],
       "refTable": "ComicProject",
       "refColumns": [],
       "onDelete": null,
@@ -17051,7 +17290,9 @@
     {
       "name": "snapshot_ComicProjectReference_projectId_fkey",
       "table": "ComicProjectReference",
-      "columns": ["projectId"],
+      "columns": [
+        "projectId"
+      ],
       "refTable": "ComicProject",
       "refColumns": [],
       "onDelete": null,
@@ -17060,7 +17301,9 @@
     {
       "name": "snapshot_ComicProjectReference_referenceId_fkey",
       "table": "ComicProjectReference",
-      "columns": ["referenceId"],
+      "columns": [
+        "referenceId"
+      ],
       "refTable": "ComicReference",
       "refColumns": [],
       "onDelete": null,
@@ -17069,7 +17312,9 @@
     {
       "name": "snapshot_ComicProjectReport_comicProjectId_fkey",
       "table": "ComicProjectReport",
-      "columns": ["comicProjectId"],
+      "columns": [
+        "comicProjectId"
+      ],
       "refTable": "ComicProject",
       "refColumns": [],
       "onDelete": null,
@@ -17078,7 +17323,9 @@
     {
       "name": "snapshot_ComicProjectReport_reportId_fkey",
       "table": "ComicProjectReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17087,7 +17334,9 @@
     {
       "name": "snapshot_ComicReference_userId_fkey",
       "table": "ComicReference",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17096,7 +17345,9 @@
     {
       "name": "snapshot_ComicReferenceImage_imageId_fkey",
       "table": "ComicReferenceImage",
-      "columns": ["imageId"],
+      "columns": [
+        "imageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17105,7 +17356,9 @@
     {
       "name": "snapshot_ComicReferenceImage_referenceId_fkey",
       "table": "ComicReferenceImage",
-      "columns": ["referenceId"],
+      "columns": [
+        "referenceId"
+      ],
       "refTable": "ComicReference",
       "refColumns": [],
       "onDelete": null,
@@ -17114,7 +17367,9 @@
     {
       "name": "snapshot_Comment_modelId_fkey",
       "table": "Comment",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17123,7 +17378,9 @@
     {
       "name": "snapshot_Comment_parentId_fkey",
       "table": "Comment",
-      "columns": ["parentId"],
+      "columns": [
+        "parentId"
+      ],
       "refTable": "Comment",
       "refColumns": [],
       "onDelete": null,
@@ -17132,7 +17389,9 @@
     {
       "name": "snapshot_Comment_userId_fkey",
       "table": "Comment",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17141,7 +17400,9 @@
     {
       "name": "snapshot_CommentReaction_commentId_fkey",
       "table": "CommentReaction",
-      "columns": ["commentId"],
+      "columns": [
+        "commentId"
+      ],
       "refTable": "Comment",
       "refColumns": [],
       "onDelete": null,
@@ -17150,7 +17411,9 @@
     {
       "name": "snapshot_CommentReaction_userId_fkey",
       "table": "CommentReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17159,7 +17422,9 @@
     {
       "name": "snapshot_CommentReport_commentId_fkey",
       "table": "CommentReport",
-      "columns": ["commentId"],
+      "columns": [
+        "commentId"
+      ],
       "refTable": "Comment",
       "refColumns": [],
       "onDelete": null,
@@ -17168,7 +17433,9 @@
     {
       "name": "snapshot_CommentReport_reportId_fkey",
       "table": "CommentReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17177,7 +17444,9 @@
     {
       "name": "snapshot_CommentV2_threadId_fkey",
       "table": "CommentV2",
-      "columns": ["threadId"],
+      "columns": [
+        "threadId"
+      ],
       "refTable": "Thread",
       "refColumns": [],
       "onDelete": null,
@@ -17186,7 +17455,9 @@
     {
       "name": "snapshot_CommentV2_userId_fkey",
       "table": "CommentV2",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17195,7 +17466,9 @@
     {
       "name": "snapshot_CommentV2Reaction_commentId_fkey",
       "table": "CommentV2Reaction",
-      "columns": ["commentId"],
+      "columns": [
+        "commentId"
+      ],
       "refTable": "CommentV2",
       "refColumns": [],
       "onDelete": null,
@@ -17204,7 +17477,9 @@
     {
       "name": "snapshot_CommentV2Reaction_userId_fkey",
       "table": "CommentV2Reaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17213,7 +17488,9 @@
     {
       "name": "snapshot_CommentV2Report_commentV2Id_fkey",
       "table": "CommentV2Report",
-      "columns": ["commentV2Id"],
+      "columns": [
+        "commentV2Id"
+      ],
       "refTable": "CommentV2",
       "refColumns": [],
       "onDelete": null,
@@ -17222,7 +17499,9 @@
     {
       "name": "snapshot_CommentV2Report_reportId_fkey",
       "table": "CommentV2Report",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17231,7 +17510,9 @@
     {
       "name": "snapshot_Cosmetic_createdById_fkey",
       "table": "Cosmetic",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17240,7 +17521,9 @@
     {
       "name": "snapshot_CosmeticShopItem_addedById_fkey",
       "table": "CosmeticShopItem",
-      "columns": ["addedById"],
+      "columns": [
+        "addedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17249,7 +17532,9 @@
     {
       "name": "snapshot_CosmeticShopItem_cosmeticId_fkey",
       "table": "CosmeticShopItem",
-      "columns": ["cosmeticId"],
+      "columns": [
+        "cosmeticId"
+      ],
       "refTable": "Cosmetic",
       "refColumns": [],
       "onDelete": null,
@@ -17258,7 +17543,9 @@
     {
       "name": "snapshot_CosmeticShopSection_addedById_fkey",
       "table": "CosmeticShopSection",
-      "columns": ["addedById"],
+      "columns": [
+        "addedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17267,7 +17554,9 @@
     {
       "name": "snapshot_CosmeticShopSectionItem_shopItemId_fkey",
       "table": "CosmeticShopSectionItem",
-      "columns": ["shopItemId"],
+      "columns": [
+        "shopItemId"
+      ],
       "refTable": "CosmeticShopItem",
       "refColumns": [],
       "onDelete": null,
@@ -17276,7 +17565,9 @@
     {
       "name": "snapshot_CosmeticShopSectionItem_shopSectionId_fkey",
       "table": "CosmeticShopSectionItem",
-      "columns": ["shopSectionId"],
+      "columns": [
+        "shopSectionId"
+      ],
       "refTable": "CosmeticShopSection",
       "refColumns": [],
       "onDelete": null,
@@ -17285,7 +17576,9 @@
     {
       "name": "snapshot_CoveredCheckpoint_model_id_fkey",
       "table": "CoveredCheckpoint",
-      "columns": ["model_id"],
+      "columns": [
+        "model_id"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17294,7 +17587,9 @@
     {
       "name": "snapshot_CoveredCheckpoint_version_id_fkey",
       "table": "CoveredCheckpoint",
-      "columns": ["version_id"],
+      "columns": [
+        "version_id"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17303,7 +17598,9 @@
     {
       "name": "snapshot_CryptoDeposit_userId_fkey",
       "table": "CryptoDeposit",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17312,7 +17609,9 @@
     {
       "name": "snapshot_CryptoTransaction_userId_fkey",
       "table": "CryptoTransaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17321,7 +17620,9 @@
     {
       "name": "snapshot_CryptoWallet_userId_fkey",
       "table": "CryptoWallet",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17330,7 +17631,9 @@
     {
       "name": "snapshot_CustomerSubscription_priceId_fkey",
       "table": "CustomerSubscription",
-      "columns": ["priceId"],
+      "columns": [
+        "priceId"
+      ],
       "refTable": "Price",
       "refColumns": [],
       "onDelete": null,
@@ -17339,7 +17642,9 @@
     {
       "name": "snapshot_CustomerSubscription_productId_fkey",
       "table": "CustomerSubscription",
-      "columns": ["productId"],
+      "columns": [
+        "productId"
+      ],
       "refTable": "Product",
       "refColumns": [],
       "onDelete": null,
@@ -17348,7 +17653,9 @@
     {
       "name": "snapshot_CustomerSubscription_userId_fkey",
       "table": "CustomerSubscription",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17357,7 +17664,9 @@
     {
       "name": "snapshot_Donation_donationGoalId_fkey",
       "table": "Donation",
-      "columns": ["donationGoalId"],
+      "columns": [
+        "donationGoalId"
+      ],
       "refTable": "DonationGoal",
       "refColumns": [],
       "onDelete": null,
@@ -17366,7 +17675,9 @@
     {
       "name": "snapshot_Donation_userId_fkey",
       "table": "Donation",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17375,7 +17686,9 @@
     {
       "name": "snapshot_DonationGoal_modelVersionId_fkey",
       "table": "DonationGoal",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17384,7 +17697,9 @@
     {
       "name": "snapshot_DonationGoal_userId_fkey",
       "table": "DonationGoal",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17393,7 +17708,9 @@
     {
       "name": "snapshot_DownloadHistory_userId_fkey",
       "table": "DownloadHistory",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17402,7 +17719,9 @@
     {
       "name": "snapshot_EntityAccess_addedById_fkey",
       "table": "EntityAccess",
-      "columns": ["addedById"],
+      "columns": [
+        "addedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17411,7 +17730,9 @@
     {
       "name": "snapshot_EntityCollaborator_createdBy_fkey",
       "table": "EntityCollaborator",
-      "columns": ["createdBy"],
+      "columns": [
+        "createdBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17420,7 +17741,9 @@
     {
       "name": "snapshot_EntityCollaborator_userId_fkey",
       "table": "EntityCollaborator",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17429,7 +17752,9 @@
     {
       "name": "snapshot_FeaturedModelVersion_modelVersionId_fkey",
       "table": "FeaturedModelVersion",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17438,7 +17763,9 @@
     {
       "name": "snapshot_GenerationPreset_userId_fkey",
       "table": "GenerationPreset",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17447,7 +17774,9 @@
     {
       "name": "snapshot_HomeBlock_sourceId_fkey",
       "table": "HomeBlock",
-      "columns": ["sourceId"],
+      "columns": [
+        "sourceId"
+      ],
       "refTable": "HomeBlock",
       "refColumns": [],
       "onDelete": null,
@@ -17456,7 +17785,9 @@
     {
       "name": "snapshot_HomeBlock_userId_fkey",
       "table": "HomeBlock",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17465,7 +17796,9 @@
     {
       "name": "snapshot_Image_postId_fkey",
       "table": "Image",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -17474,7 +17807,9 @@
     {
       "name": "snapshot_Image_userId_fkey",
       "table": "Image",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17483,7 +17818,9 @@
     {
       "name": "snapshot_ImageEngagement_userId_fkey",
       "table": "ImageEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17492,7 +17829,9 @@
     {
       "name": "snapshot_ImageRatingRequest_userId_fkey",
       "table": "ImageRatingRequest",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17501,7 +17840,9 @@
     {
       "name": "snapshot_ImageReaction_userId_fkey",
       "table": "ImageReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17510,7 +17851,9 @@
     {
       "name": "snapshot_ImageReport_imageId_fkey",
       "table": "ImageReport",
-      "columns": ["imageId"],
+      "columns": [
+        "imageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17519,7 +17862,9 @@
     {
       "name": "snapshot_ImageReport_reportId_fkey",
       "table": "ImageReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17528,7 +17873,9 @@
     {
       "name": "snapshot_ImageResource_modelVersionId_fkey",
       "table": "ImageResource",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17537,7 +17884,9 @@
     {
       "name": "snapshot_ImageTechnique_techniqueId_fkey",
       "table": "ImageTechnique",
-      "columns": ["techniqueId"],
+      "columns": [
+        "techniqueId"
+      ],
       "refTable": "Technique",
       "refColumns": [],
       "onDelete": null,
@@ -17546,7 +17895,9 @@
     {
       "name": "snapshot_ImageTool_toolId_fkey",
       "table": "ImageTool",
-      "columns": ["toolId"],
+      "columns": [
+        "toolId"
+      ],
       "refTable": "Tool",
       "refColumns": [],
       "onDelete": null,
@@ -17555,7 +17906,9 @@
     {
       "name": "snapshot_ImagesOnModels_modelVersionId_fkey",
       "table": "ImagesOnModels",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17564,7 +17917,9 @@
     {
       "name": "snapshot_Import_parentId_fkey",
       "table": "Import",
-      "columns": ["parentId"],
+      "columns": [
+        "parentId"
+      ],
       "refTable": "Import",
       "refColumns": [],
       "onDelete": null,
@@ -17573,7 +17928,9 @@
     {
       "name": "snapshot_Import_userId_fkey",
       "table": "Import",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17582,7 +17939,9 @@
     {
       "name": "snapshot_LeaderboardResult_leaderboardId_fkey",
       "table": "LeaderboardResult",
-      "columns": ["leaderboardId"],
+      "columns": [
+        "leaderboardId"
+      ],
       "refTable": "Leaderboard",
       "refColumns": [],
       "onDelete": null,
@@ -17591,7 +17950,9 @@
     {
       "name": "snapshot_LeaderboardResult_userId_fkey",
       "table": "LeaderboardResult",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17600,7 +17961,9 @@
     {
       "name": "snapshot_LicensingRoot_modelVersionId_fkey",
       "table": "LicensingRoot",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17609,7 +17972,9 @@
     {
       "name": "snapshot_MembershipGift_gifterId_fkey",
       "table": "MembershipGift",
-      "columns": ["gifterId"],
+      "columns": [
+        "gifterId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17618,7 +17983,9 @@
     {
       "name": "snapshot_MembershipGift_recipientId_fkey",
       "table": "MembershipGift",
-      "columns": ["recipientId"],
+      "columns": [
+        "recipientId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17627,7 +17994,9 @@
     {
       "name": "snapshot_Model_deletedBy_fkey",
       "table": "Model",
-      "columns": ["deletedBy"],
+      "columns": [
+        "deletedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17636,7 +18005,9 @@
     {
       "name": "snapshot_Model_fromImportId_fkey",
       "table": "Model",
-      "columns": ["fromImportId"],
+      "columns": [
+        "fromImportId"
+      ],
       "refTable": "Import",
       "refColumns": [],
       "onDelete": null,
@@ -17645,7 +18016,9 @@
     {
       "name": "snapshot_Model_userId_fkey",
       "table": "Model",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17654,7 +18027,9 @@
     {
       "name": "snapshot_Model3D_deletedBy_fkey",
       "table": "Model3D",
-      "columns": ["deletedBy"],
+      "columns": [
+        "deletedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17663,7 +18038,9 @@
     {
       "name": "snapshot_Model3D_licenseId_fkey",
       "table": "Model3D",
-      "columns": ["licenseId"],
+      "columns": [
+        "licenseId"
+      ],
       "refTable": "Model3DLicense",
       "refColumns": [],
       "onDelete": null,
@@ -17672,7 +18049,9 @@
     {
       "name": "snapshot_Model3D_sourceImageId_fkey",
       "table": "Model3D",
-      "columns": ["sourceImageId"],
+      "columns": [
+        "sourceImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17681,7 +18060,9 @@
     {
       "name": "snapshot_Model3D_thumbnailImageId_fkey",
       "table": "Model3D",
-      "columns": ["thumbnailImageId"],
+      "columns": [
+        "thumbnailImageId"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -17690,7 +18071,9 @@
     {
       "name": "snapshot_Model3D_userId_fkey",
       "table": "Model3D",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17699,7 +18082,9 @@
     {
       "name": "snapshot_Model3DEngagement_model3dId_fkey",
       "table": "Model3DEngagement",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -17708,7 +18093,9 @@
     {
       "name": "snapshot_Model3DEngagement_userId_fkey",
       "table": "Model3DEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17717,7 +18104,9 @@
     {
       "name": "snapshot_Model3DFile_model3dId_fkey",
       "table": "Model3DFile",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -17726,7 +18115,9 @@
     {
       "name": "snapshot_Model3DMetric_model3dId_fkey",
       "table": "Model3DMetric",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -17735,7 +18126,9 @@
     {
       "name": "snapshot_Model3DReport_model3dId_fkey",
       "table": "Model3DReport",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -17744,7 +18137,9 @@
     {
       "name": "snapshot_Model3DReport_reportId_fkey",
       "table": "Model3DReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17753,7 +18148,9 @@
     {
       "name": "snapshot_Model3DReview_model3dId_fkey",
       "table": "Model3DReview",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -17762,7 +18159,9 @@
     {
       "name": "snapshot_Model3DReview_userId_fkey",
       "table": "Model3DReview",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17771,7 +18170,9 @@
     {
       "name": "snapshot_Model3DReviewReport_model3dReviewId_fkey",
       "table": "Model3DReviewReport",
-      "columns": ["model3dReviewId"],
+      "columns": [
+        "model3dReviewId"
+      ],
       "refTable": "Model3DReview",
       "refColumns": [],
       "onDelete": null,
@@ -17780,7 +18181,9 @@
     {
       "name": "snapshot_Model3DReviewReport_reportId_fkey",
       "table": "Model3DReviewReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17789,7 +18192,9 @@
     {
       "name": "snapshot_ModelAssociations_fromModelId_fkey",
       "table": "ModelAssociations",
-      "columns": ["fromModelId"],
+      "columns": [
+        "fromModelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17798,7 +18203,9 @@
     {
       "name": "snapshot_ModelAssociations_toArticleId_fkey",
       "table": "ModelAssociations",
-      "columns": ["toArticleId"],
+      "columns": [
+        "toArticleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -17807,7 +18214,9 @@
     {
       "name": "snapshot_ModelAssociations_toModelId_fkey",
       "table": "ModelAssociations",
-      "columns": ["toModelId"],
+      "columns": [
+        "toModelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17816,7 +18225,9 @@
     {
       "name": "snapshot_ModelDescription_modelId_fkey",
       "table": "ModelDescription",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17825,7 +18236,9 @@
     {
       "name": "snapshot_ModelEngagement_modelId_fkey",
       "table": "ModelEngagement",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17834,7 +18247,9 @@
     {
       "name": "snapshot_ModelEngagement_userId_fkey",
       "table": "ModelEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17843,7 +18258,9 @@
     {
       "name": "snapshot_ModelFile_modelVersionId_fkey",
       "table": "ModelFile",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17852,7 +18269,9 @@
     {
       "name": "snapshot_ModelFileHash_fileId_fkey",
       "table": "ModelFileHash",
-      "columns": ["fileId"],
+      "columns": [
+        "fileId"
+      ],
       "refTable": "ModelFile",
       "refColumns": [],
       "onDelete": null,
@@ -17861,7 +18280,9 @@
     {
       "name": "snapshot_ModelFlag_modelId_fkey",
       "table": "ModelFlag",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17870,7 +18291,9 @@
     {
       "name": "snapshot_ModelInterest_modelId_fkey",
       "table": "ModelInterest",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17879,7 +18302,9 @@
     {
       "name": "snapshot_ModelInterest_userId_fkey",
       "table": "ModelInterest",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17888,7 +18313,9 @@
     {
       "name": "snapshot_ModelMetric_modelId_fkey",
       "table": "ModelMetric",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17897,7 +18324,9 @@
     {
       "name": "snapshot_ModelMetricDaily_modelId_fkey",
       "table": "ModelMetricDaily",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17906,7 +18335,9 @@
     {
       "name": "snapshot_ModelMetricDaily_modelVersionId_fkey",
       "table": "ModelMetricDaily",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17915,7 +18346,9 @@
     {
       "name": "snapshot_ModelReport_modelId_fkey",
       "table": "ModelReport",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17924,7 +18357,9 @@
     {
       "name": "snapshot_ModelReport_reportId_fkey",
       "table": "ModelReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -17933,7 +18368,9 @@
     {
       "name": "snapshot_ModelVersion_fromImportId_fkey",
       "table": "ModelVersion",
-      "columns": ["fromImportId"],
+      "columns": [
+        "fromImportId"
+      ],
       "refTable": "Import",
       "refColumns": [],
       "onDelete": null,
@@ -17942,7 +18379,9 @@
     {
       "name": "snapshot_ModelVersion_licensingSourceVersionId_fkey",
       "table": "ModelVersion",
-      "columns": ["licensingSourceVersionId"],
+      "columns": [
+        "licensingSourceVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17951,7 +18390,9 @@
     {
       "name": "snapshot_ModelVersion_modelId_fkey",
       "table": "ModelVersion",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -17960,7 +18401,9 @@
     {
       "name": "snapshot_ModelVersion_vaeId_fkey",
       "table": "ModelVersion",
-      "columns": ["vaeId"],
+      "columns": [
+        "vaeId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17969,7 +18412,9 @@
     {
       "name": "snapshot_ModelVersionEngagement_modelVersionId_fkey",
       "table": "ModelVersionEngagement",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17978,7 +18423,9 @@
     {
       "name": "snapshot_ModelVersionEngagement_userId_fkey",
       "table": "ModelVersionEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -17987,7 +18434,9 @@
     {
       "name": "snapshot_ModelVersionExploration_modelVersionId_fkey",
       "table": "ModelVersionExploration",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -17996,7 +18445,9 @@
     {
       "name": "snapshot_ModelVersionMetric_modelVersionId_fkey",
       "table": "ModelVersionMetric",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18005,7 +18456,9 @@
     {
       "name": "snapshot_ModelVersionMonetization_modelVersionId_fkey",
       "table": "ModelVersionMonetization",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18014,7 +18467,9 @@
     {
       "name": "snapshot_ModelVersionSponsorshipSettings_modelVersionMonetizationId_fkey",
       "table": "ModelVersionSponsorshipSettings",
-      "columns": ["modelVersionMonetizationId"],
+      "columns": [
+        "modelVersionMonetizationId"
+      ],
       "refTable": "ModelVersionMonetization",
       "refColumns": [],
       "onDelete": null,
@@ -18023,7 +18478,9 @@
     {
       "name": "snapshot_ModerationRule_createdById_fkey",
       "table": "ModerationRule",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18032,7 +18489,9 @@
     {
       "name": "snapshot_NewOrderPlayer_rankType_fkey",
       "table": "NewOrderPlayer",
-      "columns": ["rankType"],
+      "columns": [
+        "rankType"
+      ],
       "refTable": "NewOrderRank",
       "refColumns": [],
       "onDelete": null,
@@ -18041,7 +18500,9 @@
     {
       "name": "snapshot_NewOrderPlayer_userId_fkey",
       "table": "NewOrderPlayer",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18050,7 +18511,9 @@
     {
       "name": "snapshot_NewOrderSmite_givenById_fkey",
       "table": "NewOrderSmite",
-      "columns": ["givenById"],
+      "columns": [
+        "givenById"
+      ],
       "refTable": "NewOrderPlayer",
       "refColumns": [],
       "onDelete": null,
@@ -18059,7 +18522,9 @@
     {
       "name": "snapshot_NewOrderSmite_targetPlayerId_fkey",
       "table": "NewOrderSmite",
-      "columns": ["targetPlayerId"],
+      "columns": [
+        "targetPlayerId"
+      ],
       "refTable": "NewOrderPlayer",
       "refColumns": [],
       "onDelete": null,
@@ -18068,7 +18533,9 @@
     {
       "name": "snapshot_OauthClient_userId_fkey",
       "table": "OauthClient",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18077,7 +18544,9 @@
     {
       "name": "snapshot_OauthConsent_clientId_fkey",
       "table": "OauthConsent",
-      "columns": ["clientId"],
+      "columns": [
+        "clientId"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -18086,7 +18555,9 @@
     {
       "name": "snapshot_OauthConsent_userId_fkey",
       "table": "OauthConsent",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18095,7 +18566,9 @@
     {
       "name": "snapshot_Post_collectionId_fkey",
       "table": "Post",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -18104,7 +18577,9 @@
     {
       "name": "snapshot_Post_model3dId_fkey",
       "table": "Post",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -18113,7 +18588,9 @@
     {
       "name": "snapshot_Post_model3dReviewId_fkey",
       "table": "Post",
-      "columns": ["model3dReviewId"],
+      "columns": [
+        "model3dReviewId"
+      ],
       "refTable": "Model3DReview",
       "refColumns": [],
       "onDelete": null,
@@ -18122,7 +18599,9 @@
     {
       "name": "snapshot_Post_modelVersionId_fkey",
       "table": "Post",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18131,7 +18610,9 @@
     {
       "name": "snapshot_Post_userId_fkey",
       "table": "Post",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18140,7 +18621,9 @@
     {
       "name": "snapshot_PostMetric_postId_fkey",
       "table": "PostMetric",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18149,7 +18632,9 @@
     {
       "name": "snapshot_PostReaction_postId_fkey",
       "table": "PostReaction",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18158,7 +18643,9 @@
     {
       "name": "snapshot_PostReaction_userId_fkey",
       "table": "PostReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18167,7 +18654,9 @@
     {
       "name": "snapshot_PostReport_postId_fkey",
       "table": "PostReport",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18176,7 +18665,9 @@
     {
       "name": "snapshot_PostReport_reportId_fkey",
       "table": "PostReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -18185,7 +18676,9 @@
     {
       "name": "snapshot_Price_productId_fkey",
       "table": "Price",
-      "columns": ["productId"],
+      "columns": [
+        "productId"
+      ],
       "refTable": "Product",
       "refColumns": [],
       "onDelete": null,
@@ -18194,7 +18687,9 @@
     {
       "name": "snapshot_PurchasableReward_addedById_fkey",
       "table": "PurchasableReward",
-      "columns": ["addedById"],
+      "columns": [
+        "addedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18203,7 +18698,9 @@
     {
       "name": "snapshot_Purchase_priceId_fkey",
       "table": "Purchase",
-      "columns": ["priceId"],
+      "columns": [
+        "priceId"
+      ],
       "refTable": "Price",
       "refColumns": [],
       "onDelete": null,
@@ -18212,7 +18709,9 @@
     {
       "name": "snapshot_Purchase_productId_fkey",
       "table": "Purchase",
-      "columns": ["productId"],
+      "columns": [
+        "productId"
+      ],
       "refTable": "Product",
       "refColumns": [],
       "onDelete": null,
@@ -18221,7 +18720,9 @@
     {
       "name": "snapshot_Purchase_userId_fkey",
       "table": "Purchase",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18230,7 +18731,9 @@
     {
       "name": "snapshot_QueryDurationLog_paramsId_fkey",
       "table": "QueryDurationLog",
-      "columns": ["paramsId"],
+      "columns": [
+        "paramsId"
+      ],
       "refTable": "QueryParamsLog",
       "refColumns": [],
       "onDelete": null,
@@ -18239,7 +18742,9 @@
     {
       "name": "snapshot_QueryDurationLog_sqlId_fkey",
       "table": "QueryDurationLog",
-      "columns": ["sqlId"],
+      "columns": [
+        "sqlId"
+      ],
       "refTable": "QuerySqlLog",
       "refColumns": [],
       "onDelete": null,
@@ -18248,7 +18753,9 @@
     {
       "name": "snapshot_QueryParamsLog_sqlId_fkey",
       "table": "QueryParamsLog",
-      "columns": ["sqlId"],
+      "columns": [
+        "sqlId"
+      ],
       "refTable": "QuerySqlLog",
       "refColumns": [],
       "onDelete": null,
@@ -18257,7 +18764,9 @@
     {
       "name": "snapshot_Question_selectedAnswerId_fkey",
       "table": "Question",
-      "columns": ["selectedAnswerId"],
+      "columns": [
+        "selectedAnswerId"
+      ],
       "refTable": "Answer",
       "refColumns": [],
       "onDelete": null,
@@ -18266,7 +18775,9 @@
     {
       "name": "snapshot_Question_userId_fkey",
       "table": "Question",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18275,7 +18786,9 @@
     {
       "name": "snapshot_QuestionMetric_questionId_fkey",
       "table": "QuestionMetric",
-      "columns": ["questionId"],
+      "columns": [
+        "questionId"
+      ],
       "refTable": "Question",
       "refColumns": [],
       "onDelete": null,
@@ -18284,7 +18797,9 @@
     {
       "name": "snapshot_QuestionReaction_questionId_fkey",
       "table": "QuestionReaction",
-      "columns": ["questionId"],
+      "columns": [
+        "questionId"
+      ],
       "refTable": "Question",
       "refColumns": [],
       "onDelete": null,
@@ -18293,7 +18808,9 @@
     {
       "name": "snapshot_QuestionReaction_userId_fkey",
       "table": "QuestionReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18302,7 +18819,9 @@
     {
       "name": "snapshot_RecommendedResource_resourceId_fkey",
       "table": "RecommendedResource",
-      "columns": ["resourceId"],
+      "columns": [
+        "resourceId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18311,7 +18830,9 @@
     {
       "name": "snapshot_RecommendedResource_sourceId_fkey",
       "table": "RecommendedResource",
-      "columns": ["sourceId"],
+      "columns": [
+        "sourceId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18320,7 +18841,9 @@
     {
       "name": "snapshot_RedeemableCode_priceId_fkey",
       "table": "RedeemableCode",
-      "columns": ["priceId"],
+      "columns": [
+        "priceId"
+      ],
       "refTable": "Price",
       "refColumns": [],
       "onDelete": null,
@@ -18329,7 +18852,9 @@
     {
       "name": "snapshot_RedeemableCode_userId_fkey",
       "table": "RedeemableCode",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18338,7 +18863,9 @@
     {
       "name": "snapshot_ReferralAttribution_refereeId_fkey",
       "table": "ReferralAttribution",
-      "columns": ["refereeId"],
+      "columns": [
+        "refereeId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18347,7 +18874,9 @@
     {
       "name": "snapshot_ReferralAttribution_referralCodeId_fkey",
       "table": "ReferralAttribution",
-      "columns": ["referralCodeId"],
+      "columns": [
+        "referralCodeId"
+      ],
       "refTable": "UserReferralCode",
       "refColumns": [],
       "onDelete": null,
@@ -18356,7 +18885,9 @@
     {
       "name": "snapshot_ReferralMilestone_userId_fkey",
       "table": "ReferralMilestone",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18365,7 +18896,9 @@
     {
       "name": "snapshot_ReferralRedemption_userId_fkey",
       "table": "ReferralRedemption",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18374,7 +18907,9 @@
     {
       "name": "snapshot_ReferralReward_refereeId_fkey",
       "table": "ReferralReward",
-      "columns": ["refereeId"],
+      "columns": [
+        "refereeId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18383,7 +18918,9 @@
     {
       "name": "snapshot_ReferralReward_userId_fkey",
       "table": "ReferralReward",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18392,7 +18929,9 @@
     {
       "name": "snapshot_Report_userId_fkey",
       "table": "Report",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18401,7 +18940,9 @@
     {
       "name": "snapshot_ReportAutomated_reportId_fkey",
       "table": "ReportAutomated",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -18410,7 +18951,9 @@
     {
       "name": "snapshot_ResourceReview_modelId_fkey",
       "table": "ResourceReview",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -18419,7 +18962,9 @@
     {
       "name": "snapshot_ResourceReview_modelVersionId_fkey",
       "table": "ResourceReview",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18428,7 +18973,9 @@
     {
       "name": "snapshot_ResourceReview_userId_fkey",
       "table": "ResourceReview",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18437,7 +18984,9 @@
     {
       "name": "snapshot_ResourceReviewReaction_reviewId_fkey",
       "table": "ResourceReviewReaction",
-      "columns": ["reviewId"],
+      "columns": [
+        "reviewId"
+      ],
       "refTable": "ResourceReview",
       "refColumns": [],
       "onDelete": null,
@@ -18446,7 +18995,9 @@
     {
       "name": "snapshot_ResourceReviewReaction_userId_fkey",
       "table": "ResourceReviewReaction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18455,7 +19006,9 @@
     {
       "name": "snapshot_ResourceReviewReport_reportId_fkey",
       "table": "ResourceReviewReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -18464,7 +19017,9 @@
     {
       "name": "snapshot_ResourceReviewReport_resourceReviewId_fkey",
       "table": "ResourceReviewReport",
-      "columns": ["resourceReviewId"],
+      "columns": [
+        "resourceReviewId"
+      ],
       "refTable": "ResourceReview",
       "refColumns": [],
       "onDelete": null,
@@ -18473,7 +19028,9 @@
     {
       "name": "snapshot_RewardsBonusEvent_articleId_fkey",
       "table": "RewardsBonusEvent",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -18482,7 +19039,9 @@
     {
       "name": "snapshot_RewardsBonusEvent_createdById_fkey",
       "table": "RewardsBonusEvent",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18491,7 +19050,9 @@
     {
       "name": "snapshot_Role_createdById_fkey",
       "table": "Role",
-      "columns": ["createdById"],
+      "columns": [
+        "createdById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18500,7 +19061,9 @@
     {
       "name": "snapshot_RunStrategy_modelVersionId_fkey",
       "table": "RunStrategy",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -18509,7 +19072,9 @@
     {
       "name": "snapshot_RunStrategy_partnerId_fkey",
       "table": "RunStrategy",
-      "columns": ["partnerId"],
+      "columns": [
+        "partnerId"
+      ],
       "refTable": "Partner",
       "refColumns": [],
       "onDelete": null,
@@ -18518,7 +19083,9 @@
     {
       "name": "snapshot_SavedModel_modelId_fkey",
       "table": "SavedModel",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -18527,7 +19094,9 @@
     {
       "name": "snapshot_SavedModel_userId_fkey",
       "table": "SavedModel",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18536,7 +19105,9 @@
     {
       "name": "snapshot_Session_userId_fkey",
       "table": "Session",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18545,7 +19116,9 @@
     {
       "name": "snapshot_SessionInvalidation_userId_fkey",
       "table": "SessionInvalidation",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18554,7 +19127,9 @@
     {
       "name": "snapshot_ShopifyCustomerLink_userId_fkey",
       "table": "ShopifyCustomerLink",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18563,7 +19138,9 @@
     {
       "name": "snapshot_ShopifyMerchOrder_userId_fkey",
       "table": "ShopifyMerchOrder",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18572,7 +19149,9 @@
     {
       "name": "snapshot_TagEngagement_tagId_fkey",
       "table": "TagEngagement",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18581,7 +19160,9 @@
     {
       "name": "snapshot_TagEngagement_userId_fkey",
       "table": "TagEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18590,7 +19171,9 @@
     {
       "name": "snapshot_TagMetric_tagId_fkey",
       "table": "TagMetric",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18599,7 +19182,9 @@
     {
       "name": "snapshot_TagsOnArticle_articleId_fkey",
       "table": "TagsOnArticle",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -18608,7 +19193,9 @@
     {
       "name": "snapshot_TagsOnArticle_tagId_fkey",
       "table": "TagsOnArticle",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18617,7 +19204,9 @@
     {
       "name": "snapshot_TagsOnBounty_bountyId_fkey",
       "table": "TagsOnBounty",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -18626,7 +19215,9 @@
     {
       "name": "snapshot_TagsOnBounty_tagId_fkey",
       "table": "TagsOnBounty",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18635,7 +19226,9 @@
     {
       "name": "snapshot_TagsOnCollection_collectionId_fkey",
       "table": "TagsOnCollection",
-      "columns": ["collectionId"],
+      "columns": [
+        "collectionId"
+      ],
       "refTable": "Collection",
       "refColumns": [],
       "onDelete": null,
@@ -18644,7 +19237,9 @@
     {
       "name": "snapshot_TagsOnCollection_tagId_fkey",
       "table": "TagsOnCollection",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18653,7 +19248,9 @@
     {
       "name": "snapshot_TagsOnImageVote_tagId_fkey",
       "table": "TagsOnImageVote",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18662,7 +19259,9 @@
     {
       "name": "snapshot_TagsOnImageVote_userId_fkey",
       "table": "TagsOnImageVote",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18671,7 +19270,9 @@
     {
       "name": "snapshot_TagsOnModel3D_model3dId_fkey",
       "table": "TagsOnModel3D",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -18680,7 +19281,9 @@
     {
       "name": "snapshot_TagsOnModel3D_tagId_fkey",
       "table": "TagsOnModel3D",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18689,7 +19292,9 @@
     {
       "name": "snapshot_TagsOnModels_modelId_fkey",
       "table": "TagsOnModels",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -18698,7 +19303,9 @@
     {
       "name": "snapshot_TagsOnModels_tagId_fkey",
       "table": "TagsOnModels",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18707,7 +19314,9 @@
     {
       "name": "snapshot_TagsOnModelsVote_modelId_fkey",
       "table": "TagsOnModelsVote",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -18716,7 +19325,9 @@
     {
       "name": "snapshot_TagsOnModelsVote_tagId_fkey",
       "table": "TagsOnModelsVote",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18725,7 +19336,9 @@
     {
       "name": "snapshot_TagsOnModelsVote_userId_fkey",
       "table": "TagsOnModelsVote",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18734,7 +19347,9 @@
     {
       "name": "snapshot_TagsOnPost_postId_fkey",
       "table": "TagsOnPost",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18743,7 +19358,9 @@
     {
       "name": "snapshot_TagsOnPost_tagId_fkey",
       "table": "TagsOnPost",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18752,7 +19369,9 @@
     {
       "name": "snapshot_TagsOnPostVote_postId_fkey",
       "table": "TagsOnPostVote",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18761,7 +19380,9 @@
     {
       "name": "snapshot_TagsOnPostVote_tagId_fkey",
       "table": "TagsOnPostVote",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18770,7 +19391,9 @@
     {
       "name": "snapshot_TagsOnPostVote_userId_fkey",
       "table": "TagsOnPostVote",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18779,7 +19402,9 @@
     {
       "name": "snapshot_TagsOnQuestions_questionId_fkey",
       "table": "TagsOnQuestions",
-      "columns": ["questionId"],
+      "columns": [
+        "questionId"
+      ],
       "refTable": "Question",
       "refColumns": [],
       "onDelete": null,
@@ -18788,7 +19413,9 @@
     {
       "name": "snapshot_TagsOnQuestions_tagId_fkey",
       "table": "TagsOnQuestions",
-      "columns": ["tagId"],
+      "columns": [
+        "tagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18797,7 +19424,9 @@
     {
       "name": "snapshot_TagsOnTags_fromTagId_fkey",
       "table": "TagsOnTags",
-      "columns": ["fromTagId"],
+      "columns": [
+        "fromTagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18806,7 +19435,9 @@
     {
       "name": "snapshot_TagsOnTags_toTagId_fkey",
       "table": "TagsOnTags",
-      "columns": ["toTagId"],
+      "columns": [
+        "toTagId"
+      ],
       "refTable": "Tag",
       "refColumns": [],
       "onDelete": null,
@@ -18815,7 +19446,9 @@
     {
       "name": "snapshot_Thread_answerId_fkey",
       "table": "Thread",
-      "columns": ["answerId"],
+      "columns": [
+        "answerId"
+      ],
       "refTable": "Answer",
       "refColumns": [],
       "onDelete": null,
@@ -18824,7 +19457,9 @@
     {
       "name": "snapshot_Thread_appListingId_fkey",
       "table": "Thread",
-      "columns": ["appListingId"],
+      "columns": [
+        "appListingId"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -18833,7 +19468,9 @@
     {
       "name": "snapshot_Thread_articleId_fkey",
       "table": "Thread",
-      "columns": ["articleId"],
+      "columns": [
+        "articleId"
+      ],
       "refTable": "Article",
       "refColumns": [],
       "onDelete": null,
@@ -18842,7 +19479,9 @@
     {
       "name": "snapshot_Thread_bountyEntryId_fkey",
       "table": "Thread",
-      "columns": ["bountyEntryId"],
+      "columns": [
+        "bountyEntryId"
+      ],
       "refTable": "BountyEntry",
       "refColumns": [],
       "onDelete": null,
@@ -18851,7 +19490,9 @@
     {
       "name": "snapshot_Thread_bountyId_fkey",
       "table": "Thread",
-      "columns": ["bountyId"],
+      "columns": [
+        "bountyId"
+      ],
       "refTable": "Bounty",
       "refColumns": [],
       "onDelete": null,
@@ -18860,7 +19501,9 @@
     {
       "name": "snapshot_Thread_clubPostId_fkey",
       "table": "Thread",
-      "columns": ["clubPostId"],
+      "columns": [
+        "clubPostId"
+      ],
       "refTable": "ClubPost",
       "refColumns": [],
       "onDelete": null,
@@ -18869,7 +19512,10 @@
     {
       "name": "snapshot_Thread_comicProjectId_comicChapterPosition_fkey",
       "table": "Thread",
-      "columns": ["comicProjectId", "comicChapterPosition"],
+      "columns": [
+        "comicProjectId",
+        "comicChapterPosition"
+      ],
       "refTable": "ComicChapter",
       "refColumns": [],
       "onDelete": null,
@@ -18878,7 +19524,9 @@
     {
       "name": "snapshot_Thread_commentId_fkey",
       "table": "Thread",
-      "columns": ["commentId"],
+      "columns": [
+        "commentId"
+      ],
       "refTable": "CommentV2",
       "refColumns": [],
       "onDelete": null,
@@ -18887,7 +19535,9 @@
     {
       "name": "snapshot_Thread_model3dId_fkey",
       "table": "Thread",
-      "columns": ["model3dId"],
+      "columns": [
+        "model3dId"
+      ],
       "refTable": "Model3D",
       "refColumns": [],
       "onDelete": null,
@@ -18896,7 +19546,9 @@
     {
       "name": "snapshot_Thread_model3dReviewId_fkey",
       "table": "Thread",
-      "columns": ["model3dReviewId"],
+      "columns": [
+        "model3dReviewId"
+      ],
       "refTable": "Model3DReview",
       "refColumns": [],
       "onDelete": null,
@@ -18905,7 +19557,9 @@
     {
       "name": "snapshot_Thread_modelId_fkey",
       "table": "Thread",
-      "columns": ["modelId"],
+      "columns": [
+        "modelId"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -18914,7 +19568,9 @@
     {
       "name": "snapshot_Thread_parentThreadId_fkey",
       "table": "Thread",
-      "columns": ["parentThreadId"],
+      "columns": [
+        "parentThreadId"
+      ],
       "refTable": "Thread",
       "refColumns": [],
       "onDelete": null,
@@ -18923,7 +19579,9 @@
     {
       "name": "snapshot_Thread_postId_fkey",
       "table": "Thread",
-      "columns": ["postId"],
+      "columns": [
+        "postId"
+      ],
       "refTable": "Post",
       "refColumns": [],
       "onDelete": null,
@@ -18932,7 +19590,9 @@
     {
       "name": "snapshot_Thread_questionId_fkey",
       "table": "Thread",
-      "columns": ["questionId"],
+      "columns": [
+        "questionId"
+      ],
       "refTable": "Question",
       "refColumns": [],
       "onDelete": null,
@@ -18941,7 +19601,9 @@
     {
       "name": "snapshot_Thread_reviewId_fkey",
       "table": "Thread",
-      "columns": ["reviewId"],
+      "columns": [
+        "reviewId"
+      ],
       "refTable": "ResourceReview",
       "refColumns": [],
       "onDelete": null,
@@ -18950,7 +19612,9 @@
     {
       "name": "snapshot_Thread_rootThreadId_fkey",
       "table": "Thread",
-      "columns": ["rootThreadId"],
+      "columns": [
+        "rootThreadId"
+      ],
       "refTable": "Thread",
       "refColumns": [],
       "onDelete": null,
@@ -18959,7 +19623,9 @@
     {
       "name": "snapshot_UserCosmetic_cosmeticId_fkey",
       "table": "UserCosmetic",
-      "columns": ["cosmeticId"],
+      "columns": [
+        "cosmeticId"
+      ],
       "refTable": "Cosmetic",
       "refColumns": [],
       "onDelete": null,
@@ -18968,7 +19634,9 @@
     {
       "name": "snapshot_UserCosmetic_userId_fkey",
       "table": "UserCosmetic",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -18977,7 +19645,9 @@
     {
       "name": "snapshot_UserCosmeticShopPurchases_cosmeticId_fkey",
       "table": "UserCosmeticShopPurchases",
-      "columns": ["cosmeticId"],
+      "columns": [
+        "cosmeticId"
+      ],
       "refTable": "Cosmetic",
       "refColumns": [],
       "onDelete": null,
@@ -18986,7 +19656,9 @@
     {
       "name": "snapshot_UserCosmeticShopPurchases_shopItemId_fkey",
       "table": "UserCosmeticShopPurchases",
-      "columns": ["shopItemId"],
+      "columns": [
+        "shopItemId"
+      ],
       "refTable": "CosmeticShopItem",
       "refColumns": [],
       "onDelete": null,
@@ -18995,7 +19667,9 @@
     {
       "name": "snapshot_UserCosmeticShopPurchases_userId_fkey",
       "table": "UserCosmeticShopPurchases",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19004,7 +19678,9 @@
     {
       "name": "snapshot_UserEngagement_targetUserId_fkey",
       "table": "UserEngagement",
-      "columns": ["targetUserId"],
+      "columns": [
+        "targetUserId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19013,7 +19689,9 @@
     {
       "name": "snapshot_UserEngagement_userId_fkey",
       "table": "UserEngagement",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19022,7 +19700,9 @@
     {
       "name": "snapshot_UserLink_userId_fkey",
       "table": "UserLink",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19031,7 +19711,9 @@
     {
       "name": "snapshot_UserMembershipOverride_grantedById_fkey",
       "table": "UserMembershipOverride",
-      "columns": ["grantedById"],
+      "columns": [
+        "grantedById"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19040,7 +19722,9 @@
     {
       "name": "snapshot_UserMembershipOverride_userId_fkey",
       "table": "UserMembershipOverride",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19049,7 +19733,9 @@
     {
       "name": "snapshot_UserMetric_userId_fkey",
       "table": "UserMetric",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19058,7 +19744,9 @@
     {
       "name": "snapshot_UserNotificationSettings_userId_fkey",
       "table": "UserNotificationSettings",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19067,7 +19755,9 @@
     {
       "name": "snapshot_UserPaymentConfiguration_userId_fkey",
       "table": "UserPaymentConfiguration",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19076,7 +19766,9 @@
     {
       "name": "snapshot_UserProfile_userId_fkey",
       "table": "UserProfile",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19085,7 +19777,9 @@
     {
       "name": "snapshot_UserPurchasedRewards_purchasableRewardId_fkey",
       "table": "UserPurchasedRewards",
-      "columns": ["purchasableRewardId"],
+      "columns": [
+        "purchasableRewardId"
+      ],
       "refTable": "PurchasableReward",
       "refColumns": [],
       "onDelete": null,
@@ -19094,7 +19788,9 @@
     {
       "name": "snapshot_UserPurchasedRewards_userId_fkey",
       "table": "UserPurchasedRewards",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19103,7 +19799,9 @@
     {
       "name": "snapshot_UserReferral_userId_fkey",
       "table": "UserReferral",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19112,7 +19810,9 @@
     {
       "name": "snapshot_UserReferral_userReferralCodeId_fkey",
       "table": "UserReferral",
-      "columns": ["userReferralCodeId"],
+      "columns": [
+        "userReferralCodeId"
+      ],
       "refTable": "UserReferralCode",
       "refColumns": [],
       "onDelete": null,
@@ -19121,7 +19821,9 @@
     {
       "name": "snapshot_UserReferralCode_userId_fkey",
       "table": "UserReferralCode",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19130,7 +19832,9 @@
     {
       "name": "snapshot_UserReport_reportId_fkey",
       "table": "UserReport",
-      "columns": ["reportId"],
+      "columns": [
+        "reportId"
+      ],
       "refTable": "Report",
       "refColumns": [],
       "onDelete": null,
@@ -19139,7 +19843,9 @@
     {
       "name": "snapshot_UserReport_userId_fkey",
       "table": "UserReport",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19148,7 +19854,9 @@
     {
       "name": "snapshot_UserRestriction_userId_fkey",
       "table": "UserRestriction",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19157,7 +19865,9 @@
     {
       "name": "snapshot_UserRole_role_fkey",
       "table": "UserRole",
-      "columns": ["role"],
+      "columns": [
+        "role"
+      ],
       "refTable": "Role",
       "refColumns": [],
       "onDelete": null,
@@ -19166,7 +19876,9 @@
     {
       "name": "snapshot_UserRole_userId_fkey",
       "table": "UserRole",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19175,7 +19887,9 @@
     {
       "name": "snapshot_UserStrike_issuedBy_fkey",
       "table": "UserStrike",
-      "columns": ["issuedBy"],
+      "columns": [
+        "issuedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19184,7 +19898,9 @@
     {
       "name": "snapshot_UserStrike_userId_fkey",
       "table": "UserStrike",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19193,7 +19909,9 @@
     {
       "name": "snapshot_UserStrike_voidedBy_fkey",
       "table": "UserStrike",
-      "columns": ["voidedBy"],
+      "columns": [
+        "voidedBy"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19202,7 +19920,9 @@
     {
       "name": "snapshot_UserStripeConnect_userId_fkey",
       "table": "UserStripeConnect",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19211,7 +19931,9 @@
     {
       "name": "snapshot_Vault_userId_fkey",
       "table": "Vault",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19220,7 +19942,9 @@
     {
       "name": "snapshot_VaultItem_creatorId_fkey",
       "table": "VaultItem",
-      "columns": ["creatorId"],
+      "columns": [
+        "creatorId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19229,7 +19953,9 @@
     {
       "name": "snapshot_VaultItem_vaultId_fkey",
       "table": "VaultItem",
-      "columns": ["vaultId"],
+      "columns": [
+        "vaultId"
+      ],
       "refTable": "Vault",
       "refColumns": [],
       "onDelete": null,
@@ -19238,7 +19964,9 @@
     {
       "name": "snapshot_Webhook_userId_fkey",
       "table": "Webhook",
-      "columns": ["userId"],
+      "columns": [
+        "userId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19247,7 +19975,9 @@
     {
       "name": "snapshot_WildcardSet_modelVersionId_fkey",
       "table": "WildcardSet",
-      "columns": ["modelVersionId"],
+      "columns": [
+        "modelVersionId"
+      ],
       "refTable": "ModelVersion",
       "refColumns": [],
       "onDelete": null,
@@ -19256,7 +19986,9 @@
     {
       "name": "snapshot_WildcardSet_ownerUserId_fkey",
       "table": "WildcardSet",
-      "columns": ["ownerUserId"],
+      "columns": [
+        "ownerUserId"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19265,7 +19997,9 @@
     {
       "name": "snapshot_WildcardSetCategory_wildcardSetId_fkey",
       "table": "WildcardSetCategory",
-      "columns": ["wildcardSetId"],
+      "columns": [
+        "wildcardSetId"
+      ],
       "refTable": "WildcardSet",
       "refColumns": [],
       "onDelete": null,
@@ -19274,7 +20008,9 @@
     {
       "name": "snapshot__LicenseToModel_A_fkey",
       "table": "_LicenseToModel",
-      "columns": ["A"],
+      "columns": [
+        "A"
+      ],
       "refTable": "License",
       "refColumns": [],
       "onDelete": null,
@@ -19283,7 +20019,9 @@
     {
       "name": "snapshot__LicenseToModel_B_fkey",
       "table": "_LicenseToModel",
-      "columns": ["B"],
+      "columns": [
+        "B"
+      ],
       "refTable": "Model",
       "refColumns": [],
       "onDelete": null,
@@ -19292,7 +20030,9 @@
     {
       "name": "snapshot_app_block_publish_requests_app_block_id_fkey",
       "table": "app_block_publish_requests",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19301,7 +20041,9 @@
     {
       "name": "snapshot_app_block_publish_requests_reviewed_by_user_id_fkey",
       "table": "app_block_publish_requests",
-      "columns": ["reviewed_by_user_id"],
+      "columns": [
+        "reviewed_by_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19310,7 +20052,9 @@
     {
       "name": "snapshot_app_block_publish_requests_submitted_by_user_id_fkey",
       "table": "app_block_publish_requests",
-      "columns": ["submitted_by_user_id"],
+      "columns": [
+        "submitted_by_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19319,7 +20063,9 @@
     {
       "name": "snapshot_app_block_reviews_app_block_id_fkey",
       "table": "app_block_reviews",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19328,7 +20074,9 @@
     {
       "name": "snapshot_app_block_reviews_user_id_fkey",
       "table": "app_block_reviews",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19337,7 +20085,9 @@
     {
       "name": "snapshot_app_blocks_app_id_fkey",
       "table": "app_blocks",
-      "columns": ["app_id"],
+      "columns": [
+        "app_id"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -19346,7 +20096,9 @@
     {
       "name": "snapshot_app_dev_forgejo_identity_user_id_fkey",
       "table": "app_dev_forgejo_identity",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19355,7 +20107,9 @@
     {
       "name": "snapshot_app_listing_metrics_app_listing_id_fkey",
       "table": "app_listing_metrics",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19364,7 +20118,9 @@
     {
       "name": "snapshot_app_listing_moderation_events_actor_user_id_fkey",
       "table": "app_listing_moderation_events",
-      "columns": ["actor_user_id"],
+      "columns": [
+        "actor_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19373,7 +20129,9 @@
     {
       "name": "snapshot_app_listing_moderation_events_app_listing_id_fkey",
       "table": "app_listing_moderation_events",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19382,7 +20140,9 @@
     {
       "name": "snapshot_app_listing_moderation_events_report_id_fkey",
       "table": "app_listing_moderation_events",
-      "columns": ["report_id"],
+      "columns": [
+        "report_id"
+      ],
       "refTable": "app_listing_reports",
       "refColumns": [],
       "onDelete": null,
@@ -19391,7 +20151,9 @@
     {
       "name": "snapshot_app_listing_publish_requests_app_listing_id_fkey",
       "table": "app_listing_publish_requests",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19400,7 +20162,9 @@
     {
       "name": "snapshot_app_listing_publish_requests_reviewed_by_user_id_fkey",
       "table": "app_listing_publish_requests",
-      "columns": ["reviewed_by_user_id"],
+      "columns": [
+        "reviewed_by_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19409,7 +20173,9 @@
     {
       "name": "snapshot_app_listing_publish_requests_submitted_by_user_id_fkey",
       "table": "app_listing_publish_requests",
-      "columns": ["submitted_by_user_id"],
+      "columns": [
+        "submitted_by_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19418,7 +20184,9 @@
     {
       "name": "snapshot_app_listing_reports_app_listing_id_fkey",
       "table": "app_listing_reports",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19427,7 +20195,9 @@
     {
       "name": "snapshot_app_listing_reports_reporter_user_id_fkey",
       "table": "app_listing_reports",
-      "columns": ["reporter_user_id"],
+      "columns": [
+        "reporter_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19436,7 +20206,9 @@
     {
       "name": "snapshot_app_listing_reports_resolved_by_user_id_fkey",
       "table": "app_listing_reports",
-      "columns": ["resolved_by_user_id"],
+      "columns": [
+        "resolved_by_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19445,7 +20217,9 @@
     {
       "name": "snapshot_app_listing_reviews_app_listing_id_fkey",
       "table": "app_listing_reviews",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19454,7 +20228,9 @@
     {
       "name": "snapshot_app_listing_reviews_user_id_fkey",
       "table": "app_listing_reviews",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19463,7 +20239,9 @@
     {
       "name": "snapshot_app_listing_screenshots_app_listing_id_fkey",
       "table": "app_listing_screenshots",
-      "columns": ["app_listing_id"],
+      "columns": [
+        "app_listing_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19472,7 +20250,9 @@
     {
       "name": "snapshot_app_listing_screenshots_image_id_fkey",
       "table": "app_listing_screenshots",
-      "columns": ["image_id"],
+      "columns": [
+        "image_id"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -19481,7 +20261,9 @@
     {
       "name": "snapshot_app_listings_app_block_id_fkey",
       "table": "app_listings",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19490,7 +20272,9 @@
     {
       "name": "snapshot_app_listings_connect_client_id_fkey",
       "table": "app_listings",
-      "columns": ["connect_client_id"],
+      "columns": [
+        "connect_client_id"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -19499,7 +20283,9 @@
     {
       "name": "snapshot_app_listings_cover_id_fkey",
       "table": "app_listings",
-      "columns": ["cover_id"],
+      "columns": [
+        "cover_id"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -19508,7 +20294,9 @@
     {
       "name": "snapshot_app_listings_icon_id_fkey",
       "table": "app_listings",
-      "columns": ["icon_id"],
+      "columns": [
+        "icon_id"
+      ],
       "refTable": "Image",
       "refColumns": [],
       "onDelete": null,
@@ -19517,7 +20305,9 @@
     {
       "name": "snapshot_app_listings_revision_of_id_fkey",
       "table": "app_listings",
-      "columns": ["revision_of_id"],
+      "columns": [
+        "revision_of_id"
+      ],
       "refTable": "app_listings",
       "refColumns": [],
       "onDelete": null,
@@ -19526,7 +20316,9 @@
     {
       "name": "snapshot_app_listings_user_id_fkey",
       "table": "app_listings",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19535,7 +20327,9 @@
     {
       "name": "snapshot_app_review_agent_reports_prior_report_id_fkey",
       "table": "app_review_agent_reports",
-      "columns": ["prior_report_id"],
+      "columns": [
+        "prior_report_id"
+      ],
       "refTable": "app_review_agent_reports",
       "refColumns": [],
       "onDelete": null,
@@ -19544,7 +20338,9 @@
     {
       "name": "snapshot_app_user_scope_grants_app_block_id_fkey",
       "table": "app_user_scope_grants",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19553,7 +20349,9 @@
     {
       "name": "snapshot_app_user_scope_grants_user_id_fkey",
       "table": "app_user_scope_grants",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19562,7 +20360,9 @@
     {
       "name": "snapshot_block_attribution_payout_app_owner_user_id_fkey",
       "table": "block_attribution_payout",
-      "columns": ["app_owner_user_id"],
+      "columns": [
+        "app_owner_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19571,7 +20371,9 @@
     {
       "name": "snapshot_block_buzz_attribution_app_block_id_fkey",
       "table": "block_buzz_attribution",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19580,7 +20382,9 @@
     {
       "name": "snapshot_block_buzz_attribution_app_id_fkey",
       "table": "block_buzz_attribution",
-      "columns": ["app_id"],
+      "columns": [
+        "app_id"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -19589,7 +20393,9 @@
     {
       "name": "snapshot_block_buzz_attribution_app_owner_user_id_fkey",
       "table": "block_buzz_attribution",
-      "columns": ["app_owner_user_id"],
+      "columns": [
+        "app_owner_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19598,7 +20404,9 @@
     {
       "name": "snapshot_block_buzz_attribution_user_id_fkey",
       "table": "block_buzz_attribution",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19607,7 +20415,9 @@
     {
       "name": "snapshot_block_scope_invocations_app_block_id_fkey",
       "table": "block_scope_invocations",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19616,7 +20426,9 @@
     {
       "name": "snapshot_block_scope_invocations_user_id_fkey",
       "table": "block_scope_invocations",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19625,7 +20437,9 @@
     {
       "name": "snapshot_block_spend_attribution_app_block_id_fkey",
       "table": "block_spend_attribution",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19634,7 +20448,9 @@
     {
       "name": "snapshot_block_spend_attribution_app_id_fkey",
       "table": "block_spend_attribution",
-      "columns": ["app_id"],
+      "columns": [
+        "app_id"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -19643,7 +20459,9 @@
     {
       "name": "snapshot_block_spend_attribution_app_owner_user_id_fkey",
       "table": "block_spend_attribution",
-      "columns": ["app_owner_user_id"],
+      "columns": [
+        "app_owner_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19652,7 +20470,9 @@
     {
       "name": "snapshot_block_spend_attribution_content_author_user_id_fkey",
       "table": "block_spend_attribution",
-      "columns": ["content_author_user_id"],
+      "columns": [
+        "content_author_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19661,7 +20481,9 @@
     {
       "name": "snapshot_block_spend_attribution_user_id_fkey",
       "table": "block_spend_attribution",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19670,7 +20492,9 @@
     {
       "name": "snapshot_block_subscription_attribution_app_block_id_fkey",
       "table": "block_subscription_attribution",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19679,7 +20503,9 @@
     {
       "name": "snapshot_block_subscription_attribution_app_id_fkey",
       "table": "block_subscription_attribution",
-      "columns": ["app_id"],
+      "columns": [
+        "app_id"
+      ],
       "refTable": "OauthClient",
       "refColumns": [],
       "onDelete": null,
@@ -19688,7 +20514,9 @@
     {
       "name": "snapshot_block_subscription_attribution_app_owner_user_id_fkey",
       "table": "block_subscription_attribution",
-      "columns": ["app_owner_user_id"],
+      "columns": [
+        "app_owner_user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19697,7 +20525,9 @@
     {
       "name": "snapshot_block_subscription_attribution_user_id_fkey",
       "table": "block_subscription_attribution",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19706,7 +20536,9 @@
     {
       "name": "snapshot_block_user_settings_block_instance_id_fkey",
       "table": "block_user_settings",
-      "columns": ["block_instance_id"],
+      "columns": [
+        "block_instance_id"
+      ],
       "refTable": "block_user_subscriptions",
       "refColumns": [],
       "onDelete": null,
@@ -19715,7 +20547,9 @@
     {
       "name": "snapshot_block_user_settings_user_id_fkey",
       "table": "block_user_settings",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19724,7 +20558,9 @@
     {
       "name": "snapshot_block_user_subscriptions_app_block_id_fkey",
       "table": "block_user_subscriptions",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19733,7 +20569,9 @@
     {
       "name": "snapshot_block_user_subscriptions_user_id_fkey",
       "table": "block_user_subscriptions",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19742,7 +20580,9 @@
     {
       "name": "snapshot_block_workflows_app_block_id_fkey",
       "table": "block_workflows",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19751,7 +20591,9 @@
     {
       "name": "snapshot_block_workflows_user_id_fkey",
       "table": "block_workflows",
-      "columns": ["user_id"],
+      "columns": [
+        "user_id"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19760,7 +20602,9 @@
     {
       "name": "snapshot_platform_default_blocks_app_block_id_fkey",
       "table": "platform_default_blocks",
-      "columns": ["app_block_id"],
+      "columns": [
+        "app_block_id"
+      ],
       "refTable": "app_blocks",
       "refColumns": [],
       "onDelete": null,
@@ -19769,7 +20613,9 @@
     {
       "name": "snapshot_platform_default_blocks_promoted_by_fkey",
       "table": "platform_default_blocks",
-      "columns": ["promoted_by"],
+      "columns": [
+        "promoted_by"
+      ],
       "refTable": "User",
       "refColumns": [],
       "onDelete": null,
@@ -19779,855 +20625,1394 @@
   "uniqueIndexes": [
     {
       "table": "Account",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Account",
-      "columns": ["provider", "providerAccountId"]
+      "columns": [
+        "provider",
+        "providerAccountId"
+      ]
     },
     {
       "table": "AdToken",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AdToken",
-      "columns": ["token"]
+      "columns": [
+        "token"
+      ]
     },
     {
       "table": "Announcement",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AnnouncementUser",
-      "columns": ["userId", "announcementId"]
+      "columns": [
+        "userId",
+        "announcementId"
+      ]
     },
     {
       "table": "Answer",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AnswerMetric",
-      "columns": ["answerId", "timeframe"]
+      "columns": [
+        "answerId",
+        "timeframe"
+      ]
     },
     {
       "table": "AnswerReaction",
-      "columns": ["answerId", "userId", "reaction"]
+      "columns": [
+        "answerId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "AnswerReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AnswerVote",
-      "columns": ["answerId", "userId"]
+      "columns": [
+        "answerId",
+        "userId"
+      ]
     },
     {
       "table": "ApiKey",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ApiKey",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "ApiKey",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "AppPageAccess",
-      "columns": ["app", "path"]
+      "columns": [
+        "app",
+        "path"
+      ]
     },
     {
       "table": "Appeal",
-      "columns": ["entityType", "entityId", "userId"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "userId"
+      ]
     },
     {
       "table": "Appeal",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Article",
-      "columns": ["coverId"]
+      "columns": [
+        "coverId"
+      ]
     },
     {
       "table": "Article",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ArticleEngagement",
-      "columns": ["userId", "articleId"]
+      "columns": [
+        "userId",
+        "articleId"
+      ]
     },
     {
       "table": "ArticleMetric",
-      "columns": ["articleId", "timeframe"]
+      "columns": [
+        "articleId",
+        "timeframe"
+      ]
     },
     {
       "table": "ArticleRank",
-      "columns": ["articleId"]
+      "columns": [
+        "articleId"
+      ]
     },
     {
       "table": "ArticleRatingReview",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ArticleReaction",
-      "columns": ["articleId", "userId", "reaction"]
+      "columns": [
+        "articleId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "ArticleReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ArticleReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ArticleReport",
-      "columns": ["reportId", "articleId"]
+      "columns": [
+        "reportId",
+        "articleId"
+      ]
     },
     {
       "table": "Auction",
-      "columns": ["auctionBaseId", "startAt"]
+      "columns": [
+        "auctionBaseId",
+        "startAt"
+      ]
     },
     {
       "table": "Auction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AuctionBase",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "AuctionBase",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "AuctionBase",
-      "columns": ["slug"]
+      "columns": [
+        "slug"
+      ]
     },
     {
       "table": "AuctionBase",
-      "columns": ["type", "ecosystem"]
+      "columns": [
+        "type",
+        "ecosystem"
+      ]
     },
     {
       "table": "Bid",
-      "columns": ["auctionId", "userId", "entityId", "accountType"]
+      "columns": [
+        "auctionId",
+        "userId",
+        "entityId",
+        "accountType"
+      ]
     },
     {
       "table": "Bid",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BidRecurring",
-      "columns": ["auctionBaseId", "userId", "entityId", "accountType"]
+      "columns": [
+        "auctionBaseId",
+        "userId",
+        "entityId",
+        "accountType"
+      ]
     },
     {
       "table": "BidRecurring",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BitdexOps",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BlockedImage",
-      "columns": ["hash"]
+      "columns": [
+        "hash"
+      ]
     },
     {
       "table": "BlockedModelHashes",
-      "columns": ["hash"]
+      "columns": [
+        "hash"
+      ]
     },
     {
       "table": "Blocklist",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Bounty",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BountyBenefactor",
-      "columns": ["bountyId", "userId"]
+      "columns": [
+        "bountyId",
+        "userId"
+      ]
     },
     {
       "table": "BountyEngagement",
-      "columns": ["type", "bountyId", "userId"]
+      "columns": [
+        "type",
+        "bountyId",
+        "userId"
+      ]
     },
     {
       "table": "BountyEntry",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BountyEntryMetric",
-      "columns": ["bountyEntryId", "timeframe"]
+      "columns": [
+        "bountyEntryId",
+        "timeframe"
+      ]
     },
     {
       "table": "BountyEntryRank",
-      "columns": ["bountyEntryId"]
+      "columns": [
+        "bountyEntryId"
+      ]
     },
     {
       "table": "BountyEntryReaction",
-      "columns": ["bountyEntryId", "userId", "reaction"]
+      "columns": [
+        "bountyEntryId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "BountyEntryReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "BountyEntryReport",
-      "columns": ["reportId", "bountyEntryId"]
+      "columns": [
+        "reportId",
+        "bountyEntryId"
+      ]
     },
     {
       "table": "BountyMetric",
-      "columns": ["bountyId", "timeframe"]
+      "columns": [
+        "bountyId",
+        "timeframe"
+      ]
     },
     {
       "table": "BountyRank",
-      "columns": ["bountyId"]
+      "columns": [
+        "bountyId"
+      ]
     },
     {
       "table": "BountyReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "BountyReport",
-      "columns": ["reportId", "bountyId"]
+      "columns": [
+        "reportId",
+        "bountyId"
+      ]
     },
     {
       "table": "Bug",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BuildGuide",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BuzzClaim",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "BuzzTip",
-      "columns": ["entityType", "entityId", "fromUserId"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "fromUserId"
+      ]
     },
     {
       "table": "BuzzWithdrawalRequest",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "BuzzWithdrawalRequestHistory",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CashWithdrawal",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CashWithdrawal",
-      "columns": ["transactionId"]
+      "columns": [
+        "transactionId"
+      ]
     },
     {
       "table": "Challenge",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChallengeCategory",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "ChallengeEngagement",
-      "columns": ["type", "challengeId", "userId"]
+      "columns": [
+        "type",
+        "challengeId",
+        "userId"
+      ]
     },
     {
       "table": "ChallengeEvent",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChallengeJudge",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChallengeReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ChallengeReport",
-      "columns": ["reportId", "challengeId"]
+      "columns": [
+        "reportId",
+        "challengeId"
+      ]
     },
     {
       "table": "ChallengeType",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "ChallengeWinner",
-      "columns": ["challengeId", "userId"]
+      "columns": [
+        "challengeId",
+        "userId"
+      ]
     },
     {
       "table": "ChallengeWinner",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Changelog",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Chat",
-      "columns": ["hash"]
+      "columns": [
+        "hash"
+      ]
     },
     {
       "table": "Chat",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChatMember",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChatMessage",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ChatReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ChatReport",
-      "columns": ["reportId", "chatId"]
+      "columns": [
+        "reportId",
+        "chatId"
+      ]
     },
     {
       "table": "Club",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubAdmin",
-      "columns": ["clubId", "userId"]
+      "columns": [
+        "clubId",
+        "userId"
+      ]
     },
     {
       "table": "ClubAdminInvite",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubMembership",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubMembership",
-      "columns": ["userId", "clubId"]
+      "columns": [
+        "userId",
+        "clubId"
+      ]
     },
     {
       "table": "ClubMembershipCharge",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubMetric",
-      "columns": ["clubId", "timeframe"]
+      "columns": [
+        "clubId",
+        "timeframe"
+      ]
     },
     {
       "table": "ClubPost",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubPostMetric",
-      "columns": ["clubPostId", "timeframe"]
+      "columns": [
+        "clubPostId",
+        "timeframe"
+      ]
     },
     {
       "table": "ClubPostReaction",
-      "columns": ["clubPostId", "userId", "reaction"]
+      "columns": [
+        "clubPostId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "ClubPostReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ClubRank",
-      "columns": ["clubId"]
+      "columns": [
+        "clubId"
+      ]
     },
     {
       "table": "ClubTier",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Collection",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CollectionContributor",
-      "columns": ["userId", "collectionId"]
+      "columns": [
+        "userId",
+        "collectionId"
+      ]
     },
     {
       "table": "CollectionItem",
-      "columns": ["collectionId", "articleId", "postId", "imageId", "modelId", "model3dId"]
+      "columns": [
+        "collectionId",
+        "articleId",
+        "postId",
+        "imageId",
+        "modelId",
+        "model3dId"
+      ]
     },
     {
       "table": "CollectionItem",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CollectionItemScore",
-      "columns": ["userId", "collectionItemId"]
+      "columns": [
+        "userId",
+        "collectionItemId"
+      ]
     },
     {
       "table": "CollectionMetric",
-      "columns": ["collectionId", "timeframe"]
+      "columns": [
+        "collectionId",
+        "timeframe"
+      ]
     },
     {
       "table": "CollectionRank",
-      "columns": ["collectionId"]
+      "columns": [
+        "collectionId"
+      ]
     },
     {
       "table": "CollectionReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "CollectionReport",
-      "columns": ["reportId", "collectionId"]
+      "columns": [
+        "reportId",
+        "collectionId"
+      ]
     },
     {
       "table": "ComicChapter",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ComicChapter",
-      "columns": ["projectId", "position"]
+      "columns": [
+        "projectId",
+        "position"
+      ]
     },
     {
       "table": "ComicChapterRead",
-      "columns": ["userId", "chapterId"]
+      "columns": [
+        "userId",
+        "chapterId"
+      ]
     },
     {
       "table": "ComicPanel",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ComicPanelReference",
-      "columns": ["panelId", "referenceId"]
+      "columns": [
+        "panelId",
+        "referenceId"
+      ]
     },
     {
       "table": "ComicProject",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ComicProjectEngagement",
-      "columns": ["userId", "projectId"]
+      "columns": [
+        "userId",
+        "projectId"
+      ]
     },
     {
       "table": "ComicProjectMetric",
-      "columns": ["comicProjectId"]
+      "columns": [
+        "comicProjectId"
+      ]
     },
     {
       "table": "ComicProjectReference",
-      "columns": ["projectId", "referenceId"]
+      "columns": [
+        "projectId",
+        "referenceId"
+      ]
     },
     {
       "table": "ComicProjectReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ComicProjectReport",
-      "columns": ["reportId", "comicProjectId"]
+      "columns": [
+        "reportId",
+        "comicProjectId"
+      ]
     },
     {
       "table": "ComicReference",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ComicReferenceImage",
-      "columns": ["referenceId", "imageId"]
+      "columns": [
+        "referenceId",
+        "imageId"
+      ]
     },
     {
       "table": "Comment",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CommentReaction",
-      "columns": ["commentId", "userId", "reaction"]
+      "columns": [
+        "commentId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "CommentReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CommentReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "CommentReport",
-      "columns": ["reportId", "commentId"]
+      "columns": [
+        "reportId",
+        "commentId"
+      ]
     },
     {
       "table": "CommentV2",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CommentV2Reaction",
-      "columns": ["commentId", "userId", "reaction"]
+      "columns": [
+        "commentId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "CommentV2Reaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CommentV2Report",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "CommentV2Report",
-      "columns": ["reportId", "commentV2Id"]
+      "columns": [
+        "reportId",
+        "commentV2Id"
+      ]
     },
     {
       "table": "Cosmetic",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CosmeticShopItem",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CosmeticShopSection",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CosmeticShopSectionItem",
-      "columns": ["shopItemId", "shopSectionId"]
+      "columns": [
+        "shopItemId",
+        "shopSectionId"
+      ]
     },
     {
       "table": "CoveredCheckpoint",
-      "columns": ["model_id", "version_id"]
+      "columns": [
+        "model_id",
+        "version_id"
+      ]
     },
     {
       "table": "CryptoDeposit",
-      "columns": ["paymentId"]
+      "columns": [
+        "paymentId"
+      ]
     },
     {
       "table": "CryptoTransaction",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "CryptoWallet",
-      "columns": ["smartAccount"]
+      "columns": [
+        "smartAccount"
+      ]
     },
     {
       "table": "CryptoWallet",
-      "columns": ["userId", "chain"]
+      "columns": [
+        "userId",
+        "chain"
+      ]
     },
     {
       "table": "CryptoWallet",
-      "columns": ["wallet"]
+      "columns": [
+        "wallet"
+      ]
     },
     {
       "table": "CsamReport",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CustomerSubscription",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "CustomerSubscription",
-      "columns": ["userId", "buzzType"]
+      "columns": [
+        "userId",
+        "buzzType"
+      ]
     },
     {
       "table": "Donation",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "DonationGoal",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "DownloadHistory",
-      "columns": ["userId", "modelVersionId"]
+      "columns": [
+        "userId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "EcosystemCheckpoints",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "EntityAccess",
-      "columns": ["accessToId", "accessToType", "accessorId", "accessorType"]
+      "columns": [
+        "accessToId",
+        "accessToType",
+        "accessorId",
+        "accessorType"
+      ]
     },
     {
       "table": "EntityCollaborator",
-      "columns": ["entityType", "entityId", "userId"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "userId"
+      ]
     },
     {
       "table": "EntityMetric",
-      "columns": ["entityType", "entityId", "metricType"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "metricType"
+      ]
     },
     {
       "table": "EntityModeration",
-      "columns": ["entityType", "entityId"]
+      "columns": [
+        "entityType",
+        "entityId"
+      ]
     },
     {
       "table": "EntityModeration",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "FeaturedModelVersion",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "File",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "GenerationBaseModel",
-      "columns": ["baseModel"]
+      "columns": [
+        "baseModel"
+      ]
     },
     {
       "table": "GenerationPreset",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "GenerationPreset",
-      "columns": ["userId", "ecosystem", "name"]
+      "columns": [
+        "userId",
+        "ecosystem",
+        "name"
+      ]
     },
     {
       "table": "GenerationServiceProvider",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "HiddenDownload",
-      "columns": ["userId", "modelVersionId"]
+      "columns": [
+        "userId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "HomeBlock",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Image",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ImageConnection",
-      "columns": ["imageId", "entityType", "entityId"]
+      "columns": [
+        "imageId",
+        "entityType",
+        "entityId"
+      ]
     },
     {
       "table": "ImageEngagement",
-      "columns": ["userId", "imageId"]
+      "columns": [
+        "userId",
+        "imageId"
+      ]
     },
     {
       "table": "ImageFlag",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "ImageForReview",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "ImageRank",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "ImageRatingRequest",
-      "columns": ["imageId", "userId"]
+      "columns": [
+        "imageId",
+        "userId"
+      ]
     },
     {
       "table": "ImageReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ImageReaction",
-      "columns": ["imageId", "userId", "reaction"]
+      "columns": [
+        "imageId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "ImageReport",
-      "columns": ["imageId", "reportId"]
+      "columns": [
+        "imageId",
+        "reportId"
+      ]
     },
     {
       "table": "ImageReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ImageResource",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ImageResourceNew",
-      "columns": ["imageId", "modelVersionId"]
+      "columns": [
+        "imageId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "ImageTagForReview",
-      "columns": ["imageId", "tagId"]
+      "columns": [
+        "imageId",
+        "tagId"
+      ]
     },
     {
       "table": "ImageTechnique",
-      "columns": ["imageId", "techniqueId"]
+      "columns": [
+        "imageId",
+        "techniqueId"
+      ]
     },
     {
       "table": "ImageTool",
-      "columns": ["imageId", "toolId"]
+      "columns": [
+        "imageId",
+        "toolId"
+      ]
     },
     {
       "table": "ImagesOnModels",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "ImagesOnModels",
-      "columns": ["imageId", "modelVersionId"]
+      "columns": [
+        "imageId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "Import",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "JobQueue",
-      "columns": ["entityType", "entityId", "type"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "type"
+      ]
     },
     {
       "table": "KeyValue",
-      "columns": ["key"]
+      "columns": [
+        "key"
+      ]
     },
     {
       "table": "Leaderboard",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "LeaderboardResult",
-      "columns": ["leaderboardId", "date", "position"]
+      "columns": [
+        "leaderboardId",
+        "date",
+        "position"
+      ]
     },
     {
       "table": "LeaderboardResult",
-      "columns": ["leaderboardId", "date", "userId"]
+      "columns": [
+        "leaderboardId",
+        "date",
+        "userId"
+      ]
     },
     {
       "table": "License",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "LicensingRoot",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "LicensingRoot",
-      "columns": ["modelVersionId"]
+      "columns": [
+        "modelVersionId"
+      ]
     },
     {
       "table": "Link",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "MembershipGift",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "MembershipGift",
-      "columns": ["stripeCheckoutSessionId"]
+      "columns": [
+        "stripeCheckoutSessionId"
+      ]
     },
     {
       "table": "MembershipGift",
-      "columns": ["stripePaymentIntentId"]
+      "columns": [
+        "stripePaymentIntentId"
+      ]
     },
     {
       "table": "MetricUpdateQueue",
-      "columns": ["type", "id"]
+      "columns": [
+        "type",
+        "id"
+      ]
     },
     {
       "table": "ModActivity",
-      "columns": ["activity", "entityType", "entityId"]
+      "columns": [
+        "activity",
+        "entityType",
+        "entityId"
+      ]
     },
     {
       "table": "ModActivity",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model",
-      "columns": ["fromImportId"]
+      "columns": [
+        "fromImportId"
+      ]
     },
     {
       "table": "Model",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model3D",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model3D",
-      "columns": ["thumbnailImageId"]
+      "columns": [
+        "thumbnailImageId"
+      ]
     },
     {
       "table": "Model3D",
-      "columns": ["workflowId"]
+      "columns": [
+        "workflowId"
+      ]
     },
     {
       "table": "Model3DEngagement",
-      "columns": ["userId", "model3dId"]
+      "columns": [
+        "userId",
+        "model3dId"
+      ]
     },
     {
       "table": "Model3DFile",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model3DFile",
-      "columns": ["model3dId", "format", "variant"]
+      "columns": [
+        "model3dId",
+        "format",
+        "variant"
+      ]
     },
     {
       "table": "Model3DLicense",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model3DLicense",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "Model3DMetric",
-      "columns": ["model3dId"]
+      "columns": [
+        "model3dId"
+      ]
     },
     {
       "table": "Model3DReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "Model3DReport",
-      "columns": ["reportId", "model3dId"]
+      "columns": [
+        "reportId",
+        "model3dId"
+      ]
     },
     {
       "table": "Model3DReview",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Model3DReview",
-      "columns": ["model3dId", "userId"]
+      "columns": [
+        "model3dId",
+        "userId"
+      ]
     },
     {
       "table": "Model3DReviewReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "Model3DReviewReport",
-      "columns": ["reportId", "model3dReviewId"]
+      "columns": [
+        "reportId",
+        "model3dReviewId"
+      ]
     },
     {
       "table": "ModelAssociations",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ModelBaseModelMetric",
-      "columns": ["modelId", "baseModel"]
+      "columns": [
+        "modelId",
+        "baseModel"
+      ]
     },
     {
       "table": "ModelDescription",
-      "columns": ["modelId"]
+      "columns": [
+        "modelId"
+      ]
     },
     {
       "table": "ModelEngagement",
-      "columns": ["userId", "modelId"]
+      "columns": [
+        "userId",
+        "modelId"
+      ]
     },
     {
       "table": "ModelFile",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ModelFileHash",
-      "columns": ["fileId", "type"]
+      "columns": [
+        "fileId",
+        "type"
+      ]
     },
     {
       "table": "ModelFlag",
-      "columns": ["modelId"]
+      "columns": [
+        "modelId"
+      ]
     },
     {
       "table": "ModelInterest",
-      "columns": ["userId", "modelId"]
+      "columns": [
+        "userId",
+        "modelId"
+      ]
     },
     {
       "table": "ModelMetric",
@@ -20651,871 +22036,1380 @@
     },
     {
       "table": "ModelMetricDaily",
-      "columns": ["modelId", "modelVersionId", "type", "date"]
+      "columns": [
+        "modelId",
+        "modelVersionId",
+        "type",
+        "date"
+      ]
     },
     {
       "table": "ModelRank_New",
-      "columns": ["modelId"]
+      "columns": [
+        "modelId"
+      ]
     },
     {
       "table": "ModelReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ModelReport",
-      "columns": ["reportId", "modelId"]
+      "columns": [
+        "reportId",
+        "modelId"
+      ]
     },
     {
       "table": "ModelVersion",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ModelVersionEngagement",
-      "columns": ["userId", "modelVersionId"]
+      "columns": [
+        "userId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "ModelVersionExploration",
-      "columns": ["modelVersionId", "name"]
+      "columns": [
+        "modelVersionId",
+        "name"
+      ]
     },
     {
       "table": "ModelVersionMetric",
-      "columns": ["modelVersionId"]
+      "columns": [
+        "modelVersionId"
+      ]
     },
     {
       "table": "ModelVersionMetric",
-      "columns": ["modelVersionId", "timeframe"]
+      "columns": [
+        "modelVersionId",
+        "timeframe"
+      ]
     },
     {
       "table": "ModelVersionMonetization",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ModelVersionMonetization",
-      "columns": ["modelVersionId"]
+      "columns": [
+        "modelVersionId"
+      ]
     },
     {
       "table": "ModelVersionRank",
-      "columns": ["modelVersionId"]
+      "columns": [
+        "modelVersionId"
+      ]
     },
     {
       "table": "ModelVersionSponsorshipSettings",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ModelVersionSponsorshipSettings",
-      "columns": ["modelVersionMonetizationId"]
+      "columns": [
+        "modelVersionMonetizationId"
+      ]
     },
     {
       "table": "ModerationRule",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "NewOrderPlayer",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "NewOrderPlayer",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "NewOrderRank",
-      "columns": ["type"]
+      "columns": [
+        "type"
+      ]
     },
     {
       "table": "NewOrderSmite",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "OauthClient",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "OauthConsent",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "OauthConsent",
-      "columns": ["userId", "clientId"]
+      "columns": [
+        "userId",
+        "clientId"
+      ]
     },
     {
       "table": "Outbox",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "PaidAccess",
-      "columns": ["entityType", "entityId"]
+      "columns": [
+        "entityType",
+        "entityId"
+      ]
     },
     {
       "table": "Partner",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Partner",
-      "columns": ["token"]
+      "columns": [
+        "token"
+      ]
     },
     {
       "table": "Post",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Post",
-      "columns": ["model3dReviewId"]
+      "columns": [
+        "model3dReviewId"
+      ]
     },
     {
       "table": "PostMetric",
-      "columns": ["postId", "timeframe"]
+      "columns": [
+        "postId",
+        "timeframe"
+      ]
     },
     {
       "table": "PostReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "PostReaction",
-      "columns": ["postId", "userId", "reaction"]
+      "columns": [
+        "postId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "PostReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "PostReport",
-      "columns": ["reportId", "postId"]
+      "columns": [
+        "reportId",
+        "postId"
+      ]
     },
     {
       "table": "PressMention",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Price",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Product",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "PromptAllowlist",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "PromptAllowlist",
-      "columns": ["trigger", "category"]
+      "columns": [
+        "trigger",
+        "category"
+      ]
     },
     {
       "table": "PurchasableReward",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Purchase",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "QueryDurationLog",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "QueryParamsLog",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "QueryParamsLog",
-      "columns": ["sqlId", "hash"]
+      "columns": [
+        "sqlId",
+        "hash"
+      ]
     },
     {
       "table": "QuerySqlLog",
-      "columns": ["hash"]
+      "columns": [
+        "hash"
+      ]
     },
     {
       "table": "QuerySqlLog",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Question",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Question",
-      "columns": ["selectedAnswerId"]
+      "columns": [
+        "selectedAnswerId"
+      ]
     },
     {
       "table": "QuestionMetric",
-      "columns": ["questionId", "timeframe"]
+      "columns": [
+        "questionId",
+        "timeframe"
+      ]
     },
     {
       "table": "QuestionReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "QuestionReaction",
-      "columns": ["questionId", "userId", "reaction"]
+      "columns": [
+        "questionId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "RecommendedResource",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "RedeemableCode",
-      "columns": ["code"]
+      "columns": [
+        "code"
+      ]
     },
     {
       "table": "ReferralAttribution",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReferralMilestone",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReferralMilestone",
-      "columns": ["userId", "threshold"]
+      "columns": [
+        "userId",
+        "threshold"
+      ]
     },
     {
       "table": "ReferralRedemption",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReferralReward",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReferralReward",
-      "columns": ["kind", "sourceEventId"]
+      "columns": [
+        "kind",
+        "sourceEventId"
+      ]
     },
     {
       "table": "Report",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReportAutomated",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ReportAutomated",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ResourceOverride",
-      "columns": ["hash"]
+      "columns": [
+        "hash"
+      ]
     },
     {
       "table": "ResourceReview",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ResourceReview",
-      "columns": ["modelVersionId", "userId"]
+      "columns": [
+        "modelVersionId",
+        "userId"
+      ]
     },
     {
       "table": "ResourceReviewReaction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ResourceReviewReaction",
-      "columns": ["reviewId", "userId", "reaction"]
+      "columns": [
+        "reviewId",
+        "userId",
+        "reaction"
+      ]
     },
     {
       "table": "ResourceReviewReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "ResourceReviewReport",
-      "columns": ["reportId", "resourceReviewId"]
+      "columns": [
+        "reportId",
+        "resourceReviewId"
+      ]
     },
     {
       "table": "RestrictedBaseModels",
-      "columns": ["baseModel"]
+      "columns": [
+        "baseModel"
+      ]
     },
     {
       "table": "RestrictedImagesByBaseModel",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "RewardsBonusEvent",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Role",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "RunStrategy",
-      "columns": ["modelVersionId", "partnerId"]
+      "columns": [
+        "modelVersionId",
+        "partnerId"
+      ]
     },
     {
       "table": "RunStrategy",
-      "columns": ["partnerId", "modelVersionId"]
+      "columns": [
+        "partnerId",
+        "modelVersionId"
+      ]
     },
     {
       "table": "SavedModel",
-      "columns": ["modelId", "userId"]
+      "columns": [
+        "modelId",
+        "userId"
+      ]
     },
     {
       "table": "ScannerContentSnapshot",
-      "columns": ["contentHash"]
+      "columns": [
+        "contentHash"
+      ]
     },
     {
       "table": "ScannerLabelReview",
-      "columns": ["contentHash", "version", "label", "reviewedBy"]
+      "columns": [
+        "contentHash",
+        "version",
+        "label",
+        "reviewedBy"
+      ]
     },
     {
       "table": "ScannerLabelReview",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "SearchIndexUpdateQueue",
-      "columns": ["type", "id", "action"]
+      "columns": [
+        "type",
+        "id",
+        "action"
+      ]
     },
     {
       "table": "Session",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Session",
-      "columns": ["sessionToken"]
+      "columns": [
+        "sessionToken"
+      ]
     },
     {
       "table": "SessionInvalidation",
-      "columns": ["userId", "invalidatedAt"]
+      "columns": [
+        "userId",
+        "invalidatedAt"
+      ]
     },
     {
       "table": "ShadowImageNsfwLevel",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "ShadowTagsOnImage",
-      "columns": ["imageId", "tagId"]
+      "columns": [
+        "imageId",
+        "tagId"
+      ]
     },
     {
       "table": "ShopifyCustomerLink",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ShopifyCustomerLink",
-      "columns": ["shopifyCustomerId"]
+      "columns": [
+        "shopifyCustomerId"
+      ]
     },
     {
       "table": "ShopifyMerchOrder",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "ShopifyMerchOrder",
-      "columns": ["shopifyOrderId"]
+      "columns": [
+        "shopifyOrderId"
+      ]
     },
     {
       "table": "Tag",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Tag",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "TagEngagement",
-      "columns": ["userId", "tagId"]
+      "columns": [
+        "userId",
+        "tagId"
+      ]
     },
     {
       "table": "TagMetric",
-      "columns": ["tagId", "timeframe"]
+      "columns": [
+        "tagId",
+        "timeframe"
+      ]
     },
     {
       "table": "TagRank",
-      "columns": ["tagId"]
+      "columns": [
+        "tagId"
+      ]
     },
     {
       "table": "TagsOnArticle",
-      "columns": ["tagId", "articleId"]
+      "columns": [
+        "tagId",
+        "articleId"
+      ]
     },
     {
       "table": "TagsOnBounty",
-      "columns": ["tagId", "bountyId"]
+      "columns": [
+        "tagId",
+        "bountyId"
+      ]
     },
     {
       "table": "TagsOnCollection",
-      "columns": ["tagId", "collectionId"]
+      "columns": [
+        "tagId",
+        "collectionId"
+      ]
     },
     {
       "table": "TagsOnImageNew",
-      "columns": ["imageId", "tagId"]
+      "columns": [
+        "imageId",
+        "tagId"
+      ]
     },
     {
       "table": "TagsOnImageVote",
-      "columns": ["tagId", "imageId", "userId"]
+      "columns": [
+        "tagId",
+        "imageId",
+        "userId"
+      ]
     },
     {
       "table": "TagsOnModel3D",
-      "columns": ["model3dId", "tagId"]
+      "columns": [
+        "model3dId",
+        "tagId"
+      ]
     },
     {
       "table": "TagsOnModels",
-      "columns": ["modelId", "tagId"]
+      "columns": [
+        "modelId",
+        "tagId"
+      ]
     },
     {
       "table": "TagsOnModelsVote",
-      "columns": ["tagId", "modelId", "userId"]
+      "columns": [
+        "tagId",
+        "modelId",
+        "userId"
+      ]
     },
     {
       "table": "TagsOnPost",
-      "columns": ["tagId", "postId"]
+      "columns": [
+        "tagId",
+        "postId"
+      ]
     },
     {
       "table": "TagsOnPostVote",
-      "columns": ["tagId", "postId", "userId"]
+      "columns": [
+        "tagId",
+        "postId",
+        "userId"
+      ]
     },
     {
       "table": "TagsOnQuestions",
-      "columns": ["tagId", "questionId"]
+      "columns": [
+        "tagId",
+        "questionId"
+      ]
     },
     {
       "table": "TagsOnTags",
-      "columns": ["fromTagId", "toTagId"]
+      "columns": [
+        "fromTagId",
+        "toTagId"
+      ]
     },
     {
       "table": "Technique",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["answerId"]
+      "columns": [
+        "answerId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["appListingId"]
+      "columns": [
+        "appListingId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["articleId"]
+      "columns": [
+        "articleId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["bountyEntryId"]
+      "columns": [
+        "bountyEntryId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["bountyId"]
+      "columns": [
+        "bountyId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["challengeId"]
+      "columns": [
+        "challengeId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["clubPostId"]
+      "columns": [
+        "clubPostId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["comicProjectId", "comicChapterPosition"]
+      "columns": [
+        "comicProjectId",
+        "comicChapterPosition"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["commentId"]
+      "columns": [
+        "commentId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["imageId"]
+      "columns": [
+        "imageId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["model3dId"]
+      "columns": [
+        "model3dId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["model3dReviewId"]
+      "columns": [
+        "model3dReviewId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["modelId"]
+      "columns": [
+        "modelId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["postId"]
+      "columns": [
+        "postId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["questionId"]
+      "columns": [
+        "questionId"
+      ]
     },
     {
       "table": "Thread",
-      "columns": ["reviewId"]
+      "columns": [
+        "reviewId"
+      ]
     },
     {
       "table": "TipConnection",
-      "columns": ["entityType", "entityId", "transactionId"]
+      "columns": [
+        "entityType",
+        "entityId",
+        "transactionId"
+      ]
     },
     {
       "table": "Tool",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Tool",
-      "columns": ["name"]
+      "columns": [
+        "name"
+      ]
     },
     {
       "table": "TrustedSpokeDomain",
-      "columns": ["domain"]
+      "columns": [
+        "domain"
+      ]
     },
     {
       "table": "TrustedSpokeDomain",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "User",
-      "columns": ["customerId"]
+      "columns": [
+        "customerId"
+      ]
     },
     {
       "table": "User",
-      "columns": ["email"]
+      "columns": [
+        "email"
+      ]
     },
     {
       "table": "User",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "User",
-      "columns": ["paddleCustomerId"]
+      "columns": [
+        "paddleCustomerId"
+      ]
     },
     {
       "table": "User",
-      "columns": ["profilePictureId"]
+      "columns": [
+        "profilePictureId"
+      ]
     },
     {
       "table": "User",
-      "columns": ["username"]
+      "columns": [
+        "username"
+      ]
     },
     {
       "table": "UserCosmetic",
-      "columns": ["userId", "cosmeticId", "claimKey"]
+      "columns": [
+        "userId",
+        "cosmeticId",
+        "claimKey"
+      ]
     },
     {
       "table": "UserCosmeticShopPurchases",
-      "columns": ["buzzTransactionId"]
+      "columns": [
+        "buzzTransactionId"
+      ]
     },
     {
       "table": "UserEngagement",
-      "columns": ["userId", "targetUserId"]
+      "columns": [
+        "userId",
+        "targetUserId"
+      ]
     },
     {
       "table": "UserLink",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserMembershipOverride",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "UserMetric",
-      "columns": ["userId", "timeframe"]
+      "columns": [
+        "userId",
+        "timeframe"
+      ]
     },
     {
       "table": "UserNotificationSettings",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserNotificationSettings",
-      "columns": ["userId", "type"]
+      "columns": [
+        "userId",
+        "type"
+      ]
     },
     {
       "table": "UserPaymentConfiguration",
-      "columns": ["stripeAccountId"]
+      "columns": [
+        "stripeAccountId"
+      ]
     },
     {
       "table": "UserPaymentConfiguration",
-      "columns": ["tipaltiAccountId"]
+      "columns": [
+        "tipaltiAccountId"
+      ]
     },
     {
       "table": "UserPaymentConfiguration",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "UserProfile",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "UserPurchasedRewards",
-      "columns": ["buzzTransactionId"]
+      "columns": [
+        "buzzTransactionId"
+      ]
     },
     {
       "table": "UserRank",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "UserReferral",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserReferral",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "UserReferralCode",
-      "columns": ["code"]
+      "columns": [
+        "code"
+      ]
     },
     {
       "table": "UserReferralCode",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserReport",
-      "columns": ["reportId"]
+      "columns": [
+        "reportId"
+      ]
     },
     {
       "table": "UserReport",
-      "columns": ["reportId", "userId"]
+      "columns": [
+        "reportId",
+        "userId"
+      ]
     },
     {
       "table": "UserRestriction",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserRole",
-      "columns": ["userId", "role"]
+      "columns": [
+        "userId",
+        "role"
+      ]
     },
     {
       "table": "UserStrike",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "UserStripeConnect",
-      "columns": ["connectedAccountId"]
+      "columns": [
+        "connectedAccountId"
+      ]
     },
     {
       "table": "UserStripeConnect",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "Vault",
-      "columns": ["userId"]
+      "columns": [
+        "userId"
+      ]
     },
     {
       "table": "VaultItem",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "VerificationToken",
-      "columns": ["identifier", "token"]
+      "columns": [
+        "identifier",
+        "token"
+      ]
     },
     {
       "table": "VerificationToken",
-      "columns": ["token"]
+      "columns": [
+        "token"
+      ]
     },
     {
       "table": "VerificationToken",
-      "columns": ["token"]
+      "columns": [
+        "token"
+      ]
     },
     {
       "table": "Webhook",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "Webhook",
-      "columns": ["url", "userId"]
+      "columns": [
+        "url",
+        "userId"
+      ]
     },
     {
       "table": "WildcardSet",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "WildcardSet",
-      "columns": ["modelVersionId"]
+      "columns": [
+        "modelVersionId"
+      ]
     },
     {
       "table": "WildcardSetCategory",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "WildcardSetCategory",
-      "columns": ["wildcardSetId", "name"]
+      "columns": [
+        "wildcardSetId",
+        "name"
+      ]
     },
     {
       "table": "ZKP2P_BlacklistedDepositor",
-      "columns": ["depositorId"]
+      "columns": [
+        "depositorId"
+      ]
     },
     {
       "table": "_LicenseToModel",
-      "columns": ["A", "B"]
+      "columns": [
+        "A",
+        "B"
+      ]
     },
     {
       "table": "_account_source_keep",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "_ir_dup_candidates",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "_ir_source_keep",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "_prisma_migrations",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "_uns_source_keep",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_block_publish_requests",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_block_reviews",
-      "columns": ["app_block_id", "user_id"]
+      "columns": [
+        "app_block_id",
+        "user_id"
+      ]
     },
     {
       "table": "app_block_reviews",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_blocks",
-      "columns": ["app_id", "block_id"]
+      "columns": [
+        "app_id",
+        "block_id"
+      ]
     },
     {
       "table": "app_blocks",
-      "columns": ["block_id"]
+      "columns": [
+        "block_id"
+      ]
     },
     {
       "table": "app_blocks",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_dev_forgejo_identity",
-      "columns": ["user_id"]
+      "columns": [
+        "user_id"
+      ]
     },
     {
       "table": "app_listing_metrics",
-      "columns": ["app_listing_id"]
+      "columns": [
+        "app_listing_id"
+      ]
     },
     {
       "table": "app_listing_moderation_events",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listing_publish_requests",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listing_reports",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listing_reviews",
-      "columns": ["app_listing_id", "user_id"]
+      "columns": [
+        "app_listing_id",
+        "user_id"
+      ]
     },
     {
       "table": "app_listing_reviews",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listing_screenshots",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listings",
-      "columns": ["app_block_id"]
+      "columns": [
+        "app_block_id"
+      ]
     },
     {
       "table": "app_listings",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_listings",
-      "columns": ["serial_id"]
+      "columns": [
+        "serial_id"
+      ]
     },
     {
       "table": "app_listings",
-      "columns": ["slug"]
+      "columns": [
+        "slug"
+      ]
     },
     {
       "table": "app_review_agent_reports",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_user_scope_grants",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "app_user_scope_grants",
-      "columns": ["user_id", "app_block_id"]
+      "columns": [
+        "user_id",
+        "app_block_id"
+      ]
     },
     {
       "table": "bitdex_cursors",
-      "columns": ["replica_id"]
+      "columns": [
+        "replica_id"
+      ]
     },
     {
       "table": "bitdex_fanout_capture",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "bitdex_post_publish_capture",
-      "columns": ["post_id"]
+      "columns": [
+        "post_id"
+      ]
     },
     {
       "table": "block_attribution_payout",
-      "columns": ["app_owner_user_id", "period_key"]
+      "columns": [
+        "app_owner_user_id",
+        "period_key"
+      ]
     },
     {
       "table": "block_attribution_payout",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_buzz_attribution",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_buzz_attribution",
-      "columns": ["payment_transaction_id", "app_block_id"]
+      "columns": [
+        "payment_transaction_id",
+        "app_block_id"
+      ]
     },
     {
       "table": "block_scope_invocations",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_spend_attribution",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_spend_attribution",
-      "columns": ["workflow_id", "app_block_id"]
+      "columns": [
+        "workflow_id",
+        "app_block_id"
+      ]
     },
     {
       "table": "block_subscription_attribution",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_subscription_attribution",
-      "columns": ["invoice_id", "app_block_id"]
+      "columns": [
+        "invoice_id",
+        "app_block_id"
+      ]
     },
     {
       "table": "block_user_settings",
-      "columns": ["block_instance_id", "user_id"]
+      "columns": [
+        "block_instance_id",
+        "user_id"
+      ]
     },
     {
       "table": "block_user_subscriptions",
-      "columns": ["block_instance_id"]
+      "columns": [
+        "block_instance_id"
+      ]
     },
     {
       "table": "block_user_subscriptions",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     },
     {
       "table": "block_workflows",
-      "columns": ["workflow_id"]
+      "columns": [
+        "workflow_id"
+      ]
     },
     {
       "table": "platform_default_blocks",
-      "columns": ["app_block_id"]
+      "columns": [
+        "app_block_id"
+      ]
     },
     {
       "table": "research_ratings",
-      "columns": ["userId", "imageId"]
+      "columns": [
+        "userId",
+        "imageId"
+      ]
     },
     {
       "table": "temp_users_to_rename_username",
-      "columns": ["id"]
+      "columns": [
+        "id"
+      ]
     }
   ]
 }

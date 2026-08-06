@@ -12,3 +12,9 @@ apps/creator-studio/
 # defeating the entire point of committing the baseline. The generator owns the format; a
 # no-op refresh is now a zero-line diff.
 packages/civitai-db-schema/src/schema-drift/drift-baseline.json
+
+# Captured by `drift --dump-catalog`. Same reasoning as drift-baseline.json above, and the
+# same failure it prevents: prettier collapses short arrays in a way JSON.stringify will not
+# reproduce, so with prettier owning the format a re-dump of this file was a 21,522-line diff
+# — while the gate's own STALE message instructs the operator to run exactly that command.
+packages/civitai-db-schema/src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json

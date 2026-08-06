@@ -249,8 +249,8 @@ packages in the same position.
 
 ## Gating a pull request
 
-`drift:gate` is the CI half. It blocks a pull request that makes the gap WORSE, and only
-that.
+`drift:gate` is the CI half. It FAILS on a pull request that makes the gap WORSE, and only
+that — see "What it can and cannot catch" below for why "fails" rather than "blocks".
 
 ```bash
 pnpm --filter @civitai/db-schema drift:gate       # verdict; exit 1 on new enforced drift
@@ -307,8 +307,9 @@ in, because they _are_ the finding rather than prose about it:
 The file is in `.prettierignore`. Prettier and the generator disagree about its formatting by
 246 lines, so with both formatting it a no-op refresh produced a ~250-line reformat that buried
 the one entry that actually changed — defeating the reason for committing it. The generator
-owns the format; a no-op refresh is now a zero-line diff, and accepting one finding a
-twelve-line one.
+owns the format; a no-op refresh is now a zero-line diff, and accepting one finding an
+eleven-line one. The catalog snapshot is owned the same way, for the same measured reason:
+with prettier owning it, a content-identical `--dump-catalog` re-dump was a 21,522-line diff.
 
 It is checked against the catalog it was captured with. A baseline measured against a
 different snapshot describes a different database, so the gate exits 2 rather than comparing
@@ -323,10 +324,10 @@ tell that apart from real drift would block every pull request that adds a colum
 The discriminator is not a taste ranking. It is: does the finding concern database surface
 that **already exists**?
 
-|              |                                                                |            |
-| ------------ | -------------------------------------------------------------- | ---------- |
-| **enforced** | the columns are in the catalog and the constraint is not       | **blocks** |
-| **pending**  | the column is not in the catalog, so the schema is ahead of it | warns      |
+|              |                                                                |                     |
+| ------------ | -------------------------------------------------------------- | ------------------- |
+| **enforced** | the columns are in the catalog and the constraint is not       | **fails the check** |
+| **pending**  | the column is not in the catalog, so the schema is ahead of it | warns               |
 
 `missing-column` is always pending by construction — the column's absence _is_ the finding.
 `nullability` and `uniqueness` are always enforced by construction — the differ only emits
@@ -334,12 +335,23 @@ them for columns it found. `missing-foreign-key` is the only kind that can be ei
 by looking **every** one of its constrained columns up in the catalog: a composite key with one
 column migrated and one not is still pending, because there is nothing to put a constraint on.
 
-**A tier can rise, and a rise blocks.** A finding accepted as `pending` — "that column does not
+**A tier can rise, and a rise fails the check.** A finding accepted as `pending` — "that column does not
 exist yet" — becomes enforceable the moment the migration lands _without_ its constraint, which
 is the shape of 37 of the 61 baseline findings. The fingerprint does not change, so the gate
 compares the current tier against the tier recorded in the baseline and reports
-`pending -> enforced` as blocking. Without that, the escalation is absorbed into the matched
+`pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
 count and the run exits 0.
+
+That guard is **forward-looking only today**. Escalation needs an entry that is both `pending`
+and `missing-foreign-key`, and the current baseline has **zero** of those — all 12 pending
+entries are `missing-column`, which is hardcoded `pending` and can never rise. It fires on
+relations accepted from here on, not on anything already in the baseline.
+
+It also has a bypass worth knowing about: a catalog only gains a column via a **recapture**,
+and the documented procedure for a recapture is to refresh the baseline in the same commit —
+which turns the escalation into a tier flip inside a regenerated file rather than a gate
+failure. `drift:baseline` therefore prints every `pending -> enforced` transition it absorbs,
+so it lands in the recapture commit's log instead of nowhere.
 
 An enforced finding is a hazard the moment it merges: declaring `@unique` on a live column
 with no unique index, or flipping a live NULLABLE column to required, makes Prisma hand
@@ -364,7 +376,7 @@ stay green.
 Adding a column, or a relation on new columns, warns and passes: the schema is ahead of the
 snapshot, which is what an unapplied migration looks like.
 
-Adding drift on a live column blocks, names the finding, and offers three routes — fix the
+Adding drift on a live column fails the check, names the finding, and offers three routes — fix the
 declaration, write and apply the migration, or accept it in the baseline with the reason in
 the PR description.
 
@@ -372,7 +384,7 @@ the PR description.
 
 - **Accepting a finding:** `drift:baseline`, commit the diff, say why in the PR.
 - **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
-  without blocking; `drift:baseline` prunes it.
+  without failing; `drift:baseline` prunes it.
 - **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
   catalog and the baseline are a pair and the gate enforces that they stay one. Budget for it:
   a recapture from a live database brings referential actions into scope for the first time,

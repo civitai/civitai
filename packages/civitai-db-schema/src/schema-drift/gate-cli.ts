@@ -21,6 +21,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from './compare';
 import {
+  absorbedEscalations,
   assertMeasuredSomething,
   blocking,
   buildBaseline,
@@ -162,13 +163,46 @@ function main(): number {
 
   if (options.updateBaseline) {
     const baseline = buildBaseline(report, catalog, catalogRelative);
+
+    // Read the OUTGOING baseline before overwriting it, so a refresh can report what it is
+    // about to absorb. Best-effort: a first-ever run has nothing to compare against.
+    let previous: Baseline | null = null;
+    if (existsSync(baselinePath)) {
+      try {
+        previous = JSON.parse(readFileSync(baselinePath, 'utf8')) as Baseline;
+      } catch {
+        previous = null;
+      }
+    }
+
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
+
+    const age = snapshotAge(catalog.capturedAt, new Date());
     process.stdout.write(
       `Wrote ${baseline.entries.length} accepted finding(s) to ` +
         `${relative(PACKAGE_ROOT, baselinePath)}\n` +
         `  enforced: ${baseline.entries.filter((e) => e.tier === 'enforced').length}\n` +
-        `  pending : ${baseline.entries.filter((e) => e.tier === 'pending').length}\n`
+        `  pending : ${baseline.entries.filter((e) => e.tier === 'pending').length}\n` +
+        `  catalog snapshot captured: ${age.label}\n`
     );
+    for (const note of age.warnings) process.stdout.write(`  STALE: ${note}\n`);
+
+    // The refresh is usually run right after a recapture, which is exactly when a pending
+    // finding can turn enforceable. Absorbing that silently would let the one case the
+    // escalation guard exists for disappear into a routine regeneration.
+    const absorbed = previous ? absorbedEscalations(previous, baseline) : [];
+    if (absorbed.length > 0) {
+      process.stdout.write(
+        `\n  ${absorbed.length} finding(s) ROSE from pending to enforced in this refresh.\n` +
+          '  Each was accepted as "the column does not exist yet"; the column exists now and\n' +
+          '  the constraint still does not. A migration landed without its constraint. This\n' +
+          '  does not fail the refresh — it is recorded here so it is in the commit that\n' +
+          '  absorbed it, rather than nowhere:\n'
+      );
+      for (const e of absorbed) {
+        process.stdout.write(`    ${e.finding.table}.${e.finding.columns.join('+')}\n`);
+      }
+    }
     return 0;
   }
 
