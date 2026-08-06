@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
+import { recordUserActivity } from './user-activity';
 import { invalidateUserSessions } from './sessions';
 
 // Enforcement actions from User Lookup (Retool's BANAPI / UNBANAPI / ToggleMute / forceLogout, ticket
@@ -27,21 +28,49 @@ async function logAction(activity: string, targetUserId: number, moderatorId: nu
   });
 }
 
+// `activity` is a parameter because the timed-mute paths apply the same account change for a different
+// reason. Letting them reuse the default would record a 24-hour mute as a plain `mute`, and a revoke as a
+// manual `unmute` — the audit panel could no longer tell them apart.
 export async function setMuted(input: {
   userId: number;
   muted: boolean;
   moderatorId: number;
+  activity?: string;
 }): Promise<ActionResult> {
   const now = new Date();
-  await dbWrite
+  const result = await dbWrite
     .updateTable('User')
     .set({ muted: input.muted, mutedAt: input.muted ? now : null })
     .where('id', '=', input.userId)
-    .execute();
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
   // Without this the mute does not take effect until the user's session refreshes.
   await invalidateUserSessions(input.userId);
-  await logAction(input.muted ? 'mute' : 'unmute', input.userId, input.moderatorId);
+  await logAction(
+    input.activity ?? (input.muted ? 'mute' : 'unmute'),
+    input.userId,
+    input.moderatorId
+  );
+  await recordUserActivity(input.muted ? 'Muted' : 'Unmuted', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+/** Unmute AND retire every open timed mute, so the account state and the schedule cannot disagree. */
+export async function unmuteAndClearTimed(input: {
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await setMuted({ userId: input.userId, muted: false, moderatorId: input.moderatorId });
+  if (!result.ok) return result;
+
+  await getModeratorDb()
+    .updateTable('TimedMutes')
+    .set({ isMuted: false, muteEnd: new Date() })
+    .where('userId', '=', String(input.userId))
+    .where('isMuted', 'is not', false)
+    .execute();
   return { ok: true };
 }
 
@@ -49,10 +78,40 @@ export async function forceLogout(input: {
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
+  const exists = await dbWrite
+    .selectFrom('User')
+    .select('id')
+    .where('id', '=', input.userId)
+    .executeTakeFirst();
+  if (!exists) return { ok: false, error: 'User not found.' };
+
   await invalidateUserSessions(input.userId);
   await logAction('forceLogout', input.userId, input.moderatorId);
   return { ok: true };
 }
+
+// `/api/mod/ban-user` parses `reasonCode` as `z.enum(BanReasonCode)` BEFORE it answers, and the endpoint
+// has no catch — so anything outside this list is a 500 and no ban. Authority is the main app's
+// `BanReasonCode` in `src/server/common/enums.ts`; kept here rather than in `@civitai/shared` because this
+// is the only spoke that bans. Promote it if a second one appears.
+//
+// `SexualMinor` additionally drives the main app's default media purge, which free text could never reach.
+export const BAN_REASON_CODES = [
+  'SexualMinor',
+  'SexualMinorGenerator',
+  'SexualMinorTraining',
+  'SexualPOI',
+  'Bestiality',
+  'Scat',
+  'Nudify',
+  'Harassment',
+  'LeaderboardCheating',
+  'BuzzCheating',
+  'RRDViolation',
+  'Other',
+] as const;
+
+export type BanReasonCode = (typeof BAN_REASON_CODES)[number];
 
 // `/api/mod/ban-user` TOGGLES rather than setting a state, and answers 200 before it has done the work.
 // Re-reading `bannedAt` and refusing when it already matches the request turns the toggle back into an
@@ -101,25 +160,52 @@ export async function setBanned(input: {
 
 // TIMED MUTES — moderator database. Retool's ActivateSystemMute / RevokeTimedMutes / ViewMutes.
 // The table is empty as of 2026-08-06, so this is built to the schema rather than to observed usage.
+//
+// RETOOL AND THIS APP DISAGREE ABOUT WHAT AN ACTIVE MUTE IS, and both are live. Retool's model is "row
+// exists = mute exists": `ViewMutes` never selects `isMuted`, and `RevokeTimedMutes` DELETEs the row.
+// `isMuted` defaults to FALSE, so a mute created through Retool's GUI write lands with `isMuted = false`.
+// Reading `isMuted` alone would therefore render a live Retool mute as "ended".
+//
+// So active is derived from BOTH: the row has not been explicitly revoked AND its end is in the future.
+// That reads a Retool-created row correctly and a spoke-created one correctly, and it finally uses
+// `muteEnd`, which is the whole point of a timed mute and which nothing previously consulted.
 export type TimedMute = {
   id: number;
   muteStart: Date | null;
   muteEnd: Date | null;
   createdBy: string | null;
   muteReason: string | null;
-  isMuted: boolean | null;
+  active: boolean;
 };
 
+const isActive = (row: { muteEnd: Date | null; isMuted: boolean | null }, now: Date) =>
+  row.isMuted !== false && (row.muteEnd === null || row.muteEnd > now);
+
 export async function getTimedMutes(userId: number): Promise<TimedMute[]> {
-  return (
-    getModeratorDb()
-      .selectFrom('TimedMutes')
-      .select(['id', 'muteStart', 'muteEnd', 'createdBy', 'muteReason', 'isMuted'])
-      // `userId` is TEXT in this table while every sibling uses integer — see moderator-db-types.
-      .where('userId', '=', String(userId))
-      .orderBy('muteStart', 'desc')
-      .execute()
-  );
+  const rows = await getModeratorDb()
+    .selectFrom('TimedMutes')
+    .select(['id', 'muteStart', 'muteEnd', 'createdBy', 'muteReason', 'isMuted'])
+    // `userId` is TEXT in this table while every sibling uses integer — see moderator-db-types.
+    .where('userId', '=', String(userId))
+    .orderBy('muteStart', 'desc')
+    .execute();
+
+  const now = new Date();
+  return rows.map(({ isMuted, ...row }) => ({ ...row, active: isActive({ ...row, isMuted }, now) }));
+}
+
+/** Does the user still have any timed mute in force? Used to decide whether lifting one should lift the
+ *  account mute — revoking one row must not unmute someone who is under a second mute, or who was
+ *  permanently muted before a timed one was layered on top. */
+async function hasOtherActiveTimedMute(userId: number, excludeId: number): Promise<boolean> {
+  const rows = await getModeratorDb()
+    .selectFrom('TimedMutes')
+    .select(['muteEnd', 'isMuted'])
+    .where('userId', '=', String(userId))
+    .where('id', '!=', excludeId)
+    .execute();
+  const now = new Date();
+  return rows.some((r) => isActive(r, now));
 }
 
 export async function addTimedMute(input: {
@@ -144,8 +230,12 @@ export async function addTimedMute(input: {
     .execute();
 
   // The timed row is the schedule; the mute itself still has to be applied to the account.
-  await setMuted({ userId: input.userId, muted: true, moderatorId: input.moderatorId });
-  return { ok: true };
+  return setMuted({
+    userId: input.userId,
+    muted: true,
+    moderatorId: input.moderatorId,
+    activity: 'timedMute',
+  });
 }
 
 // Scoped to BOTH id and userId, and acts only if a row actually changed. Filtering on `id` alone would
@@ -166,6 +256,13 @@ export async function revokeTimedMute(input: {
   if (Number(result.numUpdatedRows ?? 0) === 0)
     return { ok: false, error: 'That timed mute does not belong to this user.' };
 
-  await setMuted({ userId: input.userId, muted: false, moderatorId: input.moderatorId });
-  return { ok: true };
+  // Lifting the account mute is only correct when nothing else is holding it down.
+  if (await hasOtherActiveTimedMute(input.userId, input.id)) return { ok: true };
+
+  return setMuted({
+    userId: input.userId,
+    muted: false,
+    moderatorId: input.moderatorId,
+    activity: 'revokeTimedMute',
+  });
 }

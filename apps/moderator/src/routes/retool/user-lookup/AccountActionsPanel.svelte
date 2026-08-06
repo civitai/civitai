@@ -7,50 +7,54 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { PageData } from './$types';
   import { LINK_CLASS, dateTime, type FormResult } from './format';
+  import { fetchSupport } from './user-support';
 
   type Identity = NonNullable<PageData['result']>['identity'];
-  type TimedMute = {
-    id: number;
-    muteStart: string | null;
-    muteEnd: string | null;
-    createdBy: string | null;
-    muteReason: string | null;
-    isMuted: boolean | null;
-  };
-  type Support = {
-    timedMutes: TimedMute[];
-    freshdesk: { id: number; name: string | null; email: string | null; url: string } | null;
-  };
 
-  let {
-    identity,
-    canAct,
-    form,
-  }: { identity: Identity; canAct: boolean; form: FormResult } = $props();
+  // Mirrors the main app's BanReasonCode enum, which `/api/mod/ban-user` parses strictly — free text is a
+  // 500 and no ban, so this is a closed list rather than an input.
+  const BAN_REASONS = [
+    'SexualMinor',
+    'SexualMinorGenerator',
+    'SexualMinorTraining',
+    'SexualPOI',
+    'Bestiality',
+    'Scat',
+    'Nudify',
+    'Harassment',
+    'LeaderboardCheating',
+    'BuzzCheating',
+    'RRDViolation',
+    'Other',
+  ];
+
+  let { identity, canAct, form }: { identity: Identity; canAct: boolean; form: FormResult } =
+    $props();
 
   const error = $derived(form?.scope === 'account' ? form.error : null);
 
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | null>(null);
   let showTimedMute = $state(false);
+  let reasonCode = $state('');
 
-  const support = $derived(
-    browser
-      ? fetch(`/api/user-support/${identity.id}?v=${version}`).then((r): Promise<Support> => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
-      : null
-  );
+  // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
+  // interleave with another.
+  let submitting = $state(false);
+
+  const support = $derived(browser ? fetchSupport(identity.id, version) : null);
 
   // `applyAction` is what populates `form` — a custom enhance callback replaces the default handling, so
   // without it every fail() (already banned, not permitted, ban endpoint 500) is silently discarded and a
   // refused action looks identical to a successful one.
   //
-  // The ban endpoint also answers before it finishes its work, so success re-reads rather than trusting
-  // the response.
+  // `submitting` is not cosmetic. The ban endpoint answers 200 BEFORE it writes, so setBanned's
+  // already-in-that-state guard is blind for the length of that write: two quick clicks both pass it,
+  // both POST, and because the endpoint TOGGLES, the second one unbans. Nothing on screen changes in
+  // between, because the success path re-reads the replica.
   const afterAction =
     () =>
     async ({ result }: { result: ActionResult }) => {
@@ -58,10 +62,17 @@
       if (result.type === 'success') {
         confirming = null;
         showTimedMute = false;
+        reasonCode = '';
         version += 1;
         await invalidateAll();
       }
+      submitting = false;
     };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterAction();
+  };
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -87,17 +98,17 @@
     </p>
 
     <div class="flex flex-wrap gap-2">
-      <form method="POST" action="?/setMuted" use:enhance={afterAction}>
+      <form method="POST" action="?/setMuted" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="muted" value={identity.muted ? 'false' : 'true'} />
-        <Button type="submit" size="sm" variant={identity.muted ? 'default' : 'outline'}>
+        <Button type="submit" size="sm" disabled={submitting} variant={identity.muted ? 'default' : 'outline'}>
           {identity.muted ? 'Unmute' : 'Mute'}
         </Button>
       </form>
 
-      <form method="POST" action="?/forceLogout" use:enhance={afterAction}>
+      <form method="POST" action="?/forceLogout" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" variant="outline">Force logout</Button>
+        <Button type="submit" size="sm" disabled={submitting} variant="outline">Force logout</Button>
       </form>
 
       <Button size="sm" variant="outline" onclick={() => (showTimedMute = !showTimedMute)}>
@@ -112,7 +123,7 @@
     </div>
 
     {#if showTimedMute}
-      <form method="POST" action="?/addTimedMute" use:enhance={afterAction} class="mt-4">
+      <form method="POST" action="?/addTimedMute" use:enhance={onSubmit} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="flex flex-wrap items-end gap-2">
           <label class="text-xs text-dark-2">
@@ -123,13 +134,13 @@
             Reason
             <Input name="reason" placeholder="Why is this mute being applied?" class="mt-1" required />
           </label>
-          <Button type="submit" size="sm">Apply</Button>
+          <Button type="submit" size="sm" disabled={submitting}>Apply</Button>
         </div>
       </form>
     {/if}
 
     {#if confirming}
-      <form method="POST" action="?/setBanned" use:enhance={afterAction} class="mt-4">
+      <form method="POST" action="?/setBanned" use:enhance={onSubmit} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="ban" value={confirming === 'ban' ? 'true' : 'false'} />
         <div
@@ -146,12 +157,26 @@
             {/if}
           </p>
           {#if confirming === 'ban'}
-            <Input name="reasonCode" placeholder="Reason code (optional)" class="mb-2" />
+            <Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
+              <Select.Trigger class="mb-2 w-full">
+                {reasonCode || 'Reason code (optional)'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each BAN_REASONS as reason (reason)}
+                  <Select.Item value={reason}>{reason}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
             <Textarea name="detailsInternal" rows={2} placeholder="Internal notes (optional)" />
           {/if}
           <div class="mt-2 flex gap-2">
-            <Button type="submit" size="sm" variant={confirming === 'ban' ? 'destructive' : 'default'}>
-              Confirm {confirming}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={submitting}
+              variant={confirming === 'ban' ? 'destructive' : 'default'}
+            >
+              {submitting ? 'Working…' : `Confirm ${confirming}`}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
               Cancel
@@ -177,16 +202,18 @@
             <ul class="space-y-1 text-sm">
               {#each result.timedMutes as m (m.id)}
                 <li class="flex flex-wrap items-baseline gap-x-2">
-                  {#if m.isMuted}<Badge variant="destructive">active</Badge>{:else}<Badge
+                  {#if m.active}<Badge variant="destructive">active</Badge>{:else}<Badge
                       variant="secondary">ended</Badge
                     >{/if}
                   <span class="text-dark-0">until {dateTime(m.muteEnd)}</span>
                   <span class="text-xs text-dark-2">{m.createdBy ?? 'unknown'}</span>
-                  {#if m.isMuted && canAct}
-                    <form method="POST" action="?/revokeTimedMute" use:enhance={afterAction}>
+                  {#if m.active && canAct}
+                    <form method="POST" action="?/revokeTimedMute" use:enhance={onSubmit}>
                       <input type="hidden" name="id" value={m.id} />
                       <input type="hidden" name="userId" value={identity.id} />
-                      <button type="submit" class="text-xs {LINK_CLASS}">revoke</button>
+                      <button type="submit" disabled={submitting} class="text-xs {LINK_CLASS}">
+                        revoke
+                      </button>
                     </form>
                   {/if}
                 </li>
@@ -197,12 +224,18 @@
 
         <div>
           <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Support</h4>
-          {#if !result.freshdesk}
-            <p class="text-sm text-dark-2">No Freshdesk contact found.</p>
-          {:else}
-            <a href={result.freshdesk.url} target="_blank" rel="noreferrer" class="text-sm {LINK_CLASS}">
-              {result.freshdesk.name ?? result.freshdesk.email ?? `contact ${result.freshdesk.id}`}
+          {#if result.freshdesk.status === 'found'}
+            {@const contact = result.freshdesk.contact}
+            <a href={contact.url} target="_blank" rel="noreferrer" class="text-sm {LINK_CLASS}">
+              {contact.name ?? contact.email ?? `contact ${contact.id}`}
             </a>
+          {:else if result.freshdesk.status === 'none'}
+            <p class="text-sm text-dark-2">No Freshdesk contact for this email.</p>
+          {:else}
+            <p class="text-sm text-amber-300">
+              Could not check Freshdesk — {result.freshdesk.reason} This account may still have contacted
+              support.
+            </p>
           {/if}
         </div>
       </div>

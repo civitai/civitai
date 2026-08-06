@@ -1,21 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { invalidateAll } from '$app/navigation';
   import { applyAction, enhance } from '$app/forms';
   import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { dateTime, type FormResult } from './format';
-
-  type Note = {
-    id: number;
-    notes: string | null;
-    lastUpdate: string | null;
-    lastUpdateBy: string | null;
-    isMine: boolean;
-  };
-  type Strike = { id: number; reason: string | null; createdAt: string | null; createdBy: string | null };
+  import { LINK_CLASS, dateTime, type FormResult } from './format';
+  import { fetchMemory } from './user-memory';
 
   let { userId, form }: { userId: number; form: FormResult } = $props();
 
@@ -25,22 +16,17 @@
   // not in `data`, so invalidating the page load would not bring it back.
   let version = $state(0);
 
-  const memory = $derived(
-    browser
-      ? fetch(`/api/user-memory/${userId}?v=${version}`).then(
-          (r): Promise<{ notes: Note[]; strikes: Strike[] }> => {
-            if (!r.ok) throw new Error(String(r.status));
-            return r.json();
-          }
-        )
-      : null
-  );
+  const memory = $derived(browser ? fetchMemory(userId, version) : null);
 
   let editing = $state<number | null>(null);
   let adding = $state(false);
+  let submitting = $state(false);
 
   // applyAction populates `form` — without it "You can only edit your own notes." never reaches the UI
   // and a rejected edit looks like a successful one.
+  //
+  // Deliberately NOT invalidateAll(): nothing a note write changes comes from `load`, and invalidating
+  // re-runs all eight lookup queries plus the account fetch behind them, including a 744M-row scan.
   const afterWrite =
     () =>
     async ({ result }: { result: ActionResult }) => {
@@ -49,9 +35,14 @@
         editing = null;
         adding = false;
         version += 1;
-        await invalidateAll();
       }
+      submitting = false;
     };
+
+  const onSubmit = () => {
+    submitting = true;
+    return afterWrite();
+  };
 </script>
 
 <section class="mb-4 grid gap-4 lg:grid-cols-2">
@@ -73,11 +64,11 @@
     {/if}
 
     {#if adding}
-      <form method="POST" action="?/addNote" use:enhance={afterWrite} class="mb-4">
+      <form method="POST" action="?/addNote" use:enhance={onSubmit} class="mb-4">
         <input type="hidden" name="userId" value={userId} />
         <Textarea name="notes" rows={3} placeholder="What should the next moderator know?" required />
         <div class="mt-2 flex gap-2">
-          <Button type="submit" size="sm">Save</Button>
+          <Button type="submit" size="sm" disabled={submitting}>Save</Button>
           <Button type="button" size="sm" variant="outline" onclick={() => (adding = false)}>
             Cancel
           </Button>
@@ -95,11 +86,11 @@
           {#each result.notes as note (note.id)}
             <li class="border-b border-dark-4 pb-3 last:border-0 last:pb-0">
               {#if editing === note.id}
-                <form method="POST" action="?/editNote" use:enhance={afterWrite}>
+                <form method="POST" action="?/editNote" use:enhance={onSubmit}>
                   <input type="hidden" name="id" value={note.id} />
                   <Textarea name="notes" rows={3} value={note.notes ?? ''} required />
                   <div class="mt-2 flex gap-2">
-                    <Button type="submit" size="sm">Save</Button>
+                    <Button type="submit" size="sm" disabled={submitting}>Save</Button>
                     <Button
                       type="button"
                       size="sm"
@@ -118,7 +109,7 @@
                   {#if note.isMine}
                     <button
                       type="button"
-                      class="text-blue-4 hover:underline"
+                      class={LINK_CLASS}
                       onclick={() => (editing = note.id)}
                     >
                       edit
