@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
@@ -5,6 +6,8 @@ import {
   CollectionContributorPermission,
   CollectionInviteStatus,
   CollectionMode,
+  CollectionReadConfiguration,
+  CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -47,6 +50,46 @@ function roleFromPermissions(
     : CollectionCollaboratorRole.Contributor;
 }
 
+// What the collection already grants everyone for free, independent of who's asking.
+// Sourced from the collection's own read/write columns — NOT from `followPermissions` on
+// `getUserCollectionPermissionsById`'s result, which the collaborationDisabledAt lapse
+// filter prunes; using that would misreport a lapsed collection's free ADD grant as
+// elevated and undercount every follower's real standing.
+function freeGrantBaseline(collection: {
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+}): Set<CollectionContributorPermission> {
+  const baseline = new Set<CollectionContributorPermission>();
+  if (
+    collection.read === CollectionReadConfiguration.Public ||
+    collection.read === CollectionReadConfiguration.Unlisted
+  ) {
+    baseline.add(CollectionContributorPermission.VIEW);
+  }
+  if (collection.write === CollectionWriteConfiguration.Public) {
+    baseline.add(CollectionContributorPermission.ADD);
+  }
+  if (collection.write === CollectionWriteConfiguration.Review) {
+    baseline.add(CollectionContributorPermission.ADD_REVIEW);
+  }
+  return baseline;
+}
+
+// Mirrors Task 2's `isCollaborator`: a row only counts as a collaborator when it holds
+// ADD/MANAGE beyond the free baseline. A plain Follow on a write:Public collection writes
+// a CollectionContributor row carrying ADD too — that row must NOT read as elevated.
+function hasElevatedPermission(
+  permissions: CollectionContributorPermission[],
+  freeBaseline: Set<CollectionContributorPermission>
+): boolean {
+  return permissions.some(
+    (p) =>
+      (p === CollectionContributorPermission.ADD ||
+        p === CollectionContributorPermission.MANAGE) &&
+      !freeBaseline.has(p)
+  );
+}
+
 // Both counts must include non-expired pending invites, not just accepted rows — counting
 // only accepted rows would let someone issue hundreds of invites and stay under the cap
 // until they all land. `excludeUserId` is the invite target: re-inviting them replaces
@@ -57,40 +100,55 @@ async function countCollaborators(
   excludeUserId: number
 ): Promise<[collaborators: number, managers: number]> {
   return dbWrite.$transaction(async (tx) => {
+    const collection = await tx.collection.findUnique({
+      where: { id: collectionId },
+      select: { read: true, write: true },
+    });
+    const freeBaseline = collection
+      ? freeGrantBaseline(collection)
+      : new Set<CollectionContributorPermission>();
     const cutoff = inviteExpiryCutoff();
 
-    const collaboratorRows = await tx.$queryRaw<{ count: number }[]>`
-      SELECT COUNT(*) as "count" FROM (
-        SELECT cc."userId" FROM "CollectionContributor" cc
-        WHERE cc."collectionId" = ${collectionId}
-          AND cc."userId" <> ${excludeUserId}
-          AND cc.permissions && ARRAY['ADD','MANAGE']::"CollectionContributorPermission"[]
-        UNION
-        SELECT ci."userId" FROM "CollectionInvite" ci
-        WHERE ci."collectionId" = ${collectionId}
-          AND ci."userId" <> ${excludeUserId}
-          AND ci.status = 'Pending'
-          AND ci."createdAt" >= ${cutoff}
-      ) x
-    `;
+    const contributorRows = await tx.collectionContributor.findMany({
+      where: {
+        collectionId,
+        userId: { not: excludeUserId },
+        permissions: {
+          hasSome: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+        },
+      },
+      select: { userId: true, permissions: true },
+    });
 
-    const managerRows = await tx.$queryRaw<{ count: number }[]>`
-      SELECT COUNT(*) as "count" FROM (
-        SELECT cc."userId" FROM "CollectionContributor" cc
-        WHERE cc."collectionId" = ${collectionId}
-          AND cc."userId" <> ${excludeUserId}
-          AND cc.permissions && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-        UNION
-        SELECT ci."userId" FROM "CollectionInvite" ci
-        WHERE ci."collectionId" = ${collectionId}
-          AND ci."userId" <> ${excludeUserId}
-          AND ci.status = 'Pending'
-          AND ci.role = 'Manager'
-          AND ci."createdAt" >= ${cutoff}
-      ) x
-    `;
+    const inviteRows = await tx.collectionInvite.findMany({
+      where: {
+        collectionId,
+        userId: { not: excludeUserId },
+        OR: [
+          { status: CollectionInviteStatus.Accepted },
+          { status: CollectionInviteStatus.Pending, createdAt: { gte: cutoff } },
+        ],
+      },
+      select: { userId: true, role: true },
+    });
 
-    return [Number(collaboratorRows[0]?.count ?? 0), Number(managerRows[0]?.count ?? 0)];
+    const collaboratorIds = new Set<number>();
+    const managerIds = new Set<number>();
+
+    for (const row of contributorRows) {
+      if (!hasElevatedPermission(row.permissions, freeBaseline)) continue;
+      collaboratorIds.add(row.userId);
+      if (row.permissions.includes(CollectionContributorPermission.MANAGE)) {
+        managerIds.add(row.userId);
+      }
+    }
+
+    for (const row of inviteRows) {
+      collaboratorIds.add(row.userId);
+      if (row.role === CollectionCollaboratorRole.Manager) managerIds.add(row.userId);
+    }
+
+    return [collaboratorIds.size, managerIds.size];
   });
 }
 
@@ -272,8 +330,13 @@ export async function removeCollaborator({
     await dbWrite.collectionContributor.delete({
       where: { userId_collectionId: { userId: targetUserId, collectionId } },
     });
-  } catch {
-    // Self-removal (or a pending-only invite) may have no contributor row to delete.
+  } catch (error) {
+    // Self-removal (or a pending-only invite) may have no contributor row to delete — but
+    // only that specific case is tolerated; anything else (a dropped connection, a
+    // permission error) must propagate rather than be reported as a successful removal.
+    const isNotFound =
+      error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+    if (!isNotFound) throw error;
   }
 }
 
@@ -296,9 +359,20 @@ export async function getCollaborators({
     throw throwAuthorizationError('You do not have access to this collection.');
   }
 
-  // CollectionContributor also holds follow rows (VIEW/ADD_REVIEW only) — filtering on
-  // ADD/MANAGE keeps this from publishing a collection's entire follower list, which is
-  // not exposed anywhere in the product today.
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { read: true, write: true },
+  });
+  const freeBaseline = collection
+    ? freeGrantBaseline(collection)
+    : new Set<CollectionContributorPermission>();
+
+  // CollectionContributor also holds follow rows — on a write:Public collection a plain
+  // Follow carries ADD too, so this must never return every row for the collection. A row
+  // qualifies as a roster entry when its permissions are elevated beyond the free baseline,
+  // or (to catch a Contributor invite accepted on a write:Public collection, whose granted
+  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user has an
+  // Accepted CollectionInvite — a signal only the invite/accept flow produces.
   const rows = await dbRead.collectionContributor.findMany({
     where: {
       collectionId,
@@ -309,10 +383,22 @@ export async function getCollaborators({
     select: { userId: true, permissions: true },
   });
 
-  const collaborators = rows.map((row) => ({
-    userId: row.userId,
-    role: roleFromPermissions(row.permissions),
-  }));
+  const acceptedInvites = await dbRead.collectionInvite.findMany({
+    where: { collectionId, status: CollectionInviteStatus.Accepted },
+    select: { userId: true },
+  });
+  const acceptedInviteUserIds = new Set(acceptedInvites.map((invite) => invite.userId));
+
+  const collaborators = rows
+    .filter(
+      (row) =>
+        hasElevatedPermission(row.permissions, freeBaseline) ||
+        acceptedInviteUserIds.has(row.userId)
+    )
+    .map((row) => ({
+      userId: row.userId,
+      role: roleFromPermissions(row.permissions),
+    }));
 
   if (!permission.manage) return { collaborators, invites: [] };
 
