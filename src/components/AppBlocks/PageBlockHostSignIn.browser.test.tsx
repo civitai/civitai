@@ -149,10 +149,76 @@ async function driveToReady() {
   });
 }
 
+/**
+ * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
+ * reports "true": the MutationObserver microtask checkpoint that ends the task which
+ * COMMITTED the DOM. React flushes passive effects in a LATER task, so a handler that
+ * closes over `status` is still the PREVIOUS render's closure — holding
+ * `status === 'loading'` — at this exact moment. Everything posted from here therefore
+ * exercises the commit→passive-effect window deterministically, instead of hoping a
+ * 50ms `vi.waitFor` poll happens to land in it.
+ *
+ * The drive is a CANCELLABLE interval rather than `vi.waitFor`: a floating waitFor
+ * keeps posting BLOCK_READY after this returns, and that stray post lands in the NEXT
+ * test — measured, it turned the "before BLOCK_READY is dropped" guard red for a
+ * reason that has nothing to do with the race under study.
+ */
+async function driveToReadyAtCommit() {
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  await new Promise<void>((resolve) => {
+    const obs = new MutationObserver(() => {
+      if (el.getAttribute('data-block-ready') === 'true') {
+        if (timer) clearInterval(timer);
+        obs.disconnect();
+        resolve();
+      }
+    });
+    obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
+    timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+    postFromBlock('BLOCK_READY', {});
+  });
+}
+
 describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     vi.mocked(openLoginPopup).mockClear();
+  });
+
+  /**
+   * REGRESSION GUARD for the host-ready stale-closure race.
+   *
+   * REQUEST_SIGN_IN is fire-and-forget — it carries no requestId and has no reply
+   * message — so a post dropped in this window is gone for good and the anonymous
+   * viewer's click on "Sign in" does nothing at all, silently. There is no NACK
+   * available to soften it, which is exactly why the root-cause fix (reading a
+   * render-body-updated `statusRef` instead of a closed-over `status`) has to hold
+   * for this handler.
+   *
+   * Proven reachable by mutation: move the `statusRef.current = status` assignment
+   * out of the render body and back into an effect and this goes red on
+   * `expected "openLoginPopup" to be called 1 times, but got 0 times`.
+   *
+   * It can never false-FAIL: if the passive effects happen to have flushed already,
+   * the handler is live and the post lands anyway.
+   */
+  test("REQUEST_SIGN_IN posted in React's commit→passive-effect gap still starts the login", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReadyAtCommit();
+    expect(openLoginPopup).not.toHaveBeenCalled();
+
+    // Synchronous dispatch from inside the commit-window checkpoint: the handler
+    // runs NOW, before React can flush passive effects and re-register a listener.
+    postFromBlock('REQUEST_SIGN_IN', {});
+
+    await vi.waitFor(() => {
+      expect(openLoginPopup).toHaveBeenCalledTimes(1);
+    });
   });
 
   test('after BLOCK_READY, REQUEST_SIGN_IN starts the hub login (defaults to the current page)', async () => {

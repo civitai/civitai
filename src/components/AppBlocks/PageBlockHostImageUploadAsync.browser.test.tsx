@@ -92,7 +92,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -156,6 +160,38 @@ async function driveToReady() {
   });
 }
 
+/**
+ * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
+ * reports "true": the MutationObserver microtask checkpoint that ends the task which
+ * COMMITTED the DOM. React flushes passive effects in a LATER task, so a handler that
+ * closes over `status` is still the PREVIOUS render's closure — holding
+ * `status === 'loading'` — at this exact moment.
+ *
+ * The drive is a CANCELLABLE interval rather than `vi.waitFor`: a floating waitFor
+ * keeps posting BLOCK_READY after this returns, and that stray post lands in the NEXT
+ * test — measured, it turned an unrelated pre-handshake guard red.
+ */
+async function driveToReadyAtCommit() {
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  await new Promise<void>((resolve) => {
+    const obs = new MutationObserver(() => {
+      if (el.getAttribute('data-block-ready') === 'true') {
+        if (timer) clearInterval(timer);
+        obs.disconnect();
+        resolve();
+      }
+    });
+    obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
+    timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+    postFromBlock('BLOCK_READY', {});
+  });
+}
+
 // Open the async upload, capture the modal's onAccepted, then simulate the modal's
 // early-resolve (persist done → onAccepted → modal closes).
 function acceptUpload(requestId: string, handle: { imageId: number; url: string }) {
@@ -181,6 +217,71 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
     h.gateMutateAsync.mockReset();
   });
 
+  /**
+   * REGRESSION GUARD for the host-ready stale-closure race, on the upload gate.
+   *
+   * Deliberately FIRST in the file: the coldest mount is the one whose commit most
+   * reliably exhausts React's 5ms frame budget and therefore yields before the
+   * passive-effect flush — the window this guard has to exist inside.
+   *
+   * The cost of a drop here is the worst of the four gates: `useImageUpload` sends
+   * OPEN_IMAGE_UPLOAD with `PICKER_REQUEST_TIMEOUT_MS` (@civitai/blocks-react 0.39.0
+   * — 10 MINUTES, not the 30s default), and a same-requestId retry is swallowed by
+   * usePostMessage's 5s transport dedup.
+   *
+   * Proven reachable by mutation: move `statusRef.current = status` out of the render
+   * body and back into an effect and this goes red on
+   * `expected [] to have a length of 1`.
+   */
+  test("OPEN_IMAGE_UPLOAD posted in React's commit→passive-effect gap still opens the modal", async () => {
+    h.gateMutateAsync.mockResolvedValue({ status: 'pending' });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReadyAtCommit();
+
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gap', asyncScan: true });
+
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(lastDialog().id).toBe('block-image-upload-rq_gap');
+  });
+
+  /**
+   * The gate's REFUSAL is unchanged — a pre-handshake block never gets the upload
+   * modal. What changed is that the refusal is now SPOKEN.
+   *
+   * The reviewMode branch in this same handler already replied a bare (cancelled)
+   * result for its own refusal, with the comment "so it fails fast (no hang)". The
+   * not-ready branch six lines below it did not — that asymmetry was the bug, and it
+   * is the one that costs ten minutes of a hung promise.
+   *
+   * A bare `{ requestId }` is the dismissed shape the SDK already handles
+   * (`if (!selected) return null; // dismissed`). Nothing is uploaded.
+   */
+  test('OPEN_IMAGE_UPLOAD before BLOCK_READY opens no modal and NACKs (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    // Do NOT drive to ready — fire while status is still 'loading'.
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_early', asyncScan: true });
+
+    await vi.waitFor(() => {
+      const r = replies.last('IMAGE_UPLOAD_RESULT');
+      if (!r) throw new Error('no NACK yet');
+    });
+    // THE security property, unchanged: no upload modal for a pre-handshake block.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // THE new property: replied on the block's own requestId, with NO `selected` —
+    // the cancelled shape. Asserted with toEqual so a future leak of an imageId or
+    // a moderated projection into this reply fails here.
+    expect(replies.last('IMAGE_UPLOAD_RESULT')!.payload).toEqual({ requestId: 'rq_early' });
+    // The scan gate was never consulted — refusing must not touch the server.
+    expect(h.gateMutateAsync).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
   test('early-resolve: accept replies a PENDING handle and closes the modal', async () => {
     // Gate never asked to resolve within this test — keep it pending so no verdict races.
     h.gateMutateAsync.mockResolvedValue({ status: 'pending' });
@@ -193,14 +294,21 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
     // The MODERATED modal is opened (async is a display-only mode).
     expect(lastDialog().id).toBe('block-image-upload-rq_async');
 
-    acceptUpload('rq_async', { imageId: 77, url: 'https://image.civitai.com/xG/77/width=1200/x.jpeg' });
+    acceptUpload('rq_async', {
+      imageId: 77,
+      url: 'https://image.civitai.com/xG/77/width=1200/x.jpeg',
+    });
 
     await vi.waitFor(() => {
       const r = replies.last('IMAGE_UPLOAD_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({
         requestId: 'rq_async',
-        selected: { status: 'pending', imageId: 77, url: 'https://image.civitai.com/xG/77/width=1200/x.jpeg' },
+        selected: {
+          status: 'pending',
+          imageId: 77,
+          url: 'https://image.civitai.com/xG/77/width=1200/x.jpeg',
+        },
       });
     });
     // Auto-close semantics: the host replied EXACTLY ONCE on accept — the modal's
@@ -254,7 +362,11 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
     await vi.waitFor(() => {
       const r = replies.last('IMAGE_SCAN_RESOLVED');
       if (!r) throw new Error('no verdict yet');
-      const payload = r.payload as { requestId: string; imageId: number; result: Record<string, unknown> };
+      const payload = r.payload as {
+        requestId: string;
+        imageId: number;
+        result: Record<string, unknown>;
+      };
       expect(payload.requestId).toBe('rq_block');
       expect(payload.result.status).toBe('blocked');
       expect(payload.result.reason).toContain('rejected during scanning');
@@ -265,7 +377,10 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
   });
 
   test('scan error: a NOT_FOUND / network gate throw streams a RETRYABLE error (not blocked)', async () => {
-    h.gateMutateAsync.mockRejectedValue({ data: { code: 'NOT_FOUND' }, message: 'Image not found' });
+    h.gateMutateAsync.mockRejectedValue({
+      data: { code: 'NOT_FOUND' },
+      message: 'Image not found',
+    });
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
