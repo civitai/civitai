@@ -6,11 +6,15 @@ import type * as PaddleService from '~/server/services/paddle.service';
 import type * as StripeService from '~/server/services/stripe.service';
 
 /**
- * Every `verifyCaptchaToken` caller must supply `meta`.
+ * Every `verifyCaptchaToken` caller must supply `meta` AND `ip`.
  *
  * `meta` is the only thing that distinguishes one captcha failure from another in
  * Axiom — without it a payment-flow failure and an onboarding failure are the same
  * opaque record. The two payment call sites passed none at all.
+ *
+ * `ip` is forwarded to Turnstile as `remoteip` and recorded on the failure log as
+ * `clientReportedIp`. It is pinned here for the same reason as `meta`: it was
+ * possible to delete `ip: ctx.ip` from a call site and keep the entire suite green.
  *
  * Two complementary guards, because neither alone is sufficient:
  *
@@ -66,14 +70,30 @@ beforeEach(() => {
   mockVerifyCaptchaToken.mockResolvedValue(true);
 });
 
-/** The `meta` object handed to `verifyCaptchaToken` by the single call under test. */
-function soleCaptchaMeta(): Record<string, unknown> {
+/** The arguments handed to `verifyCaptchaToken` by the single call under test. */
+function soleCaptchaArgs(): Record<string, unknown> {
   expect(mockVerifyCaptchaToken).toHaveBeenCalledTimes(1);
   const [args] = mockVerifyCaptchaToken.mock.calls[0] as [Record<string, unknown>];
+  return args;
+}
+
+/**
+ * The `meta` object handed to `verifyCaptchaToken`, asserting alongside it that the
+ * caller also forwarded `ip`.
+ *
+ * `ip` is checked here rather than in a separate test because it is the same class of
+ * regression as a missing `meta` and was previously unpinned: dropping `ip: ctx.ip`
+ * from a call site left the whole suite green, since the behavioural tests only ever
+ * read `meta` and the ledger only required a `meta:` key.
+ */
+function soleCaptchaMeta(): Record<string, unknown> {
+  const args = soleCaptchaArgs();
   // Named explicitly so this fails as "meta is missing" rather than as an
   // unhelpful "cannot read property of undefined" further down.
   expect(args).toHaveProperty('meta');
   expect(args.meta, 'verifyCaptchaToken was called without `meta`').toBeDefined();
+  expect(args, 'verifyCaptchaToken was called without `ip`').toHaveProperty('ip');
+  expect(args.ip, 'verifyCaptchaToken was called with an undefined `ip`').toBe(IP);
   return args.meta as Record<string, unknown>;
 }
 
@@ -186,10 +206,10 @@ describe('call-site ledger — every verifyCaptchaToken caller supplies meta', (
     expect(callSites).toEqual(EXPECTED_CALL_SITES);
   });
 
-  it.each(EXPECTED_CALL_SITES)('%s passes meta to verifyCaptchaToken', (rel) => {
+  it.each(EXPECTED_CALL_SITES)('%s passes meta and ip to verifyCaptchaToken', (rel) => {
     const text = fs.readFileSync(path.join(SRC, rel), 'utf8');
 
-    // Slice each invocation's argument object and require a `meta:` key in it.
+    // Slice each invocation's argument object and require `meta:` and `ip:` in it.
     const invocations = [...text.matchAll(/verifyCaptchaToken\s*\(\s*\{/g)].map((match) => {
       const start = match.index + match[0].length - 1;
       let depth = 0;
@@ -205,7 +225,14 @@ describe('call-site ledger — every verifyCaptchaToken caller supplies meta', (
 
     expect(invocations.length).toBeGreaterThan(0);
     for (const args of invocations) {
-      expect(args, `a verifyCaptchaToken call in ${rel} omits meta`).toMatch(/\bmeta\s*:/);
+      // The negative lookahead matters: a bare `/\bmeta\s*:/` is satisfied by
+      // `meta: undefined`, which passes nothing and defeats the whole ledger.
+      expect(args, `a verifyCaptchaToken call in ${rel} omits meta`).toMatch(
+        /\bmeta\s*:\s*(?!undefined\b)\S/
+      );
+      expect(args, `a verifyCaptchaToken call in ${rel} omits ip`).toMatch(
+        /\bip\s*:\s*(?!undefined\b)\S/
+      );
     }
   });
 });

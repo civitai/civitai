@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
+
+import type * as LoggingClient from '~/server/logging/client';
 
 /**
  * `verifyCaptchaToken` — siteverify request shape, response VALIDATION, and the
@@ -46,6 +49,15 @@ vi.mock('~/server/utils/fetch-timeout', () => ({
 
 import { logToAxiom } from '~/server/logging/client';
 import { verifyCaptchaToken } from '~/server/recaptcha/client';
+
+// The global setup mocks `~/server/logging/client` wholesale (it exports only
+// `logToAxiom`), so the REAL classifier has to be pulled in via `importActual` —
+// the same approach `src/server/logging/central-error-log.test.ts` uses. The
+// override registry it consults (`server-fault-override.ts`) is NOT mocked, so the
+// marking done inside `verifyCaptchaToken` is visible to this copy.
+const { classifyErrorFault, buildCentralErrorLog } = await vi.importActual<typeof LoggingClient>(
+  '~/server/logging/client'
+);
 
 const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const TOKEN = 'tok_abcdefghijklmnopqrstuvwxyz';
@@ -162,10 +174,34 @@ describe('verifyCaptchaToken — success', () => {
     const logged = samples[0].error as Record<string, unknown>;
     expect(logged.tokenPrefix).toBe(TOKEN_PREFIX);
 
-    // The actual guard, naming the field.
+    // The actual guard, naming the field — under BOTH the old and the current
+    // name, so a later rename cannot quietly reintroduce the leak past a guard
+    // that is still spelled for the previous field.
     expect(logged).not.toHaveProperty('ip');
+    expect(logged).not.toHaveProperty('clientReportedIp');
     expect(Object.values(logged)).not.toContain(IP);
     expect(JSON.stringify(samples[0])).not.toContain(IP);
+  });
+
+  it('keeps challenge_ts as the raw upstream string rather than coercing it to a Date', async () => {
+    // The success path is telemetry-neutral by construction: every field is read
+    // straight back out into a log payload, so it stays in the representation
+    // Cloudflare sent. Coercing to a `Date` is invisible in production (both
+    // JSON-serialize to the same ISO-8601) but changes what the non-prod
+    // `console.log` branch prints — a difference that only ever shows up on a
+    // developer's machine, which is the worst place to discover it.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const CHALLENGE_TS = '2026-08-06T12:34:56.000Z';
+    stubSiteverify({ body: { success: true, challenge_ts: CHALLENGE_TS } });
+
+    await expect(call()).resolves.toBe(true);
+
+    const samples = logsNamed('captcha-success-sample');
+    expect(samples).toHaveLength(1);
+    const logged = samples[0].error as Record<string, unknown>;
+    expect(logged.challenge_ts).toBe(CHALLENGE_TS);
+    expect(typeof logged.challenge_ts).toBe('string');
+    expect(logged.challenge_ts).not.toBeInstanceOf(Date);
   });
 });
 
@@ -178,7 +214,7 @@ describe('verifyCaptchaToken — failure telemetry carries ip and meta', () => {
     await expect(call()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     const logged = soleFailureLog();
-    expect(logged.ip).toBe(IP);
+    expect(logged.clientReportedIp).toBe(IP);
     expect(logged.meta).toEqual(META);
     expect(logged.tokenPrefix).toBe(TOKEN_PREFIX);
     expect(logged.cfRay).toBe('ray-abc');
@@ -193,7 +229,7 @@ describe('verifyCaptchaToken — failure telemetry carries ip and meta', () => {
     const logged = soleFailureLog();
     expect(logged.reason).toBe('siteverify-not-ok');
     expect(logged.status).toBe(503);
-    expect(logged.ip).toBe(IP);
+    expect(logged.clientReportedIp).toBe(IP);
     expect(logged.meta).toEqual(META);
   });
 });
@@ -209,7 +245,7 @@ describe('verifyCaptchaToken — response schema is EXECUTED', () => {
 
     const logged = soleFailureLog();
     expect(logged.reason).toBe('siteverify-malformed-response');
-    expect(logged.ip).toBe(IP);
+    expect(logged.clientReportedIp).toBe(IP);
     expect(logged.meta).toEqual(META);
     // The parse issues are the diagnostic payload — they name the field that drifted.
     expect(Array.isArray(logged.issues)).toBe(true);
@@ -225,7 +261,7 @@ describe('verifyCaptchaToken — response schema is EXECUTED', () => {
 
     const logged = soleFailureLog();
     expect(logged.reason).toBe('siteverify-malformed-response');
-    expect(logged.ip).toBe(IP);
+    expect(logged.clientReportedIp).toBe(IP);
     expect(logged.meta).toEqual(META);
   });
 
@@ -289,6 +325,35 @@ describe('verifyCaptchaToken — the schema stays TOLERANT of benign upstream dr
     expect(logged.ephemeralId).toBe('x:9f78e0ed210960d7693b167e');
   });
 
+  it('hands every parse its OWN error-codes fallback array', async () => {
+    // `.catch([])` stores ONE array literal and returns that same reference from
+    // every parse, so mutating one verification's result would poison every later
+    // one process-wide — cross-request shared mutable state on a payment path.
+    // `.catch(() => [])` builds a fresh array per parse. Nothing mutates this today;
+    // the guard is here because the failure mode is silent and permanent if it does.
+    const bodyWithoutErrorCodes = { success: false };
+
+    stubSiteverify({ body: bodyWithoutErrorCodes });
+    await expect(call()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const first = (soleFailureLog().response as Record<string, unknown>)['error-codes'] as string[];
+    expect(first).toEqual([]);
+
+    // Poison the first result, then verify again.
+    first.push('POISONED-BY-A-PREVIOUS-REQUEST');
+    vi.clearAllMocks();
+
+    stubSiteverify({ body: bodyWithoutErrorCodes });
+    await expect(call()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const second = (soleFailureLog().response as Record<string, unknown>)[
+      'error-codes'
+    ] as string[];
+
+    // The assertion that fails under `.catch([])`.
+    expect(second).toEqual([]);
+    expect(second).not.toContain('POISONED-BY-A-PREVIOUS-REQUEST');
+    expect(second).not.toBe(first);
+  });
+
   it('leaves ephemeralId undefined when Cloudflare sends no metadata', async () => {
     // The standard (non-Enterprise) response. Negative control for the test
     // above: proves `ephemeralId` tracks the payload rather than being a
@@ -297,5 +362,112 @@ describe('verifyCaptchaToken — the schema stays TOLERANT of benign upstream dr
 
     await expect(call()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(soleFailureLog().ephemeralId).toBeUndefined();
+  });
+});
+
+describe('verifyCaptchaToken — the raw upstream body is never logged', () => {
+  it('logs the parse issues but not the body that produced them', async () => {
+    // The malformed-response log deliberately carries only a bounded issue list.
+    // The body is unbounded third-party content: it can be an HTML error page of
+    // arbitrary size, and on this path it is attacker-influenced only insofar as
+    // Cloudflare is compromised — but the size argument alone is enough.
+    //
+    // Without this test the comment claiming the body is "deliberately NOT logged"
+    // was unguarded: adding `rawBody` to the payload left all tests green.
+    const SENTINEL = 'SENTINEL-RAW-BODY-MUST-NOT-BE-LOGGED';
+    stubSiteverify({ body: { unexpected: SENTINEL } });
+
+    await expect(call()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    const failures = logsNamed('captcha-failure');
+    expect(failures).toHaveLength(1);
+    const logged = failures[0].error as Record<string, unknown>;
+
+    // Positive control: the log DID happen and DID carry its diagnostic payload,
+    // so the absence assertions below are not passing against an empty object.
+    expect(logged.reason).toBe('siteverify-malformed-response');
+    expect(JSON.stringify(logged.issues)).toContain('success');
+
+    // The guards, by field name and by value.
+    expect(logged).not.toHaveProperty('rawBody');
+    expect(logged).not.toHaveProperty('body');
+    expect(logged).not.toHaveProperty('response');
+    expect(JSON.stringify(failures[0])).not.toContain(SENTINEL);
+  });
+});
+
+/**
+ * Item 1 of the audit: severity, not status.
+ *
+ * An unusable UPSTREAM response and a genuinely failed verification both answer the
+ * caller BAD_REQUEST/400, but they are not the same kind of event:
+ *
+ *   - upstream unusable  → nobody did anything wrong; it is an incident, and if
+ *     Cloudflare starts serving interstitials EVERY buzz purchase fails. It has to
+ *     reach the error stream.
+ *   - verification failed → routine client feedback (stale/replayed/forged token).
+ *     Promoting these to error severity would bury the case above in noise.
+ *
+ * These assert on the SEVERITY the central tRPC chokepoint would emit
+ * (`buildCentralErrorLog(...).type` — the field the Alloy→Loki pipeline reads as
+ * `detected_level`), for the error each path actually throws. The pair is the point:
+ * either assertion alone would pass under a change that flattened both to one value.
+ */
+describe('verifyCaptchaToken — upstream faults are SERVER faults, failed verifications are not', () => {
+  async function thrownError(stub: Parameters<typeof stubSiteverify>[0]): Promise<unknown> {
+    stubSiteverify(stub);
+    try {
+      await call();
+    } catch (e) {
+      return e;
+    }
+    throw new Error('expected verifyCaptchaToken to reject, but it resolved');
+  }
+
+  it('classifies a malformed upstream response as a SERVER fault logged at type:error', async () => {
+    const error = await thrownError({ body: { unexpected: 'payload' } });
+
+    // Status is unchanged — this is a severity fix, not a status change.
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(classifyErrorFault(error)).toBe('server');
+    expect(buildCentralErrorLog(error).type).toBe('error');
+  });
+
+  it('classifies a non-JSON upstream body as a SERVER fault logged at type:error', async () => {
+    const error = await thrownError({ jsonThrows: true });
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(classifyErrorFault(error)).toBe('server');
+    expect(buildCentralErrorLog(error).type).toBe('error');
+  });
+
+  it('classifies a non-OK upstream status as a SERVER fault logged at type:error', async () => {
+    const error = await thrownError({ ok: false, status: 503 });
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(classifyErrorFault(error)).toBe('server');
+    expect(buildCentralErrorLog(error).type).toBe('error');
+  });
+
+  it('leaves a genuinely failed verification a CLIENT fault logged at type:info', async () => {
+    // The asymmetry guard. A user submitting a stale or forged token is not an
+    // incident, and this must NOT have been swept up by the change above.
+    const error = await thrownError({
+      body: { success: false, 'error-codes': ['timeout-or-duplicate'] },
+    });
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(classifyErrorFault(error)).toBe('client');
+    expect(buildCentralErrorLog(error).type).toBe('info');
+  });
+
+  it('does not mark unrelated BAD_REQUESTs as server faults', async () => {
+    // Negative control on the override registry itself: it must be per-error, not
+    // a global switch that reclassifies every BAD_REQUEST once a captcha fails.
+    await thrownError({ body: { unexpected: 'payload' } });
+
+    const unrelated = new TRPCError({ code: 'BAD_REQUEST', message: 'unrelated' });
+    expect(classifyErrorFault(unrelated)).toBe('client');
+    expect(buildCentralErrorLog(unrelated).type).toBe('info');
   });
 });
