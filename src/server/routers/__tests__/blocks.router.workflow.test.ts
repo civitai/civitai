@@ -6547,92 +6547,225 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         throw new Error('expected the body to be REJECTED, but it parsed');
       }
 
+      /**
+       * The same rejection, parsed back into the issue array tRPC serialised.
+       *
+       * Asserting on the PARSED issue lets a test pin one issue's whole `message`
+       * instead of fishing for substrings in a JSON blob where every `"` is
+       * backslash-escaped. It also fails loudly if the wire shape stops being a
+       * JSON issue array at all, which no substring assertion would notice.
+       */
+      async function rejectionIssues(
+        body: unknown
+      ): Promise<Array<{ code?: string; path?: unknown[]; message?: string }>> {
+        const text = await rejectionText(body);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error(`expected tRPC to return a JSON issue array, got: ${text}`);
+        }
+        if (!Array.isArray(parsed)) {
+          throw new Error(`expected tRPC to return a JSON issue ARRAY, got: ${text}`);
+        }
+        return parsed as Array<{ code?: string; path?: unknown[]; message?: string }>;
+      }
+
+      /** The one `unrecognized_keys` issue's message — asserts there is exactly one. */
+      function soleUnrecognizedKeysMessage(
+        issues: Array<{ code?: string; path?: unknown[]; message?: string }>
+      ): string {
+        const hits = issues.filter((i) => i.code === 'unrecognized_keys');
+        expect(hits.map((h) => h.message)).toHaveLength(1);
+        expect(hits[0].path).toEqual(['body']);
+        return String(hits[0].message);
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // 🔴 THE ARM BLURBS, PINNED WHOLE — and deliberately NOT derived from the
+      // schema.
+      //
+      // Every message below is ONE concatenated string carrying BOTH arms'
+      // blurbs, so a `toContain` on it sees the UNION of the two key sets and can
+      // never attribute a key to an arm. Under `toContain`, SWAPPING the two arms'
+      // key lists — a message that tells a developer `mode:"recipe"` accepts
+      // `workflow, resources, prompt, negativePrompt, maxBuzz` — is green. That
+      // inversion is precisely the "the message misleads a developer" failure this
+      // whole change exists to remove, so the assertions have to be able to see
+      // it. Same for the echoed key: the static blurb spells the word "graph"
+      // itself, so `toContain('graph')` is satisfied by the blurb whether or not
+      // the rejected key was echoed at all.
+      //
+      // 🔴 ACCEPTED TRADE, DO NOT LOOSEN THIS BACK TO `toContain`. Pinning the
+      // whole string means a purely COSMETIC reword of the message turns these
+      // red. That is the correct trade here — the text IS the deliverable, it is
+      // what a developer reads instead of reading the schema, and a reword should
+      // be a deliberate, reviewed edit rather than something that slips through a
+      // green suite. Rewording? Update these two constants. Adding a public key to
+      // an arm? That is a WIRE CONTRACT change and updating the expected list here
+      // is the point, not friction.
+      //
+      // Written by reading the rendered output, not by re-deriving the template:
+      // `Object.keys(shape)` order is the arms' declaration order in
+      // `workflow.schema.ts`.
+      // ─────────────────────────────────────────────────────────────────────────
+      const RECIPE_ARM =
+        'mode:"recipe" (the default when `mode` is omitted) runs a server-registered recipe by id' +
+        ' and accepts only: kind, mode, recipe, params';
+      const INLINE_ARM =
+        'mode:"inline" carries the ComfyUI graph itself — the graph goes under `workflow` —' +
+        ' and accepts only: kind, mode, workflow, resources, prompt, negativePrompt, maxBuzz';
+
       // 🔴 THE MOTIVATING BODY, verbatim. `recipe` present pins the RECIPE arm and
       // `.strict()` refuses `graph` — correct, and previously the whole answer.
       it('the exact recipe+graph body names the recipe arm AND points at mode:"inline" / `workflow`', async () => {
-        const text = await rejectionText({
+        const issues = await rejectionIssues({
           kind: 'customComfy',
           recipe: 'starter-comfy-txt2img',
           graph: { '1': { class_type: 'CheckpointLoaderSimple', inputs: {} } },
           params: { prompt: 'a cat' },
         });
-        // Still names the offending key (nothing lost)…
-        expect(text).toContain('graph');
-        // …and now names the arm the body landed on…
-        expect(text).toContain('recipe body');
-        // …the arm it actually wanted, and where the graph goes.
-        expect(text).toContain('mode:\\"inline\\"');
-        expect(text).toContain('workflow');
-        // The inline arm's public keys are enumerated, like every other
-        // enumerating rejection on this platform.
-        for (const key of ['resources', 'prompt', 'negativePrompt', 'maxBuzz']) {
-          expect(text).toContain(key);
-        }
+        // The WHOLE message, pinned. In order: the ECHOED offending key (`"graph"`
+        // — not the word "graph" that the inline blurb happens to spell), the arm
+        // the body landed on, that arm's own key list, then the other arm's.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` recipe body: "graph"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
         // It never reached a handler — this is a wire rejection, as before.
         expect(mockReserveAppSpend).not.toHaveBeenCalled();
         expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       });
 
       it('a bare unknown key on a body with NO `mode` still enumerates both arms', async () => {
-        const text = await rejectionText({
+        const issues = await rejectionIssues({
           kind: 'customComfy',
           recipe: 'starter-comfy-txt2img',
           params: { prompt: 'a cat' },
           stpes: 20, // a typo, not a graph — the generic case
         });
-        expect(text).toContain('stpes');
-        expect(text).toContain('recipe body');
-        expect(text).toContain('mode:\\"inline\\"');
-        expect(text).toContain('mode:\\"recipe\\"');
+        // `"stpes"` appears NOWHERE in the static blurbs, so this one also
+        // independently proves the echo is real rather than blurb spill-over.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` recipe body: "stpes"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
       });
 
       // The other likely guess: drop `recipe`, keep the graph under the wrong key,
       // and omit `mode` entirely. Lands on the recipe arm too (its `mode` is
       // `.optional()`), so the same enumeration has to carry the developer.
       it('a graph-shaped body with NEITHER `mode` nor `recipe` is still told about mode:"inline"', async () => {
-        const text = await rejectionText({
+        const issues = await rejectionIssues({
           kind: 'customComfy',
           graph: { '1': { class_type: 'CheckpointLoaderSimple', inputs: {} } },
           maxBuzz: 60,
         });
-        expect(text).toContain('mode:\\"inline\\"');
-        expect(text).toContain('workflow');
-        // The pre-existing per-field diagnostics are intact alongside it.
-        expect(text).toContain('recipe');
+        // TWO unknown keys here, so this row also pins the plural ("keys") and the
+        // echo ORDER — `"graph", "maxBuzz"`, the body's own key order.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized keys on a `customComfy` recipe body: "graph", "maxBuzz"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // The pre-existing per-field diagnostics are intact alongside it: the arm
+        // error map returns `undefined` for every other code, so zod's own
+        // messages still arrive at their own paths.
+        expect(issues.filter((i) => i.code !== 'unrecognized_keys').map((i) => i.path)).toEqual([
+          ['body', 'recipe'],
+          ['body', 'params'],
+        ]);
       });
 
       it('an unrecognized key on an INLINE body names the inline arm and points back at mode:"recipe"', async () => {
-        const text = await rejectionText(
+        const issues = await rejectionIssues(
           inlineBody({ graph: { '1': { class_type: 'X', inputs: {} } } })
         );
-        expect(text).toContain('graph');
-        expect(text).toContain('inline body');
-        expect(text).toContain('mode:\\"recipe\\"');
-        // The inline arm's own keys, including where the graph belongs.
-        expect(text).toContain('workflow');
-        expect(text).toContain('maxBuzz');
+        // 🔴 THE MIRROR OF THE RECIPE ROW, and the reason both are pinned whole:
+        // the arm label AND the blurb ORDER invert here (own arm first, other
+        // second). A `toContain` sweep is byte-for-byte identical between this
+        // case and the recipe case above, so it cannot tell them apart at all.
+        expect(soleUnrecognizedKeysMessage(issues)).toBe(
+          'Unrecognized key on a `customComfy` inline body: "graph"' +
+            ' — a `customComfy` body has two forms.' +
+            ` ${INLINE_ARM}. ${RECIPE_ARM}.`
+        );
       });
 
       it('an unknown `mode` value names the value it got and enumerates both arms', async () => {
-        const text = await rejectionText({
+        const issues = await rejectionIssues({
           kind: 'customComfy',
           mode: 'graph',
           workflow: { '1': { class_type: 'X', inputs: {} } },
           resources: [],
           maxBuzz: 60,
         });
-        expect(text).toContain('mode');
-        expect(text).toContain('graph');
-        expect(text).toContain('mode:\\"inline\\"');
-        expect(text).toContain('mode:\\"recipe\\"');
+        // 🔴 NAMING THE VALUE IS THE ENTIRE IMPROVEMENT over zod's bare
+        // `Invalid input` here, so it is the one thing that must not be asserted
+        // by a substring the static blurbs also spell — and `"graph"` is exactly
+        // such a word. Pinned whole.
+        expect(issues).toHaveLength(1);
+        expect(issues[0].code).toBe('invalid_union');
+        expect(issues[0].path).toEqual(['body', 'mode']);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: "graph" — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // 🔴 A SECOND PROBE VALUE THAT THE BLURBS DO NOT SPELL. The row above uses
+      // `'graph'` because that is the real dogfood guess, but `'graph'` also
+      // appears in the inline blurb — so on its own it cannot separate "the value
+      // was echoed" from "the blurb happened to contain it". `'reciep'` appears
+      // nowhere in either blurb, which makes the echo the ONLY thing that can put
+      // it in the message.
+      it('an unknown `mode` value the blurbs never spell is still echoed verbatim', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: 'reciep',
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(issues).toHaveLength(1);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: "reciep" — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
+      // A NON-STRING `mode` takes the other branch of the `typeof raw === 'string'`
+      // ternary (`JSON.stringify(raw ?? null)`), which no other row exercises —
+      // so an inverted or dropped branch there is otherwise invisible.
+      it('a NON-STRING `mode` is echoed through the JSON branch, not quoted as a string', async () => {
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: 7,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: 7 — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
       });
 
       // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
       // after. A genuinely bad value on a DECLARED inline field is raised by that
       // field's own schema, not by the object, so the arm error map must not
       // swallow it: the precise path and zod's own bound message have to survive.
-      // If the map ever stopped returning `undefined` for other issue codes, this
-      // is what goes red.
+      //
+      // 🔴 CORRECTION, MEASURED: this does NOT cover the map's
+      // `if (iss.code !== 'unrecognized_keys') return undefined;` early return, and
+      // an earlier version of this comment claimed it did. Deleting that line
+      // leaves this test green — a per-FIELD issue is raised by the FIELD's schema
+      // and never reaches the object's error map, so there is nothing here for the
+      // map to swallow in the first place. The one issue an object schema raises
+      // itself besides `unrecognized_keys` is `invalid_type` on a non-object, which
+      // the outer `kind` discriminator rejects before any arm sees it — so that
+      // line is unreachable from the router entirely. It is pinned where it IS
+      // reachable, on a direct arm parse, in `workflow.schema.inline-comfy.test.ts`.
       it('INVARIANT: a bad value on a declared inline field keeps its precise per-field message', async () => {
         const text = await rejectionText(inlineBody({ maxBuzz: 9999 }));
         expect(text).toContain('maxBuzz');

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blockCustomComfyBodySchema,
+  blockInlineComfyBodySchema,
   blockWorkflowBodySchema,
   INLINE_GRAPH_NODES_MAX,
   INLINE_MAX_BUZZ,
@@ -334,5 +336,43 @@ describe('🔴 blockWorkflowBodySchema — customComfy accept/reject boundary is
     'trace',
   ])('the RECIPE arm also rejects `%s`', (field) => {
     expect(blockWorkflowBodySchema.safeParse({ ...RECIPE_BODY, [field]: 'x' }).success).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE ARM ERROR MAP'S EARLY RETURN, MADE REACHABLE.
+//
+// `customComfyArmErrorMap` opens with `if (iss.code !== 'unrecognized_keys')
+// return undefined;` so zod keeps its own message for every other issue. That
+// line is asserted at the router seam only INDIRECTLY (a bad `maxBuzz` keeps its
+// `Too big:` message) — and that assertion cannot fail, because a per-FIELD
+// issue is raised by the field's schema and never consults the object's error
+// map at all. Deleting the line was MEASURED to leave every other test in both
+// this file and `blocks.router.workflow.test.ts` green.
+//
+// The one issue an OBJECT schema raises itself, other than `unrecognized_keys`,
+// is `invalid_type` for a non-object input — and the outer `kind` discriminated
+// union rejects a non-object before any arm sees it, so that code is
+// unreachable through `blockWorkflowBodySchema` and therefore through the
+// router. Parsing the exported arm directly is the only way to reach it. With
+// the early return deleted, these two report the arm blurb with an EMPTY key
+// list ("recipe body:  — a `customComfy` body has two forms…") instead of
+// zod's `Invalid input: expected object, received string`.
+//
+// Whole-string, for the same reason as the router-seam assertions: a blurb
+// leaking into this message would still `toContain` every word you would think
+// to check for.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 the arm error map returns UNDEFINED for every non-`unrecognized_keys` issue', () => {
+  it.each([
+    ['recipe', blockCustomComfyBodySchema],
+    ['inline', blockInlineComfyBodySchema],
+  ])("the %s arm keeps zod's own `invalid_type` message for a non-object body", (_arm, schema) => {
+    const parsed = schema.safeParse('customComfy');
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues).toHaveLength(1);
+    expect(parsed.error.issues[0].code).toBe('invalid_type');
+    expect(parsed.error.issues[0].message).toBe('Invalid input: expected object, received string');
   });
 });
