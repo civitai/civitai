@@ -5402,12 +5402,18 @@ export const blocksRouter = router({
     // `civitai login` token can run `civitai generate` — issue #3681.)
     // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
     // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
-    // which enumerates every migration writing `"OauthClient"."allowedScopes"` off the
-    // tree, folds the grants per client, and fails if any client would hold a STRICT
-    // superset of Full — so a future migration granting `Full | <some opt-in bit>` goes
-    // red there instead of silently flipping this gate. What that guard still cannot see
-    // is a grant written OUTSIDE a migration (a hand-run UPDATE against a database), and
-    // it cannot prove what any environment's row actually holds.
+    // which enumerates every migration whose LIVE SQL writes `"OauthClient"."allowedScopes"`
+    // off the tree, reconciles the set against a declared table, pins each grant's whole
+    // statement verbatim, folds the grants per client — SEEDED FROM THE COLUMN DEFAULT
+    // (Full), not from 0 — and fails if any client would hold a STRICT superset of Full.
+    // The seed is what makes the claim real: the likely way this gate flips is a migration
+    // that ORs one opt-in bit onto a row created with the column default, landing on
+    // `Full | <bit>`; folding from 0 read that same migration as granting just `<bit>` and
+    // passed clean. Verified by planting exactly that migration and watching the guard go
+    // red on `allowedScopes=100663295`.
+    // What that guard still cannot see is a grant written OUTSIDE a migration (a hand-run
+    // UPDATE against a database), and it cannot prove what any environment's row actually
+    // holds — these migrations are manual-apply.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the

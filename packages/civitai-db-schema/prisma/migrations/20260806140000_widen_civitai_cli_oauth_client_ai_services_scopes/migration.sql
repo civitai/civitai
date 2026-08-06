@@ -37,6 +37,12 @@
 -- `blocks.router.getMyAppAnalytics` from allow to deny. Any FUTURE migration that
 -- grants a client `Full | <opt-in bit>` must revisit that gate — see the invariant
 -- guard in `src/server/routers/__tests__/blocks.router.getMyAppAnalytics.test.ts`.
+-- That case is now caught mechanically: `src/server/services/oauth/__tests__/
+-- oauth-client-scope-grants.test.ts` enumerates every migration whose LIVE SQL writes
+-- this column, pins each statement verbatim, and folds the grants per client SEEDED
+-- FROM THE COLUMN DEFAULT (Full) — so ORing an opt-in bit onto a default-created row
+-- goes red there. Editing the statement below without restating that file's declared
+-- table fails the build.
 --
 -- IDEMPOTENT: the OR-in of the bits is a no-op on re-apply (re-ORing the same bits
 -- leaves the value unchanged); scoped to the single `civitai-cli` row so it can
@@ -52,6 +58,28 @@
 -- ⚠️ MANUAL-APPLY: per the cluster ops rule, civitai DB migrations are NOT
 -- auto-applied. A human applies this per environment; this PR does not apply it
 -- anywhere.
+--
+-- 🔴 CHECK THE ROWCOUNT — psql reports success on zero rows. `UPDATE 1` is the
+-- expected result on a first apply. `UPDATE 0` means EITHER the bits were already
+-- set (a genuine re-apply no-op) OR the `civitai-cli` row does not exist in this
+-- environment at all: the 2026-06-19 registration migration is guarded by
+-- `WHERE EXISTS (SELECT 1 FROM "User" WHERE "id" = -1)`, so in any environment
+-- lacking the civitai system account it inserted nothing and this UPDATE has no
+-- row to widen. Those two cases are indistinguishable from the rowcount, so confirm
+-- explicitly:
+--   SELECT "id", "allowedScopes" FROM "OauthClient" WHERE "id" = 'civitai-cli';
+--   -- expect exactly one row, "allowedScopes" = 100777985
+-- No row returned ⇒ register the client first (2026-06-19 migration, with a valid
+-- owner userId) and re-run this one.
+--
+-- ROLLBACK (clears exactly the three bits this migration adds, leaving every other
+-- bit — including AppBlocksSubmit/AppBlocksDevTunnel — untouched):
+--   UPDATE "OauthClient" SET "allowedScopes" = "allowedScopes" & ~114688 WHERE "id" = 'civitai-cli';
+-- Reverting is a NARROWING, so any already-issued CLI access token carrying bits
+-- 14/15/16 keeps them until it expires — the client ceiling is checked at
+-- device-authorization and mint time, not on every request. Revoke outstanding
+-- civitai-cli tokens too if the revert is security-motivated rather than a rollback
+-- of a botched deploy.
 UPDATE "OauthClient"
 SET "allowedScopes" = "allowedScopes" | 114688, -- AIServicesRead|AIServicesWrite|BuzzRead
     "updatedAt" = CURRENT_TIMESTAMP
