@@ -891,11 +891,12 @@ export const saveItemInCollections = async ({
 export const upsertCollection = async ({
   input,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean };
+  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
 }) => {
   const {
     userId,
     isModerator,
+    isMember,
     id,
     name,
     description,
@@ -927,12 +928,29 @@ export const upsertCollection = async ({
       select: {
         id: true,
         read: true,
+        write: true,
         mode: true,
         createdAt: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+
+    const canConfigure = permission.isOwner || !!isModerator;
+    const nextRead = canConfigure ? read : undefined;
+    const nextWrite = canConfigure ? write : undefined;
+    const nextMode = canConfigure ? mode : undefined;
+
+    const opensSubmissions =
+      !!nextWrite &&
+      nextWrite !== currentCollection.write &&
+      nextWrite !== CollectionWriteConfiguration.Private;
+
+    if (opensSubmissions && !isMember && !isModerator) {
+      throw throwAuthorizationError(
+        'A membership is required to open a collection to submissions.'
+      );
+    }
 
     // nb - if we ever allow a cover image on create, copy this logic below
     // TODO commenting this out - other users can manage collections
@@ -972,9 +990,9 @@ export const upsertCollection = async ({
           name,
           description,
           nsfw,
-          read,
-          write,
-          mode,
+          read: nextRead,
+          write: nextWrite,
+          mode: nextMode,
           metadata: (metadata ?? {}) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
@@ -1026,8 +1044,8 @@ export const upsertCollection = async ({
     await userCollectionCountCache.refresh(updated.userId);
 
     if (
-      input.read === CollectionReadConfiguration.Public &&
-      currentCollection.read !== input.read
+      nextRead === CollectionReadConfiguration.Public &&
+      currentCollection.read !== nextRead
     ) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
       await dbWrite.$queryRaw`
@@ -1036,7 +1054,7 @@ export const upsertCollection = async ({
           "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
         WHERE "collectionId" = ${updated.id}
       `;
-    } else if (!updated.mode && input.read !== CollectionReadConfiguration.Public) {
+    } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup.
       await dbWrite.$queryRaw`
         UPDATE "Post" SET
@@ -1048,8 +1066,8 @@ export const upsertCollection = async ({
 
     // Update contributors:
     if (
-      (input.write && input.write !== updated.write) ||
-      (input.read && input.read !== updated.read)
+      (nextWrite && nextWrite !== updated.write) ||
+      (nextRead && nextRead !== updated.read)
     ) {
       // Update contributors permissions:
       const permissions: CollectionContributorPermission[] = [];
@@ -1104,6 +1122,10 @@ export const upsertCollection = async ({
     await preventReplicationLag('collection', updated.id);
 
     return updated;
+  }
+
+  if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
+    throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
   // TODO allow cover image

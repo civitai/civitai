@@ -346,7 +346,12 @@ export const upsertCollectionHandler = async ({
 
   try {
     const collection = await upsertCollection({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        isMember: !!user.tier && user.tier !== 'free',
+      },
     });
 
     const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
