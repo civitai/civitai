@@ -15,6 +15,8 @@ import {
   assertViewerEntitledToInlineResources,
   collectInlineAuditText,
   collectInlineGraphStrings,
+  INLINE_ALLOWED_AIR_SOURCES,
+  INLINE_ALLOWED_AIR_TYPES,
   INLINE_NODEPACKS_ENABLED,
 } from '~/server/services/blocks/inline-comfy.service';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
@@ -170,66 +172,134 @@ describe('collectInlineAuditText — the moderation sweep', () => {
 // (@civitai/client 0.2.0-beta.84) that fails OPEN if the gate is naive.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('assertViewerEntitledToInlineResources — AIR shape', () => {
-  // 🔴 INVERTED, NOT DELETED. These two used to assert a nodepack URN was
-  // REJECTED. The kill switch is now on, so they assert it is ACCEPTED and
-  // reaches the submit path intact. Keeping them inverted rather than removing
-  // them means flipping `INLINE_NODEPACKS_ENABLED` back is still a one-line
-  // change with live coverage on both sides of the decision.
-  it('🔴 ACCEPTS a comfyregistry NODEPACK URN now that the kill switch is on', async () => {
-    expect(INLINE_NODEPACKS_ENABLED).toBe(true);
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 NODEPACKS ARE OFF, AND THE REASON IS A DEADLOCK, NOT A SAFETY POSTURE.
+  // #3663 flipped `INLINE_NODEPACKS_ENABLED` on, and these cases asserted the
+  // ACCEPT behaviour. Measured live against production afterwards: a bare
+  // `comfy:nodepack` AIR passes this allowlist and is then 400'd by the
+  // ORCHESTRATOR, which prescribes `comfy:nodepacklayer` — which THIS module
+  // 400s. The prescribed remediation is refused by the next guard, so the flag
+  // bought nothing except a second, contradictory error message.
+  //
+  // 🔴 INVERTED, NOT DELETED, IN EITHER DIRECTION. The coverage below is the
+  // same shape it was when the flag was on, pointed the other way: the accept
+  // path, the not-widened control, and the sibling-type control all still have a
+  // case. Flipping the constant stays a one-line change with live coverage on
+  // both sides — which is exactly the property that let #3663 happen cheaply and
+  // that lets this revert be equally cheap.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('🔴 REJECTS a comfyregistry NODEPACK URN — the kill switch is off', async () => {
+    expect(INLINE_NODEPACKS_ENABLED).toBe(false);
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0'],
         user: VIEWER,
       })
-    ).resolves.toBeUndefined();
-    // A nodepack carries no civitai entitlement, so the belt is not consulted
-    // for it — the same exempt-by-construction path huggingface weights take.
+    ).rejects.toThrow(/nodepack resources are not permitted in an inline workflow/);
+    // The belt is never reached — the shape gate rejects before any DB work.
     expect(mockGetResourceData).not.toHaveBeenCalled();
   });
 
-  it('🔴 the flip opens COMFYREGISTRY nodepacks only — a civitai-sourced one is still rejected', async () => {
-    // MEASURED, and narrower than "nodepacks are on" implies. `type` and
-    // `source` are separate allowlists, and only `comfyregistry` was added to
-    // the source list. A `civitai`-sourced nodepack passes the TYPE check, then
-    // takes the civitai branch and is gated as a model version — which it is
-    // not, so it resolves to nothing and the anti-drop assert rejects it.
+  it("🔴 …and the message is the DEDICATED guard's, not the type allowlist's generic one", async () => {
+    // MUTATION-DRIVEN. The nodepack guard and the type-allowlist guard are
+    // adjacent, both throw BAD_REQUEST, and both messages end in the same
+    // words. Delete the nodepack guard and a nodepack AIR is STILL rejected —
+    // by the allowlist, with `resource AIR type 'nodepack' is not permitted`.
+    // So a `/is not permitted in an inline workflow/` assertion would stay green
+    // with the guard gone: it would be testing the sibling.
     //
-    // That is fail-CLOSED and it is the behaviour we want: real nodepacks live
-    // in the ComfyUI registry, and no logic was added to carve out a path for a
-    // shape that does not exist. Recorded as a test so the narrowness is a
-    // known property rather than a surprise.
-    mockGetResourceData.mockResolvedValue([]);
+    // This case names a token ONLY the dedicated guard emits, and asserts the
+    // generic wording is ABSENT, so it dies when the guard does.
+    const err = await assertViewerEntitledToInlineResources({
+      airs: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0'],
+      user: VIEWER,
+    }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain(
+      'nodepack resources are not permitted in an inline workflow'
+    );
+    expect((err as Error).message).toContain('urn:air:comfy:nodepacklayer');
+    expect((err as Error).message).toContain('ComfyNodepackSnapshot');
+    expect((err as Error).message).not.toContain("resource AIR type 'nodepack' is not permitted");
+  });
+
+  it('🔴 the LAYER spelling the orchestrator prescribes takes the SAME informative refusal', async () => {
+    // THE WHOLE POINT OF THE REVERT. Production 400s a bare pack AIR with
+    // "Declare custom nodes as their install-layer AIR
+    // (urn:air:comfy:nodepacklayer:…). Capture it with a ComfyNodepackSnapshot
+    // step and use its output's layerAir." A developer who follows that advice
+    // used to land on the type allowlist's bare `resource AIR type
+    // 'nodepacklayer' is not permitted in an inline workflow` — a second,
+    // differently-worded refusal with no way forward. Both spellings now get one
+    // message that explains the deadlock.
+    const err = await assertViewerEntitledToInlineResources({
+      airs: ['urn:air:comfy:nodepacklayer:comfyregistry:comfyui-kjnodes@1.0.0'],
+      user: VIEWER,
+    }).catch((e: Error) => e);
+    expect((err as Error).message).toContain(
+      'nodepack resources are not permitted in an inline workflow'
+    );
+    expect((err as Error).message).not.toContain(
+      "resource AIR type 'nodepacklayer' is not permitted"
+    );
+  });
+
+  it('🔴 a civitai-sourced nodepack is rejected too, on the SAME guard', async () => {
+    // With the flag ON this fixture reached the civitai entitlement branch and
+    // was rejected fail-closed as an unresolvable model version — a different
+    // guard, a different message. With the flag OFF the dedicated guard runs
+    // first for EVERY source, so the refusal no longer depends on which source
+    // happens to be spelled. Pinned because the old behaviour was subtle enough
+    // to have its own test.
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:other:nodepack:civitai:123@456'],
         user: VIEWER,
       })
-    ).rejects.toThrow(/not available for generation/);
+    ).rejects.toThrow(/nodepack resources are not permitted in an inline workflow/);
+    expect(mockGetResourceData).not.toHaveBeenCalled();
   });
 
-  it('🔴 enabling nodepacks did NOT widen anything else — a non-nodepack resource is still fully gated', async () => {
-    // The failure this pins: a flag flip that accidentally relaxes the belt for
-    // the rest of `resources`. A nodepack alongside a non-generatable civitai
-    // LoRA must still be rejected, on the LoRA.
+  it('🔴 the revert did NOT narrow anything else — a non-nodepack resource is gated exactly as before', async () => {
+    // The mirror of the test that guarded the flip. The failure it pins: a
+    // revert that accidentally tightens (or loosens) the belt for the rest of
+    // `resources`. A well-formed, generatable civitai LoRA plus a huggingface
+    // weight must still be ACCEPTED, and a non-generatable one still REJECTED,
+    // with nodepacks out of the picture entirely.
+    await expect(
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+    ).resolves.toBeUndefined();
+
+    vi.clearAllMocks();
     mockGetResourceData.mockResolvedValue([resourceRow({ canGenerate: false })]);
     await expect(
-      assertViewerEntitledToInlineResources({
-        airs: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0', LORA_AIR],
-        user: VIEWER,
-      })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).rejects.toThrow(/not available for generation/);
   });
 
-  it('🔴 an OCI container-image AIR is STILL rejected — the flip is nodepack-only', async () => {
-    // `image` was never keyed off the nodepack flag. This is the control that
-    // proves the flip widened one type, not the whole allowlist.
+  it('🔴 COMFYREGISTRY is closed again as a SOURCE, and that is a separate guard from the type', async () => {
+    // `comfyregistry` is in the source allowlist only while the flag is on. With
+    // it off, a NON-nodepack AIR from comfyregistry — which slips past the
+    // nodepack guard entirely — must be rejected by the SOURCE guard. This is
+    // what proves the revert closed both halves, not just the loud one.
+    const err = await assertViewerEntitledToInlineResources({
+      airs: ['urn:air:comfy:lora:comfyregistry:kijai/whatever@1.0.0'],
+      user: VIEWER,
+    }).catch((e: Error) => e);
+    expect((err as Error).message).toContain(
+      "resource AIR source 'comfyregistry' is not permitted in an inline workflow"
+    );
+  });
+
+  it('🔴 an OCI container-image AIR is rejected, on its OWN guard — unchanged by the revert', async () => {
+    // `image` was never keyed off the nodepack flag in either direction. This is
+    // the control that proves the revert narrowed one type, not the whole list.
     await expect(
       assertViewerEntitledToInlineResources({
         airs: ['urn:air:oci:image:ghcr:evil/comfy@v1'],
         user: VIEWER,
       })
-    ).rejects.toThrow(/is not permitted in an inline workflow/);
+    ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -502,5 +572,97 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
       })
     ).resolves.toBeUndefined();
     expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MEMBERSHIP GUARD
+//
+// 🔴 READ THIS BEFORE TRUSTING THE BLOCK BELOW. It is NOT a contract test and it
+// is NOT regression coverage. It is an INVARIANT GUARD — a change-detector that
+// makes any edit to the two allowlists a deliberate, reviewed act instead of a
+// silent one. It cannot fail because the orchestrator changed; it can only fail
+// because WE changed.
+//
+// WHY NOT A REAL CONTRACT TEST. #3663's defect was a SEAM: civitai's allowlist
+// and the orchestrator's accepted-AIR set are each individually correct and
+// individually tested, and were broken only in combination. The fix for that
+// class is to pin one side against a machine-generated artifact from the other.
+// That artifact does not exist here. What was searched, and what was found:
+//
+//   • `@civitai/client@0.2.0-beta.84` (the GENERATED orchestrator client), all
+//     46 files under `dist/`, greppable with `grep -a`. `types.gen.js` emits 67
+//     runtime enums; NONE is an AIR type or AIR source enum. Every AIR-bearing field in
+//     the entire generated surface — `CustomComfyInput.resources`,
+//     `ResourceInfo.air`, `ComfyNodepackSnapshotInput.nodepacks`,
+//     `ComfyNodepackSnapshotResult.layerAir` — is typed `string` or
+//     `Array<string>`. There is nothing to pin against.
+//   • `Air.parseSafe` (`dist/utils/Air.js`) is a bare regex; `type` and `source`
+//     are `[a-zA-Z0-9_\-/]+` with no value validation at all.
+//   • No vendored OpenAPI/JSON schema anywhere in the repo — `git ls-files |
+//     grep -iE "openapi|swagger|\.schema\.json"` is empty, and the client ships
+//     zero `.json` files. The spec lives in `civitai-client-javascript`, a
+//     separate repo; this one holds only the published package.
+//   • `src/shared/utils/air.ts`'s `typeUrnMap` is hand-written from civitai's
+//     own Prisma `ModelType` enum. It is the EMIT direction (what we send), not
+//     the ACCEPT direction, and `inline-comfy.service.ts` already documents why
+//     deriving from it would be wrong.
+//
+// So the only in-repo statements about which AIRs the orchestrator accepts are
+// JSDoc prose — and, as `inline-comfy.service.ts`'s header records, that prose
+// CONTRADICTS ITSELF inside a single generated file. Pinning a constant against
+// a docstring that is known-wrong would be worse than pinning nothing: it would
+// look like a contract test and encode the stale half.
+//
+// WHAT THIS BLOCK THEREFORE DOES PROVE: that `INLINE_ALLOWED_AIR_TYPES` and
+// `INLINE_ALLOWED_AIR_SOURCES` contain exactly the values written below, so
+// widening either one cannot land without a reviewer seeing this file change.
+// WHAT IT DOES NOT PROVE: anything whatsoever about what the orchestrator
+// accepts. A divergence introduced by an orchestrator-side change stays
+// invisible to CI, exactly as it was on 2026-08-05.
+//
+// WHAT WOULD MAKE A REAL CONTRACT TEST POSSIBLE (neither exists today): the
+// orchestrator's OpenAPI JSON vendored here behind a re-vendor diff guard, or
+// `@civitai/client` typing those fields as enums instead of `string`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('INVARIANT GUARD (not a contract test) — allowlist membership', () => {
+  it('pins the exact AIR TYPE allowlist', () => {
+    expect([...INLINE_ALLOWED_AIR_TYPES].sort()).toEqual(
+      [
+        'ag',
+        'checkpoint',
+        'clip',
+        'clipvision',
+        'controlnet',
+        'diffusion_model',
+        'diffusionmodel',
+        'dora',
+        'embedding',
+        'hypernet',
+        'lora',
+        'lycoris',
+        'motion',
+        'text_encoders',
+        'unet',
+        'upscaler',
+        'vae',
+        'visionlanguage',
+      ].sort()
+    );
+  });
+
+  it('pins the exact AIR SOURCE allowlist', () => {
+    expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai', 'huggingface'].sort());
+  });
+
+  it('🔴 neither nodepack spelling is in the ACCEPT list, in either flag state', () => {
+    // `INLINE_NODEPACKS_ENABLED` only ever added `nodepack`. `nodepacklayer` —
+    // the spelling the orchestrator actually prescribes — is absent from the
+    // accept list under BOTH values of the flag, which is precisely why flipping
+    // the flag alone deadlocks rather than working. Stated as an assertion so
+    // the next person reaching for the one-line flip finds it here.
+    expect(INLINE_ALLOWED_AIR_TYPES.has('nodepacklayer')).toBe(false);
+    expect(INLINE_ALLOWED_AIR_TYPES.has('nodepack')).toBe(INLINE_NODEPACKS_ENABLED);
+    expect(INLINE_ALLOWED_AIR_TYPES.has('image')).toBe(false);
   });
 });
