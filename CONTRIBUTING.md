@@ -73,7 +73,7 @@ every existing and future worktree of that clone inherits it until you sync.
 ```bash
 pnpm typecheck                 # full repo
 pnpm test:unit:run             # ~8,900 unit tests, node env
-pnpm test:component            # ~860 component tests in real Chromium, slower
+pnpm test:component            # ~1,300 component tests in real Chromium, slower
 pnpm exec prettier --check <files you added>
 pnpm exec eslint <files you added>
 ```

@@ -60,7 +60,7 @@ importers:
         version: link:packages/civitai-db-schema
       '@civitai/next-axiom':
         specifier: ^0.17.0
-        version: 0.17.0(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
+        version: 0.17.0(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -150,7 +150,7 @@ importers:
         version: 16.2.7(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@next/third-parties':
         specifier: ^15.0.3
-        version: 15.4.6(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
+        version: 15.4.6(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
       '@node-oauth/oauth2-server':
         specifier: ^5.3.0
         version: 5.3.0
@@ -306,7 +306,7 @@ importers:
         version: 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/next':
         specifier: ^11.17.0
-        version: 11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.2)
+        version: 11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.2)
       '@trpc/react-query':
         specifier: ^11.17.0
         version: 11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2)
@@ -474,7 +474,7 @@ importers:
         version: 1.11.5
       next:
         specifier: ^16.2.7
-        version: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+        version: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       nodemailer:
         specifier: ^6.8.0
         version: 6.10.1
@@ -534,7 +534,7 @@ importers:
         version: 7.12.0(algoliasearch@4.25.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react-instantsearch-router-nextjs:
         specifier: 7.12.0
-        version: 7.12.0(algoliasearch@4.25.2)(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
+        version: 7.12.0(algoliasearch@4.25.2)(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
       react-intersection-observer:
         specifier: ^9.4.0
         version: 9.16.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -669,8 +669,8 @@ importers:
         specifier: ^15.5.19
         version: 15.5.19
       '@playwright/test':
-        specifier: ^1.57.0
-        version: 1.57.0
+        specifier: 1.61.1
+        version: 1.61.1
       '@prisma/generator-helper':
         specifier: ^5.22.0
         version: 5.22.0
@@ -769,7 +769,7 @@ importers:
         version: 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/browser-playwright':
         specifier: 4.0.18
-        version: 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
+        version: 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/coverage-v8':
         specifier: ^4.0.18
         version: 4.0.18(@vitest/browser@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18))(vitest@4.0.18)
@@ -810,8 +810,8 @@ importers:
         specifier: ^1.0.4
         version: 1.0.4
       playwright:
-        specifier: ^1.57.0
-        version: 1.57.0
+        specifier: 1.61.1
+        version: 1.61.1
       postcss:
         specifier: ^8.5.3
         version: 8.5.6
@@ -3919,8 +3919,8 @@ packages:
     resolution: {integrity: sha512-fdDH1LSGfZdTH2sxdpVMw31BanV28K/Gry0cVFxaNP77neJSkd82mM8ErPNYs9e+0O7SdHBLTDzDgwUuy18RnQ==}
     engines: {node: ^12.20.0 || ^14.18.0 || >=16.0.0}
 
-  '@playwright/test@1.57.0':
-    resolution: {integrity: sha512-6TyEnHgd6SArQO8UO2OMTxshln3QMWBtPGrOCgs3wVEmQmwyuNtB10IZMfmYDE0riwNR1cu4q+pPcxMVtaG3TA==}
+  '@playwright/test@1.61.1':
+    resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -10087,13 +10087,13 @@ packages:
   pkg-types@2.2.0:
     resolution: {integrity: sha512-2SM/GZGAEkPp3KWORxQZns4M+WSeXbC2HEvmOIJe3Cmiv6ieAJvdVhDldtHqM5J1Y7MrR1XhkBT/rMlhh9FdqQ==}
 
-  playwright-core@1.57.0:
-    resolution: {integrity: sha512-agTcKlMw/mjBWOnD6kFZttAAGHgi/Nw0CZ2o6JqWSbMlI219lAFLZZCyqByTsvVAJq5XA5H8cA6PrvBRpBWEuQ==}
+  playwright-core@1.61.1:
+    resolution: {integrity: sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==}
     engines: {node: '>=18'}
     hasBin: true
 
-  playwright@1.57.0:
-    resolution: {integrity: sha512-ilYQj1s8sr2ppEJ2YVadYBN0Mb3mdo9J0wQ+UuDhzYqURwSoW4n1Xs5vs7ORwgDGmyEh33tRMeS8KhdkMoLXQw==}
+  playwright@1.61.1:
+    resolution: {integrity: sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -13777,9 +13777,9 @@ snapshots:
     dependencies:
       fast-xml-parser: 5.10.1
 
-  '@civitai/next-axiom@0.17.0(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
+  '@civitai/next-axiom@0.17.0(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
     dependencies:
-      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
   '@clavata/sdk@0.2.3':
@@ -15158,9 +15158,9 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.2.7':
     optional: true
 
-  '@next/third-parties@15.4.6(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)':
+  '@next/third-parties@15.4.6(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)':
     dependencies:
-      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react: 18.3.1
       third-party-capital: 1.0.20
 
@@ -15729,9 +15729,9 @@ snapshots:
 
   '@pkgr/core@0.1.2': {}
 
-  '@playwright/test@1.57.0':
+  '@playwright/test@1.61.1':
     dependencies:
-      playwright: 1.57.0
+      playwright: 1.61.1
 
   '@polka/url@1.0.0-next.29': {}
 
@@ -17344,11 +17344,11 @@ snapshots:
       '@trpc/server': 11.17.0(typescript@5.9.2)
       typescript: 5.9.2
 
-  '@trpc/next@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.2)':
+  '@trpc/next@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.2)':
     dependencies:
       '@trpc/client': 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/server': 11.17.0(typescript@5.9.2)
-      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
       typescript: 5.9.2
@@ -18089,11 +18089,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
+  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
     dependencies:
       '@vitest/browser': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
-      playwright: 1.57.0
+      playwright: 1.61.1
       tinyrainbow: 3.1.0
       vitest: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
     transitivePeerDependencies:
@@ -18103,11 +18103,11 @@ snapshots:
       - vite
     optional: true
 
-  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
+  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
     dependencies:
       '@vitest/browser': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
-      playwright: 1.57.0
+      playwright: 1.61.1
       tinyrainbow: 3.1.0
       vitest: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
     transitivePeerDependencies:
@@ -18117,11 +18117,11 @@ snapshots:
       - vite
     optional: true
 
-  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
+  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
     dependencies:
       '@vitest/browser': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
-      playwright: 1.57.0
+      playwright: 1.61.1
       tinyrainbow: 3.1.0
       vitest: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
     transitivePeerDependencies:
@@ -18130,11 +18130,11 @@ snapshots:
       - utf-8-validate
       - vite
 
-  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
+  '@vitest/browser-playwright@4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)':
     dependencies:
       '@vitest/browser': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       '@vitest/mocker': 4.0.18(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
-      playwright: 1.57.0
+      playwright: 1.61.1
       tinyrainbow: 3.1.0
       vitest: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
     transitivePeerDependencies:
@@ -23156,7 +23156,7 @@ snapshots:
 
   neo-async@2.6.2: {}
 
-  next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0):
+  next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0):
     dependencies:
       '@next/env': 16.2.7
       '@swc/helpers': 0.5.15
@@ -23176,7 +23176,7 @@ snapshots:
       '@next/swc-win32-arm64-msvc': 16.2.7
       '@next/swc-win32-x64-msvc': 16.2.7
       '@opentelemetry/api': 1.9.0
-      '@playwright/test': 1.57.0
+      '@playwright/test': 1.61.1
       sass: 1.90.0
       sharp: 0.34.5
     transitivePeerDependencies:
@@ -23655,11 +23655,11 @@ snapshots:
       exsolve: 1.0.7
       pathe: 2.0.3
 
-  playwright-core@1.57.0: {}
+  playwright-core@1.61.1: {}
 
-  playwright@1.57.0:
+  playwright@1.61.1:
     dependencies:
-      playwright-core: 1.57.0
+      playwright-core: 1.61.1
     optionalDependencies:
       fsevents: 2.3.2
 
@@ -24363,10 +24363,10 @@ snapshots:
       react: 18.3.1
       use-sync-external-store: 1.5.0(react@18.3.1)
 
-  react-instantsearch-router-nextjs@7.12.0(algoliasearch@4.25.2)(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1):
+  react-instantsearch-router-nextjs@7.12.0(algoliasearch@4.25.2)(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1):
     dependencies:
       instantsearch.js: 4.73.0(algoliasearch@4.25.2)
-      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react-instantsearch-core: 7.12.0(algoliasearch@4.25.2)(react@18.3.1)
     transitivePeerDependencies:
       - algoliasearch
@@ -26461,7 +26461,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 20.19.9
-      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
@@ -26502,7 +26502,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 20.19.9
-      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
@@ -26543,7 +26543,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 24.13.3
-      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
@@ -26584,7 +26584,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@types/node': 24.13.3
-      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
+      '@vitest/browser-playwright': 4.0.18(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.61.1)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.0.18)
       happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
