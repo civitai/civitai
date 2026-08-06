@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * W10 money-path bridge gap regression (page surface).
@@ -185,36 +186,21 @@ async function driveToReady() {
 }
 
 /**
- * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
- * reports "true": the MutationObserver microtask checkpoint that ends the task which
- * COMMITTED the DOM. React flushes passive effects in a LATER task, so a handler that
- * closes over `status` is still the PREVIOUS render's closure — holding
- * `status === 'loading'` — at this exact moment.
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
  *
- * The drive is a CANCELLABLE interval rather than `vi.waitFor`: a floating waitFor
- * keeps posting BLOCK_READY after this returns, and that stray post lands in the NEXT
- * test — measured, it turned the "before BLOCK_READY is dropped" guard below red for
- * a reason that has nothing to do with the race under study.
+ * Cancellable is load-bearing: a drive left running past the end of a test posts
+ * BLOCK_READY into the NEXT test's freshly-mounted host — measured, that turned the
+ * "before BLOCK_READY is dropped" guard below red for a reason having nothing to do
+ * with the race under study. Callers stop it in a `finally`.
  */
-async function driveToReadyAtCommit() {
+async function startReadyDrive() {
   await vi.waitFor(() => {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
   });
-  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-  let timer: ReturnType<typeof setInterval> | undefined;
-  await new Promise<void>((resolve) => {
-    const obs = new MutationObserver(() => {
-      if (el.getAttribute('data-block-ready') === 'true') {
-        if (timer) clearInterval(timer);
-        obs.disconnect();
-        resolve();
-      }
-    });
-    obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
-    timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
-    postFromBlock('BLOCK_READY', {});
-  });
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
 }
 
 describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
@@ -450,23 +436,36 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
   /**
    * REGRESSION GUARD for the host-ready stale-closure race, on the money gate.
    *
-   * OPEN_BUZZ_PURCHASE is request/response: the block awaits BUZZ_PURCHASE_RESULT
-   * on a promise that rejects only at the SDK's 30s default request timeout
-   * (`DEFAULT_REQUEST_TIMEOUT_MS`, @civitai/blocks-react 0.39.0), and a retry
-   * carrying the same requestId is swallowed by usePostMessage's 5s transport-level
-   * dedup — so a drop here is expensive.
+   * OPEN_BUZZ_PURCHASE is request/response: the block awaits BUZZ_PURCHASE_RESULT on
+   * a promise that rejects only at the SDK's 30s default request timeout
+   * (`DEFAULT_REQUEST_TIMEOUT_MS`, @civitai/blocks-react 0.39.0) — so a drop here
+   * costs the user's click plus half a minute of nothing.
    *
-   * Proven reachable by mutation: move `statusRef.current = status` out of the
-   * render body and back into an effect and this goes red on
-   * `expected [] to have a length of 1`.
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT a MutationObserver — see
+   * test/commitWindow.tsx. A MutationObserver callback is a microtask that runs at the
+   * END of the scheduler task, often after React has already flushed the passive
+   * effects, which made the first version of this guard survive the mutant about one
+   * run in three.
+   *
+   * Proven reachable by mutation: move `statusRef.current = status` out of the render
+   * body and back into an effect and this goes red on `expected [] to have a length
+   * of 1`.
    */
   test("OPEN_BUZZ_PURCHASE posted in React's commit→passive-effect gap still opens the modal", async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
-    await driveToReadyAtCommit();
-
-    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_gap', suggestedAmount: 1000 });
-
-    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    const unpatch = onReadyAttributeWrite(() =>
+      postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_gap', suggestedAmount: 1000 })
+    );
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
     // Pin the per-request dialog id, so this proves THIS post opened the modal.
     expect(useDialogStore.getState().dialogs[0].id).toBe('block-buy-buzz-rq_gap');
   });
@@ -476,8 +475,8 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
    * changed is that the refusal is now SPOKEN instead of silent.
    *
    * Previously this branch dropped the message with a bare `return`, leaving the
-   * block's promise to hang for the SDK's full 30s request timeout with a requestId
-   * that the transport's 5s dedup makes un-retryable. The reviewMode branch a few
+   * block's promise to hang for the SDK's full 30s request timeout. The reviewMode
+   * branch a few
    * lines above in the handler already replied for exactly this reason ("Reply the
    * not-purchased result the block awaits (fail-fast, no hang)"); this branch simply
    * did not, and that asymmetry was the bug.

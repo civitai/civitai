@@ -399,11 +399,27 @@ export function PageBlockHost({
   //   • StrictMode double-render writes the SAME value twice — idempotent.
   //   • An interrupted/discarded concurrent render can leave the ref holding a
   //     status that never committed. It converges: React always eventually renders
-  //     the latest state, and that render overwrites the ref. The transient
-  //     disagreement is only ever "ref is AHEAD of the DOM", which is the
-  //     PERMISSIVE direction — it can open the gate a beat early, never drop.
+  //     the latest state, and that render overwrites the ref.
   //   • It is only ever written from `status` (component state), never derived
   //     from props or anything a parent can change mid-render.
+  //
+  // 🔴 WHICH DIRECTION THAT TRANSIENT DISAGREEMENT RUNS IN — read this before
+  // pointing a NEW gate at the ref. "Ref ahead of the DOM" is NOT always the
+  // permissive direction; it inherits the direction of the transition in flight,
+  // and this component has transitions BOTH ways:
+  //   • loading → ready is PERMISSIVE. The ref says ready while `data-block-ready`
+  //     still reads "false", so a gate can open a beat before the host has publicly
+  //     announced readiness. Harmless, and it is the whole point of the fix.
+  //   • ready → error (the mid-session token loss at the `setStatus` below) and
+  //     ready → fatal (`BLOCK_ERROR{fatal:true}`) are RESTRICTIVE. A concurrent
+  //     render writes `statusRef.current = 'error'`, yields before commit, and a
+  //     queued OPEN_BUZZ_PURCHASE arriving in that gap is REFUSED while
+  //     `data-block-ready` still reads "true".
+  // The restrictive case is deliberate and is the safer side of the trade: the ref
+  // is the host's freshest knowledge of its own state, so refusing a spend on a
+  // host that has already decided it is broken is correct, and the DOM attribute is
+  // the thing lagging. A gate that must NOT tighten early (there is none today)
+  // would have to key off the committed `status`, not this ref.
   //
   // RESIDUAL WINDOW, stated rather than hidden: this closes the commit→passive-
   // effect gap, NOT the larger message-received→render gap. `status` becomes
@@ -1912,9 +1928,8 @@ export function PageBlockHost({
           //   • host not ready — REPLIABLE, and it must be replied to. The block
           //     is awaiting BUZZ_PURCHASE_RESULT on a promise that rejects only
           //     at the SDK's 30s default request timeout (blocks-react 0.39.0,
-          //     `DEFAULT_REQUEST_TIMEOUT_MS`), and a retry carrying the same
-          //     requestId is swallowed by usePostMessage's 5s transport-level
-          //     dedup — so a silent drop strands the user's click.
+          //     `DEFAULT_REQUEST_TIMEOUT_MS`), so a silent drop costs the user's
+          //     click plus half a minute of nothing happening.
           //
           // `purchased: false` is exactly the reply the reviewMode branch above
           // already sends for its own refusal, and exactly what the SDK's
@@ -2936,9 +2951,8 @@ export function PageBlockHost({
         // one that didn't, and it is the expensive one to get wrong: the SDK's
         // `useImageUpload` sends OPEN_IMAGE_UPLOAD with
         // `PICKER_REQUEST_TIMEOUT_MS` (blocks-react 0.39.0 — 10 MINUTES, not the
-        // 30s default), and a same-requestId retry is swallowed by
-        // usePostMessage's 5s transport dedup, so a silent drop strands the
-        // block's promise for ten minutes with no error anywhere.
+        // 30s default), so a silent drop strands the block's promise for ten
+        // minutes with no error anywhere.
         //
         // A bare `{ requestId }` is the cancelled/dismissed shape the SDK
         // already handles (`if (!selected) return null; // dismissed`). Nothing

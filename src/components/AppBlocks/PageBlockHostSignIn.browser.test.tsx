@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * W10 sign-in-bridge gap regression (page surface).
@@ -150,38 +151,21 @@ async function driveToReady() {
 }
 
 /**
- * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
- * reports "true": the MutationObserver microtask checkpoint that ends the task which
- * COMMITTED the DOM. React flushes passive effects in a LATER task, so a handler that
- * closes over `status` is still the PREVIOUS render's closure — holding
- * `status === 'loading'` — at this exact moment. Everything posted from here therefore
- * exercises the commit→passive-effect window deterministically, instead of hoping a
- * 50ms `vi.waitFor` poll happens to land in it.
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
  *
- * The drive is a CANCELLABLE interval rather than `vi.waitFor`: a floating waitFor
- * keeps posting BLOCK_READY after this returns, and that stray post lands in the NEXT
- * test — measured, it turned the "before BLOCK_READY is dropped" guard red for a
- * reason that has nothing to do with the race under study.
+ * Cancellable is load-bearing: a drive left running past the end of a test posts
+ * BLOCK_READY into the NEXT test's freshly-mounted host — measured, that turned the
+ * "before BLOCK_READY is dropped" guard below red for a reason having nothing to do
+ * with the race under study. Callers stop it in a `finally`.
  */
-async function driveToReadyAtCommit() {
+async function startReadyDrive() {
   await vi.waitFor(() => {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
   });
-  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-  let timer: ReturnType<typeof setInterval> | undefined;
-  await new Promise<void>((resolve) => {
-    const obs = new MutationObserver(() => {
-      if (el.getAttribute('data-block-ready') === 'true') {
-        if (timer) clearInterval(timer);
-        obs.disconnect();
-        resolve();
-      }
-    });
-    obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
-    timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
-    postFromBlock('BLOCK_READY', {});
-  });
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
 }
 
 describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () => {
@@ -200,25 +184,35 @@ describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () =
    * render-body-updated `statusRef` instead of a closed-over `status`) has to hold
    * for this handler.
    *
-   * Proven reachable by mutation: move the `statusRef.current = status` assignment
-   * out of the render body and back into an effect and this goes red on
-   * `expected "openLoginPopup" to be called 1 times, but got 0 times`.
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT from a MutationObserver.
+   * That is the difference between a guard and a coin flip — see test/commitWindow.tsx
+   * for the two approaches that were measured and rejected. The short version: a
+   * MutationObserver callback is a microtask that runs at the END of the scheduler
+   * task, by which point React has often already flushed the passive effects, so the
+   * first version of this guard survived the mutant roughly one run in three.
    *
-   * It can never false-FAIL: if the passive effects happen to have flushed already,
-   * the handler is live and the post lands anyway.
+   * Proven reachable by mutation: move `statusRef.current = status` out of the render
+   * body and back into an effect and this goes red on `expected "openLoginPopup" to
+   * be called 1 times, but got 0 times`.
    */
   test("REQUEST_SIGN_IN posted in React's commit→passive-effect gap still starts the login", async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
-    await driveToReadyAtCommit();
-    expect(openLoginPopup).not.toHaveBeenCalled();
-
-    // Synchronous dispatch from inside the commit-window checkpoint: the handler
-    // runs NOW, before React can flush passive effects and re-register a listener.
-    postFromBlock('REQUEST_SIGN_IN', {});
-
-    await vi.waitFor(() => {
-      expect(openLoginPopup).toHaveBeenCalledTimes(1);
-    });
+    // Fires synchronously on React's own stack, at the instant the host writes
+    // data-block-ready="true" — strictly before this commit's passive effects
+    // re-register a listener holding the fresh status.
+    const unpatch = onReadyAttributeWrite(() => postFromBlock('REQUEST_SIGN_IN', {}));
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => {
+          expect(openLoginPopup).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
   });
 
   test('after BLOCK_READY, REQUEST_SIGN_IN starts the hub login (defaults to the current page)', async () => {

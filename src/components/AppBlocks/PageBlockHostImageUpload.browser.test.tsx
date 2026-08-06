@@ -5,6 +5,7 @@ import type { BlockUploadedImageInfo } from '~/components/AppBlocks/BlockImageUp
 import type { BlockSourceImageInfo } from '~/components/AppBlocks/BlockGenerationSourceUploadModal';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * App Blocks PAGE image upload (OPEN_IMAGE_UPLOAD) — the host-handler BRANCH test.
@@ -162,87 +163,58 @@ async function driveToReady() {
 }
 
 /**
- * Post OPEN_IMAGE_UPLOAD and RETRY WITH A FRESH `requestId` until the host actually
- * accepts it. Returns the requestId that landed — assert against THAT, never a literal.
- *
- * 🔴 BOTH HALVES ARE LOAD-BEARING, and neither is obvious. This helper exists because
- * a one-shot post here was a real, CI-observed flake (civitai#3659: the same commit
- * `f1044a1446` ran the component suite three times — twice `1280 passed`, once
- * `1 failed | 1279 passed` with this file's first test failing at 11205ms on
- * `expected [] to have a length of 1`).
- *
- * WHY A RETRY. `driveToReady` gates on the `data-block-ready` DOM attribute, which
- * React writes during the COMMIT (`isReady = status === 'ready'`). But the host's
- * OPEN_IMAGE_UPLOAD listener early-returns (`gateStatus !== 'ready'` -> drop) until the
- * `useEffect` that closes over `status` RE-REGISTERS — and React flushes passive
- * effects in a LATER task than the commit. So `data-block-ready === 'true'` is NOT
- * evidence that the handler is live; it is evidence that it is about to be. Measured
- * with a MutationObserver on the attribute: at the instant it flips to "true" the
- * handler still drops the message, 6 runs out of 6. A fire-and-forget post that lands
- * in that window is gone for good — nothing re-sends it — and the `vi.waitFor` that
- * follows just burns its full (10s, see test/component-setup.tsx) timeout before
- * reporting an empty dialog list. On a quiet box the next 50ms poll happens after the
- * flush and the test passes; on a saturated CI runner it doesn't. That is the whole
- * flake.
- *
- * WHY A FRESH ID PER ATTEMPT. Re-posting the SAME requestId does NOT work.
- * `usePostMessage` dedups on `payload.requestId` for `DEDUP_WINDOW_MS` (5s) at the
- * TRANSPORT layer — before the handler's status gate — so the first, dropped attempt
- * poisons every retry of that id. Measured: 30 same-id retries over 1500ms, never
- * delivered. A retry loop that keeps the id is therefore INERT: it looks like a fix and
- * changes nothing.
- *
- * `closeAll()` per attempt keeps the assertion honest — whatever dialog is present
- * afterwards provably came from THIS attempt, not an earlier post landing late. It
- * does not run `options.onClose`, so it can never manufacture an IMAGE_UPLOAD_RESULT.
- *
- * The dialog store is written synchronously from the message handler, so checking
- * immediately after the dispatch is correct: an accepted post is visible at once.
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
+ * Used by the commit-window guard, which must NOT await readiness before acting —
+ * the whole point is to act during the commit that establishes it. Callers stop the
+ * drive in a `finally` so it can never post into the next test's host.
  */
-async function openUploadModal(payload: Record<string, unknown> = {}) {
-  let attempt = 0;
-  let requestId = '';
-  await vi.waitFor(() => {
-    attempt += 1;
-    requestId = `rq_${attempt}`;
-    useDialogStore.getState().closeAll();
-    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId, ...payload });
-    if (useDialogStore.getState().dialogs.length !== 1) {
-      throw new Error(`OPEN_IMAGE_UPLOAD opened no modal (attempt ${attempt})`);
-    }
-  });
-  return requestId;
-}
-
-/**
- * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
- * reports "true": the MutationObserver microtask checkpoint that ends the task which
- * COMMITTED the DOM. React flushes passive effects in a LATER task, so this is exactly
- * the window a loaded CI runner's 50ms `vi.waitFor` poll lands in — the one that made
- * this file flake. Reproducing it deterministically is what lets the guard below be a
- * real regression test instead of a coin flip.
- */
-async function driveToReadyAtCommit() {
+async function startReadyDrive() {
   await vi.waitFor(() => {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
   });
-  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-  let resolveFlip!: () => void;
-  const flipped = new Promise<void>((r) => (resolveFlip = r));
-  const obs = new MutationObserver(() => {
-    if (el.getAttribute('data-block-ready') === 'true') resolveFlip();
-  });
-  obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
-  const driving = vi.waitFor(() => {
-    postFromBlock('BLOCK_READY', {});
-    const cur = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-    if (cur.getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
-  });
-  await flipped;
-  obs.disconnect();
-  // Hand back the still-pending drive so the caller can settle it before finishing.
-  return () => driving;
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
+}
+
+/**
+ * Post OPEN_IMAGE_UPLOAD after the host is ready and return the requestId used.
+ *
+ * ── HISTORY, because RETIRING the workaround is the point ────────────────────────
+ *
+ * This used to be a RETRY LOOP that re-posted with a FRESH `requestId` until the host
+ * accepted one, and its comment called both halves load-bearing. It was a TEST-SIDE
+ * workaround for a PRODUCTION bug (civitai#3659: the same commit `f1044a1446` ran the
+ * component suite three times — twice `1280 passed`, once `1 failed | 1279 passed`
+ * with this file's first test failing at 11205ms). The host's OPEN_IMAGE_UPLOAD
+ * listener closed over `status`, so it dropped messages until a passive effect
+ * re-registered it, and `data-block-ready === 'true'` was NOT evidence the handler was
+ * live.
+ *
+ * The host now reads a render-body-updated `statusRef`, so the handler IS live at the
+ * instant the attribute is written and the retry can never take a second attempt. It
+ * is deleted rather than left in place: an inert retry whose comment insists it is
+ * load-bearing is a false claim about current behaviour, and the next person to hit a
+ * similar flake would copy it. The one-shot post below now FAILS LOUDLY if the host
+ * ever drops a post-ready request again — which is the regression signal we want.
+ *
+ * The claim about the transport's 5s `requestId` dedup that used to live here is gone
+ * too, and not because the dedup was removed: it is real in `usePostMessage` but
+ * UNREACHABLE from the SDK, whose `nextRequestId()` is `random6 + a monotonic
+ * counter`, so every call mints a fresh id and the window can never see a repeat.
+ *
+ * The dialog store is written synchronously from the message handler, so checking
+ * immediately after the dispatch is correct: an accepted post is visible at once.
+ */
+function openUploadModal(payload: Record<string, unknown> = {}) {
+  const requestId = 'rq_1';
+  useDialogStore.getState().closeAll();
+  postFromBlock('OPEN_IMAGE_UPLOAD', { requestId, ...payload });
+  if (useDialogStore.getState().dialogs.length !== 1) {
+    throw new Error('OPEN_IMAGE_UPLOAD opened no modal — the host dropped a post-ready request');
+  }
+  return requestId;
 }
 
 describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
@@ -251,32 +223,47 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
   });
 
   /**
-   * REGRESSION GUARD for the civitai#3659 flake — it pins `openUploadModal`'s retry,
-   * which IS the fix. Deliberately FIRST in the file: the coldest mount is the one
-   * whose commit most reliably exhausts React's 5ms frame budget and therefore yields
-   * before the passive-effect flush, which is the window this guard has to exist
-   * inside. Proven reachable by mutation — swap the retry back for the old one-shot
-   * post and this goes red.
+   * REGRESSION GUARD for the civitai#3659 flake. It used to pin `openUploadModal`'s
+   * fresh-id RETRY — a test-side workaround. It now pins the PRODUCTION fix: the host
+   * reading a render-body-updated `statusRef` instead of a closed-over `status`.
    *
-   * It can never false-FAIL: if the effects happen to have flushed already, the retry
-   * simply succeeds on its first attempt.
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT the MutationObserver this
+   * guard originally used — see test/commitWindow.tsx. The observer's callback is a
+   * microtask that runs at the END of the scheduler task, by which point React has
+   * often already flushed the passive effects; measured, the observer-driven version
+   * of this guard survived the mutant roughly one run in three. The old comment's
+   * "it can never false-FAIL" was an admission of exactly that: a guard that silently
+   * degrades to a no-op is not a regression test. `setAttribute` is on React's own
+   * call stack, so there is no queue to lose a race to.
    */
   test("a request posted in React's commit→passive-effect gap still opens the modal", async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
-    const settleDrive = await driveToReadyAtCommit();
-
-    const requestId = await openUploadModal({ purpose: 'generationSource' });
-    expect(lastDialog().id).toBe(`block-generation-source-upload-${requestId}`);
-
-    await settleDrive();
+    let opened: string | number | symbol | null = null;
+    const unpatch = onReadyAttributeWrite(() => {
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gap', purpose: 'generationSource' });
+      opened = useDialogStore.getState().dialogs[0]?.id ?? null;
+    });
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
+    // Asserted on the value captured INSIDE the window, so this cannot pass on a
+    // dialog that only appeared after the passive flush.
+    expect(opened).toBe('block-generation-source-upload-rq_gap');
   });
 
-  test("generationSource opens the UNSCANNED consumer-blob modal (NOT the moderated one) and replies { url, width, height }", async () => {
+  test('generationSource opens the UNSCANNED consumer-blob modal (NOT the moderated one) and replies { url, width, height }', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
 
-    const requestId = await openUploadModal({ purpose: 'generationSource' });
+    const requestId = openUploadModal({ purpose: 'generationSource' });
 
     // The generationSource branch opens the generation-source modal — proof it
     // does NOT route to the moderated scan/gate modal.
@@ -302,19 +289,20 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
       // EXACTLY the source projection — no imageId / nsfwLevel / contentRating.
       expect(r.payload).toEqual({ requestId, selected: source });
     });
-    const sel = (replies.last('IMAGE_UPLOAD_RESULT')!.payload as { selected: Record<string, unknown> })
-      .selected;
+    const sel = (
+      replies.last('IMAGE_UPLOAD_RESULT')!.payload as { selected: Record<string, unknown> }
+    ).selected;
     expect(Object.keys(sel).sort()).toEqual(['height', 'url', 'width']);
     for (const k of ['imageId', 'nsfwLevel', 'contentRating']) expect(sel).not.toHaveProperty(k);
     replies.stop();
   });
 
-  test("display (explicit) opens the MODERATED modal and replies the moderated projection (unchanged)", async () => {
+  test('display (explicit) opens the MODERATED modal and replies the moderated projection (unchanged)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
 
-    const requestId = await openUploadModal({ purpose: 'display' });
+    const requestId = openUploadModal({ purpose: 'display' });
 
     expect(lastDialog().id).toBe(`block-image-upload-${requestId}`);
 
@@ -342,7 +330,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
     await driveToReady();
 
     // Exactly what the current SDK sends today: a bare requestId, no purpose.
-    const requestId = await openUploadModal();
+    const requestId = openUploadModal();
 
     expect(lastDialog().id).toBe(`block-image-upload-${requestId}`);
   });
@@ -352,7 +340,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
     await driveToReady();
     const replies = listenForReply();
 
-    const requestId = await openUploadModal({ purpose: 'generationSource' });
+    const requestId = openUploadModal({ purpose: 'generationSource' });
 
     // User dismisses without a successful upload — onResolved never called, so
     // the dialog's options.onClose posts a bare (cancelled) result.
@@ -379,7 +367,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
     // `closeAll` does not run `options.onClose`, so this cannot post a reply of its own
     // — re-asserted immediately, so a future change that made it reply would be caught
     // here rather than silently satisfying the real assertion further down.
-    await openUploadModal({ purpose: 'generationSource' });
+    openUploadModal({ purpose: 'generationSource' });
     useDialogStore.getState().closeAll();
     expect(replies.last('IMAGE_UPLOAD_RESULT')).toBeUndefined();
 

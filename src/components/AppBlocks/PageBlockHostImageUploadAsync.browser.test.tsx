@@ -4,6 +4,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import type { BlockUploadedImageInfo } from '~/components/AppBlocks/BlockImageUploadModal';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * App Blocks PAGE image upload — the ASYNC (non-blocking) scan branch of
@@ -161,35 +162,20 @@ async function driveToReady() {
 }
 
 /**
- * Drive to ready and hand control back at the EARLIEST instant `data-block-ready`
- * reports "true": the MutationObserver microtask checkpoint that ends the task which
- * COMMITTED the DOM. React flushes passive effects in a LATER task, so a handler that
- * closes over `status` is still the PREVIOUS render's closure — holding
- * `status === 'loading'` — at this exact moment.
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
  *
- * The drive is a CANCELLABLE interval rather than `vi.waitFor`: a floating waitFor
- * keeps posting BLOCK_READY after this returns, and that stray post lands in the NEXT
- * test — measured, it turned an unrelated pre-handshake guard red.
+ * Cancellable is load-bearing: a drive left running past the end of a test posts
+ * BLOCK_READY into the NEXT test's freshly-mounted host — measured, that turned an
+ * unrelated pre-handshake guard red. Callers stop it in a `finally`.
  */
-async function driveToReadyAtCommit() {
+async function startReadyDrive() {
   await vi.waitFor(() => {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
   });
-  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
-  let timer: ReturnType<typeof setInterval> | undefined;
-  await new Promise<void>((resolve) => {
-    const obs = new MutationObserver(() => {
-      if (el.getAttribute('data-block-ready') === 'true') {
-        if (timer) clearInterval(timer);
-        obs.disconnect();
-        resolve();
-      }
-    });
-    obs.observe(el, { attributes: true, attributeFilter: ['data-block-ready'] });
-    timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
-    postFromBlock('BLOCK_READY', {});
-  });
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
 }
 
 // Open the async upload, capture the modal's onAccepted, then simulate the modal's
@@ -220,14 +206,15 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
   /**
    * REGRESSION GUARD for the host-ready stale-closure race, on the upload gate.
    *
-   * Deliberately FIRST in the file: the coldest mount is the one whose commit most
-   * reliably exhausts React's 5ms frame budget and therefore yields before the
-   * passive-effect flush — the window this guard has to exist inside.
-   *
-   * The cost of a drop here is the worst of the four gates: `useImageUpload` sends
+   * The cost of a drop here is the worst of the five gates: `useImageUpload` sends
    * OPEN_IMAGE_UPLOAD with `PICKER_REQUEST_TIMEOUT_MS` (@civitai/blocks-react 0.39.0
-   * — 10 MINUTES, not the 30s default), and a same-requestId retry is swallowed by
-   * usePostMessage's 5s transport dedup.
+   * — 10 MINUTES, not the 30s default), so the block's promise is simply stuck.
+   *
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT a MutationObserver — see
+   * test/commitWindow.tsx. A MutationObserver callback is a microtask that runs at the
+   * END of the scheduler task, often after React has already flushed the passive
+   * effects, which made the first version of this guard survive the mutant about one
+   * run in three.
    *
    * Proven reachable by mutation: move `statusRef.current = status` out of the render
    * body and back into an effect and this goes red on
@@ -236,11 +223,19 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (asyncScan branch)', () => {
   test("OPEN_IMAGE_UPLOAD posted in React's commit→passive-effect gap still opens the modal", async () => {
     h.gateMutateAsync.mockResolvedValue({ status: 'pending' });
     renderWithProviders(<PageBlockHost {...baseProps} />);
-    await driveToReadyAtCommit();
-
-    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gap', asyncScan: true });
-
-    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    const unpatch = onReadyAttributeWrite(() =>
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gap', asyncScan: true })
+    );
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
     expect(lastDialog().id).toBe('block-image-upload-rq_gap');
   });
 

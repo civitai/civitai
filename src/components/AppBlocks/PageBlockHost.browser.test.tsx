@@ -230,13 +230,13 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     // The block claims a WIDER set than the host withheld — the host must ignore
     // the claim and grant only its server-known missingScopes.
     //
-    // Re-post REQUEST_CONSENT INSIDE the waitFor: driveToReady only guarantees the
-    // DOM `data-block-ready` attribute, but the host's message-gate state can lag
-    // it by a tick — so a single fire-once REQUEST_CONSENT can land while the gate
-    // still reads "not ready", get dropped (see the "before BLOCK_READY is dropped"
-    // test), and never retried → the dialog never opens (a 10s CI-contention flake).
-    // Re-posting until the dialog appears mirrors driveToReady's BLOCK_READY retry;
-    // waitFor exits on the first success, so exactly one post opens exactly one dialog.
+    // Posted inside the waitFor purely so the assertion retries if the DIALOG has
+    // not rendered yet. The gate itself no longer lags: the host reads a
+    // render-body-updated `statusRef`, so once `data-block-ready` is "true" the
+    // handler is live. (This used to say the message-gate state could lag the DOM
+    // attribute by a tick and a dropped fire-and-forget post was never retried —
+    // true before the stale-closure fix, false now.) waitFor exits on the first
+    // success, so exactly one post opens exactly one dialog.
     await vi.waitFor(() => {
       postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:spend:self'] });
       expect(useDialogStore.getState().dialogs).toHaveLength(1);
@@ -288,8 +288,25 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     );
 
     await driveToReady();
-    // baseProps.declaredScopes already carries ai:write:budgeted, so with nothing
-    // missing it is ALREADY granted → benign re-request → no dialog AND no toast.
+
+    // 🔴 POSITIVE CONTROL, and it is not optional. Everything this test asserts is a
+    // ZERO — no dialog, no toast — and a host that simply DROPPED the message
+    // produces that same zero. Before the stale-closure fix that was a live
+    // possibility: the handler closed over `status` and stayed non-ready until a
+    // passive effect re-registered it, so this test could pass without ever
+    // exercising its own subject ("nothing missing is a no-op").
+    //
+    // `models:read:self` is neither granted (not in declaredScopes) nor grantable
+    // (missingScopes is empty), so it is UN-GRANTABLE and must surface a toast —
+    // proving the handler is live under exactly these props before the zero is read.
+    postFromBlock('REQUEST_CONSENT', { scopes: ['models:read:self'] });
+    await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+    showNotificationSpy.mockClear();
+
+    // THE SUBJECT: baseProps.declaredScopes already carries ai:write:budgeted, so
+    // with nothing missing it is ALREADY granted → benign re-request → no dialog AND
+    // no toast. This zero is now a measurement, because the control above proved a
+    // non-zero is reachable on this very mount.
     postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
 
     await new Promise((r) => setTimeout(r, 150));
@@ -432,58 +449,50 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
 
-  test(
-    'loader clears after the BLOCK_READY timeout (timeout terminal path)',
-    async () => {
-      // token present so the init controller arms its readiness timeout, but we
-      // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
-      // flips status 'loading' → 'timeout', clearing the loader and rendering the
-      // fallback.
-      useFakeClock();
-      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+  test('loader clears after the BLOCK_READY timeout (timeout terminal path)', async () => {
+    // token present so the init controller arms its readiness timeout, but we
+    // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
+    // flips status 'loading' → 'timeout', clearing the loader and rendering the
+    // fallback.
+    useFakeClock();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      // Jump the 10s readiness window on the fake clock instead of sleeping through it.
-      await advancePastWindow(11_000);
-      // The loader must clear and the timeout fallback render.
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-loading').query()).toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
-    },
-    20_000
-  );
+    // Jump the 10s readiness window on the fake clock instead of sleeping through it.
+    await advancePastWindow(11_000);
+    // The loader must clear and the timeout fallback render.
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-loading').query()).toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+  }, 20_000);
 
-  test(
-    'loader clears after the token-wait timeout (no_token terminal path)',
-    async () => {
-      // token=null and tokenError=false → no init controller (shouldStartInit
-      // needs a token) and no synchronous error flip; the token-wait effect's
-      // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
-      // clearing the loader and rendering the fallback. (With a null token the
-      // iframe still mounts in the loading state, so the overlay is shown first.)
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
-      );
+  test('loader clears after the token-wait timeout (no_token terminal path)', async () => {
+    // token=null and tokenError=false → no init controller (shouldStartInit
+    // needs a token) and no synchronous error flip; the token-wait effect's
+    // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
+    // clearing the loader and rendering the fallback. (With a null token the
+    // iframe still mounts in the loading state, so the overlay is shown first.)
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+    );
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-loading').query()).toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
-    },
-    25_000
-  );
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-loading').query()).toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+  }, 25_000);
 });
 
 // Drive the host to the `fatal` terminal state via its REAL status machine:
@@ -509,9 +518,7 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     await driveToFatal();
 
     // Readable message (app name surfaced on the fatal path) — NOT "reported an error".
-    await expect
-      .element(page.getByText('Budgeted Generator failed to load'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Budgeted Generator failed to load')).toBeInTheDocument();
     // Retry button present.
     await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // Loader is gone (no infinite spinner behind the fallback).
@@ -524,62 +531,48 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
     );
     await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
 
-    await expect
-      .element(page.getByText("Couldn't authenticate this app"))
-      .toBeInTheDocument();
+    await expect.element(page.getByText("Couldn't authenticate this app")).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
 
-  test(
-    'timeout terminal state: readable timeout message + Retry, not the loader',
-    async () => {
-      // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
-      useFakeClock();
-      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('timeout terminal state: readable timeout message + Retry, not the loader', async () => {
+    // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
+    useFakeClock();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(11_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect
-        .element(page.getByText("This app didn't load in time"))
-        .toBeInTheDocument();
-      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    20_000
-  );
+    await advancePastWindow(11_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByText("This app didn't load in time")).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 20_000);
 
-  test(
-    'no_token terminal state: readable auth message + Retry, not the loader',
-    async () => {
-      // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
-      );
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('no_token terminal state: readable auth message + Retry, not the loader', async () => {
+    // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+    );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      await expect
-        .element(page.getByText("Couldn't authenticate this app"))
-        .toBeInTheDocument();
-      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    25_000
-  );
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    await expect.element(page.getByText("Couldn't authenticate this app")).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 25_000);
 });
 
 describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', () => {
@@ -696,41 +689,37 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     expect(page.getByTestId('app-page-fallback').query()).toBeNull();
   });
 
-  test(
-    'no_token (token never arrived): Retry calls onRetryToken AND returns to loading',
-    async () => {
-      const onRetryToken = vi.fn();
-      // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost
-          {...baseProps}
-          token={null}
-          tokenError={false}
-          onConsentGranted={vi.fn()}
-          onRetryToken={onRetryToken}
-        />
-      );
-      // The loader is the precondition — and it also guarantees the render has committed
-      // (so the product's token-wait timer is on the fake clock) before we advance it.
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      await advancePastWindow(16_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
-      expect(onRetryToken).not.toHaveBeenCalled();
+  test('no_token (token never arrived): Retry calls onRetryToken AND returns to loading', async () => {
+    const onRetryToken = vi.fn();
+    // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError={false}
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+    // The loader is the precondition — and it also guarantees the render has committed
+    // (so the product's token-wait timer is on the fake clock) before we advance it.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await advancePastWindow(16_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
+    expect(onRetryToken).not.toHaveBeenCalled();
 
-      await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByRole('button', { name: 'Retry' }).click();
 
-      expect(onRetryToken).toHaveBeenCalledTimes(1);
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
-    },
-    25_000
-  );
+    expect(onRetryToken).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+  }, 25_000);
 
   test('fatal (non-auth): Retry returns to loading + remounts but does NOT re-mint the token', async () => {
     const onRetryToken = vi.fn();
@@ -754,35 +743,31 @@ describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', (
     expect(onRetryToken).not.toHaveBeenCalled();
   });
 
-  test(
-    'timeout (non-auth): Retry returns to loading but does NOT re-mint the token',
-    async () => {
-      const onRetryToken = vi.fn();
-      // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
-      useFakeClock();
-      renderWithProviders(
-        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
-      );
-      // The loader is the precondition — and it also guarantees the render has committed
-      // (so the product's readiness timer is on the fake clock) before we advance it.
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      await advancePastWindow(11_000);
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 5_000, interval: 100 }
-      );
+  test('timeout (non-auth): Retry returns to loading but does NOT re-mint the token', async () => {
+    const onRetryToken = vi.fn();
+    // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+    );
+    // The loader is the precondition — and it also guarantees the render has committed
+    // (so the product's readiness timer is on the fake clock) before we advance it.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await advancePastWindow(11_000);
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 5_000, interval: 100 }
+    );
 
-      await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByRole('button', { name: 'Retry' }).click();
 
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
-      // Token was fine on a timeout → no re-mint (remount-only path unchanged).
-      expect(onRetryToken).not.toHaveBeenCalled();
-    },
-    20_000
-  );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    // Token was fine on a timeout → no re-mint (remount-only path unchanged).
+    expect(onRetryToken).not.toHaveBeenCalled();
+  }, 20_000);
 });
 
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
@@ -813,9 +798,7 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   beforeEach(() => {
     // vi.spyOn dedupes to the same mock when fetch is already spied, so its
     // .mock.calls would accumulate across tests — clear it each time.
-    fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     fetchSpy.mockClear();
   });
 
