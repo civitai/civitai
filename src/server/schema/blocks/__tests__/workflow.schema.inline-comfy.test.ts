@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blockCustomComfyBodySchema,
+  blockInlineComfyBodySchema,
   blockWorkflowBodySchema,
   INLINE_GRAPH_NODES_MAX,
   INLINE_MAX_BUZZ,
@@ -277,5 +279,100 @@ describe('blockWorkflowBodySchema — inline arm bounds', () => {
     expect(
       blockWorkflowBodySchema.safeParse(inlineBody({ negativePrompt: 'a'.repeat(1501) })).success
     ).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE ACCEPT/REJECT BOUNDARY, PINNED AS A TABLE.
+//
+// The arms now carry a custom `error` map so a rejected `customComfy` body is
+// told which arm it landed on and what the other one is (see the ARM-AWARE
+// REJECTION MESSAGES block in `workflow.schema.ts`; the message text itself is
+// asserted at the router seam in `blocks.router.workflow.test.ts`).
+//
+// A custom error map is not supposed to move the boundary — but "not supposed
+// to" is a claim, and the whole reason `.strict()` is here is that on this arm
+// it is a security gate rather than hygiene. So the VERDICT is pinned
+// independently of the text: every row below is a boolean that must not move,
+// whatever a message says. This is an INVARIANT GUARD, deliberately labelled as
+// one — it was green before the message change and must stay green after.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 blockWorkflowBodySchema — customComfy accept/reject boundary is unchanged', () => {
+  const RECIPE_BODY = { kind: 'customComfy', recipe: RECIPE_ID, params: { prompt: 'x' } };
+
+  const cases: Array<[string, unknown, boolean]> = [
+    ['recipe body, no `mode` (every deployed app)', RECIPE_BODY, true],
+    ['recipe body, explicit `mode:"recipe"`', { ...RECIPE_BODY, mode: 'recipe' }, true],
+    ['recipe body + an unknown key', { ...RECIPE_BODY, graph: {} }, false],
+    ['recipe body + an unregistered recipe id', { ...RECIPE_BODY, recipe: 'nope' }, false],
+    ['inline body', inlineBody(), true],
+    ['inline body + an unknown key', inlineBody({ graph: {} }), false],
+    ['inline body, maxBuzz over the ceiling', inlineBody({ maxBuzz: INLINE_MAX_BUZZ + 1 }), false],
+    ['inline body, maxBuzz at the ceiling', inlineBody({ maxBuzz: INLINE_MAX_BUZZ }), true],
+    ['inline body missing maxBuzz', inlineBody({ maxBuzz: undefined }), false],
+    ['a body naming BOTH arms', inlineBody({ recipe: RECIPE_ID, params: {} }), false],
+    ['an unknown `mode` value', { ...RECIPE_BODY, mode: 'graph' }, false],
+    ['`mode:"inline"` on a recipe-shaped body', { ...RECIPE_BODY, mode: 'inline' }, false],
+    ['a bare string where a body is expected', 'customComfy', false],
+    ['a null body', null, false],
+  ];
+
+  it.each(cases)('%s → %s', (_label, body, accepted) => {
+    expect(blockWorkflowBodySchema.safeParse(body).success).toBe(accepted);
+  });
+
+  // The seven `CustomComfyInput` fields an app must never set are pinned as
+  // REJECTED in their own table above (`inline arm rejects every
+  // CustomComfyInput field an app must not set`) — the error map cannot have
+  // moved them, because it never runs before the verdict is decided. This asserts
+  // the same for the RECIPE arm, which had no such table.
+  it.each([
+    'sessionOwnerApiToken',
+    'comfyImage',
+    'minVramGb',
+    'sessionId',
+    'useSageAttention',
+    'minimumDurationSeconds',
+    'trace',
+  ])('the RECIPE arm also rejects `%s`', (field) => {
+    expect(blockWorkflowBodySchema.safeParse({ ...RECIPE_BODY, [field]: 'x' }).success).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE ARM ERROR MAP'S EARLY RETURN, MADE REACHABLE.
+//
+// `customComfyArmErrorMap` opens with `if (iss.code !== 'unrecognized_keys')
+// return undefined;` so zod keeps its own message for every other issue. That
+// line is asserted at the router seam only INDIRECTLY (a bad `maxBuzz` keeps its
+// `Too big:` message) — and that assertion cannot fail, because a per-FIELD
+// issue is raised by the field's schema and never consults the object's error
+// map at all. Deleting the line was MEASURED to leave every other test in both
+// this file and `blocks.router.workflow.test.ts` green.
+//
+// The one issue an OBJECT schema raises itself, other than `unrecognized_keys`,
+// is `invalid_type` for a non-object input — and the outer `kind` discriminated
+// union rejects a non-object before any arm sees it, so that code is
+// unreachable through `blockWorkflowBodySchema` and therefore through the
+// router. Parsing the exported arm directly is the only way to reach it. With
+// the early return deleted, these two report the arm blurb with an EMPTY key
+// list ("recipe body:  — a `customComfy` body has two forms…") instead of
+// zod's `Invalid input: expected object, received string`.
+//
+// Whole-string, for the same reason as the router-seam assertions: a blurb
+// leaking into this message would still `toContain` every word you would think
+// to check for.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 the arm error map returns UNDEFINED for every non-`unrecognized_keys` issue', () => {
+  it.each([
+    ['recipe', blockCustomComfyBodySchema],
+    ['inline', blockInlineComfyBodySchema],
+  ])("the %s arm keeps zod's own `invalid_type` message for a non-object body", (_arm, schema) => {
+    const parsed = schema.safeParse('customComfy');
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues).toHaveLength(1);
+    expect(parsed.error.issues[0].code).toBe('invalid_type');
+    expect(parsed.error.issues[0].message).toBe('Invalid input: expected object, received string');
   });
 });
