@@ -2,65 +2,34 @@ import { Card, Divider, Stack, Title, Group, Text, Checkbox } from '@mantine/cor
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
-import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
+import {
+  useNotificationSettings,
+  useToggleNotificationSetting,
+} from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
-  isOptInNotification,
   notificationCategoryTypes,
   notificationTypes,
+  optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
-import { showSuccessNotification } from '~/utils/notifications';
-
-import { trpc } from '~/utils/trpc';
 
 export default function NotificationsCard() {
-  const queryUtils = trpc.useUtils();
-
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();
 
-  const updateNotificationSettingMutation = trpc.notification.updateUserSettings.useMutation({
-    async onMutate({ toggle, type }) {
-      await queryUtils.user.getNotificationSettings.cancel();
+  const updateNotificationSettingMutation = useToggleNotificationSetting();
 
-      const prevUserSettings = queryUtils.user.getNotificationSettings.getData() ?? [];
-      const withRow = prevUserSettings.map((x) => x.type);
-      const latestSetting =
-        prevUserSettings.length > 0 ? prevUserSettings[prevUserSettings.length - 1] : { id: 0 };
-
-      // Mirror the split the toggle handler makes: for an opt-in type the row means subscribed, so
-      // the same `toggle` adds a row where it removes one for everything else. Guessing a single
-      // direction here made the checkbox flicker to the wrong state until the refetch landed.
-      const removing = type.filter((t) =>
-        toggle ? !isOptInNotification(t) : isOptInNotification(t)
-      );
-      const adding = type
-        .filter((t) => (toggle ? isOptInNotification(t) : !isOptInNotification(t)))
-        .filter((t) => !withRow.includes(t))
-        .map((t) => ({ ...latestSetting, type: t, disabledAt: new Date() }));
-
-      queryUtils.user.getNotificationSettings.setData(undefined, (old = []) => [
-        ...old.filter((setting) => !removing.includes(setting.type)),
-        ...adding,
-      ]);
-
-      return { prevUserSettings };
-    },
-    onSuccess() {
-      showSuccessNotification({ message: 'User profile updated' });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getNotificationSettings.setData(undefined, context?.prevUserSettings);
-    },
-  });
+  // Asymmetric on purpose. Turning everything OFF must also unsubscribe opt-in types, or a user who
+  // silences the site keeps receiving promos with no way back — the aggregates then hide the tree
+  // that holds the only in-settings control. Turning everything ON must NOT subscribe them: nobody
+  // reads "enable notifications" as "sign me up for shop promos". Opt-in stays a deliberate act.
   const toggleAll = (toggle: boolean) => {
-    updateNotificationSettingMutation.mutate({ toggle, type: notificationTypes });
+    const type = toggle ? notificationTypes : [...notificationTypes, ...optInNotificationTypes];
+    updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    // Same exclusion `notificationTypes` makes for toggleAll — a category switch must not decide an
-    // opt-in subscription on the user's behalf in either direction.
     const categoryTypes = notificationCategoryTypes[category]
-      ?.filter((x) => !x.optIn)
+      ?.filter((x) => toggle === false || !x.optIn)
       .map((x) => x.type);
     if (!categoryTypes?.length) return;
 
