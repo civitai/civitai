@@ -50,7 +50,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { runImageSearch } from '../image-search.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { UNRESOLVED_CLIENT_IP, resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 const UA = 'probe-agent/1.0';
 
@@ -75,6 +75,30 @@ async function actorFor(req: NextApiRequest): Promise<string> {
   ];
   return call[0].actor;
 }
+
+/**
+ * Fixtures span the cases where one derivation can differ from another, and are
+ * shared by the derivation block and the sibling-agreement block below.
+ */
+const FIXTURES: ReadonlyArray<
+  readonly [string, Record<string, string | string[]>, string | undefined, string | null]
+> = [
+  ['an edge-stamped request', { 'cf-connecting-ip': '203.0.113.7' }, undefined, '203.0.113.7'],
+  [
+    'an edge-stamped request that also carries a competing address',
+    { 'cf-connecting-ip': '203.0.113.7', 'x-client-ip': '198.51.100.4' },
+    undefined,
+    '203.0.113.7',
+  ],
+  [
+    'a request whose edge value is not an address, falling through',
+    { 'cf-connecting-ip': 'notanip', 'x-client-ip': '198.51.100.4' },
+    undefined,
+    '198.51.100.4',
+  ],
+  ['a request with only a transport peer', {}, '10.42.0.9', '10.42.0.9'],
+  ['a request with nothing resolvable at all', {}, undefined, null],
+];
 
 describe('runImageSearch: the address behind the search-actor label', () => {
   beforeEach(() => {
@@ -104,26 +128,6 @@ describe('runImageSearch: the address behind the search-actor label', () => {
   });
 
   describe('the actor is built from the shared derivation, on every fixture', () => {
-    const FIXTURES: ReadonlyArray<
-      readonly [string, Record<string, string | string[]>, string | undefined, string | null]
-    > = [
-      ['an edge-stamped request', { 'cf-connecting-ip': '203.0.113.7' }, undefined, '203.0.113.7'],
-      [
-        'an edge-stamped request that also carries a competing address',
-        { 'cf-connecting-ip': '203.0.113.7', 'x-client-ip': '198.51.100.4' },
-        undefined,
-        '203.0.113.7',
-      ],
-      [
-        'a request whose edge value is not an address, falling through',
-        { 'cf-connecting-ip': 'notanip', 'x-client-ip': '198.51.100.4' },
-        undefined,
-        '198.51.100.4',
-      ],
-      ['a request with only a transport peer', {}, '10.42.0.9', '10.42.0.9'],
-      ['a request with nothing resolvable at all', {}, undefined, null],
-    ];
-
     it.each(FIXTURES)('%s', async (_label, headers, peer, expectedIp) => {
       const req = reqWith(headers, peer);
 
@@ -135,6 +139,36 @@ describe('runImageSearch: the address behind the search-actor label', () => {
       const onWire = await actorFor(req);
       expect(onWire).toBe(buildSearchActor({ ip: expectedIp, userAgent: UA }));
       expect(onWire).toBe(buildSearchActor({ ip: resolveClientIpOrNull(req), userAgent: UA }));
+    });
+  });
+
+  describe('agreement with the two ctx.ip-fed sibling call sites', () => {
+    /**
+     * `ctx.ip` is `resolveClientIpOrNull(req) ?? ''` and feeds the two
+     * `buildSearchActor` calls in `image.controller.ts`. One caller must not be
+     * hashed to two different actors depending on which entry point served the
+     * request, so this pins what that agreement does and does NOT depend on.
+     */
+    it("agrees with the ctx.ip form on every fixture — the `?? ''` sentinel is inert", async () => {
+      for (const [, headers, peer] of FIXTURES) {
+        const req = reqWith(headers, peer);
+        const ctxIpForm = buildSearchActor({
+          ip: resolveClientIpOrNull(req) ?? '',
+          userAgent: UA,
+        });
+        expect(await actorFor(req)).toBe(ctxIpForm);
+      }
+    });
+
+    it('but the shared LABEL is NOT interchangeable — it would break that agreement', () => {
+      // Why this site takes `resolveClientIpOrNull` and not `resolveClientIp`.
+      // `null`/`''` fold to one hash input; `'unknown'` hashes as itself.
+      expect(buildSearchActor({ ip: null, userAgent: UA })).toBe(
+        buildSearchActor({ ip: '', userAgent: UA })
+      );
+      expect(buildSearchActor({ ip: UNRESOLVED_CLIENT_IP, userAgent: UA })).not.toBe(
+        buildSearchActor({ ip: '', userAgent: UA })
+      );
     });
   });
 
