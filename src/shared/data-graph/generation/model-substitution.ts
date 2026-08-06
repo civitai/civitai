@@ -164,6 +164,72 @@ export type ModelSubstitution = {
 export type ModelSubstitutionEvent = Omit<ModelSubstitution, 'reason'>;
 
 /**
+ * The subset of a {@link ModelSubstitution} that travels on a WIRE — the App
+ * Blocks snapshot, the tRPC generation replies, and the orchestrator workflow
+ * metadata that survives to later reads.
+ *
+ * `ecosystem`/`workflow` are deliberately dropped: the caller already knows what
+ * it submitted, and they are the two fields most likely to change shape as the
+ * graph config evolves.
+ */
+export type PersistedModelSubstitution = {
+  requested: number;
+  applied: number;
+  reason: ModelSubstitutionReason;
+};
+
+/**
+ * The key silent substitutions are persisted under on an orchestrator workflow's
+ * `metadata`.
+ *
+ * 🔴 WHY PERSISTED AT ALL, AND NOT ONLY ON THE SUBMIT REPLY. A reply-only field
+ * is gone before there is anything to show beside it: the render/poll path
+ * rebuilds from a freshly fetched Workflow with none of the submitting request's
+ * context, and neither `block_workflows` nor the generation feed retains the
+ * submitted body to recover it from. Riding on the metadata the submit body
+ * already carries makes it readable on EVERY later read, with no schema or DB
+ * change.
+ */
+export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
+
+/**
+ * Read persisted substitutions back off a workflow's `metadata`.
+ *
+ * 🔴 VALIDATED, NOT CAST. This crosses a service boundary — the value is
+ * whatever the orchestrator hands back — and it feeds public wire contracts
+ * whose `reason` is also a bounded prom label. Each entry is checked
+ * structurally and its `reason` narrowed against the code-owned union; anything
+ * else is dropped.
+ *
+ * Returns `undefined` (not `[]`) when there is nothing to report, so every
+ * caller can keep OMITTING the field rather than emitting an empty array.
+ *
+ * 🔴 DECLARED HERE, IN A MODULE THAT IMPORTS NOTHING, BECAUSE IT HAS TWO
+ * CONSUMERS. It began life private to the App Blocks workflow service; the tRPC
+ * generation path (#3665) needs the identical parse, and a second copy of a
+ * predicate is how the same bug gets fixed at one site and not the other. Keep
+ * it dependency-free so both a server service and shared graph code can use it.
+ */
+export function readModelSubstitutionsFromMetadata(
+  metadata: unknown
+): PersistedModelSubstitution[] | undefined {
+  const raw = (metadata as Record<string, unknown> | null | undefined)?.[
+    WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY
+  ];
+  if (!Array.isArray(raw)) return undefined;
+  const out: PersistedModelSubstitution[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { requested, applied, reason } = entry as Record<string, unknown>;
+    if (typeof requested !== 'number' || !Number.isFinite(requested)) continue;
+    if (typeof applied !== 'number' || !Number.isFinite(applied)) continue;
+    if (!isModelSubstitutionReason(reason)) continue;
+    out.push({ requested, applied, reason });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
  * Resolves the REASON for one substitution. Server-supplied (see the module
  * note on why this is injected); `classifyModelSubstitutionReason` in
  * `workflow-capability.ts` is the only implementation.
