@@ -49,7 +49,10 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     curated non-moderator author cohort alongside `moderators`. The mint
  *     endpoint's own comment at `pages/api/v1/blocks/dev-token.ts` says it
  *     plainly: "a curated non-mod cohort can mint a dev token for `dev:live`".
- *     So a non-moderator in that cohort reaches this belt in production today.
+ *     So a non-moderator in that cohort reaches this belt whenever that cohort
+ *     is populated. (Deliberately NOT "reaches it today": live Flipt state is
+ *     something this repo cannot settle, and a claim it cannot check is a claim
+ *     that rots. The reachable-by-construction fact is what matters here.)
  *
  *     🔴 AND THE OBSERVATION THAT PRODUCED THE WRONG CLAIM COULD NOT HAVE
  *     SUPPORTED IT. It was a single account's 403 from that endpoint —
@@ -221,6 +224,14 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
   // these two cases existed, this file did not catch it at all (every fixture
   // above is already lowercase, so it survived 13/13). Both consequences of the
   // fold are pinned, because they fail in OPPOSITE directions.
+  //
+  // 🔴 SCOPE — ONLY THE `source` FOLD IS PINNED, NOT BOTH. `parseInlineAir`
+  // folds `type` one line ABOVE the `source` fold, and that sibling fold still
+  // survives both suites. It is left uncovered deliberately, not by oversight:
+  // its failure direction is fail-CLOSED (drop it and an uppercase `LORA` starts
+  // being REJECTED — over-strictness, a false reject), which is the safe
+  // direction, whereas the `source` fold guards a routing decision. Do not read
+  // "case-folding is covered" off this block; read "the source fold is".
   // ───────────────────────────────────────────────────────────────────────────
   it('🔴 CASE-FOLD (reject side) — an UPPERCASE non-allowlisted source is rejected, named LOWERCASED', async () => {
     // Without the fold this still rejects — but the message names `REPLICATE`.
@@ -237,11 +248,22 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
   });
 
   it('🔴 CASE-FOLD (bypass side) — an UPPERCASE `CIVITAI` source still enters the entitlement belt', async () => {
-    // THE ACTUAL BYPASS. A case-sensitive `source !== 'civitai'` sends this down
-    // the non-civitai branch and returns BEFORE any entitlement check — a gated
+    // A case-sensitive `source !== 'civitai'` would send this down the
+    // non-civitai branch and return BEFORE any entitlement check — a gated
     // resource waved through by spelling. Asserting the belt was CALLED (not
     // merely that this resolves) is what distinguishes "gated and allowed" from
-    // "never gated".
+    // "never gated", and that assertion is the load-bearing one: a mutant that
+    // inverts the routing so the belt is skipped turns this case red.
+    //
+    // 🔴 BE PRECISE ABOUT WHICH MUTATION THIS CATCHES — an earlier version of
+    // this comment called it "THE ACTUAL BYPASS", which overstated what ONE
+    // change does. Dropping only `.toLowerCase()` on `source` does NOT open the
+    // bypass: the allowlist test folds on the adjacent line and catches
+    // `CIVITAI` first, so the request is REJECTED — fail-CLOSED over-strictness,
+    // not a hole. Reaching the routing bypass takes TWO changes (fold dropped
+    // AND the allowlist made case-insensitive or widened). This case still dies
+    // under the single-change mutant, but it dies at the ALLOWLIST, so do not
+    // read its redness as evidence about the routing branch.
     mockGetResourceData.mockResolvedValue([row({ id: UPPERCASE_VERSION_ID })]);
     await expect(
       assertViewerEntitledToInlineResources({
@@ -294,6 +316,37 @@ describe('assertViewerEntitledToInlineResources — the non-moderator Private/ep
     expect(message).toBe('Using Private resources requires an active subscription.');
     // The gate was genuinely REACHED and consulted the subscription service for
     // THIS viewer — not short-circuited somewhere earlier.
+    expect(mockGetHighestTierSubscription).toHaveBeenCalledWith(NON_MODERATOR.id);
+  });
+
+  it('🔴 MIXED MANIFEST — ONE Private resource among Public ones still rejects (`.some`, not `.every`)', async () => {
+    // 🔴 THE FIXTURE SHAPE IS THE ASSERTION HERE. `hasPrivateOrEpoch` is a
+    // `.some` over the returned rows. Every OTHER fixture in this file and in
+    // the sibling suite is SINGLE-RESOURCE — and on a one-element array `.some`
+    // and `.every` are INDISTINGUISHABLE. So `.some` → `.every` was a live
+    // fail-OPEN that both suites passed 50/50: with `.every`, a manifest mixing
+    // one Private resource with any Public one reports "no private resources
+    // here" and the entitlement gate never runs.
+    //
+    // That is the real-world shape too — an inline graph declaring a Private
+    // LoRA alongside a public checkpoint — and it fails OPEN on a Buzz-spending
+    // path, so it is the direction that matters. No assertion could have caught
+    // it; only a second element in the array can.
+    mockGetResourceData.mockResolvedValue([
+      row({ id: PUBLIC_VERSION_ID, availability: 'Public' }),
+      row({ id: PRIVATE_VERSION_ID, availability: 'Private' }),
+    ]);
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    const { code, message } = await captureRejection(
+      assertViewerEntitledToInlineResources({
+        airs: [PUBLIC_AIR, PRIVATE_AIR],
+        user: NON_MODERATOR,
+      })
+    );
+
+    expect(code).toBe('FORBIDDEN');
+    expect(message).toBe('Using Private resources requires an active subscription.');
     expect(mockGetHighestTierSubscription).toHaveBeenCalledWith(NON_MODERATOR.id);
   });
 
