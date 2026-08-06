@@ -34,7 +34,7 @@
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
-  import type { CapTier } from '@civitai/buzz';
+  import { capMediaType, type CapTier } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
@@ -75,6 +75,22 @@
       ? { label: 'Over cap', cls: 'text-yellow-5' }
       : { label: 'Active', cls: 'text-green-5' };
   }
+
+  // Versions storing a fee above the creator's cap. They earn the capped amount, not the stored one, and
+  // the per-row "Over cap" chip only reaches someone already scanning the table — the creator in
+  // CU 868kn7zu4 set a fee before caps existed and had no reason to look again.
+  const overCapVersions = $derived.by(() => {
+    const out: { name: string; stored: number; effective: number }[] = [];
+    for (const m of data.models)
+      for (const v of m.versions) {
+        const fee = v.licensingFee ?? 0;
+        if (fee <= 0) continue;
+        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
+          .maxPerGeneration;
+        if (fee > cap) out.push({ name: `${m.name} · ${v.name}`, stored: fee, effective: cap });
+      }
+    return out;
+  });
 
   // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
   function feeChip(
@@ -263,6 +279,24 @@
     return strictest ?? monetizationLimits({ tier: t });
   }
   const bulkLimits = $derived(strictestLimits(tier));
+
+  // One fee is applied across the whole selection, and the server rejects the batch if it would raise ANY
+  // version past that version's own cap — so a single "your cap is N" hides which member is binding.
+  // Grouped by the two axes that move the cap: model type and the media type of the base model.
+  const selectionFeeCaps = $derived.by(() => {
+    const byKey = new Map<string, { label: string; cap: number }>();
+    for (const m of data.models)
+      for (const v of m.versions) {
+        if (!selected.has(v.id)) continue;
+        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
+          .maxPerGeneration;
+        const media = capMediaType(v.baseModel);
+        const key = `${m.type}|${media}`;
+        if (!byKey.has(key))
+          byKey.set(key, { label: media === 'video' ? `${m.type} (video)` : m.type, cap });
+      }
+    return [...byKey.values()].sort((a, b) => a.cap - b.cap);
+  });
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
@@ -579,6 +613,29 @@
   </label>
 </div>
 
+{#if overCapVersions.length > 0}
+  <div class="mb-3 rounded-lg border border-yellow-5/30 bg-yellow-5/10 px-3 py-2 text-sm">
+    <p class="font-medium text-yellow-4">
+      {overCapVersions.length} version{overCapVersions.length === 1 ? '' : 's'} earn less than the fee
+      you set
+    </p>
+    <p class="mt-0.5 text-xs text-dark-2">
+      Your membership tier caps what a generation can charge, so these are billed at the capped rate
+      — the stored fee applies again if you upgrade.
+    </p>
+    <ul class="mt-1.5 max-h-24 overflow-y-auto text-xs text-dark-1">
+      {#each overCapVersions.slice(0, 10) as v (v.name)}
+        <li class="truncate">
+          {v.name} — set {v.stored} ⚡, earning {v.effective} ⚡ / generation
+        </li>
+      {/each}
+    </ul>
+    {#if overCapVersions.length > 10}
+      <p class="mt-1 text-xs text-dark-2">…and {overCapVersions.length - 10} more.</p>
+    {/if}
+  </div>
+{/if}
+
 {#if data.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
@@ -598,6 +655,7 @@
   bind:action={bulkAction}
   versionIds={selectedIds}
   limits={bulkLimits}
+  feeCapsByType={selectionFeeCaps}
   capTier={tier}
   capFor={(t, imgs) => feeMaxFor(strictestLimits(t), imgs)}
   accessCapFor={(t) => finiteOrNull(maxPaidAccessPrice(t))}

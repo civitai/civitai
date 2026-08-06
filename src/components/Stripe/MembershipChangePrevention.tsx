@@ -38,6 +38,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { getSubscriptionDisplayBuzzType } from '~/shared/utils/buzz-membership';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -361,7 +362,7 @@ export const CancelMembershipBenefitsModal = () => {
               {benefits && (
                 <PlanBenefitList
                   benefits={benefits}
-                  buzzType={subscription.buzzType}
+                  buzzType={getSubscriptionDisplayBuzzType(subscription.buzzType, mainBuzzType)}
                   tier={subscription.product.metadata.tier}
                 />
               )}

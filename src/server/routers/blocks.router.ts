@@ -136,6 +136,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -1090,9 +1091,7 @@ async function createBlockTextToImageStep(opts: {
   // object — so it describes THIS submit and no one else's. Behaviour is
   // unchanged; the caller folds this into the snapshot so the block can detect
   // that it was billed for a model it did not ask for.
-  const modelSubstitutions = externalCtx.modelSubstitutions
-    ?.list()
-    .map(({ requested, applied, reason }) => ({ requested, applied, reason }));
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
 
   // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
   // A block renders from the TERMINAL POLL (the only snapshot carrying
@@ -5388,16 +5387,32 @@ export const blocksRouter = router({
     //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
     //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
     //     `allowedScopes | UserRead`, not Full.
-    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
-    //     migration, which no zod schema governs.
+    //   - The one client exceeding Full (civitai-cli, now 100777985) was written by RAW SQL
+    //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
     //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
     //     carry `grants: []` so they cannot mint an account bearer token at all.
-    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
-    // flip is unreachable — but that last part rests on INSPECTION of that migration,
-    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
-    // this gate flips for it and no test will catch it.
+    // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
+    // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
+    // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
+    // (33554431) and the flip stays unreachable for it. (Bits 14/15/16 were added by
+    // `20260806140000_widen_civitai_cli_oauth_client_ai_services_scopes` so the
+    // `civitai login` token can run `civitai generate` — issue #3681.)
+    // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
+    // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
+    // which enumerates every migration whose LIVE SQL writes `"OauthClient"."allowedScopes"`
+    // off the tree, reconciles the set against a declared table, pins each grant's whole
+    // statement verbatim, folds the grants per client — SEEDED FROM THE COLUMN DEFAULT
+    // (Full), not from 0 — and fails if any client would hold a STRICT superset of Full.
+    // The seed is what makes the claim real: the likely way this gate flips is a migration
+    // that ORs one opt-in bit onto a row created with the column default, landing on
+    // `Full | <bit>`; folding from 0 read that same migration as granting just `<bit>` and
+    // passed clean. Verified by planting exactly that migration and watching the guard go
+    // red on `allowedScopes=100663295`.
+    // What that guard still cannot see is a grant written OUTSIDE a migration (a hand-run
+    // UPDATE against a database), and it cannot prove what any environment's row actually
+    // holds — these migrations are manual-apply.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the

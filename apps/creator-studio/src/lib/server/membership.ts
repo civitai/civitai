@@ -39,6 +39,24 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
 // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — membership decides
 // only HOW MUCH, via maxLicensingFee / maxPaidAccessPrice.
 
+// Usage control is NOT open like monetization is: a non-Download control needs the main app's
+// `generationOnlyModels` feature, whose availability is ['mod', 'granted', 'gold']. Restated here rather
+// than imported because the flag registry lives in the main app and this spoke writes the column directly
+// — if that availability list changes, this has to change with it (CU 868kmy9f3).
+const GENERATION_ONLY_TIERS = ['gold'];
+const GENERATION_ONLY_PERMISSION = 'generationOnlyModels';
+
+export function canSetGenerationOnly(user: SessionUser | undefined): boolean {
+  if (!user) return false;
+  if (user.isModerator) return true;
+  if (user.permissions?.includes(GENERATION_ONLY_PERMISSION)) return true;
+  return GENERATION_ONLY_TIERS.includes(user.tier ?? '');
+}
+
+export function tierGrantsGenerationOnly(tier: string | null | undefined): boolean {
+  return GENERATION_ONLY_TIERS.includes(tier ?? '');
+}
+
 // No subscription and the 'free' tier are the same thing everywhere — both resolve to 'free', so neither
 // the caps nor the UI ever needs to tell them apart.
 export const displayTier = (m: Membership): string => m.tier ?? 'free';
@@ -59,4 +77,6 @@ export type CreatorCaps = {
   maxEarlyAccessDays: number;
   earlyAccessUsed: number;
   earlyAccessCap: number;
+  /** Whether the creator may move a version off Download — see canSetGenerationOnly. */
+  canSetGenerationOnly: boolean;
 };

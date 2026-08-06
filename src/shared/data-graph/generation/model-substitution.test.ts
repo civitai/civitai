@@ -473,11 +473,13 @@ describe('runtime narrowing helpers', () => {
     }
   });
 
-  it('the surface union is exactly the three wired call sites', () => {
-    // 3 reasons x 3 surfaces = 9 series. Adding a value here is a deliberate,
+  it('the surface union is exactly the four wired call sites', () => {
+    // 3 reasons x 4 surfaces = 12 series. Adding a value here is a deliberate,
     // reviewable widening of the counter's cardinality, so it has to fail a test
-    // rather than land silently.
-    expect([...GENERATION_SURFACES]).toEqual(['block', 'onsite', 'preset']);
+    // rather than land silently. `api` (#3665) was exactly that: it was split out
+    // of `onsite`, which had been assigned by a hardcoded literal on two tRPC
+    // procedures that also serve every bearer-token caller.
+    expect([...GENERATION_SURFACES]).toEqual(['api', 'block', 'onsite', 'preset']);
     expect([...MODEL_SUBSTITUTION_REASONS]).toEqual(['wrong-workflow', 'unrecognized', 'gated']);
   });
 });

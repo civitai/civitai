@@ -1226,7 +1226,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Krea2,
     defaults: {
-      model: { id: 2983022 },
+      model: { id: 3072329 },
       modelLocked: true,
     },
   },
