@@ -139,51 +139,111 @@ describe('tierOf', () => {
     expect(tierOf(onNewColumns, catalog)).toBe('pending');
   });
 
-  it.each([
+  // SEPARATOR ALPHABET, DERIVED — not five spellings hand-picked.
+  //
+  // Each case builds `table = A{S}B` / `column = C` against `A` / `B{S}C`. Under an
+  // implementation separator M those two keys are equal IFF `S === M`, so a case only ever
+  // catches its own separator. The previous version listed five, which meant a sixth nobody
+  // enumerated was invisible: `-`, `#`, `::`, `--` and `~!~` all survived at 382/0 — and `-`
+  // and `#` are legal inside a QUOTED Postgres identifier, so that is the hazard class the
+  // guard exists for, not a hypothetical.
+  //
+  // Enumerating the alphabet is what lets the claim be stated at its true scope, which is
+  // narrower than "any character": empty, space, every ASCII punctuation character, five
+  // multi-character candidates, and five non-ASCII ones. THAT IS THE WHOLE CLAIM. A finite
+  // enumeration cannot prove a property over an infinite alphabet, and a separator outside
+  // this list is not covered by these cases — `ZZQ` still survives them, as would any other
+  // unenumerated multi-character run. The fuzz below is a second, differently-constructed
+  // check that catches single-character separators without naming them; between them, every
+  // separator anyone has actually proposed for this line dies.
+  const ASCII_PUNCTUATION = [...'!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'];
+  const SEPARATOR_CANDIDATES: { name: string; sep: string }[] = [
     { name: 'empty', sep: '' },
-    { name: 'underscore', sep: '_' },
-    { name: 'pipe', sep: '|' },
-    { name: 'dot', sep: '.' },
     { name: 'space', sep: ' ' },
-  ])('cannot confuse (table, column) pairs that collide under a $name separator', ({ sep }) => {
-    // Pins the PROPERTY — distinct (table, column) pairs must produce distinct keys — rather
-    // than one character. The previous version used a single `A_B`+`C` vs `A`+`B_C` fixture,
-    // which only collides under `_`: mutating the separator to `|` or to empty both SURVIVED.
-    // That is a guard spelled to a character instead of asserting the invariant, and this
-    // file already had one instance of that class.
-    //
-    // Each case builds the pair that collides under ITS separator, so any separator drawn
-    // from a Postgres identifier's legal alphabet fails at least one of them. NUL is the one
-    // character that cannot appear in an identifier, so it alone passes all of them.
-    const table = `A${sep}B`;
-    const column = 'C';
-    const otherTable = 'A';
-    const otherColumn = `B${sep}C`;
+    ...ASCII_PUNCTUATION.map((c) => ({ name: `punctuation ${c}`, sep: c })),
+    ...['::', '--', '~!~', '||', '__'].map((c) => ({ name: `multi-char ${c}`, sep: c })),
+    // Non-ASCII, because a QUOTED Postgres identifier may contain them and an ASCII-only
+    // alphabet silently excludes them: `§` survived the first version of this enumeration.
+    ...['§', '±', '£', '·', '\u00a0'].map((c) => ({
+      name: `non-ascii U+${c.codePointAt(0)?.toString(16).padStart(4, '0')}`,
+      sep: c,
+    })),
+  ];
 
-    const catalogWithOther: DbCatalog = {
-      tables: [table, otherTable],
-      // ONLY the other pair exists in the database
-      columns: [{ table: otherTable, column: otherColumn, notNull: false }],
-      foreignKeys: [],
-      uniqueIndexes: [],
+  it.each(SEPARATOR_CANDIDATES)(
+    'cannot confuse (table, column) pairs that collide under a $name separator',
+    ({ sep }) => {
+      const catalogWithOther: DbCatalog = {
+        tables: [`A${sep}B`, 'A'],
+        // ONLY the second pair exists in the database
+        columns: [{ table: 'A', column: `B${sep}C`, notNull: false }],
+        foreignKeys: [],
+        uniqueIndexes: [],
+      };
+      const onAbsentColumn = finding({
+        kind: 'missing-foreign-key',
+        table: `A${sep}B`,
+        columns: ['C'],
+        model: 'AB',
+        field: 'c',
+        declared: 'FOREIGN KEY -> Other(id) ON DELETE Cascade ON UPDATE Cascade',
+      });
+
+      expect(tierOf(onAbsentColumn, catalogWithOther)).toBe('pending');
+      // Positive control: the pair that IS present must still resolve, so the assertion
+      // above cannot pass merely because every lookup fails.
+      expect(
+        tierOf({ ...onAbsentColumn, table: 'A', columns: [`B${sep}C`] }, catalogWithOther)
+      ).toBe('enforced');
+    }
+  );
+
+  it('keeps distinct (table, column) pairs distinct across a deterministic fuzz', () => {
+    // Differently constructed from the enumeration above, on purpose. Rather than testing
+    // one separator per case, this builds pairs that are AMBIGUOUS BY CONSTRUCTION — the
+    // same character run split at two different points — so their naive concatenation is
+    // identical and only a separator that cannot occur inside an identifier keeps them
+    // apart. Seeded, so a failure is reproducible rather than a flake.
+    let seed = 0x5eed;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
     };
+    const alphabet = 'abAB01' + '!"#$%&\'()*+,-./:;<=>?@[]^_`{|}~ ';
+    const pick = () => alphabet[Math.floor(rand() * alphabet.length)];
 
-    const onAbsentColumn = finding({
-      kind: 'missing-foreign-key',
-      table,
-      columns: [column],
-      model: 'AB',
-      field: 'c',
-      declared: 'FOREIGN KEY -> Other(id) ON DELETE Cascade ON UPDATE Cascade',
-    });
+    let checked = 0;
+    for (let n = 0; n < 200; n += 1) {
+      const len = 4 + Math.floor(rand() * 6);
+      const run = Array.from({ length: len }, pick).join('');
+      const i = 1 + Math.floor(rand() * (run.length - 2));
+      let j = 1 + Math.floor(rand() * (run.length - 2));
+      if (i === j) j = i === 1 ? i + 1 : i - 1;
 
-    // The catalog does NOT have (table, column); a colliding key would wrongly say it does.
-    expect(tierOf(onAbsentColumn, catalogWithOther)).toBe('pending');
-    // Positive control: the pair that IS present must still resolve, so the assertion above
-    // cannot pass merely because every lookup fails.
-    expect(
-      tierOf({ ...onAbsentColumn, table: otherTable, columns: [otherColumn] }, catalogWithOther)
-    ).toBe('enforced');
+      const present = { table: run.slice(0, i), column: run.slice(i) };
+      const absent = { table: run.slice(0, j), column: run.slice(j) };
+      if (present.table === absent.table) continue;
+
+      const catalog: DbCatalog = {
+        tables: [present.table, absent.table],
+        columns: [{ ...present, notNull: false }],
+        foreignKeys: [],
+        uniqueIndexes: [],
+      };
+      const f = finding({
+        kind: 'missing-foreign-key',
+        table: absent.table,
+        columns: [absent.column],
+        model: 'M',
+        field: 'f',
+        declared: 'FOREIGN KEY -> Other(id) ON DELETE Cascade ON UPDATE Cascade',
+      });
+      expect(tierOf(f, catalog)).toBe('pending');
+      checked += 1;
+    }
+    // Positive control on the loop: a `continue` that swallowed every case would leave this
+    // test green having asserted nothing.
+    expect(checked).toBeGreaterThan(100);
   });
 
   it('a COMPOSITE foreign key is pending unless EVERY column exists', () => {
