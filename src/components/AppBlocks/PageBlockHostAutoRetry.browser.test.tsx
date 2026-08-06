@@ -47,7 +47,7 @@ import {
  * budget exhaustion (rc=124, "no suite reported red") is what made the
  * `preview / component-tests` check red on 100% of PRs.
  *
- * So the eleven long tests install a VIRTUAL clock (`vi.useFakeTimers`, timer
+ * So the twelve long tests install a VIRTUAL clock (`vi.useFakeTimers`, timer
  * functions only — `Date`, `performance`, `requestAnimationFrame` and
  * `queueMicrotask` are left real so React's scheduler and Mantine are untouched)
  * and JUMP those windows with `advance()`. Nothing about the host changes: the
@@ -59,10 +59,18 @@ import {
  * converted case asserts the RETRY ACTUALLY RAN — a fresh loading surface, a
  * re-mint call count, a beacon count — not merely that nothing threw.
  *
- * THREE tests deliberately keep REAL timers: the two that assert an
- * already-instant render (nothing to wait for) and the manual-Retry case, which
- * uses a real Playwright `.click()` — driver interactions must not race a faked
- * clock, and that test costs 358ms as-is.
+ * TWO tests deliberately keep REAL timers: the two that assert an
+ * already-instant render, where there is nothing to wait for.
+ *
+ * 🔴 The manual-Retry case USED to be a third, on the stated grounds that a real
+ * Playwright `.click()` must not race a faked clock. That reasoning was backwards
+ * and the test was flaky for it (civitai#3674): the driver spends REAL time, and
+ * the clock it was actually racing was the host's 2s backoff — also real — so the
+ * pending automatic attempt could fire before the takeover landed and the test
+ * asserted a premise it had never established. It now installs the virtual clock
+ * and KEEPS the driver click; `toFake` covers only the timer functions, so
+ * `Date`/`performance`/`rAF` stay real and the driver is untouched. See the
+ * comment on that test.
  */
 
 // AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
@@ -714,11 +722,55 @@ describe('PageBlockHost auto-retry — reduced motion', () => {
 });
 
 describe('PageBlockHost auto-retry — manual Retry interaction + teardown', () => {
-  // 🔴 REAL TIMERS ON PURPOSE. This is the only case driven by a real Playwright
-  // `.click()`, and the driver's own round-trip must not race a faked clock. It
-  // never waits out a recovery window (it deliberately takes over mid-backoff),
-  // so it costs ~0.4s as-is and has nothing to gain from a virtual clock.
+  // 🔴 VIRTUAL CLOCK + a REAL Playwright `.click()`. Both halves are load-bearing,
+  // and the combination is the fix for a CI-observed flake.
+  //
+  // This test used to run on REAL timers, with a comment claiming it "never waits
+  // out a recovery window ... so it costs ~0.4s". That was true only on an idle
+  // box. The premise it needs — that the automatic attempt is still PENDING when
+  // the user takes over — is a race against `AUTO_RETRY_BACKOFF_MS[0]`, which is
+  // 2000ms of REAL time. The driver's round-trip (actionability checks, hit
+  // testing, a CDP round-trip) plus `driveToReady`'s iframe remount has to finish
+  // inside that window. On a saturated CI runner it does not: the pending
+  // automatic attempt fires first, spends the budget, and the final assertion sees
+  // `attempt 2 of 2`. Observed on civitai#3674 at 13507ms —
+  //   `expected 'Retrying automatically… (attempt 2 of…' to contain 'attempt 1 of 2'`
+  // — and reproduced here 3/3 by inserting a real sleep past the backoff before
+  // the click, which is exactly what a loaded box does for free.
+  //
+  // The virtual clock makes the premise PROVABLE rather than probable: between
+  // `driveToFatal()` arming the timer and the click, virtual time advances by 0ms,
+  // so the automatic attempt CANNOT have fired no matter how slow the machine is.
+  //
+  // Keeping the driver click is why `toFake` is restricted to the timer functions
+  // (see `useVirtualClock`): `Date`/`performance`/`rAF` stay real, so Playwright's
+  // round-trip is unaffected — it spends real time, which is not the clock this
+  // test is racing. This remains the only case exercising a real user gesture on
+  // the Retry button, so it must NOT be downgraded to a native `.click()`.
+  //
+  // 🔴 `expect.element` / `vi.waitFor` are replaced by `pollFor`, and the reason is
+  // the OPPOSITE of the obvious one. They do NOT hang under the faked clock — an
+  // earlier version of this comment said they would, and that was measured false.
+  // Putting each back under the virtual clock: `expect.element` passes (307ms real)
+  // and does NOT touch the fake clock; `vi.waitFor` passes too (~300ms real) but
+  // DOES ADVANCE the fake clock while polling — a 60ms virtual timer armed just
+  // before it fires during the poll. (A positive control in the same probe proves
+  // the observation can go either way, so the `false` is real.)
+  //
+  // That advance is the hazard: `vi.waitFor` spends VIRTUAL time against the 2000ms
+  // backoff, so under enough polling it re-creates this exact flake. Do NOT revert
+  // this on the grounds that "vi.waitFor works fine here" — it works right up until
+  // the poll count gets high enough. `expect.element` is swapped for consistency.
+  //
+  // `pollFor` nudges BOTH clocks. Its budget is 500ms virtual PER CALL, and there
+  // are FOUR calls between the backoff being armed and the final assertion — so the
+  // aggregate worst case is 2000ms against a 2000ms backoff, i.e. no margin at the
+  // limit. Measured actual: under 5ms total (virtual timers armed at
+  // 5/10/25/50/100/250/500/1000/1999ms were ALL still pending at the end, 3/3, and
+  // fire after an explicit `advance(30)`). Huge margin in practice, none in theory
+  // — adding a fifth `pollFor` in that stretch is what would spend it.
   test('a manual Retry DURING a pending auto-retry runs once and does not consume the automatic budget', async () => {
+    useVirtualClock();
     const onRetryToken = vi.fn();
     renderWithProviders(
       <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
@@ -726,9 +778,11 @@ describe('PageBlockHost auto-retry — manual Retry interaction + teardown', () 
     await driveToFatal();
     expect(autoRetryLine()?.textContent).toContain('attempt 1 of');
 
-    // Take over BEFORE the backoff elapses.
+    // Take over BEFORE the backoff elapses. 🔴 PROVABLY before: the virtual clock
+    // has been advanced by 0ms since `driveToFatal` armed the timer, and the
+    // driver's round-trip spends only REAL time.
     await page.getByRole('button', { name: 'Retry' }).click();
-    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await pollFor('retry loading surface', () => loadingEl() !== null);
     expect(fallbackEl()).toBeNull();
 
     // The pending automatic attempt was cancelled — driving straight back to a
@@ -736,7 +790,8 @@ describe('PageBlockHost auto-retry — manual Retry interaction + teardown', () 
     // spend the platform's remaining recovery attempts), and no extra load ran.
     await driveToReady();
     postFromBlock('BLOCK_ERROR', { fatal: true });
-    await vi.waitFor(() => expect(fallbackEl()).not.toBeNull());
+    await pollFor('terminal fallback', () => fallbackEl() !== null);
+    await advance(0);
     expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
     // `fatal` is not an auth failure → still no re-mint from either path.
     expect(onRetryToken).not.toHaveBeenCalled();
