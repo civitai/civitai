@@ -3,7 +3,6 @@
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteSet } from 'svelte/reactivity';
-  import { MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT } from '@civitai/buzz';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import {
     Card,
@@ -13,22 +12,11 @@
   } from '@civitai/ui/components/ui/card/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
-    AlertDialog,
-    AlertDialogContent,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogCancel,
-    AlertDialogAction,
-  } from '@civitai/ui/components/ui/alert-dialog/index.js';
-  import {
     Sheet,
     SheetContent,
     SheetHeader,
     SheetTitle,
     SheetDescription,
-    SheetFooter,
   } from '@civitai/ui/components/ui/sheet/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
@@ -40,20 +28,25 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import {
     feeToRatio,
-    formatFeeRatio,
     feeMaxFor,
     monetizationLimits,
     suggestedFee,
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
+  import type { CapTier } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
-  import CapUpsell from '$lib/components/CapUpsell.svelte';
-  import NumberInput from '$lib/components/NumberInput.svelte';
-  import PaidAccessBulkBar from '$lib/components/PaidAccessBulkBar.svelte';
+  import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
+  import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
-  import BulkLicensingFeesBar from '$lib/components/BulkLicensingFeesBar.svelte';
+  import BulkBar from '$lib/components/BulkBar.svelte';
+  import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
+  import type { BulkAction } from '$lib/monetization/bulk-actions';
+  import { maxPaidAccessPrice } from '$lib/monetization/paid-access';
+
+  // Gold's cap is Infinity; the context contract says uncapped is null.
+  const finiteOrNull = (n: number) => (Number.isFinite(n) ? n : null);
   import {
     IconSearch,
     IconFilter,
@@ -187,18 +180,11 @@
     navigate({ q: q || null, page: null });
   }
 
-  // --- Bulk mode ---
-  const bulkMode = $derived(page.url.searchParams.get('mode') === 'bulk');
-  // Bulk permanent paid-access pricing — a separate mode/bar from fees. Open to every tier now; the price
-  // and count caps do the gating.
-  const paidAccessMode = $derived(page.url.searchParams.get('mode') === 'paid-access');
-  // Either mode shares the same version-selection UI.
-  const selectionMode = $derived(bulkMode || paidAccessMode);
-  // Paid-access bulk is scoped to one usage type — the toggle drives a `usage` list filter so the price
-  // fields are unambiguous and "select all" is exact. Defaults to downloadable.
-  const bulkUsage = $derived(data.query.usage === 'generation' ? 'generation' : 'download');
-  // A reactive Set — in-place add/delete/clear stay fine-grained (no reassign-to-mutate).
+  // --- Bulk selection ---
+  // Always available: no mode to enter, so the bar and the checkboxes are visible to a creator who'd
+  // never think to look for them. A reactive Set — in-place add/delete/clear stay fine-grained.
   const selected = new SvelteSet<number>();
+  let bulkAction = $state<BulkAction | null>(null);
   // Permanent slots the creator can still fill (null cap = unlimited).
   const remainingPermanentSlots = $derived(
     data.caps.permanentCap === null
@@ -215,13 +201,12 @@
         .map((v) => v.id)
     )
   );
-  // New slots the current selection would consume (already-permanent picks are free). A plain function so it
-  // reads `selected` live and stays correct mid-loop in the bulk selectors below.
-  function newSlotsUsed(): number {
+  // Slots the current selection would consume, for the paid-access form's over-cap warning.
+  const newSlotsUsed = $derived.by(() => {
     let n = 0;
     for (const id of selected) if (!alreadyPermanentIds.has(id)) n++;
     return n;
-  }
+  });
   const affirmedIds = $derived(
     new Set(
       data.models
@@ -232,84 +217,70 @@
   );
   // A "select all" spans pages, so ids outside the current page aren't in `affirmedIds` — treat those as
   // needing an affirmation rather than assuming they have one. The server re-checks per version regardless.
-  function selectionNeedsAffirmation(): boolean {
+  const selectionNeedsAffirmation = $derived.by(() => {
     for (const id of selected) if (!affirmedIds.has(id)) return true;
     return false;
-  }
-  // Whether a version may be added: no cap (fee mode), already permanent (free re-price), or a free slot left.
-  function canSelect(id: number): boolean {
-    if (!paidAccessMode) return true;
-    if (alreadyPermanentIds.has(id)) return true;
-    return newSlotsUsed() < remainingPermanentSlots;
-  }
-  // How many matching versions "Select all" would actually pick: every already-permanent one plus as many
-  // new ones as free slots allow.
-  const selectableMatchingCount = $derived.by(() => {
-    let already = 0;
-    let fresh = 0;
-    for (const id of data.matchingVersionIds) {
-      if (alreadyPermanentIds.has(id)) already++;
-      else fresh++;
-    }
-    return already + Math.min(fresh, remainingPermanentSlots);
   });
-  // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
+  const selectedIds = $derived([...selected]);
+  const matchingIds = $derived(new Set(data.matchingVersionIds));
+  // Selected versions the current filters no longer return — usually because a bulk write just moved
+  // them out of the filter that found them. They stay selected and actionable; the bar names the count
+  // so it never claims rows the table isn't showing.
+  const offViewCount = $derived.by(() => {
+    let n = 0;
+    for (const id of selected) if (!matchingIds.has(id)) n++;
+    return n;
+  });
+  const allMatchingSelected = $derived(
+    data.matchingVersionIds.length > 0 && selected.size >= data.matchingVersionIds.length
+  );
+  // Suggested fee is per model type, so it's only unambiguous when the type filter pins one. It lives in
+  // the fee form now rather than the bar — it's an input default, not an operation.
   const bulkSuggested = $derived(
     data.query.mt ? suggestedFee({ modelType: data.query.mt, baseModel: data.query.bm }) : undefined
   );
 
-  // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the selection
-  // — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this page, whose model
-  // types aren't loaded, so anything unresolved falls back to the non-checkpoint cap (the strictest there is).
-  const bulkLimits = $derived.by(() => {
+  // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the
+  // selection — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this
+  // page, whose model types aren't loaded, so anything unresolved falls back to the non-checkpoint cap
+  // (the strictest there is).
+  // Parameterised by tier so the cap upsell can ask "what would Gold allow for this same selection?"
+  function strictestLimits(t: CapTier): MonetizationLimits {
     const loaded = new Map<number, { modelType: string; baseModel: string }>();
     for (const m of data.models)
       for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
-    // Keep the whole limits object for the strictest version, not just its number — the bar needs the
-    // denominators that go with it. An id whose type isn't loaded (select-all reaches beyond this page)
-    // resolves to the non-checkpoint image caps, which are the strictest there are.
     let strictest: MonetizationLimits | null = null;
     for (const id of selected) {
       const v = loaded.get(id);
-      const limits = monetizationLimits({ tier, modelType: v?.modelType, baseModel: v?.baseModel });
+      const limits = monetizationLimits({
+        tier: t,
+        modelType: v?.modelType,
+        baseModel: v?.baseModel,
+      });
       if (!strictest || limits.fee.maxPerGeneration < strictest.fee.maxPerGeneration)
         strictest = limits;
     }
-    return strictest ?? monetizationLimits({ tier });
-  });
-
-  // Leaving bulk mode (Cancel, or any URL change that drops the mode) discards a pending selection.
-  $effect(() => {
-    if (!selectionMode && selected.size > 0) selected.clear();
-  });
+    return strictest ?? monetizationLimits({ tier: t });
+  }
+  const bulkLimits = $derived(strictestLimits(tier));
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
-    else if (canSelect(id)) selected.add(id);
-    else
-      toast.error(
-        `You can add up to ${remainingPermanentSlots} more permanent-access version${remainingPermanentSlots === 1 ? '' : 's'}.`
-      );
+    else selected.add(id);
   }
-  function allSelected(model: CreatorModel) {
-    return model.versions.length > 0 && model.versions.every((v) => selected.has(v.id));
+  function selectedCount(model: CreatorModel) {
+    let n = 0;
+    for (const v of model.versions) if (selected.has(v.id)) n++;
+    return n;
   }
+  // Partial clears, matching the bar above it — two checkboxes on one screen disagreeing about what a
+  // half-filled box does is worse than either choice.
   function toggleModel(model: CreatorModel) {
-    const all = allSelected(model);
+    const anySelected = selectedCount(model) > 0;
     for (const v of model.versions) {
-      if (all) selected.delete(v.id);
-      else if (!selected.has(v.id) && canSelect(v.id)) selected.add(v.id);
+      if (anySelected) selected.delete(v.id);
+      else selected.add(v.id);
     }
-  }
-  function selectAll(ids: number[]) {
-    selected.clear();
-    for (const id of ids) if (canSelect(id)) selected.add(id);
-  }
-  // Switch the paid-access usage scope: clears the (now off-list) selection and re-filters the list.
-  function setBulkUsage(usage: 'download' | 'generation') {
-    if (usage === bulkUsage) return;
-    selected.clear();
-    navigate({ usage, page: null });
   }
 
   const setFeeEnhance =
@@ -328,8 +299,8 @@
       }
     };
 
-  // --- CSV import/export ---
-  // Export mirrors the current filters; drop the transient bulk/page params.
+  // --- CSV export ---
+  // Mirrors the current filters; drops the transient bulk/page params.
   const exportHref = $derived.by(() => {
     const params = new URLSearchParams(page.url.searchParams);
     params.delete('mode');
@@ -337,55 +308,6 @@
     const qs = params.toString();
     return `/models/export${qs ? `?${qs}` : ''}`;
   });
-  type FeeChange = {
-    versionId: number;
-    row?: number;
-    modelName: string;
-    versionName: string;
-    baseModel: string;
-    current: number | null;
-    next: number | null;
-  };
-  let fileInput = $state<HTMLInputElement>();
-  let previewForm = $state<HTMLFormElement>();
-  let applyForm = $state<HTMLFormElement>();
-  let preview = $state<{
-    changes: FeeChange[];
-    unchanged: number;
-    skipped: { row?: number; reason: string }[];
-    needsRightsAffirmation?: boolean;
-  } | null>(null);
-  let showPreview = $state(false);
-  let applying = $state(false);
-  let importAffirmed = $state(false);
-
-  // Upload → dry-run: show the diff + any skipped rows in a modal; nothing is written until the creator confirms.
-  const previewEnhance = () => async (event: { result: any; update: () => Promise<void> }) => {
-    if (fileInput) fileInput.value = '';
-    if (event.result.type === 'success') {
-      preview = event.result.data;
-      // Each import is affirmed on its own; a tick from a previous sheet must not carry over.
-      importAffirmed = false;
-      showPreview = true;
-    } else if (event.result.type === 'failure') {
-      toast.error(String(event.result.data?.error ?? 'Could not read that file'));
-    }
-  };
-
-  const applyEnhance = () => async (event: { result: any; update: () => Promise<void> }) => {
-    applying = false;
-    if (event.result.type === 'success') {
-      const n = Number(event.result.data?.updated ?? 0);
-      const skip = Number(event.result.data?.skippedCount ?? 0);
-      toast.success(`Updated ${n} fee${n === 1 ? '' : 's'}${skip ? ` · ${skip} skipped` : ''}`);
-      showPreview = false;
-      preview = null;
-      await invalidateAll();
-    } else if (event.result.type === 'failure') {
-      toast.error(String(event.result.data?.error ?? 'Import failed'));
-    }
-  };
-
   const filterActive = $derived(
     !!data.query.q ||
       !!data.query.fee ||
@@ -632,46 +554,6 @@
       <Select.Item value="name" label="Name" />
     </Select.Content>
   </Select.Root>
-  {#if data.total > 0 && !selectionMode}
-    <div class="ml-auto flex items-center gap-2">
-      <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button
-      >
-      <form
-        bind:this={previewForm}
-        method="POST"
-        action="?/previewFees"
-        enctype="multipart/form-data"
-        use:enhance={previewEnhance}
-        class="contents"
-      >
-        <input
-          bind:this={fileInput}
-          type="file"
-          name="file"
-          accept=".csv,text/csv"
-          class="hidden"
-          onchange={() => previewForm?.requestSubmit()}
-        />
-      </form>
-      <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
-      <Button
-        href={buildHref({ mode: 'paid-access', usage: 'download' })}
-        data-sveltekit-replacestate
-        variant="outline"
-        size="sm"
-      >
-        Bulk Paid Access
-      </Button>
-      <Button
-        href={buildHref({ mode: 'bulk' })}
-        data-sveltekit-replacestate
-        variant="outline"
-        size="sm"
-      >
-        Bulk Edit Fees
-      </Button>
-    </div>
-  {/if}
 </div>
 
 <div class="mb-4 flex items-center justify-between gap-2">
@@ -697,32 +579,33 @@
   </label>
 </div>
 
-{#if bulkMode}
-  <BulkLicensingFeesBar
-    matchingVersionIds={data.matchingVersionIds}
-    {selected}
-    suggestedFee={bulkSuggested}
-    cancelHref={buildHref({ mode: null })}
-    onSelectAll={selectAll}
-    limits={bulkLimits}
-    selectionNeedsAffirmation={selectionNeedsAffirmation()}
+{#if data.total > 0 || selected.size > 0}
+  <BulkBar
+    count={selected.size}
+    matchingCount={data.matchingVersionIds.length}
+    {allMatchingSelected}
+    {offViewCount}
+    {exportHref}
+    onAction={(a) => (bulkAction = a)}
+    onSelectAllMatching={() => {
+      for (const id of data.matchingVersionIds) selected.add(id);
+    }}
+    onClear={() => selected.clear()}
   />
 {/if}
 
-{#if paidAccessMode}
-  <PaidAccessBulkBar
-    caps={data.caps}
-    matchingVersionIds={data.matchingVersionIds}
-    selectableCount={selectableMatchingCount}
-    slotsConsumed={newSlotsUsed()}
-    usage={bulkUsage}
-    {selected}
-    onSetUsage={setBulkUsage}
-    onSelectAll={selectAll}
-    cancelHref={buildHref({ mode: null, usage: null })}
-    selectionNeedsAffirmation={selectionNeedsAffirmation()}
-  />
-{/if}
+<BulkActionDialog
+  bind:action={bulkAction}
+  versionIds={selectedIds}
+  limits={bulkLimits}
+  capTier={tier}
+  capFor={(t, imgs) => feeMaxFor(strictestLimits(t), imgs)}
+  accessCapFor={(t) => finiteOrNull(maxPaidAccessPrice(t))}
+  caps={data.caps}
+  suggestedFee={bulkSuggested}
+  needsAffirmation={selectionNeedsAffirmation}
+  permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
+/>
 
 {#if data.models.length === 0}
   <div class="placeholder">
@@ -745,11 +628,13 @@
       <Card>
         <CardHeader>
           <div class="flex items-center gap-3">
-            {#if selectionMode && model.versions.length > 0}
+            {#if model.versions.length > 0}
               {@const mId = `m-${model.id}`}
+              {@const picked = selectedCount(model)}
               <Checkbox
                 id={mId}
-                checked={allSelected(model)}
+                checked={picked === model.versions.length}
+                indeterminate={picked > 0 && picked < model.versions.length}
                 onCheckedChange={() => toggleModel(model)}
                 aria-label="Select all versions of {model.name}"
               />
@@ -763,7 +648,7 @@
             <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
               {model.status}
             </Badge>
-            {#if !selectionMode}
+            {#if model.versions.length > 0}
               <a
                 href={modelUrl(model.id, model)}
                 target="_blank"
@@ -784,39 +669,23 @@
             <ul class="divide-y divide-dark-4 border-t border-dark-4">
               {#each model.versions as version (version.id)}
                 {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
+                {@const cbId = `v-${version.id}`}
                 <li>
-                  {#if selectionMode}
-                    {@const cbId = `v-${version.id}`}
-                    <div class="flex w-full items-center gap-3 px-5 py-3">
-                      <Checkbox
-                        id={cbId}
-                        checked={selected.has(version.id)}
-                        onCheckedChange={() => toggleVersion(version.id)}
-                        aria-label="Select {version.name}"
-                        class="shrink-0"
-                      />
-                      <Label
-                        for={cbId}
-                        class="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2 font-normal"
-                      >
-                        <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge
-                          variant="outline"
-                          class="{statusBadgeCls(
-                            version.status
-                          )} text-[10px] uppercase tracking-wide"
-                        >
-                          {version.status}
-                        </Badge>
-                        <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
-                      </Label>
-                      <Badge variant="outline" class="{chip.cls} shrink-0">{chip.label}</Badge>
-                    </div>
-                  {:else}
+                  <div
+                    class="flex w-full items-center gap-3 px-5 hover:bg-dark-6/40"
+                    class:bg-dark-6={selected.has(version.id)}
+                  >
+                    <Checkbox
+                      id={cbId}
+                      checked={selected.has(version.id)}
+                      onCheckedChange={() => toggleVersion(version.id)}
+                      aria-label="Select {version.name}"
+                      class="shrink-0"
+                    />
                     <button
                       type="button"
                       onclick={() => openEditor(version, model.type)}
-                      class="flex w-full cursor-pointer flex-col gap-1.5 px-5 py-3 text-left hover:bg-dark-6/40 sm:flex-row sm:items-center sm:gap-3"
+                      class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
                     >
                       <span class="flex min-w-0 items-center gap-2 sm:flex-1">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
@@ -842,7 +711,7 @@
                         <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-2 sm:ml-0" />
                       </span>
                     </button>
-                  {/if}
+                  </div>
                 </li>
               {/each}
             </ul>
@@ -891,110 +760,6 @@
   {/if}
 {/if}
 
-<AlertDialog bind:open={showPreview}>
-  <AlertDialogContent class="max-w-2xl">
-    <AlertDialogHeader>
-      <AlertDialogTitle>
-        Review changes · {preview?.changes.length ?? 0} to update
-      </AlertDialogTitle>
-      <AlertDialogDescription>
-        {preview?.changes.length ?? 0} fee{preview?.changes.length === 1 ? '' : 's'} will change · {preview?.unchanged ??
-          0} unchanged{(preview?.skipped.length ?? 0) > 0
-          ? ` · ${preview?.skipped.length} skipped`
-          : ''}. Nothing is saved until you confirm.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-
-    {#if (preview?.changes.length ?? 0) > 0}
-      <div class="max-h-72 overflow-y-auto rounded-lg border border-dark-4">
-        <table class="w-full text-sm">
-          <thead class="sticky top-0 bg-dark-7 text-xs uppercase tracking-wide text-dark-2">
-            <tr>
-              <th class="px-3 py-2 text-left font-medium">Version</th>
-              <th class="px-3 py-2 text-right font-medium">Current</th>
-              <th class="px-3 py-2 text-right font-medium">New</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each (preview?.changes ?? []).slice(0, 100) as c (c.versionId)}
-              <tr class="border-t border-dark-4">
-                <td class="px-3 py-1.5 text-dark-1">
-                  <span class="text-white">{c.modelName}</span>
-                  <span class="text-dark-2">· {c.versionName} · {c.baseModel}</span>
-                </td>
-                <td class="px-3 py-1.5 text-right tabular-nums text-dark-2"
-                  >{formatFeeRatio(c.current)}</td
-                >
-                <td class="px-3 py-1.5 text-right tabular-nums font-medium text-white"
-                  >{formatFeeRatio(c.next)}</td
-                >
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if (preview?.changes.length ?? 0) > 100}
-        <p class="text-xs text-dark-2">
-          Showing the first 100 of {preview?.changes.length} changes — all will be applied.
-        </p>
-      {/if}
-    {:else}
-      <p class="rounded-lg border border-dark-4 p-3 text-sm text-dark-2">No fees would change.</p>
-    {/if}
-
-    {#if (preview?.skipped.length ?? 0) > 0}
-      <details class="rounded-lg border border-dark-4 p-3 text-sm">
-        <summary class="cursor-pointer text-yellow-5"
-          >{preview?.skipped.length} row(s) skipped</summary
-        >
-        <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto text-dark-1">
-          {#each preview?.skipped ?? [] as s (s.row)}
-            <li><span class="text-dark-2">Row {s.row}:</span> {s.reason}</li>
-          {/each}
-        </ul>
-      </details>
-    {/if}
-
-    <form
-      bind:this={applyForm}
-      method="POST"
-      action="?/applyFees"
-      use:enhance={applyEnhance}
-      class="contents"
-    >
-      <input
-        type="hidden"
-        name="changes"
-        value={JSON.stringify(
-          (preview?.changes ?? []).map((c) => ({ versionId: c.versionId, fee: c.next }))
-        )}
-      />
-      <input type="hidden" name="rightsAffirmed" value={importAffirmed ? 'on' : ''} />
-    </form>
-    {#if preview?.needsRightsAffirmation}
-      <label class="flex items-start gap-2 text-sm text-dark-1">
-        <input type="checkbox" bind:checked={importAffirmed} class="mt-1 shrink-0" />
-        <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
-      </label>
-    {/if}
-    <AlertDialogFooter>
-      <AlertDialogCancel onclick={() => (preview = null)}>Cancel</AlertDialogCancel>
-      <AlertDialogAction
-        disabled={(preview?.changes.length ?? 0) === 0 ||
-          applying ||
-          (preview?.needsRightsAffirmation && !importAffirmed)}
-        onclick={(e: Event) => {
-          e.preventDefault();
-          applying = true;
-          applyForm?.requestSubmit();
-        }}
-      >
-        Save {preview?.changes.length ?? 0} change{preview?.changes.length === 1 ? '' : 's'}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
-
 <Sheet
   open={editing != null}
   onOpenChange={(o) => {
@@ -1023,82 +788,25 @@
             class="flex flex-wrap items-center gap-1.5"
           >
             <input type="hidden" name="versionId" value={editing.id} />
-            <NumberInput
-              name="buzz"
-              min={0}
-              max={feeMaxFor(editingLimits, Number(feeImages))}
-              bind:value={feeBuzz}
-              placeholder="Off"
-              aria-label="Buzz for {editing.name}"
-              class="w-16 py-1"
+            <LicensingFeeFields
+              bind:buzz={feeBuzz}
+              bind:images={feeImages}
+              limits={editingLimits}
+              capTier={data.caps.capTier}
+              capFor={(t, imgs) =>
+                feeMaxFor(
+                  monetizationLimits({
+                    tier: t,
+                    modelType: editingType,
+                    baseModel: editing?.baseModel,
+                  }),
+                  imgs
+                )}
+              {suggested}
+              ariaLabelSuffix=" for {editing.name}"
             />
-            <span class="text-xs text-dark-2">⚡ per</span>
-            <input type="hidden" name="images" value={feeImages} />
-            <Select.Root
-              type="single"
-              value={feeImages}
-              onValueChange={(v: string) => {
-                if (v) feeImages = v;
-              }}
-            >
-              <Select.Trigger
-                size="default"
-                class="w-16 text-white"
-                aria-label="Generations for {editing.name}"
-              >
-                {feeImages}
-              </Select.Trigger>
-              <Select.Content>
-                {#each editingLimits.fee.denominators as opt (opt)}
-                  <Select.Item value={String(opt)} label={String(opt)} />
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <span class="text-xs text-dark-2">generations</span>
-            <div class="w-full">
-              <CapUpsell
-                value={feeBuzz}
-                cap={feeMaxFor(editingLimits, Number(feeImages))}
-                capTier={data.caps.capTier}
-                capFor={(t) =>
-                  feeMaxFor(
-                    monetizationLimits({
-                      tier: t,
-                      modelType: editingType,
-                      baseModel: editing?.baseModel,
-                    }),
-                    Number(feeImages)
-                  )}
-                title="Licensing fee"
-                perLabel="{feeImages} generation{feeImages === '1' ? '' : 's'}"
-              />
-            </div>
-            <p class="w-full text-xs text-dark-2">
-              Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
-                ? 'generation'
-                : `${suggested.images} generations`}
-              <button
-                type="button"
-                class="ml-1 text-blue-4 hover:underline"
-                onclick={() => {
-                  feeBuzz = suggested.buzz;
-                  feeImages = String(suggested.images);
-                }}
-              >
-                Use this
-              </button>
-            </p>
-            <span class="w-full text-xs text-dark-2">Leave empty to clear the fee.</span>
             {#if feeNeedsAffirmation}
-              <label class="flex w-full items-start gap-2 text-xs text-dark-1">
-                <input
-                  type="checkbox"
-                  name="rightsAffirmed"
-                  bind:checked={feeAffirmed}
-                  class="mt-0.5 shrink-0"
-                />
-                <span>{MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}</span>
-              </label>
+              <RightsAffirmation bind:checked={feeAffirmed} />
             {/if}
             <Button
               type="submit"

@@ -22,7 +22,13 @@ export const processingEngingEarlyAccess = createJob(
     const republished = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
       UPDATE "ModelVersion" mv
       SET "publishedAt" = NOW(),
-          "availability" = 'Public'
+          -- Only the legacy EarlyAccess flag is cleared. An unconditional 'Public' would publish a
+          -- version the creator had set Private — 13 gated versions are Private today, and they only
+          -- escape it because their gates are permanent and never reach this query.
+          "availability" = CASE
+            WHEN mv."availability" = 'EarlyAccess' THEN 'Public'::"Availability"
+            ELSE mv."availability"
+          END
       FROM "PaidAccess" pa
       WHERE pa."entityType" = 'ModelVersion'
         AND pa."entityId" = mv.id

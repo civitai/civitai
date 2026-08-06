@@ -17,11 +17,8 @@ import {
 import {
   setLicensingFee,
   bulkSetLicensingFee,
-  bulkSetLicensingFeeVaried,
-  previewLicensingFeeChanges,
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
-import { parseFeeCsv } from '$lib/server/monetization/fee-csv';
 import { bustVersionCache } from '$lib/server/monetization/bust-cache';
 import {
   setPaidAccessConfig,
@@ -34,7 +31,11 @@ import {
   strictestCapMediaType,
   isCreatorUsageControl,
   setUsageControl,
-  bulkSetPermanentAccess,
+  bulkSetPaidAccess,
+  countPreviouslyPublished,
+  bulkRemovePaidAccess,
+  bulkSetUsageControl,
+  versionsLosingFreeGeneration,
 } from '$lib/server/monetization/paid-access';
 import {
   checkbox,
@@ -42,7 +43,7 @@ import {
   requiredBuzzField,
   freePreviewsField,
 } from '$lib/server/monetization/form-fields';
-import { getModelsScore } from '$lib/server/creator-score';
+import { resolveModelsScore, TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
@@ -69,6 +70,9 @@ const bulkPaidAccessSchema = z
     accessPrice: requiredBuzzField(MIN_ACCESS_PRICE, 'Enter a price for access.'),
     generationPrice: optionalBuzzField(MIN_GENERATION_PRICE),
     freePreviewGenerations: freePreviewsField(),
+    // Without this the shared form's "Free for everyone" choice is silently dropped and the version
+    // gets a PRICED generation tier with a zero trial limit — the opposite of what was picked.
+    freeGeneration: checkbox,
   })
   .refine((v) => v.generationPrice == null || v.generationPrice <= v.accessPrice, {
     message: 'Generation-only price cannot be greater than the access price.',
@@ -105,9 +109,6 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   const baseModel = parsed.bm?.trim() || undefined;
   const type = parsed.mt?.trim() || undefined;
   const access = parsed.access === '1';
-  const mode = url.searchParams.get('mode');
-  // Either bulk mode needs the full matching-version-id set for "select all".
-  const selectionMode = mode === 'bulk' || mode === 'paid-access';
 
   // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
   const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
@@ -128,9 +129,14 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       sort: parsed.sort,
       page: parsed.page,
       perPage,
-      withMatchingVersionIds: selectionMode,
+      // Selection is always available, so "select all matching filters" always needs the full id set.
+      withMatchingVersionIds: true,
     }),
-    getModelsScore(locals.user.id),
+    resolveModelsScore(
+      locals.user.id,
+      !!locals.user.isModerator,
+      cookies.get(TEST_MODELS_SCORE_COOKIE)
+    ),
     countPermanentAccessVersions(locals.user.id),
     countActiveEarlyAccessVersions(locals.user.id),
   ]);
@@ -190,75 +196,8 @@ export const actions: Actions = {
     return { versionId: versionId.data };
   },
 
-  // CSV import — dry run (early-access 2.2). Parse + validate the re-uploaded sheet and return the before→after
-  // diff + skipped rows for a confirmation modal; nothing is written here. Bad rows are reported, not fatal.
-  previewFees: async ({ request, locals, cookies }) => {
-    const form = await request.formData();
-    const file = form.get('file');
-    if (!(file instanceof File) || file.size === 0)
-      return fail(400, { preview: true, error: 'Choose a CSV file to upload.' });
-    if (file.size > 5_000_000)
-      return fail(400, { preview: true, error: 'That file is too large (max 5MB).' });
-
-    const parsed = parseFeeCsv(await file.text());
-    if (!parsed.ok) return fail(400, { preview: true, error: parsed.error });
-
-    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await previewLicensingFeeChanges(locals.user.id, membership, parsed.rows);
-    if (!result.ok) return fail(result.status, { preview: true, error: result.error });
-
-    const skipped = [
-      ...parsed.errors,
-      ...result.skipped.map((s) => ({ row: s.row, reason: s.reason })),
-    ].sort((a, b) => (a.row ?? 0) - (b.row ?? 0));
-    return {
-      preview: true,
-      changes: result.changes,
-      unchanged: result.unchanged,
-      skipped,
-      needsRightsAffirmation: result.needsRightsAffirmation,
-    };
-  },
-
-  // CSV import — apply the confirmed changes. Re-validates ownership/limits server-side regardless of the posted
-  // list (the preview is advisory, not trusted).
-  applyFees: async ({ request, locals, cookies }) => {
-    const form = await request.formData();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(String(form.get('changes') ?? ''));
-    } catch {
-      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
-    }
-    if (!Array.isArray(parsed))
-      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
-    const entries = parsed
-      .filter(
-        (e): e is { versionId: number; fee: number | null } =>
-          !!e &&
-          Number.isInteger((e as { versionId?: unknown }).versionId) &&
-          ((e as { fee?: unknown }).fee === null ||
-            typeof (e as { fee?: unknown }).fee === 'number')
-      )
-      .map((e) => ({ versionId: e.versionId, fee: e.fee }));
-    if (entries.length === 0) return fail(400, { apply: true, error: 'No changes to apply.' });
-
-    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    const result = await bulkSetLicensingFeeVaried(
-      locals.user.id,
-      membership,
-      entries,
-      checkbox.parse(form.get('rightsAffirmed'))
-    );
-    if (result.ok)
-      await bustVersionCache(
-        request.headers.get('cookie') ?? '',
-        entries.map((e) => e.versionId)
-      );
-    if (!result.ok) return fail(result.status, { apply: true, error: result.error });
-    return { apply: true, updated: result.updated, skippedCount: result.skipped.length };
-  },
-
+  // Apply one licensing fee to every selected version. The fee is capped by the STRICTEST cap in the
+  // selection, which the bar mirrors client-side.
   bulkSetFee: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
@@ -299,10 +238,66 @@ export const actions: Actions = {
       accessPrice: form.get('accessPrice'),
       generationPrice: form.get('generationPrice'),
       freePreviewGenerations: form.get('freePreviewGenerations'),
+      freeGeneration: form.get('freeGeneration'),
     });
     if (!pricing.success) return fail(400, { paidAccess: true, error: firstError(pricing.error) });
 
-    if (!locals.user.isModerator) {
+    const permanent = checkbox.parse(form.get('permanent'));
+    const timeframe = z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(365)
+      .safeParse(form.get('timeframe') ?? 0);
+    if (!timeframe.success)
+      return fail(400, { paidAccess: true, error: firstError(timeframe.error) });
+
+    if (!permanent && !locals.user.isModerator) {
+      // A timed window is bounded by creator score, not membership — and it has no price ceiling at all,
+      // so the permanent price/count caps below don't apply to it.
+      const score = await resolveModelsScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_MODELS_SCORE_COOKIE)
+      );
+      const maxDays = earlyAccessDaysForScore(score);
+      if (maxDays <= 0)
+        return fail(403, {
+          paidAccess: true,
+          error:
+            "Early access isn't available for your account yet — it unlocks as your score grows.",
+        });
+      if (timeframe.data > maxDays)
+        return fail(403, {
+          paidAccess: true,
+          error: `Your creator level allows an early-access window of up to ${maxDays} day${
+            maxDays === 1 ? '' : 's'
+          }.`,
+        });
+
+      // Aggregate slot check, mirroring the permanent branch below. The main app enforces the same cap
+      // per request, but it reads-then-writes and we fan out MAIN_APP_WRITE_CONCURRENCY at a time, so a
+      // whole wave can pass the per-request check before any of them commit.
+      const quantityCap = earlyAccessQuantityForScore(score);
+      if (Number.isFinite(quantityCap)) {
+        // Excluded so re-pricing versions that already hold windows doesn't count them twice and refuse
+        // an edit with nothing to deselect — same baseline the permanent branch below uses.
+        const active = await countActiveEarlyAccessVersions(
+          locals.user.id,
+          undefined,
+          versionIds.data
+        );
+        if (active + versionIds.data.length > quantityCap)
+          return fail(400, {
+            paidAccess: true,
+            error: `Your creator level allows ${quantityCap} early-access version${
+              quantityCap === 1 ? '' : 's'
+            } at a time, and you have ${active} active. Deselect some and try again.`,
+          });
+      }
+    }
+
+    if (!locals.user.isModerator && permanent) {
       // Price cap first — it applies to every tier; the count cap only bites on free (CU 868kj4q4j).
       const priceCap = maxPaidAccessPrice(
         cappedTier(membership),
@@ -332,19 +327,113 @@ export const actions: Actions = {
     }
 
     const cookie = request.headers.get('cookie') ?? '';
-    const result = await bulkSetPermanentAccess(
+    const result = await bulkSetPaidAccess(
       cookie,
       versionIds.data,
-      pricing.data,
+      {
+        ...pricing.data,
+        permanent,
+        timeframe: timeframe.data,
+        donationGoalEnabled: checkbox.parse(form.get('donationGoalEnabled')),
+        donationGoal: z.coerce
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .catch(undefined)
+          .parse(form.get('donationGoal') ?? undefined),
+      },
       checkbox.parse(form.get('rightsAffirmed'))
     );
     if (!result.ok) return fail(result.status, { paidAccess: true, error: result.error });
 
-    return { paidAccess: true, updated: result.updated, failed: result.failed };
+    return {
+      paidAccess: true,
+      updated: result.updated,
+      failed: result.failed,
+      skippedPublished: result.skippedPublished ?? 0,
+    };
   },
 
-  // Paid access is written through the main app (see monetization/paid-access.ts). Not member-gated;
-  // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
+  // Clear the licensing fee on every selected version. No affirmation: it's required to START monetizing,
+  // never to stop. bulkSetLicensingFee already treats a null fee as "clear", including writing NULL rather
+  // than 0 so the studio's "fee off" filter and the write-path guard agree the fee is gone.
+  bulkClearFee: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await bulkSetLicensingFee(locals.user.id, membership, versionIds.data, null);
+    if (result.ok) await bustVersionCache(request.headers.get('cookie') ?? '', versionIds.data);
+    if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
+    return { bulk: true, cleared: result.updated };
+  },
+
+  // Remove the paid-access gate from every selected version. Buyers keep what they bought — this stops new
+  // sales, it doesn't revoke EntityAccess grants.
+  bulkRemovePaidAccess: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
+
+    // Ownership is enforced by the main-app endpoint each write goes through, same as the bulk SET path —
+    // a version the caller doesn't own fails there rather than being filtered here.
+    const cookie = request.headers.get('cookie') ?? '';
+    const result = await bulkRemovePaidAccess(cookie, versionIds.data);
+    if (result.ok) await bustVersionCache(cookie, versionIds.data);
+    if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
+    return { bulk: true, removed: result.updated, failed: result.failed };
+  },
+
+  // Which of the selected versions would lose free generation by going generation-only. Resolved on the
+  // server because "select all matching" reaches versions this page never loaded.
+  freeGenerationPreview: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success)
+      return fail(400, { preview: true, error: firstError(versionIds.error) });
+    return {
+      preview: true,
+      affected: await versionsLosingFreeGeneration(locals.user.id, versionIds.data),
+    };
+  },
+
+  // How many of the selection a timed early-access window would skip. Same reason as the preview above:
+  // "select all matching" reaches versions the page never loaded, so the count can't come from the client.
+  publishedPreview: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success)
+      return fail(400, { preview: true, error: firstError(versionIds.error) });
+    return {
+      preview: true,
+      published: await countPreviouslyPublished(locals.user.id, versionIds.data),
+    };
+  },
+
+  // Bulk usage control (RisingV's "version permissions" — Download & Gen vs Gen-only are the same setting).
+  bulkSetUsageControl: async ({ request, locals }) => {
+    const form = await request.formData();
+    const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
+    if (!versionIds.success) return fail(400, { bulk: true, error: firstError(versionIds.error) });
+
+    const usageControl = form.get('usageControl');
+    if (!isCreatorUsageControl(usageControl))
+      return fail(400, { bulk: true, error: 'Invalid usage control.' });
+
+    const cookie = request.headers.get('cookie') ?? '';
+    const result = await bulkSetUsageControl(locals.user.id, versionIds.data, usageControl, cookie);
+    if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
+    await bustVersionCache(cookie, versionIds.data);
+    return {
+      bulk: true,
+      usageUpdated: result.updated,
+      migrated: result.migrated,
+      failed: result.migrationFailures,
+    };
+  },
+
   // Usage control is a property of the VERSION, not of its gate, so it saves on its own — a creator can
   // flip a version to generation-only without also filling in pricing, and it stays reachable when paid
   // access isn't available to them at all.
@@ -357,23 +446,26 @@ export const actions: Actions = {
     if (!isCreatorUsageControl(usageControl))
       return fail(400, { versionId: versionId.data, error: 'Invalid usage control.' });
 
-    // Mirrors the main app's rule: a version that isn't downloadable can't be charging for downloads.
-    // Writing directly means nothing else enforces it, so it has to be checked here.
-    if (usageControl === 'Generation') {
-      const prices = await currentAccessPrices(versionId.data);
-      if (prices.download > 0)
-        return fail(400, {
-          versionId: versionId.data,
-          error:
-            'This version charges for downloads. Clear the download price before switching to generation-only.',
-        });
-    }
-
-    const updated = await setUsageControl(locals.user.id, versionId.data, usageControl);
-    if (updated) await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
-    if (!updated)
+    // Same behaviour as the bulk path: rather than refusing because the version charges for a tier that's
+    // about to disappear, move the price onto the surviving tier. Refusing here sent the creator away to
+    // clear a price by hand for an operation bulk performs without comment.
+    const result = await bulkSetUsageControl(
+      locals.user.id,
+      [versionId.data],
+      usageControl,
+      request.headers.get('cookie') ?? ''
+    );
+    if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
+    if (result.updated === 0)
       return fail(404, { versionId: versionId.data, error: 'Version not found or not yours.' });
-    return { versionId: versionId.data, usageControlSaved: true };
+
+    await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
+    if (result.migrationFailures > 0)
+      return fail(502, {
+        versionId: versionId.data,
+        error: "Usage control saved, but the price couldn't be moved to the surviving tier.",
+      });
+    return { versionId: versionId.data, usageControlSaved: true, migrated: result.migrated };
   },
 
   setPaidAccess: async ({ request, locals, cookies }) => {

@@ -326,6 +326,7 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |

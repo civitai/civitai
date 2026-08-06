@@ -356,3 +356,30 @@ export function gatePrices(terms: ModelVersionTerms | undefined | null): {
   const gen = terms?.generation && !('free' in terms.generation) ? terms.generation : undefined;
   return { download: terms?.download?.price ?? 0, generation: gen?.price ?? 0 };
 }
+
+/**
+ * Move a gate's price onto the tier that survives a usage-control change.
+ *
+ * A gen-only version can't carry a download tier, but refusing the write strands the creator: they have to
+ * go clear a price by hand before the switch they asked for will take. Creator Studio has always migrated;
+ * this is the same rule for the main app so the two can't disagree.
+ *
+ * Returns the terms unchanged when nothing needs moving.
+ */
+export function migrateTermsForUsageControl(
+  terms: ModelVersionTerms | undefined | null,
+  genOnly: boolean
+): ModelVersionTerms | undefined | null {
+  if (!terms || !genOnly || !terms.download) return terms;
+  const { download, generation, ...rest } = terms;
+  // A free grant is a deliberate choice and outranks an inherited price — a gen-only version that gives
+  // generation away keeps doing so, it just loses the download tier.
+  if (generation && 'free' in generation) return { ...rest, generation };
+  return {
+    ...rest,
+    generation: {
+      price: generation?.price ?? download.price,
+      trialLimit: generation?.trialLimit ?? 0,
+    },
+  };
+}
