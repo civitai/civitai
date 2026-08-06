@@ -93,7 +93,11 @@ export const placementRouter = router({
     .input(createStickerPlacementSchema)
     .mutation(({ input, ctx }) => {
       assertPlacementEnabled(ctx);
-      return createStickerPlacement({ ...input, placerId: ctx.user.id });
+      return createStickerPlacement({
+        ...input,
+        placerId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
 
   actOnSticker: protectedProcedure.input(actOnStickerPlacementSchema).mutation(({ input, ctx }) =>

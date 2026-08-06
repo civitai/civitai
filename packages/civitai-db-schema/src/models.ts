@@ -5145,6 +5145,7 @@ export interface PlacementSpace {
   entityId: number;
   mode: string;
   price: number | null;
+  settings: JsonValue;
   createdAt: Date;
   updatedAt: Date;
 }

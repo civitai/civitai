@@ -22,6 +22,7 @@ import type {
 import {
   isStickerPlacementData,
   normalizeStickerPlacement,
+  stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
 
 const SURFACE = 'sticker' as const;
@@ -74,6 +75,8 @@ export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementData, 'cosmeticId'> & { cosmeticId: number };
+  /** Moderators may exceed a creator's size limit. Justin's call. */
+  isModerator?: boolean;
 };
 
 /**
@@ -103,7 +106,12 @@ export type CreateStickerPlacement = {
  * one. The pre-check below is a courtesy refusal; the spend is the authority,
  * and it is all-or-nothing under `FOR UPDATE`.
  */
-export async function createStickerPlacement({ placerId, imageId, data }: CreateStickerPlacement) {
+export async function createStickerPlacement({
+  placerId,
+  imageId,
+  data,
+  isModerator = false,
+}: CreateStickerPlacement) {
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -122,6 +130,23 @@ export async function createStickerPlacement({ placerId, imageId, data }: Create
 
   if (space.price == null)
     throw throwBadRequestError('placement: this creator has not set a price yet');
+
+  // The creator's size limit, refused rather than clamped. Quietly shrinking a
+  // sticker someone just paid for is the same shape as v1's recurring defect: a
+  // rule applied as a filter where a refusal was needed. The editor also caps
+  // its handles, so reaching this means the limit moved or the request did not
+  // come from the editor.
+  //
+  // Not applied retroactively — existing placements were accepted at the size
+  // they were accepted at, and a creator lowering their limit is not a licence
+  // to take back something already paid for.
+  const maxScale = stickerMaxScale(space.settings);
+  if (!isModerator && data.scale > maxScale)
+    throw throwBadRequestError(
+      `placement: this creator allows stickers up to ${Math.round(
+        maxScale * 100
+      )}% of the image width`
+    );
 
   await assertCanPlace({ ownerId: space.ownerId, placerId });
 

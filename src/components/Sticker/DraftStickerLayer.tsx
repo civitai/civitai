@@ -12,10 +12,7 @@ import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
 } from '~/store/sticker-placement-draft.store';
-import {
-  STICKER_PLACEMENT_MAX_SCALE,
-  STICKER_PLACEMENT_MIN_SCALE,
-} from '~/shared/utils/sticker-placement';
+import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
 
 /** Where the rotate knob sits above the sticker, as a fraction of its height. */
 const KNOB_OFFSET = 0.22;
@@ -67,9 +64,17 @@ export function DraftStickerLayer() {
   const { sticker } = useOwnedSticker();
   const { space } = useImagePlacementSpace(draft?.imageId);
   const place = useCreateStickerPlacement();
+  // The creator's ceiling, so a resize handle stops where the mutation would
+  // refuse. The refusal is still on the server — this only means nobody has to
+  // discover it by being told no after a drag.
+  const maxScale = stickerMaxScale(space?.settings);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  // Held in a ref because the pointer listener is bound once; re-binding it when
+  // the space loads would drop the moves in flight at that moment.
+  const maxScaleRef = useRef(maxScale);
+  maxScaleRef.current = maxScale;
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -107,7 +112,7 @@ export function DraftStickerLayer() {
       const local = rotate(pointerX - active.anchorX, pointerY - active.anchorY, -current.rotation);
       const width = Math.min(
         Math.max(Math.abs(local.x), STICKER_PLACEMENT_MIN_SCALE * bounds.width),
-        STICKER_PLACEMENT_MAX_SCALE * bounds.width
+        maxScaleRef.current * bounds.width
       );
       // Clamped first, then the centre is derived from the clamped size — the
       // other order lets the anchor drift once a drag hits either bound.

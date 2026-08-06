@@ -7493,6 +7493,10 @@ model PlacementSpace {
   /// What the owner asks. The charged price is min(price, cap) computed at read; a
   /// stored effective price goes stale the moment a membership lapses.
   price      Int?
+  /// Surface-owned settings, read only by the surface that wrote them — a max
+  /// sticker size means nothing to a remix gallery. Kept as JSON so this layer
+  /// does not grow a column per surface idea.
+  settings   Json     @default("{}")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

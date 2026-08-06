@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -5,6 +6,7 @@ import type {
   PlacementSpaceEntity,
   PlacementSpaceMode,
   PlacementSpaceSetting,
+  PlacementSpaceSettings,
   PlacementSurface,
 } from '~/shared/utils/placement';
 import {
@@ -38,6 +40,8 @@ export type ResolvedPlacementSpace = {
   /** `min(setPrice, cap)`, computed here and never stored. `null` when unpriced. */
   price: number | null;
   cap: number;
+  /** Surface-owned; this layer carries it without reading inside it. */
+  settings: PlacementSpaceSettings;
 };
 
 /**
@@ -70,12 +74,18 @@ export async function resolvePlacementSpaceFor({
         { entityType: 'user', entityId: ownerId },
       ],
     },
-    select: { entityType: true, mode: true, price: true },
+    select: { entityType: true, mode: true, price: true, settings: true },
   });
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
     const row = rows.find((candidate) => candidate.entityType === entityType);
-    return row ? { mode: row.mode as PlacementSpaceMode, price: row.price } : undefined;
+    return row
+      ? {
+          mode: row.mode as PlacementSpaceMode,
+          price: row.price,
+          settings: (row.settings ?? {}) as PlacementSpaceSettings,
+        }
+      : undefined;
   };
 
   const resolved = resolvePlacementSpace(surface, {
@@ -92,6 +102,7 @@ export async function resolvePlacementSpaceFor({
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
+    settings: resolved.settings ?? {},
   };
 }
 
@@ -133,6 +144,7 @@ export async function setPlacementSpace({
   entityId,
   mode,
   price,
+  settings,
   userId,
 }: {
   surface: PlacementSurface;
@@ -140,6 +152,7 @@ export async function setPlacementSpace({
   entityId: number;
   mode: PlacementSpaceMode;
   price?: number | null;
+  settings?: PlacementSpaceSettings;
   userId: number;
 }) {
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
@@ -155,8 +168,21 @@ export async function setPlacementSpace({
 
   await dbWrite.placementSpace.upsert({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
-    create: { surface, entityType, entityId, mode, price: price ?? null },
-    update: { mode, ...(price === undefined ? {} : { price }) },
+    create: {
+      surface,
+      entityType,
+      entityId,
+      mode,
+      price: price ?? null,
+      settings: (settings ?? {}) as Prisma.InputJsonValue,
+    },
+    update: {
+      mode,
+      ...(price === undefined ? {} : { price }),
+      // Replaced wholesale, not merged: the caller sends the settings it owns,
+      // and a merge here would make a removed key impossible to express.
+      ...(settings === undefined ? {} : { settings: settings as Prisma.InputJsonValue }),
+    },
   });
 }
 
@@ -214,5 +240,5 @@ export const getPlacementSpaces = ({
 }) =>
   dbRead.placementSpace.findMany({
     where: { surface, entityType: 'user', entityId: userId },
-    select: { entityType: true, entityId: true, mode: true, price: true },
+    select: { entityType: true, entityId: true, mode: true, price: true, settings: true },
   });

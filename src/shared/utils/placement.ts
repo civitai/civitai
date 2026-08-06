@@ -138,7 +138,18 @@ export const placementSurfaceLabel = (surface: PlacementSurface) =>
 // Space resolution
 // ---------------------------------------------------------------------------
 
-export type PlacementSpaceSetting = { mode: PlacementSpaceMode; price: number | null };
+/**
+ * Settings a surface owns and the foundation only carries. Sticker placement
+ * keeps a max size in here; a remix gallery will keep something else. Nothing in
+ * this layer reads inside it.
+ */
+export type PlacementSpaceSettings = Record<string, unknown>;
+
+export type PlacementSpaceSetting = {
+  mode: PlacementSpaceMode;
+  price: number | null;
+  settings?: PlacementSpaceSettings;
+};
 
 /**
  * Image beats post beats account. A post-level row also covers images added to
@@ -162,6 +173,15 @@ export function resolvePlacementSpace(
       ordered.find((level) => level?.mode !== undefined)?.mode ??
       PLACEMENT_SURFACES[surface].defaultMode,
     price: ordered.find((level) => level?.price != null)?.price ?? null,
+    // Merged per key, most specific last, rather than taking the first level
+    // that has any settings at all: an owner who set a max size on their account
+    // and something unrelated on one image should keep both.
+    settings: Object.assign(
+      {},
+      levels.user?.settings,
+      levels.post?.settings,
+      levels.image?.settings
+    ),
   };
 }
 

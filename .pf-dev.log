@@ -740,3 +740,39 @@ Unable to listen on port 25099: Listeners failed to create with the following er
 error: unable to listen on any of the requested ports: [{25099 5432}]
 Unable to listen on port 25099: Listeners failed to create with the following errors: [unable to create listener: Error listen tcp4 127.0.0.1:25099: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted. unable to create listener: Error listen tcp6 [::1]:25099: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted.]
 error: unable to listen on any of the requested ports: [{25099 5432}]
+Forwarding from 127.0.0.1:25099 -> 5432
+Forwarding from [::1]:25099 -> 5432
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+Handling connection for 25099
+E0806 15:21:30.401731   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:63458: read tcp4 127.0.0.1:25099->127.0.0.1:63458: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.401731   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:63457: read tcp4 127.0.0.1:25099->127.0.0.1:63457: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.401731   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:63456: read tcp4 127.0.0.1:25099->127.0.0.1:63456: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.409343   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:60653: read tcp4 127.0.0.1:25099->127.0.0.1:60653: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.413643   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:64051: read tcp4 127.0.0.1:25099->127.0.0.1:64051: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.414186   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:56973: read tcp4 127.0.0.1:25099->127.0.0.1:56973: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.415269   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:60652: read tcp4 127.0.0.1:25099->127.0.0.1:60652: wsarecv: An existing connection was forcibly closed by the remote host.
+E0806 15:21:30.416043   81288 portforward.go:398] error copying from local connection to remote stream: writeto tcp4 127.0.0.1:25099->127.0.0.1:60654: read tcp4 127.0.0.1:25099->127.0.0.1:60654: wsarecv: An existing connection was forcibly closed by the remote host.

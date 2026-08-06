@@ -38,6 +38,31 @@ export const STICKER_PLACEMENT_DEFAULT_SCALE = 0.18;
 
 export const STICKER_PLACEMENT_MAX_ROTATION = 180;
 
+/**
+ * What a creator's space allows by default, when they have never set a max.
+ *
+ * Tighter than the absolute ceiling on purpose: most creators will never open
+ * this setting, and the default is what the feature actually feels like. They
+ * can raise it to `STICKER_PLACEMENT_MAX_SCALE` or lower it to the floor.
+ */
+export const STICKER_PLACEMENT_DEFAULT_MAX_SCALE = 0.25;
+
+/**
+ * The largest a sticker may be placed on this space.
+ *
+ * Clamped into the global bounds rather than trusted: the value is JSON on a row
+ * anyone with database access can edit, and a stored `5` would otherwise mean a
+ * sticker five times the width of the image.
+ */
+export function stickerMaxScale(settings?: Record<string, unknown> | null) {
+  const stored = settings?.[STICKER_MAX_SCALE_KEY];
+  if (typeof stored !== 'number' || !Number.isFinite(stored))
+    return STICKER_PLACEMENT_DEFAULT_MAX_SCALE;
+  return Math.min(Math.max(stored, STICKER_PLACEMENT_MIN_SCALE), STICKER_PLACEMENT_MAX_SCALE);
+}
+
+export const STICKER_MAX_SCALE_KEY = 'maxScale';
+
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 /**

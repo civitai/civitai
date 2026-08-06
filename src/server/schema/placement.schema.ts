@@ -48,6 +48,14 @@ export const placementSpaceSchema = z.object({
   // Distinguishes "leave whatever is set" from "clear it and inherit", which a
   // single optional number cannot: `undefined` keeps, `null` clears.
   price: z.number().int().min(0).nullable().optional(),
+  // Surface-owned. Bounded here so a client cannot store a max size outside the
+  // global limits; the reader clamps too, since the column is editable by hand.
+  settings: z
+    .object({
+      maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
+    })
+    .partial()
+    .optional(),
 });
 
 export const getPlacementSpaceSchema = z.object({

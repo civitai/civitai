@@ -2929,6 +2929,12 @@ export type PlacementSpace = {
    * stored effective price goes stale the moment a membership lapses.
    */
   price: number | null;
+  /**
+   * Surface-owned settings, read only by the surface that wrote them — a max
+   * sticker size means nothing to a remix gallery. Kept as JSON so this layer
+   * does not grow a column per surface idea.
+   */
+  settings: Generated<unknown>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
