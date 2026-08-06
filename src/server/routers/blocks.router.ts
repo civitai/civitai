@@ -5388,16 +5388,26 @@ export const blocksRouter = router({
     //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
     //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
     //     `allowedScopes | UserRead`, not Full.
-    //   - The one client exceeding Full (civitai-cli, 100663297) was written by a RAW SQL
-    //     migration, which no zod schema governs.
+    //   - The one client exceeding Full (civitai-cli, now 100777985) was written by RAW SQL
+    //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
     //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
     //     carry `grants: []` so they cannot mint an account bearer token at all.
-    // 100663297 is not a superset of Full (it carries bit 0 and none of 1..24), so the
-    // flip is unreachable — but that last part rests on INSPECTION of that migration,
-    // not on a cap. If a future migration grants a client `Full | <some opt-in bit>`,
-    // this gate flips for it and no test will catch it.
+    // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
+    // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
+    // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
+    // (33554431) and the flip stays unreachable for it. (Bits 14/15/16 were added by
+    // `20260806140000_widen_civitai_cli_oauth_client_ai_services_scopes` so the
+    // `civitai login` token can run `civitai generate` — issue #3681.)
+    // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
+    // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
+    // which enumerates every migration writing `"OauthClient"."allowedScopes"` off the
+    // tree, folds the grants per client, and fails if any client would hold a STRICT
+    // superset of Full — so a future migration granting `Full | <some opt-in bit>` goes
+    // red there instead of silently flipping this gate. What that guard still cannot see
+    // is a grant written OUTSIDE a migration (a hand-run UPDATE against a database), and
+    // it cannot prove what any environment's row actually holds.
     //
     // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
     // and the login token requests it, so no NEW migration is needed here. Note the

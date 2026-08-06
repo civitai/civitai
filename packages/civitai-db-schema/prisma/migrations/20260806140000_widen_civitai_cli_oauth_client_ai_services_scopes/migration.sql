@@ -1,0 +1,59 @@
+-- Widen the first-party `civitai-cli` OAuth client's allowedScopes to permit the
+-- AI-services scopes, so the OAuth `civitai login` token can actually run
+-- `civitai generate` (issue #3681). Prior to this the CLI token could carry only
+-- `UserRead | AppBlocksSubmit | AppBlocksDevTunnel`, so every generation
+-- procedure rejected it and users had to fall back to a Full-scope personal API
+-- key. An OAuth access token's ceiling is its client's
+-- `allowedScopes | UserRead` (enforced at device-authorization time AND again at
+-- mint), so a bit the client does not allow cannot even be REQUESTED.
+--
+-- Which bits, and why each one:
+--   - AIServicesRead  (bit 14): orchestrator.whatIfFromGraph (cost estimate),
+--     getWorkflow, queryGeneratedImages — the poll/download half of `generate`.
+--   - AIServicesWrite (bit 15): orchestrator.generateFromGraph (submit) and
+--     cancelWorkflow. Implicitly authorises Buzz spend for orchestrator usage.
+--   - BuzzRead        (bit 16): buzz.getBuzzAccount, read by the CLI's pre-flight
+--     insufficient-balance guard. That guard FAILS SOFT (warns and continues), so
+--     omitting the bit would degrade UX rather than break generation — it is
+--     included so the pre-flight check works rather than silently warning on
+--     every run.
+--
+-- allowedScopes: 100663297 -> 100777985
+--   old = TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel
+--       = 1 | 33554432 | 67108864
+--       = 100663297
+--   add = TokenScope.AIServicesRead | TokenScope.AIServicesWrite | TokenScope.BuzzRead
+--       = (1<<14) | (1<<15) | (1<<16)
+--       = 16384 | 32768 | 65536
+--       = 114688
+--   new = 100663297 | 114688
+--       = 100777985
+--
+-- 🔴 STILL NOT A SUPERSET OF `Full` (33554431 = bits 0..24). 100777985 carries
+-- bits 0, 14, 15, 16, 25, 26 and NONE of 1..13 or 17..24, so it does not contain
+-- `Full`. That matters because `enforceTokenScope` bypasses the scope gate on
+-- EXACT EQUALITY with `Full` (`ctx.tokenScope === TokenScope.Full`), and a mask
+-- that is a strict superset of `Full` while missing an opt-in bit would flip
+-- `blocks.router.getMyAppAnalytics` from allow to deny. Any FUTURE migration that
+-- grants a client `Full | <opt-in bit>` must revisit that gate — see the invariant
+-- guard in `src/server/routers/__tests__/blocks.router.getMyAppAnalytics.test.ts`.
+--
+-- IDEMPOTENT: the OR-in of the bits is a no-op on re-apply (re-ORing the same bits
+-- leaves the value unchanged); scoped to the single `civitai-cli` row so it can
+-- never touch another client's grant. The WHERE clause also makes a re-apply touch
+-- ZERO rows (so `updatedAt` is not churned).
+--
+-- 🔴 DEPLOY ORDERING: apply this migration BEFORE releasing a civitai CLI that
+-- REQUESTS these bits. The device-authorization scope check is ALL-OR-NOTHING — it
+-- REJECTS a request carrying any bit outside the client ceiling rather than
+-- clamping it — so a CLI that asks for the wider scope before this lands gets
+-- `invalid_scope` and `civitai login` 400s outright.
+--
+-- ⚠️ MANUAL-APPLY: per the cluster ops rule, civitai DB migrations are NOT
+-- auto-applied. A human applies this per environment; this PR does not apply it
+-- anywhere.
+UPDATE "OauthClient"
+SET "allowedScopes" = "allowedScopes" | 114688, -- AIServicesRead|AIServicesWrite|BuzzRead
+    "updatedAt" = CURRENT_TIMESTAMP
+WHERE "id" = 'civitai-cli'
+  AND ("allowedScopes" & 114688) <> 114688; -- no-op once all three bits are set
