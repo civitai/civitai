@@ -40,6 +40,7 @@
     capFor,
     accessCapFor,
     caps,
+    feeCapsByType,
   }: {
     action: BulkAction | null;
     versionIds: number[];
@@ -50,6 +51,8 @@
     capTier: CapTier;
     capFor: (tier: CapTier, images: number) => number;
     accessCapFor: (tier: CapTier) => number | null;
+    /** Per model/media type caps across the selection, lowest first. */
+    feeCapsByType: { label: string; cap: number }[];
     caps: {
       tier: string;
       permanentUsed: number;
@@ -384,7 +387,27 @@
                 {capFor}
                 suggested={suggestedFee != null ? feeToRatio(suggestedFee) : undefined}
               />
-              <p class="text-xs text-dark-2">Caps shown are the strictest in your selection.</p>
+              {#if feeCapsByType.length > 1}
+                <div class="rounded-lg border border-dark-4 p-2">
+                  <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-dark-2">
+                    Caps in this selection
+                  </p>
+                  <ul class="text-xs text-dark-1">
+                    {#each feeCapsByType as c (c.label)}
+                      <li class="flex justify-between gap-3">
+                        <span>{c.label}</span>
+                        <span class="tabular-nums">{c.cap} ⚡ / generation</span>
+                      </li>
+                    {/each}
+                  </ul>
+                  <p class="mt-1 text-xs text-dark-2">
+                    One fee applies to all of them, so the lowest governs — the save is rejected if
+                    it would raise any version past its own cap.
+                  </p>
+                </div>
+              {:else}
+                <p class="text-xs text-dark-2">Caps shown are the strictest in your selection.</p>
+              {/if}
             </div>
           {:else if action === 'paidAccess'}
             <PaidAccessFields
