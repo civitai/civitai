@@ -3,7 +3,7 @@ import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
-import { isAdminPath, isHubAdmin } from '$lib/server/auth/admin';
+import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
 import { unhandledErrorsTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
 
@@ -49,10 +49,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  // Authorization for the admin area. This is the gate: it runs ahead of routing, so one check covers every
-  // request method and every route under /admin, including routes added after this was written.
+  // Authorization for the admin area. This is the gate: it runs before any route's own code, so one check
+  // covers every request method and every route under /admin, including routes added after this was written.
   // +layout.server.ts keeps its own equivalent check as a second layer.
-  if (isAdminPath(event.url.pathname)) {
+  if (isAdminRequest(event.url.pathname, event.route?.id)) {
     // Scoped stand-in for SvelteKit's form-origin check, which is disabled app-wide for the OAuth machine
     // endpoints (see svelte.config.js).
     const origin = event.request.headers.get('origin');

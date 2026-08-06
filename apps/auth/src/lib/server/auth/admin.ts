@@ -19,9 +19,35 @@ export function isHubAdmin(user: Pick<SessionUser, 'id'> | undefined | null): bo
 }
 
 /**
- * Paths belonging to the admin area. Matched on the path prefix rather than against the route table so that
- * a route added under /admin later is covered by the guard without anyone having to remember to list it.
+ * Paths and route ids belonging to the admin area. Matched on the prefix rather than against a list of known
+ * routes so that a route added under /admin later is covered without anyone having to remember to list it.
  */
 export function isAdminPath(pathname: string): boolean {
   return pathname === '/admin' || pathname.startsWith('/admin/');
+}
+
+// Mirrors SvelteKit's own `decode_pathname` (src/utils/url.js), which is what it matches routes against.
+// %25 is held back so an encoded percent is not decoded twice.
+function decodePathname(pathname: string): string {
+  try {
+    return pathname.split('%25').map(decodeURI).join('%25');
+  } catch {
+    return pathname;
+  }
+}
+
+/**
+ * Whether a request belongs to the admin area.
+ *
+ * `routeId` is the authoritative arm: SvelteKit resolves routes against the DECODED pathname while
+ * `url.pathname` keeps the spelling the client sent, so the two can disagree and the routed id is what
+ * actually executes. The pathname arms are kept so an /admin request that matches no route is still
+ * rejected here rather than falling through.
+ */
+export function isAdminRequest(pathname: string, routeId: string | null | undefined): boolean {
+  return (
+    isAdminPath(pathname) ||
+    isAdminPath(decodePathname(pathname)) ||
+    (!!routeId && isAdminPath(routeId))
+  );
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, sep } from 'node:path';
-import { isAdminPath } from '$lib/server/auth/admin';
+import { isAdminPath, isAdminRequest } from '$lib/server/auth/admin';
 
 /**
  * The behavioural guard test proves the five admin form-action routes that exist TODAY are covered. This
@@ -68,8 +68,10 @@ describe('hub form-action route ledger', () => {
 
     expect(admin).toEqual(ADMIN_ACTION_ROUTES);
     for (const id of admin) {
-      // Substitute a concrete value for any dynamic segment — the matcher sees request paths, not route ids.
-      expect(isAdminPath(id.replace(/\[[^\]]+\]/g, 'x'))).toBe(true);
+      // Substitute a concrete value for any dynamic segment — the pathname arm sees request paths.
+      expect(isAdminRequest(id.replace(/\[[^\]]+\]/g, 'x'), null)).toBe(true);
+      // ...and the routed-id arm must cover it on its own, whatever path spelling reached it.
+      expect(isAdminRequest('/', id)).toBe(true);
     }
   });
 

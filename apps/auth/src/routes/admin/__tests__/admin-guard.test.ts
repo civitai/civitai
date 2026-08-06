@@ -212,12 +212,25 @@ const ADMIN_ACTIONS: Scenario[] = [
 /**
  * Drives the real `handle` hook the way SvelteKit does — the hook wraps `resolve`, and the form action runs
  * inside `resolve`. So `resolve` never being called is exactly "the action never ran".
+ *
+ * The requested path and the routed id are settable INDEPENDENTLY on purpose. SvelteKit matches routes on the
+ * decoded pathname while `event.url.pathname` stays as sent, so the two can legitimately disagree; a harness
+ * that derives one from the other cannot express that case at all, and silently shares whatever assumption
+ * the code under test makes. `routedId: null` models "no route matched".
  */
 async function post(
   scenario: Scenario,
-  opts: { sessionUserId?: number; origin?: string | null } = {}
+  opts: {
+    sessionUserId?: number;
+    origin?: string | null;
+    rawPath?: string;
+    routedId?: string | null;
+  } = {}
 ) {
-  const url = new URL(`${ORIGIN}${scenario.path}?/${scenario.action}`);
+  const rawPath = opts.rawPath ?? scenario.path;
+  const routedId = opts.routedId === undefined ? scenario.routeId : opts.routedId;
+
+  const url = new URL(`${ORIGIN}${rawPath}?/${scenario.action}`);
   const headers = new Headers({ 'content-type': 'application/x-www-form-urlencoded' });
   const origin = opts.origin === undefined ? ORIGIN : opts.origin;
   if (origin !== null) headers.set('origin', origin);
@@ -234,13 +247,15 @@ async function post(
   const event = {
     url,
     request,
+    route: { id: routedId },
     params: scenario.params ?? {},
     locals: {} as Record<string, unknown>,
     cookies: { get: (name: string) => cookies.get(name) },
   };
 
   const resolve = vi.fn(async (ev: typeof event) => {
-    const mod = await ACTION_MODULES[scenario.routeId]();
+    if (routedId === null) return new Response('Not found', { status: 404 });
+    const mod = await ACTION_MODULES[routedId]();
     const action = mod.actions[scenario.action] as (arg: unknown) => Promise<unknown>;
     const result = await action({
       request: ev.request,
@@ -255,6 +270,9 @@ async function post(
   const response = await handle({ event: event as any, resolve: resolve as any });
   return { response, actionRan: resolve.mock.calls.length > 0 };
 }
+
+/** Percent-encode the first character of a path segment — decodes back to the same route. */
+const encodeFirstChar = (path: string) => `/%${path.charCodeAt(1).toString(16)}${path.slice(2)}`;
 
 beforeEach(() => {
   writes.length = 0;
@@ -297,23 +315,95 @@ describe('hub /admin authorization', () => {
       expect(actionRan).toBe(false);
       expect(response.status).toBe(403);
     });
+
+    // A missing Origin must be treated as untrusted, not waved through. Without this case a guard that
+    // fails open on the absent header passes every other test in this file.
+    it('is rejected with 403 and performs no write when the Origin header is absent', async () => {
+      const { response, actionRan } = await post(scenario, {
+        sessionUserId: ADMIN_USER_ID,
+        origin: null,
+      });
+
+      expect(writes).toEqual([]);
+      expect(actionRan).toBe(false);
+      expect(response.status).toBe(403);
+    });
+
+    // SvelteKit routes on the decoded pathname, so a percent-encoded path reaches the same action while
+    // spelling `event.url.pathname` differently. The guard has to agree with the router, not with the string.
+    it('is rejected with 403 and performs no write for a percent-encoded path that routes here', async () => {
+      const { response, actionRan } = await post(scenario, {
+        rawPath: encodeFirstChar(scenario.path),
+      });
+
+      expect(writes).toEqual([]);
+      expect(actionRan).toBe(false);
+      expect(response.status).toBe(403);
+    });
   });
 });
 
 describe('hub /admin guard shape', () => {
   const anyScenario = ADMIN_ACTIONS[0];
 
-  it('answers identically for a real and an unknown admin route, so it leaks no route inventory', async () => {
+  // Scope: this is about the hook's OWN responses. SvelteKit normalizes a trailing slash with a 308 before
+  // `handle` runs, and only for a path that matched a route, so the hook is not the only thing answering and
+  // cannot make every /admin request indistinguishable.
+  it('answers identically for a matched and an unmatched admin path', async () => {
     const real = await post(anyScenario);
-    const unknown = await post({ ...anyScenario, path: '/admin/no-such-route-here' });
+    const unknown = await post(anyScenario, {
+      rawPath: '/admin/no-such-route-here',
+      routedId: null,
+    });
 
     expect(real.response.status).toBe(403);
     expect(unknown.response.status).toBe(403);
     expect(await unknown.response.text()).toBe(await real.response.text());
   });
 
-  it('covers an admin route that does not exist yet, because it matches on path not on route id', async () => {
-    const { response, actionRan } = await post({ ...anyScenario, path: '/admin/future-route' });
+  it('rejects an unmatched /admin path rather than letting it fall through', async () => {
+    const { response, actionRan } = await post(anyScenario, {
+      rawPath: '/admin/future-route',
+      routedId: null,
+    });
+
+    expect(actionRan).toBe(false);
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects a request routed to an admin route however the path was spelled', async () => {
+    const { response, actionRan } = await post(anyScenario, {
+      rawPath: '/%61dmin/spoke-domains',
+      routedId: '/admin/spoke-domains',
+    });
+
+    expect(writes).toEqual([]);
+    expect(actionRan).toBe(false);
+    expect(response.status).toBe(403);
+  });
+
+  // The two arms of the guard cover different failure modes and would otherwise mask each other, so each
+  // gets a case the other cannot answer.
+
+  // Routed-id arm alone: a `reroute` hook or a configured base path can route a request to an admin route
+  // from a path that does not resemble one, and no amount of decoding recovers that.
+  it('rejects a request whose path is not admin-like but which routes to an admin route', async () => {
+    const { response, actionRan } = await post(anyScenario, {
+      rawPath: '/somewhere-else-entirely',
+      routedId: '/admin/spoke-domains',
+    });
+
+    expect(writes).toEqual([]);
+    expect(actionRan).toBe(false);
+    expect(response.status).toBe(403);
+  });
+
+  // Decoded-pathname arm alone: an encoded admin path that matches no route has no routed id to consult.
+  it('rejects an encoded admin path that matches no route', async () => {
+    const { response, actionRan } = await post(anyScenario, {
+      rawPath: '/%61dmin/no-such-route-here',
+      routedId: null,
+    });
 
     expect(actionRan).toBe(false);
     expect(response.status).toBe(403);
@@ -324,6 +414,7 @@ describe('hub /admin guard shape', () => {
     const event = {
       url,
       request: new Request(url, { method: 'GET' }),
+      route: { id: '/admin/spoke-domains' },
       params: {},
       locals: {} as Record<string, unknown>,
       cookies: { get: () => undefined },
@@ -345,6 +436,7 @@ describe('hub /admin guard shape', () => {
     const event = {
       url,
       request: new Request(url, { method: 'POST', body: new URLSearchParams({ a: 'b' }) }),
+      route: { id: '/login' },
       params: {},
       locals: {} as Record<string, unknown>,
       cookies: { get: () => undefined },
