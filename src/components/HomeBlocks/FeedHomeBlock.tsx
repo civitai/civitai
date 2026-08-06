@@ -22,6 +22,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { FeedBlockItems } from '~/server/services/home-block.service';
+import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
@@ -159,6 +160,17 @@ const FeedSkeleton = ({ rows }: { rows: number }) => (
   </div>
 );
 
+/**
+ * Rotate the fetched pool so the shelf isn't identical on every visit, matching how
+ * Collection and Featured Models blocks behave.
+ *
+ * Copies before shuffling: `shuffle` sorts in place, and the array here belongs to the
+ * React Query cache.
+ */
+function useShuffled<T>(items: T[]) {
+  return useMemo(() => shuffle([...items]), [items]);
+}
+
 /** Trim to the visible slice, capping how many items one creator can contribute. */
 function useCappedItems<T extends { id: number; user?: { id: number } }>(
   items: T[],
@@ -194,9 +206,10 @@ function ImageFeedGrid({
   rows,
   maxPerUser,
 }: GridProps<Extract<FeedBlockItems, { entity: 'images' }>['items']>) {
+  const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'images',
-    data: items,
+    data: rotated,
   });
   const visible = useCappedItems(filtered, rows, maxPerUser);
 
@@ -220,9 +233,10 @@ function ModelFeedGrid({
   rows,
   maxPerUser,
 }: GridProps<Extract<FeedBlockItems, { entity: 'models' }>['items']>) {
+  const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'models',
-    data: items,
+    data: rotated,
   });
   const visible = useCappedItems(filtered, rows, maxPerUser);
 

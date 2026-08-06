@@ -210,10 +210,13 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     expect(subtype).toBe('rate-limit-write-degraded');
     expect(fn).toBe('middleware.trpc.recordAttempt');
     expect(err).toBe(synthetic);
-    // The extra payload should carry enough to disambiguate the call.
+    // The extra payload should carry enough to disambiguate the call. The hash
+    // key is namespaced by principal kind (`user:` / `ip:`) so the two key
+    // spaces cannot collide — see middleware.trpc.ts and the dedicated bucket-key
+    // suite in `middleware.trpc.rate-limit-key.test.ts`.
     expect(extra).toMatchObject({
       cacheKey: expect.stringContaining('trpc:rate-limit:'),
-      hashKey: '42',
+      hashKey: 'user:42',
     });
   });
 

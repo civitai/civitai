@@ -1,38 +1,169 @@
-import { isIP } from 'node:net';
+import { isIP } from 'net';
+import type { NextApiRequest } from 'next';
+import requestIp from 'request-ip';
 
 /**
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ MERGE NOTE — #3658 created this same module and has now LANDED on main │
- * │ (d705fbd97d). Its `resolveClientIp` and this PR's                       │
- * │ `getTrustedClientIp` + `isIpAddress` are DIFFERENT predicates for       │
- * │ DIFFERENT surfaces and both are wanted — resolve the add/add conflict   │
- * │ by KEEPING BOTH, not by picking one. See "Choosing between the two"     │
- * │ below.                                                                 │
- * │                                                                        │
- * │ Three things a mechanical union gets WRONG, to do by hand:              │
- * │                                                                        │
- * │  1. Both sides import `isIP`, from DIFFERENT specifiers — this file     │
- * │     uses `node:net`, main uses `net`. Keeping both lines is a           │
- * │     duplicate identifier (TS2300). Keep the `node:net` line and drop    │
- * │     the other: `net` is the only builtin this repo imports with a       │
- * │     single spelling — 3 of 3 occurrences are `node:net`, none bare.     │
- * │                                                                        │
- * │  2. Fix main's paragraph beginning "NOT THE ONLY PREDICATE — CHOOSE     │
- * │     PER SURFACE.", which says the stricter variant "lives with the      │
- * │     token-minting endpoint in `src/pages/api/v1/block-tokens/`".        │
- * │     After the union it does not live there: it is `getTrustedClientIp`  │
- * │     in this file, and block-tokens calls it. The paragraph's POINT      │
- * │     (two predicates, pick per surface) survives and is worth keeping —  │
- * │     only its claim about WHERE the strict one lives is falsified, so    │
- * │     repoint it here rather than deleting the paragraph.                 │
- * │                                                                        │
- * │  3. Both sides independently reject an IPv6 zone id and bound an        │
- * │     accepted value to 45 characters — main in `isBareAddress`, this     │
- * │     file in `isIpAddress`. Keep both predicates but do NOT keep two     │
- * │     copies of that rule: they agree today and nothing makes them agree  │
- * │     tomorrow. Fold one onto the other in a follow-up.                   │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * TWO PREDICATES IN ONE FILE — the record of a resolved add/add merge.
  *
+ * #3658 and #3659 each created this module, independently, for different
+ * surfaces. The conflict was resolved as a UNION, because neither predicate
+ * replaces the other:
+ *
+ *   `resolveClientIp`     an attribution LABEL for rate-limit buckets
+ *   `getTrustedClientIp`  a validated address for an ENFORCEMENT decision
+ *
+ * The section "CHOOSING BETWEEN THE TWO PREDICATES IN THIS FILE" further down
+ * is how to pick between them, and the return type is the tell. Three things
+ * the union settled by hand, recorded here so they are not re-litigated:
+ *
+ *  1. IMPORT SPECIFIER. Both sides imported `isIP`; keeping both lines would be
+ *     a duplicate identifier (TS2300), so one spelling had to win. This file
+ *     uses the bare `net`, which is what the merged-in side already had — the
+ *     smallest possible edit in a file where the boring resolution is the right
+ *     one. The repo is NOT actually consistent on this: measured at the merge
+ *     base, the other `src/` imports of this builtin spell it `node:net`, so
+ *     the count runs the other way. The choice is inert — both specifiers
+ *     resolve to the same builtin — and normalising the repo on one spelling
+ *     belongs with the follow-up in (3), not in a conflict resolution.
+ *
+ *  2. The "NOT THE ONLY PREDICATE — CHOOSE PER SURFACE" paragraph below used to
+ *     say the stricter variant lived with the token-minting endpoint. After the
+ *     union it does not live there: it is `getTrustedClientIp` in this file,
+ *     and that endpoint calls it. The paragraph's POINT — two predicates,
+ *     choose per surface, they differ deliberately — survives untouched, so it
+ *     was repointed rather than deleted.
+ *
+ *  3. DUPLICATED VALIDATION, DELIBERATELY LEFT IN PLACE. `isBareAddress` and
+ *     `isIpAddress` apply the same rule and return the same verdict for every
+ *     string input. Collapsing them was explicitly NOT done here: it would
+ *     change the tRPC rate limiter and the download blocklist in the same
+ *     commit, and a conflict resolution in this file should be as boring as it
+ *     can be. A follow-up consolidates the two, together with the `getClientIp`
+ *     wrapper in `src/pages/api/v1/block-tokens/index.ts`. Until then the two
+ *     carry lockstep notes pointing at each other, and their agreement is
+ *     pinned by a test rather than by hope — see either predicate.
+ */
+
+/**
+ * THE single client-IP predicate for anything that keys a per-client control
+ * (rate-limit buckets, per-IP quotas) on the caller's address.
+ *
+ * PREFER Cloudflare's `CF-Connecting-IP` (Next lowercases header keys →
+ * `cf-connecting-ip`). CF stamps it at the edge on every proxied request, so for
+ * traffic that transits Cloudflare it is the one address in the request the
+ * origin did not take on the caller's word. Fall back
+ * to `requestIp.getClientIp` (XFF chain → socket peer) for non-CF / local
+ * requests that never traversed the edge, so dev and direct-to-origin traffic
+ * still bucket sensibly.
+ *
+ * WHY A SHARED PREDICATE: a bucket key is only as good as the value it is
+ * derived from, and a per-call-site derivation drifts — each new limiter picks
+ * whichever header its author reached for first, and the resulting disagreement
+ * is invisible until someone audits all of them at once. Keeping ONE exported
+ * function means the choice is made in one reviewable place and every keyed
+ * control inherits it. If you are adding a limiter, call this rather than
+ * reading headers yourself; `src/server/utils/__tests__/client-ip-ledger.test.ts`
+ * pins the (small) set of modules allowed a direct `request-ip` dependency and
+ * will fail if a new one appears.
+ *
+ * NOT THE ONLY PREDICATE — CHOOSE PER SURFACE. The stricter, fail-closed
+ * variant is `getTrustedClientIp`, further down THIS file. It used to live with
+ * the token-minting endpoint in `src/pages/api/v1/block-tokens/`; that endpoint
+ * now calls the shared one, so the strict predicate is no longer over there —
+ * only this pointer changed, the choice it describes did not. The two differ
+ * deliberately in what they are willing to trust and in what they hand back,
+ * because an enforcement decision and a generic rate limiter do not want the
+ * same trade — strictness is not free in either direction. Pick the one that
+ * matches the surface you are on; do not reach for either by default, and do
+ * not collapse them into one without re-deciding the trade for both. The
+ * section "CHOOSING BETWEEN THE TWO PREDICATES IN THIS FILE" below is the long
+ * form of that choice.
+ *
+ * WHAT THE RETURN VALUE IS: a BARE, well-formed IPv4/IPv6 address, or the
+ * literal `'unknown'` when the request carries no resolvable address at all.
+ * Both branches validate against the same grammar — see `isBareAddress` — so the
+ * value is bounded in length and in content. That is load-bearing wherever this
+ * is used as a key: an unbounded key space is unbounded storage, and a caller
+ * able to vary the key at will can rotate away from its own bucket. Callers must
+ * still NAMESPACE their keys — see `middleware.trpc.ts` — because a key space
+ * shared between two namespaces is only disjoint by luck.
+ *
+ * Note `'unknown'` is a SHARED bucket for every caller that lands on it, so it
+ * is deliberately a single fixed label rather than something per-request: an
+ * unresolvable caller must not be able to mint itself a fresh empty quota.
+ */
+
+/**
+ * The longest textual IP address: the fully-expanded IPv4-mapped IPv6 form,
+ * `0000:0000:0000:0000:0000:ffff:255.255.255.255`.
+ */
+const MAX_TEXTUAL_ADDRESS_LENGTH = 45;
+
+/**
+ * A BARE address — a well-formed IPv4/IPv6 address with no IPv6 zone identifier,
+ * no longer than the grammar permits.
+ *
+ * `net.isIP` on its own is NOT this check, and the difference matters. It accepts
+ * a zone-scoped address (`fe80::1%eth0`) and bounds neither the zone part's
+ * length nor its contents, while the `request-ip` fallback's own `is.ip()`
+ * rejects exactly those values — so a validator resting on `isIP` alone lets the
+ * two branches of `resolveClientIp` disagree about what counts as an address,
+ * and lets an arbitrary-length caller-supplied suffix through the accepting one.
+ *
+ * Measured across both families, the zone suffix is the ENTIRE disagreement
+ * between the two validators: every value they score differently contains a `%`.
+ * Excluding it is therefore what makes the two branches agree.
+ *
+ * ON THE LENGTH BOUND — it is DEFENCE IN DEPTH, not the working check, and the
+ * distinction is recorded so nobody mistakes it for load-bearing. Once `%` is
+ * excluded, `isIP` cannot accept anything longer than the grammar's own maximum
+ * anyway: probing ~1.4M `%`-free strings of length 46-80, plus every maximal
+ * canonical form, produced ZERO acceptances above 45. So deleting this line is a
+ * provably EQUIVALENT mutation — no input can distinguish it, and the mutation
+ * battery reports it as a survivor for that reason rather than for want of a
+ * test. It is kept as a bound that still holds if `isIP`'s accepted grammar ever
+ * widens. Its VALUE is pinned: tightening it below 45 fails the longest-legal-
+ * address control in `src/server/utils/__tests__/client-ip.test.ts`.
+ *
+ * That file also pins the zone rejection in content and in length, with controls
+ * proving the bare address is still accepted.
+ *
+ * ⚠️ LOCKSTEP WITH `isIpAddress` — DO NOT CHANGE ONE WITHOUT THE OTHER.
+ * `isIpAddress`, further down this file, applies the same rule to the same
+ * grammar and returns the same accept/reject verdict for every string input.
+ * They are two independent copies of one rule: neither fails when the other
+ * changes, so a divergence would be silent at every call site of both. They are
+ * kept separate ON PURPOSE for now — see the note at the top of this file — and a follow-up
+ * consolidates them. Do not collapse them here. Their agreement is pinned by
+ * `src/server/utils/__tests__/client-ip-predicate-agreement.test.ts`, which
+ * runs one shared table of inputs through both and fails on any divergence.
+ * The differing SIGNATURES (`string` → `boolean` here, `unknown` → type
+ * predicate there) are deliberate and are not the duplication.
+ */
+function isBareAddress(value: string): boolean {
+  if (value.length > MAX_TEXTUAL_ADDRESS_LENGTH) return false;
+  if (value.includes('%')) return false;
+  return isIP(value) !== 0;
+}
+
+export function resolveClientIp(req: NextApiRequest): string {
+  // `req.headers` is optional-chained rather than assumed. This is reached from
+  // middleware with no try/catch, and at least one call path supplies `req`
+  // through an `as any` (`server-side-helpers.ts`), so the type is not the
+  // guarantee it looks like. `requestIp.getClientIp` already guards its own
+  // access the same way.
+  const cfip = req.headers?.['cf-connecting-ip'];
+  const cf = Array.isArray(cfip) ? cfip[0] : cfip;
+  const candidate = cf?.trim();
+  // Validate rather than pass through: an unvalidated edge header is a
+  // caller-controlled string, and every consumer of this uses the result as a
+  // key. A header that does not validate falls through to the fallback, which
+  // yields a real address rather than the value that was presented.
+  if (candidate && isBareAddress(candidate)) return candidate;
+  return requestIp.getClientIp(req) ?? 'unknown';
+}
+
+/**
  * Client-IP derivation for ENFORCEMENT controls (abuse blocklists, per-client
  * quotas).
  *
@@ -152,6 +283,21 @@ type IpSourceRequest = {
  * This is the validation every consumer of a client IP should apply before the
  * value is allowed to reach a query, a cache key, or a comparison — see
  * `fetchDownloadCount` for a call site that depends on it.
+ *
+ * ⚠️ LOCKSTEP WITH `isBareAddress` — DO NOT CHANGE ONE WITHOUT THE OTHER.
+ * `isBareAddress`, further up this file, applies the same rule to the same
+ * grammar and returns the same accept/reject verdict for every string input
+ * (it also carries an explicit 45-character bound, which is why the two agree
+ * on length as well — that bound is redundant while `%` is excluded, and is
+ * documented there as such). They are two independent copies of one rule:
+ * neither fails when the other changes, so a divergence would be silent at
+ * every call site of both. They are kept separate ON PURPOSE for now — see the note at the top
+ * of this file — and a follow-up consolidates them. Do not collapse them here.
+ * Their agreement is pinned by
+ * `src/server/utils/__tests__/client-ip-predicate-agreement.test.ts`, which
+ * runs one shared table of inputs through both and fails on any divergence.
+ * The differing SIGNATURES (`unknown` → type predicate here, `string` →
+ * `boolean` there) are deliberate and are not the duplication.
  */
 export function isIpAddress(value: unknown): value is string {
   if (typeof value !== 'string') return false;

@@ -162,7 +162,7 @@ migrations to hand-apply.**
 - **Verify subagent claims directly — several were wrong on first pass** (a flag-eval that
   "worked" only by luck; a redis return-value misread; an audit citing a GET-only route as a
   POST-CSRF hole; an audit citing the wrong file path for a real finding).
-- **Tests in a worktree:** `ln -s /home/zach/workspace/civit/civitai/node_modules ./node_modules`,
+- **Tests in a worktree:** `ln -s <local-path>/workspace/civit/civitai/node_modules ./node_modules`,
   then run the single target file. Full `tsc` in a worktree is noisy (stale Prisma client in
   unrelated files) — but you CAN validate a specific file with
   `npx tsc --noEmit -p tsconfig.json 2>&1 | grep <file>` (the stale-Prisma errors are in OTHER
