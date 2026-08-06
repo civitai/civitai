@@ -87,7 +87,7 @@
             <p class="text-sm text-dark-2">None found.</p>
           {:else}
             <ul class="space-y-1 text-sm">
-              {#each result.sharedAccounts.slice(0, SHOWN) as acct (acct.userId + acct.ip)}
+              {#each result.sharedAccounts.slice(0, SHOWN) as acct (`${acct.userId}:${acct.ip}:${acct.type}`)}
                 <li class="flex flex-wrap items-baseline gap-x-2">
                   <a href="?q={acct.userId}" class={LINK_CLASS}>
                     {acct.username ?? `#${acct.userId}`}

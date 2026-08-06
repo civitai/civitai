@@ -21,7 +21,8 @@
     modelId: number | null;
   };
   type Cosmetic = {
-    id: number;
+    /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
+    key: string;
     name: string;
     type: string;
     equipped: boolean;
@@ -133,7 +134,7 @@
           <p class="text-sm text-dark-2">None.</p>
         {:else}
           <ul class="space-y-1 text-sm">
-            {#each showCosmetics ? result.cosmetics : result.cosmetics.slice(0, SHOWN) as c (c.id)}
+            {#each showCosmetics ? result.cosmetics : result.cosmetics.slice(0, SHOWN) as c (c.key)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-dark-0">{c.name}</span>
                 <Badge variant="secondary">{c.type}</Badge>

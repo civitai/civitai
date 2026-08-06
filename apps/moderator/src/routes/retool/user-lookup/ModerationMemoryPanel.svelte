@@ -1,11 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
-  import { enhance } from '$app/forms';
+  import { applyAction, enhance } from '$app/forms';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { dateTime } from './format';
+  import { dateTime, type FormResult } from './format';
 
   type Note = {
     id: number;
@@ -16,7 +17,9 @@
   };
   type Strike = { id: number; reason: string | null; createdAt: string | null; createdBy: string | null };
 
-  let { userId }: { userId: number } = $props();
+  let { userId, form }: { userId: number; form: FormResult } = $props();
+
+  const error = $derived(form?.scope === 'notes' ? form.error : null);
 
   // Bumped after a write so the derived promise refetches — the data lives in the moderator database,
   // not in `data`, so invalidating the page load would not bring it back.
@@ -36,14 +39,19 @@
   let editing = $state<number | null>(null);
   let adding = $state(false);
 
-  const afterWrite = () => async ({ result }: { result: { type: string } }) => {
-    if (result.type === 'success') {
-      editing = null;
-      adding = false;
-      version += 1;
-    }
-    await invalidateAll();
-  };
+  // applyAction populates `form` — without it "You can only edit your own notes." never reaches the UI
+  // and a rejected edit looks like a successful one.
+  const afterWrite =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        editing = null;
+        adding = false;
+        version += 1;
+        await invalidateAll();
+      }
+    };
 </script>
 
 <section class="mb-4 grid gap-4 lg:grid-cols-2">
@@ -54,6 +62,15 @@
         <Button size="sm" variant="outline" onclick={() => (adding = true)}>Add note</Button>
       {/if}
     </div>
+
+    {#if error}
+      <div
+        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+        role="alert"
+      >
+        {error}
+      </div>
+    {/if}
 
     {#if adding}
       <form method="POST" action="?/addNote" use:enhance={afterWrite} class="mb-4">

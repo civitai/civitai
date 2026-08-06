@@ -175,6 +175,8 @@ export type ReportsFiled = {
   actioned: number;
   unactioned: number;
   pending: number;
+  /** ReportStatus also has `Processing`; without it the four tiles do not sum to `total`. */
+  processing: number;
   actionedPercent: number | null;
 };
 
@@ -186,6 +188,7 @@ export async function getReportsFiled(userId: number): Promise<ReportsFiled> {
       eb.fn.count<string>(sql`CASE WHEN "status" = 'Actioned' THEN 1 END`).as('actioned'),
       eb.fn.count<string>(sql`CASE WHEN "status" = 'Unactioned' THEN 1 END`).as('unactioned'),
       eb.fn.count<string>(sql`CASE WHEN "status" = 'Pending' THEN 1 END`).as('pending'),
+      eb.fn.count<string>(sql`CASE WHEN "status" = 'Processing' THEN 1 END`).as('processing'),
     ])
     .where('userId', '=', userId)
     .executeTakeFirst();
@@ -201,6 +204,7 @@ export async function getReportsFiled(userId: number): Promise<ReportsFiled> {
     actioned,
     unactioned,
     pending: Number(row?.pending ?? 0),
+    processing: Number(row?.processing ?? 0),
     actionedPercent: resolved > 0 ? Math.round((actioned / resolved) * 100) : null,
   };
 }
@@ -295,18 +299,26 @@ export type SharedIpAccount = {
 //
 // Capped hard at both ends: a carrier NAT can carry thousands of unrelated accounts, and returning them
 // all would be slow and useless. A truncated result is reported rather than silently trimmed.
+// Identifying IPs are selected by their OWN query, not filtered out of `getUserIps`. That list is
+// capped at 100 (ip, type) groups ordered by recency, and a registration is by definition the oldest
+// event on the account — so for any busy user the Registration row falls outside the cap and the
+// ban-evasion panel silently reports "none found" on exactly the accounts worth investigating.
+async function getIdentifyingIps(userId: number): Promise<string[]> {
+  const rows = await getClickhouse().$query<{ ip: string }>(`
+    SELECT DISTINCT ip
+    FROM default.userActivities
+    WHERE targetUserId = ${userId}
+      AND type IN ('Registration', 'Subscribe')
+      AND NOT isIPAddressInRange(ip, '${INTERNAL_IP_RANGE}')
+    LIMIT 25
+  `);
+  return rows.map((r) => r.ip).filter((ip) => IP_PATTERN.test(ip));
+}
+
 export async function getSharedIpAccounts(
-  userId: number,
-  ips: UserIp[]
+  userId: number
 ): Promise<{ accounts: SharedIpAccount[]; truncated: boolean }> {
-  const identifying = [
-    ...new Set(
-      ips
-        .filter((i) => i.type === 'Registration' || i.type === 'Subscribe')
-        .map((i) => i.ip)
-        .filter((ip) => IP_PATTERN.test(ip))
-    ),
-  ].slice(0, 25);
+  const identifying = await getIdentifyingIps(userId);
   if (!identifying.length) return { accounts: [], truncated: false };
 
   const LIMIT = 100;
@@ -383,6 +395,7 @@ export async function getCommentBurst(userId: number): Promise<number> {
 // History only accrues from that migration forward — earlier rows were deduped in place by the unique
 // index it dropped, so older accounts will look sparser than they were.
 export type ModActivityRow = {
+  id: number;
   activity: string;
   entityType: string;
   entityId: number | null;
@@ -399,6 +412,9 @@ const ACTIVITY_CONTENT = [
 
 export async function getModActivity(userId: number, limit = 40): Promise<ModActivityRow[]> {
   const select = [
+    // `id` is selected purely so the UI has a stable key — ModActivity is append-only now, so two rows
+    // can share (createdAt, activity, entityId) and a composite key would collide.
+    'ma.id',
     'ma.activity',
     'ma.entityType',
     'ma.entityId',
@@ -441,6 +457,7 @@ export async function getModActivity(userId: number, limit = 40): Promise<ModAct
   const byId = new Map(mods.map((m) => [m.id, m.username]));
 
   return rows.map((r) => ({
+    id: r.id,
     activity: r.activity,
     entityType: r.entityType ?? '',
     entityId: r.entityId,
@@ -455,27 +472,47 @@ export type UserSubscription = {
   productName: string | null;
   provider: string | null;
   status: string;
+  buzzType: string | null;
   cancelAtPeriodEnd: boolean | null;
   canceledAt: Date | null;
   currentPeriodEnd: Date | null;
 };
 
+// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design, and
+// referrals deliberately add a `referral` row that can outlast a paid one. Ordering by period end alone
+// would report the referral grant as the user's plan, so filter to the paid subscription the main app
+// treats as canonical and surface `buzzType` regardless.
+const PAID_BUZZ_TYPE = 'yellow';
+
 export async function getSubscription(userId: number): Promise<UserSubscription | null> {
-  const row = await dbRead
+  const select = [
+    'p.name as productName',
+    'p.provider',
+    'cs.status',
+    'cs.buzzType',
+    'cs.cancelAtPeriodEnd',
+    'cs.canceledAt',
+    'cs.currentPeriodEnd',
+  ] as const;
+
+  const paid = await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
-    .select([
-      'p.name as productName',
-      'p.provider',
-      'cs.status',
-      'cs.cancelAtPeriodEnd',
-      'cs.canceledAt',
-      'cs.currentPeriodEnd',
-    ])
+    .select(select)
+    .where('cs.userId', '=', userId)
+    .where('cs.buzzType', '=', PAID_BUZZ_TYPE)
+    .executeTakeFirst();
+  if (paid) return paid as UserSubscription;
+
+  // No paid row — show whatever they do have rather than nothing, with buzzType visible.
+  const other = await dbRead
+    .selectFrom('CustomerSubscription as cs')
+    .leftJoin('Product as p', 'p.id', 'cs.productId')
+    .select(select)
     .where('cs.userId', '=', userId)
     .orderBy('cs.currentPeriodEnd', 'desc')
     .executeTakeFirst();
-  return row ?? null;
+  return (other as UserSubscription | undefined) ?? null;
 }
 
 // REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
@@ -535,7 +572,9 @@ export async function getComments(userId: number, limit = 25): Promise<UserComme
 // COSMETICS — read-only. Retool's RemoveCosmetics is deliberately not ported (destructive, and the
 // main app's equivalent also refreshes entity caches and search indexes).
 export type UserCosmeticRow = {
-  id: number;
+  /** `${cosmeticId}:${claimKey}` — UserCosmetic's key is (userId, cosmeticId, claimKey), so the
+   *  cosmetic id alone is not unique per user and collides for repeat claims. */
+  key: string;
   name: string;
   type: string;
   equipped: boolean;
@@ -546,16 +585,18 @@ export async function getCosmetics(userId: number, limit = 50): Promise<UserCosm
   const rows = await dbRead
     .selectFrom('UserCosmetic as uc')
     .innerJoin('Cosmetic as c', 'c.id', 'uc.cosmeticId')
-    .select(['c.id', 'c.name', 'c.type', 'uc.equippedToId', 'uc.obtainedAt'])
+    // `equippedAt` is the canonical "is this equipped" test, matching the main app. `equippedToId` is
+    // the entity it is attached to, and is NULL for profile-level cosmetics that ARE equipped.
+    .select(['uc.cosmeticId', 'uc.claimKey', 'c.name', 'c.type', 'uc.equippedAt', 'uc.obtainedAt'])
     .where('uc.userId', '=', userId)
     .orderBy('uc.obtainedAt', 'desc')
     .limit(limit)
     .execute();
   return rows.map((r) => ({
-    id: r.id,
+    key: `${r.cosmeticId}:${r.claimKey}`,
     name: r.name,
     type: String(r.type),
-    equipped: r.equippedToId !== null,
+    equipped: r.equippedAt !== null,
     obtainedAt: r.obtainedAt,
   }));
 }

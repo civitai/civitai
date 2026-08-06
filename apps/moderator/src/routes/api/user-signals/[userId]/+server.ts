@@ -16,8 +16,13 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   if (!Number.isInteger(userId) || userId <= 0)
     return json({ error: 'bad userId' }, { status: 400 });
 
-  const [ips, commentBurst] = await Promise.all([getUserIps(userId), getCommentBurst(userId)]);
-  const shared = await getSharedIpAccounts(userId, ips);
+  // Independent now — the shared-IP scan selects its own identifying addresses rather than filtering
+  // the recency-capped list, so all three can run together.
+  const [ips, commentBurst, shared] = await Promise.all([
+    getUserIps(userId),
+    getCommentBurst(userId),
+    getSharedIpAccounts(userId),
+  ]);
 
   return json({
     ips,

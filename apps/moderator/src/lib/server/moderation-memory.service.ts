@@ -63,10 +63,9 @@ export async function addUserNote(input: {
     .execute();
 }
 
-// Scoped to the author's own notes, per the ticket ("mods can leave notes on users and edit their own
-// notes"). The `lastUpdateBy` predicate is the authorisation check, not just a filter — a moderator
-// cannot edit a note written under someone else's name, including the Retool display names on
-// historical rows.
+// The `lastUpdateBy` predicate is the authorisation check, not just a filter — a forged id changes
+// nothing. Because it matches on a NAME, a historical row written under a Retool display name is
+// editable by whoever holds that Civitai username; the id backfill closes that.
 export async function updateUserNote(input: {
   id: number;
   notes: string;

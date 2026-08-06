@@ -1,13 +1,14 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { enhance } from '$app/forms';
+  import { applyAction, enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
+  import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import type { PageData } from './$types';
-  import { LINK_CLASS, dateTime } from './format';
+  import { LINK_CLASS, dateTime, type FormResult } from './format';
 
   type Identity = NonNullable<PageData['result']>['identity'];
   type TimedMute = {
@@ -23,7 +24,13 @@
     freshdesk: { id: number; name: string | null; email: string | null; url: string } | null;
   };
 
-  let { identity, canAct }: { identity: Identity; canAct: boolean } = $props();
+  let {
+    identity,
+    canAct,
+    form,
+  }: { identity: Identity; canAct: boolean; form: FormResult } = $props();
+
+  const error = $derived(form?.scope === 'account' ? form.error : null);
 
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | null>(null);
@@ -38,19 +45,37 @@
       : null
   );
 
-  // The ban endpoint answers before it finishes its work, so re-read rather than trusting the response.
-  const afterAction = () => async ({ result }: { result: { type: string } }) => {
-    if (result.type === 'success') {
-      confirming = null;
-      showTimedMute = false;
-      version += 1;
-    }
-    await invalidateAll();
-  };
+  // `applyAction` is what populates `form` — a custom enhance callback replaces the default handling, so
+  // without it every fail() (already banned, not permitted, ban endpoint 500) is silently discarded and a
+  // refused action looks identical to a successful one.
+  //
+  // The ban endpoint also answers before it finishes its work, so success re-reads rather than trusting
+  // the response.
+  const afterAction =
+    () =>
+    async ({ result }: { result: ActionResult }) => {
+      await applyAction(result);
+      if (result.type === 'success') {
+        confirming = null;
+        showTimedMute = false;
+        version += 1;
+        await invalidateAll();
+      }
+    };
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="mb-1 text-sm font-semibold text-white">Account actions</h3>
+
+  {#if error}
+    <div
+      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+      role="alert"
+    >
+      {error}
+    </div>
+  {/if}
+
   {#if !canAct}
     <p class="text-sm text-dark-2">
       You can view this account but not act on it. Enforcement requires the Users permission.
@@ -137,7 +162,9 @@
     {/if}
   {/if}
 
-  {#await support then result}
+  {#await support}
+    <p class="mt-5 text-sm text-dark-2">Loading mutes and support context…</p>
+  {:then result}
     {#if result}
       <div class="mt-5 grid gap-5 lg:grid-cols-2">
         <div>
@@ -180,5 +207,7 @@
         </div>
       </div>
     {/if}
+  {:catch}
+    <p class="mt-5 text-sm text-red-300">Could not load mutes or support context.</p>
   {/await}
 </section>

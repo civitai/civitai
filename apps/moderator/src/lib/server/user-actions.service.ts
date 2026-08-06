@@ -148,16 +148,23 @@ export async function addTimedMute(input: {
   return { ok: true };
 }
 
+// Scoped to BOTH id and userId, and acts only if a row actually changed. Filtering on `id` alone would
+// let an id/userId mismatch — forged or merely stale — revoke one account's mute while unmuting another,
+// revoking their sessions and logging it against them.
 export async function revokeTimedMute(input: {
   id: number;
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  await getModeratorDb()
+  const result = await getModeratorDb()
     .updateTable('TimedMutes')
     .set({ isMuted: false, muteEnd: new Date() })
     .where('id', '=', input.id)
-    .execute();
+    .where('userId', '=', String(input.userId))
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows ?? 0) === 0)
+    return { ok: false, error: 'That timed mute does not belong to this user.' };
 
   await setMuted({ userId: input.userId, muted: false, moderatorId: input.moderatorId });
   return { ok: true };

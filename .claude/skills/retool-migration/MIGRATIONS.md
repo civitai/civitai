@@ -10,7 +10,7 @@ left worth porting) · `dropped` (agreed not to port)
 
 | App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
-| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **all slices built** — not yet verified in a browser, and Retool still live |
+| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — every export-derived slice built (unverified in a browser); 8 items from the ticket wishlist unbuilt |
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
@@ -145,6 +145,36 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       rather than erroring, so a missing key never blocks a lookup. Documented in `.env.example`; this
       is the one piece that has not been exercised against the real service.
 
+### Asked for in the ticket, not built
+
+The slices above were scoped from the Retool export. `868kn6x1b`'s description is a **wishlist**, and it
+asks for eight things the export-driven slices never covered. None are blocked — they are unbuilt.
+
+- [ ] **LoRA trainings** — `ModelVersionsAllTraining` etc. The largest omission: training status, base
+      model, epoch progress, workflow/job id and the Buzz transaction per training run. Roughly a panel
+      of its own; the SQL digs through `ModelFile.metadata->trainingResults`.
+- [ ] **Buzz history** — `Receipts` / `Payments` (ClickHouse) plus `ReceiptsUsers` / `PaymentsUsers` to
+      name the counterparties. Only the *balance* is shipped. "Add / subtract buzz" the ticket itself
+      flags as probably a separate app — leave it there.
+- [ ] **Reactions** — `ReactionsGrouped`, `ReactionsAll` over `ImageReaction`. Straight read.
+- [ ] **Civitai score** — `SocialScore`, from `User.meta->scores` (total / users / images / models /
+      articles / reportsAgainst / reportsActioned). Cheap, and it belongs in `ReputationPanel`.
+- [ ] **Bio, profile message and location** — `UserBio` over `UserProfile`. Read is trivial; the ticket
+      also wants **edit**, which is `/api/mod/retool/user` and carries the same API-key blocker as
+      `UpdateUserDeets`.
+- [ ] **Socials** — `AccountSocialQuery` (`UserLink`), and the cross-user matching (`UsersWithSocials`,
+      `DistinctUsersWithSocialLinks`) that is a ban-evasion signal in the same class as shared IPs.
+      Belongs beside Security signals, not in the profile.
+- [ ] **Blocked prompts** — `GetBlockedPrompts` (ClickHouse). Also `GeneratorCount` / `GenRateLimited`;
+      generation abuse is a signal group we have none of.
+- [ ] **"Has this user talked to a mod before?"** — `FindChats` / `FindChatsWithMods` / `UserChats`.
+      The ticket wants a *warning* on lookup, not a chat browser. Overlaps the **Chat Audit** app
+      (`868kn7m9r`) — decide there whether the flag lives here and the transcript lives there.
+      The ticket's "DMs sent" is the same data.
+- [ ] **Notification history** — `GetNotifications` / `ViewNotifications` against the Notifications DB,
+      which the spoke has no connection to. Not in the ticket text; noting it so the export's use of a
+      seventh datasource is not rediscovered later.
+
 ## User Reports
 
 Resources: `Replicated_Read_Prod`, `retool_db`, ClickHouse, REST. The smallest of the three, and the
@@ -179,11 +209,15 @@ equivalent here; a SvelteKit form action does the same job.
 ## Rules
 
 1. **Add the app here when the export arrives**, before writing code — even if it stays `not started`.
-2. **Tick a slice only when it is shipped and verified** (typecheck + build + a look at the real page).
+2. **Scope from the subtask description as well as the export.** They are different sources and they
+   disagree. The export says what Retool *does*; the description says what the mod team *asked for*,
+   and it includes things the Retool app never had. Reading only the export produced a User Lookup that
+   looked complete and was missing eight requested features.
+3. **Tick a slice only when it is shipped and verified** (typecheck + build + a look at the real page).
    A slice that is written but unverified is still unticked.
-3. **Record what you deliberately skipped** under the app, with the reason. "Not ported" and "not needed"
+4. **Record what you deliberately skipped** under the app, with the reason. "Not ported" and "not needed"
    look identical six months later.
-4. **`retool_db` slices are blocked on a data migration**, not on UI work. Do not tick them because a
+5. **`retool_db` slices are blocked on a data migration**, not on UI work. Do not tick them because a
    page renders; the data still lives in Retool.
-5. **Nothing is `done` until the Retool app is switched off** — otherwise moderators keep using the old
+6. **Nothing is `done` until the Retool app is switched off** — otherwise moderators keep using the old
    one and the two diverge.

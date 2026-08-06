@@ -4,6 +4,7 @@
   import { LINK_CLASS, dateTime } from './format';
 
   export type ModActivityRow = {
+    id: number;
     activity: string;
     entityType: string;
     entityId: number | null;
@@ -53,7 +54,7 @@
       <p class="text-sm text-dark-2">No recorded moderator activity.</p>
     {:else}
       <ul class="space-y-1.5 text-sm">
-        {#each expanded ? rows : rows.slice(0, COLLAPSED) as row (row.createdAt + row.activity + row.entityId)}
+        {#each expanded ? rows : rows.slice(0, COLLAPSED) as row (row.id)}
           {@const url = entityUrl(row)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-dark-2">{dateTime(row.createdAt)}</span>
