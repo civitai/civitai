@@ -34,35 +34,66 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     cannot fire at all, and (b) asserts the source guard's own distinct
  *     wording — including that the message does NOT mention `AIR type`.
  *
- *   GUARD 2 — the non-moderator entitlement gate for Private / epoch resources
+ *   GUARD 2 — the SUBSCRIPTION requirement on Private / epoch resources
  *     (`if (hasPrivateOrEpoch && !opts.user.isModerator)`).
  *
- *     🔴 THIS IS A LIVE GATE ON A REACHABLE, BUZZ-SPENDING PATH — NOT DEAD CODE.
- *     An earlier draft of this comment said non-moderators cannot obtain an App
- *     Blocks dev token, so the gate could never be reached by one. That was
- *     WRONG, and it was wrong in the direction that invites deleting this file:
- *     a maintainer reading "unreachable" has every reason to drop the coverage.
+ *     🔴 READ THIS BEFORE ASSUMING WHAT THESE TESTS COVER. This gate does NOT
+ *     stop an untrusted developer pinning a Private resource they do not own.
+ *     A DIFFERENT guard does that, one check EARLIER — `!resource.canGenerate`
+ *     — and a non-owner never reaches line 452 at all. Establishing that took a
+ *     live production run; two prior drafts of this comment described the wrong
+ *     population, so the mechanism is written out here rather than re-guessed.
  *
- *     What the code actually says (`server/services/app-blocks-flag.ts`):
- *     `isAppBlocksAuthorEnabled` returns true for a moderator floor **OR** a
- *     per-user Flipt eval of `app-blocks-author`, whose rollout carries a
- *     curated non-moderator author cohort alongside `moderators`. The mint
- *     endpoint's own comment at `pages/api/v1/blocks/dev-token.ts` says it
- *     plainly: "a curated non-mod cohort can mint a dev token for `dev:live`".
- *     So a non-moderator in that cohort reaches this belt whenever that cohort
- *     is populated. (Deliberately NOT "reaches it today": live Flipt state is
- *     something this repo cannot settle, and a claim it cannot check is a claim
- *     that rots. The reachable-by-construction fact is what matters here.)
+ *     WHY A NON-OWNER CANNOT REACH IT (`generation.service.ts`, canGenerate):
+ *       isPrivate   = availability === 'Private' || status in {Draft, Training}
+ *       canGenerate = covered && hasValidStatus &&
+ *                     (!isPrivate || isOwnedByUser || user.isModerator)
+ *     and `getEpochDetails` returns non-null ONLY when `status !== 'Published'`,
+ *     so an epoch resource is always Draft/Training. Therefore EVERY resource
+ *     that can set `hasPrivateOrEpoch` also sets `isPrivate` — which forces
+ *     `canGenerate = false` for a non-owner non-moderator, and the canGenerate
+ *     guard throws before `hasPrivateOrEpoch` is ever computed.
  *
- *     🔴 AND THE OBSERVATION THAT PRODUCED THE WRONG CLAIM COULD NOT HAVE
- *     SUPPORTED IT. It was a single account's 403 from that endpoint —
- *     generalised into a claim about every non-moderator. Worse, that endpoint
- *     returns the SAME "Apps are restricted to the Civitai team" body from the
- *     BANNED check and from the author gate (`dev-token.ts`, two adjacent
- *     branches), so the response cannot even distinguish which one fired, let
- *     alone establish anything about a population of one. Sampling is not
- *     enumerating: the authoritative surface is the flag resolver, not one
- *     account's rejection.
+ *     🔴 SO WHAT LINE 452 ACTUALLY GATES: the OWNER of a Private/epoch resource
+ *     who lacks an active subscription. Owners get `canGenerate: true` on their
+ *     own private resources, so they are the population that arrives here.
+ *     Moderators are exempt at BOTH layers.
+ *
+ *     That is exactly what the fixtures below encode, and it is why they are
+ *     correct as written: a row with `availability: 'Private'` AND
+ *     `canGenerate: true` for a non-moderator viewer IS the owner case. Keep
+ *     them; only the description of the population was ever wrong.
+ *
+ *     🔴 ESTABLISHED BY LIVE MEASUREMENT, NOT INFERENCE — and note HOW, because
+ *     the obvious method does not work. A genuine non-moderator (author-cohort
+ *     enrolled) submitted an inline body pinning a Private version owned by
+ *     someone else: 403, zero Buzz. Positive control — byte-identical body, one
+ *     AIR swapped for a public version — 200, workflow minted. But the MESSAGE
+ *     could not attribute the refusal: the anti-drop guard and the canGenerate
+ *     guard emit VERBATIM IDENTICAL text (`model version <id> is not available
+ *     for generation`), so the response cannot say which fired. It was
+ *     discriminated by a MODERATOR CONTRAST on the identical negative body (200,
+ *     accepted): `resourceDataCache`'s lookup takes only ids and filters on
+ *     `mv.id IN (…)` alone — no status, no availability, no user parameter — so
+ *     row PRESENCE is user-independent. A moderator succeeding proves the row
+ *     was there, which excludes anti-drop and leaves canGenerate.
+ *
+ *     🔴 KNOWN LIMIT — THE SUBSCRIPTION BRANCH ITSELF HAS STILL NEVER EXECUTED
+ *     IN A NON-MODERATOR PRODUCTION RUN. The test account owns zero models, so
+ *     the owner-without-subscription case could not be constructed live. Its
+ *     reachability is established from the source above; its BEHAVIOUR is
+ *     pinned only by the fixtures below. Do not upgrade that to "verified in
+ *     production" without an owning account.
+ *
+ *     (Reachability of the App Blocks path at all: `isAppBlocksAuthorEnabled`
+ *     is a moderator floor OR a per-user eval of `app-blocks-author`, whose
+ *     rollout carries a curated non-moderator author cohort — see
+ *     `server/services/app-blocks-flag.ts` and the mint endpoint's own comment
+ *     at `pages/api/v1/blocks/dev-token.ts`. An earlier draft claimed
+ *     non-moderators cannot obtain a dev token at all; that was false, and was
+ *     derived by generalising ONE account's 403 — from an endpoint that returns
+ *     the SAME body from its banned branch and its author gate, so it could not
+ *     attribute even that one rejection.)
  *
  * 🔴 NOTHING HERE DEPENDS ON `INLINE_NODEPACKS_ENABLED`. Both `comfyregistry`
  * (source) and `nodepack` (type) are keyed off that kill switch, so a fixture
@@ -289,16 +320,25 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GUARD 2 — the non-moderator Private / epoch entitlement gate.
+// GUARD 2 — the SUBSCRIPTION requirement on a Private / epoch resource the
+// viewer can already generate with, i.e. ITS OWNER.
 //
 //   if (hasPrivateOrEpoch && !opts.user.isModerator) { …require subscription… }
+//
+// 🔴 THE POPULATION IS OWNERS, NOT ARBITRARY DEVELOPERS. A non-owner is refused
+// one guard EARLIER by `!resource.canGenerate` and never arrives here — see the
+// derivation in the file header. Every fixture below therefore pairs
+// `availability: 'Private'` (or an epoch) with `canGenerate: true`, which is the
+// shape production produces for an OWNER. That is deliberate, not a convenient
+// mock: with `canGenerate: false` these cases would be rejected by the earlier
+// guard and would prove nothing about this one.
 //
 // Both LEGS are pinned. A test that only asserts the reject leg is killed by
 // deleting the guard but NOT by dropping `!`; a test that only asserts the
 // moderator exemption is killed by dropping `!` but not by deleting the guard.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('assertViewerEntitledToInlineResources — the non-moderator Private/epoch gate', () => {
-  it('🔴 REJECT LEG — a NON-moderator with no subscription is refused a PRIVATE resource', async () => {
+describe('assertViewerEntitledToInlineResources — the owner Private/epoch subscription gate', () => {
+  it('🔴 REJECT LEG — a NON-moderator OWNER with no subscription is refused their PRIVATE resource', async () => {
     mockGetResourceData.mockResolvedValue([
       row({ id: PRIVATE_VERSION_ID, availability: 'Private' }),
     ]);
@@ -350,10 +390,13 @@ describe('assertViewerEntitledToInlineResources — the non-moderator Private/ep
     expect(mockGetHighestTierSubscription).toHaveBeenCalledWith(NON_MODERATOR.id);
   });
 
-  it('🔴 REJECT LEG — the same holds for an EPOCH (early-access) resource', async () => {
+  it('🔴 REJECT LEG — the same holds for an OWNED EPOCH (early-access) resource', async () => {
     // The right-hand leg of `availability === Private || !!epochDetails`. A
     // distinct version id and a Public availability, so this case cannot be
-    // satisfied by the Private branch.
+    // satisfied by the Private branch. (In production an epoch resource is
+    // always Draft/Training — `getEpochDetails` returns non-null only when
+    // `status !== 'Published'` — which is itself `isPrivate`, so this row's
+    // `canGenerate: true` again encodes the OWNER.)
     mockGetResourceData.mockResolvedValue([
       row({
         id: EPOCH_VERSION_ID,
