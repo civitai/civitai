@@ -861,34 +861,47 @@ export const saveItemInCollections = async ({
     data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
   );
   if (reviewCollectionIds.length > 0) {
-    const managers = await dbRead.collectionContributor.findMany({
-      where: {
-        collectionId: { in: reviewCollectionIds },
-        permissions: { has: CollectionContributorPermission.MANAGE },
-      },
-      select: { collectionId: true, userId: true },
-    });
+    try {
+      const managers = await dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: reviewCollectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      });
 
-    await Promise.all(
-      reviewCollectionIds.map((collectionId) => {
-        const collection = collections.find((c) => c.id === collectionId);
-        if (!collection) return;
+      await Promise.all(
+        reviewCollectionIds.map((collectionId) => {
+          const collection = collections.find((c) => c.id === collectionId);
+          if (!collection) return;
 
-        const recipients = uniq([
-          collection.userId,
-          ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
-        ]).filter((id) => id !== userId);
-        if (recipients.length === 0) return;
+          const recipients = uniq([
+            collection.userId,
+            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
+          ]).filter((id) => id !== userId);
+          if (recipients.length === 0) return;
 
-        return createNotification({
-          userIds: recipients,
-          type: 'collection-submission-received',
-          category: NotificationCategory.Update,
-          key: `collection-submission-received:${collectionId}:${uuid()}`,
-          details: { collectionId, collectionName: collection.name },
-        });
-      })
-    );
+          return createNotification({
+            userIds: recipients,
+            type: 'collection-submission-received',
+            category: NotificationCategory.Update,
+            key: `collection-submission-received:${collectionId}:${uuid()}`,
+            details: { collectionId, collectionName: collection.name },
+          });
+        })
+      );
+    } catch (error) {
+      // The item write above already committed — a failure resolving recipients or notifying
+      // them must not fail the submit itself, or the caller sees an error for an action that
+      // actually succeeded and is likely to retry and double-submit.
+      logToAxiom({
+        type: 'error',
+        name: 'collection-submission-notify-failed',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        collectionIds: reviewCollectionIds,
+      }).catch();
+    }
   }
 
   // Check for updates to featured models

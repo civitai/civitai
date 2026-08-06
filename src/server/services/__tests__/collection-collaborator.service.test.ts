@@ -126,12 +126,16 @@ describe('inviteCollaborator', () => {
       role: 'Contributor',
     });
 
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: TARGET_ID,
         type: 'collection-invite-received',
         details: { collectionId: COLLECTION_ID, collectionName: 'My Collection' },
       })
+    );
+    expect(mockCreateNotification.mock.calls.every((call) => call[0].userId !== OWNER_ID)).toBe(
+      true
     );
   });
 
