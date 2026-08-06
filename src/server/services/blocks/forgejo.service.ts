@@ -19,6 +19,7 @@
 
 import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
 
 export const FORGEJO_ORG = 'civitai-apps';
@@ -172,24 +173,175 @@ export async function getRepo(slug: string): Promise<ForgejoRepo> {
   return unwrap<ForgejoRepo>(res);
 }
 
-/** Grant a Forgejo username write access to the repo. */
+/**
+ * Collaborator access levels, LOW → HIGH. This ordering is what makes
+ * `addCollaborator` a GRANT-AT-LEAST rather than a SET: a caller asking for a
+ * level at or below what the user already holds is a no-op, never a downgrade.
+ *
+ * Every string here was MEASURED against Forgejo `15.0.6+gitea-1.22.0` — the
+ * version `GET /api/v1/version` reports for the deployed instance — as a value
+ * `GET …/collaborators/{user}/permission` actually returns:
+ *   - `none`  is what a NON-collaborator reads back. That endpoint answers
+ *             200 with `permission: "none"`, NOT 404, so "not a collaborator
+ *             yet" is an ordinary reading, not an error.
+ *   - `owner` is what an org owner reads back.
+ * Only `read` / `write` / `admin` are grantable by PUT: a PUT of `owner`
+ * answers 204 and changes nothing.
+ */
+const COLLABORATOR_PERMISSION_RANK = {
+  none: 0,
+  read: 1,
+  write: 2,
+  admin: 3,
+  owner: 4,
+} as const;
+
+export type CollaboratorPermission = keyof typeof COLLABORATOR_PERMISSION_RANK;
+export type GrantablePermission = 'read' | 'write' | 'admin';
+
+function permissionRank(value: string): number | null {
+  return Object.prototype.hasOwnProperty.call(COLLABORATOR_PERMISSION_RANK, value)
+    ? COLLABORATOR_PERMISSION_RANK[value as CollaboratorPermission]
+    : null;
+}
+
+/**
+ * Three-valued on purpose. `unknown` (a permission string this Forgejo returned
+ * that our table does not rank) and `unreadable` (the call failed) are NOT the
+ * same as `none`, and collapsing either into `none` would silently re-enable the
+ * downgrade this whole helper exists to prevent — a rank of 0 compares below
+ * everything, so every grant would proceed.
+ */
+type PermissionRead =
+  | { kind: 'known'; permission: CollaboratorPermission }
+  | { kind: 'unknown'; raw: string }
+  | { kind: 'unreadable'; reason: string };
+
+async function readCollaboratorPermission(slug: string, username: string): Promise<PermissionRead> {
+  try {
+    const res = await fjFetch(
+      `/api/v1/repos/${FORGEJO_ORG}/${slug}/collaborators/${encodeURIComponent(
+        username
+      )}/permission`
+    );
+    if (!res.ok) {
+      // 404 here means the USER or the REPO does not exist (measured) — never
+      // "is not a collaborator", which reads back 200 + `none`. Either way we
+      // cannot rank what we did not read.
+      return { kind: 'unreadable', reason: `HTTP ${res.status}` };
+    }
+    const body = (await res.json().catch(() => null)) as { permission?: unknown } | null;
+    const raw = body?.permission;
+    if (typeof raw !== 'string') return { kind: 'unreadable', reason: 'no permission field' };
+    if (permissionRank(raw) === null) return { kind: 'unknown', raw };
+    return { kind: 'known', permission: raw as CollaboratorPermission };
+  } catch (error) {
+    return { kind: 'unreadable', reason: (error as Error)?.message ?? 'read threw' };
+  }
+}
+
+export type AddCollaboratorResult = {
+  requested: GrantablePermission;
+  /** What we read before deciding, or null when the read was unobservable. */
+  existing: CollaboratorPermission | null;
+  /**
+   * `kept`   — already at or above `requested`; no PUT was sent.
+   * `granted` — the read succeeded and `requested` was strictly higher.
+   * `granted-unobserved` — the read failed or returned an unrankable string, so
+   *   the grant went out WITHOUT knowing whether it lowers anything.
+   */
+  outcome: 'kept' | 'granted' | 'granted-unobserved';
+};
+
+/**
+ * Grant a Forgejo username AT LEAST `permission` on the repo — never less.
+ *
+ * The bare PUT this replaced was a SET, not a grant: Forgejo applies whatever
+ * level the body names, in both directions. Measured on 15.0.6+gitea-1.22.0,
+ * every one of first-grant / same-level re-grant / upgrade / DOWNGRADE answers
+ * `204 No Content` with an empty body, and a read-back confirms the downgrade
+ * landed. So `civitai app pull` (which asks for `read`) silently stripped push
+ * access from an author who had `write` from the web flow, and no status code
+ * distinguished that from success.
+ *
+ * Read-before-write closes it: rank the current level, and skip the PUT whenever
+ * it is already at or above what the caller asked for. `admin` and `owner` are
+ * therefore unreachable by either call site.
+ *
+ * WHEN THE READ IS UNOBSERVABLE we still send the grant (`granted-unobserved`),
+ * and say so in the log. The trade, stated rather than implied: proceeding can
+ * reproduce the downgrade on the narrow path where the read fails but the write
+ * succeeds, whereas skipping would deny a first-time author access to their own
+ * repo with no workaround — a hard, immediate, user-visible failure, versus a
+ * regression to the behaviour that shipped before this function was fixed. The
+ * log is what keeps the choice from being silent.
+ */
 export async function addCollaborator(opts: {
   slug: string;
   username: string;
-  permission?: 'read' | 'write' | 'admin';
-}): Promise<void> {
+  permission?: GrantablePermission;
+}): Promise<AddCollaboratorResult> {
+  const requested = opts.permission ?? 'write';
+  const requestedRank = COLLABORATOR_PERMISSION_RANK[requested];
+
+  const current = await readCollaboratorPermission(opts.slug, opts.username);
+
+  if (current.kind === 'known') {
+    const currentRank = COLLABORATOR_PERMISSION_RANK[current.permission];
+    if (currentRank >= requestedRank) {
+      if (currentRank > requestedRank) {
+        // A downgrade we actively refused. Logged because it is the ONLY
+        // evidence in production that the guard fires at all.
+        logToAxiom(
+          {
+            name: 'forgejo-add-collaborator',
+            type: 'info',
+            message: 'kept higher existing permission',
+            slug: opts.slug,
+            username: opts.username,
+            requested,
+            existing: current.permission,
+          },
+          'webhooks'
+        ).catch(() => undefined);
+      }
+      return { requested, existing: current.permission, outcome: 'kept' };
+    }
+  } else {
+    logToAxiom(
+      {
+        name: 'forgejo-add-collaborator',
+        type: 'warning',
+        message: 'granting without observing the current permission',
+        slug: opts.slug,
+        username: opts.username,
+        requested,
+        reason: current.kind === 'unknown' ? `unrankable "${current.raw}"` : current.reason,
+      },
+      'webhooks'
+    ).catch(() => undefined);
+  }
+
   const res = await fjFetch(
     `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
     {
       method: 'PUT',
-      body: JSON.stringify({ permission: opts.permission ?? 'write' }),
+      body: JSON.stringify({ permission: requested }),
     }
   );
-  // 204 No Content on success; 422 if already a collaborator with the same level.
-  if (!res.ok && res.status !== 204 && res.status !== 422) {
+  // Measured: 204 No Content for first grant, same-level re-grant, upgrade AND
+  // downgrade alike. The 422 tolerance predates this change and is kept as a
+  // defensive allowance only — the "already a collaborator at the same level"
+  // explanation it used to carry was measured FALSE (that case is a 204).
+  if (!res.ok && res.status !== 422) {
     const body = await res.text().catch(() => '');
     throw new Error(`Forgejo addCollaborator ${res.status}: ${body.slice(0, 240)}`);
   }
+  return {
+    requested,
+    existing: current.kind === 'known' ? current.permission : null,
+    outcome: current.kind === 'known' ? 'granted' : 'granted-unobserved',
+  };
 }
 
 /**
@@ -489,9 +641,7 @@ export async function getBlobContent(slug: string, sha: string): Promise<Buffer>
   const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/git/blobs/${sha}`);
   const blob = await unwrap<{ content: string; encoding: string }>(res);
   if (blob.encoding !== 'base64') {
-    throw new Error(
-      `Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`
-    );
+    throw new Error(`Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`);
   }
   return Buffer.from(blob.content, 'base64');
 }
@@ -678,10 +828,9 @@ export async function getForgejoUser(username: string): Promise<ForgejoUser> {
  * gone) is treated as success.
  */
 export async function deleteForgejoUser(username: string): Promise<void> {
-  const res = await fjFetch(
-    `/api/v1/admin/users/${encodeURIComponent(username)}?purge=true`,
-    { method: 'DELETE' }
-  );
+  const res = await fjFetch(`/api/v1/admin/users/${encodeURIComponent(username)}?purge=true`, {
+    method: 'DELETE',
+  });
   if (!res.ok && res.status !== 204 && res.status !== 404) {
     const body = await res.text().catch(() => '');
     throw new Error(`Forgejo deleteUser ${res.status}: ${body.slice(0, 240)}`);
@@ -836,9 +985,7 @@ export async function listReviewRepos(
  * Scoped to the in-review org on purpose: nothing here should ever be able to
  * mutate the visibility of a canonical `civitai-apps/<slug>` repo.
  */
-export async function setReviewRepoPrivate(
-  slug: string
-): Promise<'updated' | 'missing'> {
+export async function setReviewRepoPrivate(slug: string): Promise<'updated' | 'missing'> {
   const res = await fjFetch(`/api/v1/repos/${FORGEJO_REVIEW_ORG}/${encodeURIComponent(slug)}`, {
     method: 'PATCH',
     body: JSON.stringify({ private: true }),

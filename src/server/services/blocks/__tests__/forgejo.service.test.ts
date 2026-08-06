@@ -639,9 +639,7 @@ describe('commitFiles', () => {
       message: 'msg',
       replaceAllFiles: false,
     });
-    const postCall = fm.calls.find((c) =>
-      c.url.endsWith('/civitai-apps/hello/contents')
-    );
+    const postCall = fm.calls.find((c) => c.url.endsWith('/civitai-apps/hello/contents'));
     const body = JSON.parse(postCall!.init!.body as string);
     const deletes = body.files.filter((o: { operation: string }) => o.operation === 'delete');
     expect(deletes).toEqual([]);
@@ -864,9 +862,7 @@ describe('Forgejo client-side timeout routing', () => {
     await ensureReviewRepo('gen-matrix');
 
     const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs'));
-    const repoIdx = fm.calls.findIndex((c) =>
-      c.url.endsWith('/orgs/civitai-apps-review/repos')
-    );
+    const repoIdx = fm.calls.findIndex((c) => c.url.endsWith('/orgs/civitai-apps-review/repos'));
     expect(orgIdx).toBeGreaterThanOrEqual(0);
     expect(repoIdx).toBeGreaterThanOrEqual(0);
     expect(timeouts[orgIdx]).toBe(15000);
@@ -907,11 +903,16 @@ describe('Forgejo client-side timeout routing', () => {
     await svc.getRepo('gen-matrix');
     expect(timeouts[timeouts.length - 1]).toBe(15000);
 
-    // addCollaborator treats res.ok as success; a 200 avoids the JS Response
-    // 204-must-be-null-body constructor quirk and exercises the same path.
+    // addCollaborator makes TWO cheap calls, and BOTH must keep the 15s ceiling:
+    // the read-before-write that gives it grant-at-least semantics, then the PUT.
+    // The read answers `none` so the grant is not skipped and the PUT is reached.
+    // The PUT gets a 200 rather than a 204 — `res.ok` covers both, and a 200
+    // avoids the JS Response 204-must-be-null-body constructor quirk.
+    fm.enqueue({ permission: 'none' });
     fm.enqueueRaw(new Response('', { status: 200 }));
+    const putsBefore = timeouts.length;
     await svc.addCollaborator({ slug: 'gen-matrix', username: 'dev-7' });
-    expect(timeouts[timeouts.length - 1]).toBe(15000);
+    expect(timeouts.slice(putsBefore)).toEqual([15000, 15000]);
 
     fm.enqueue({ id: 1 });
     await svc.setCommitStatus({
