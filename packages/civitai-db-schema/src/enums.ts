@@ -151,6 +151,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  ComfyWorkflows: 'ComfyWorkflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
