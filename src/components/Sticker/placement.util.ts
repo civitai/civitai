@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { StickerPlacementData } from '~/shared/utils/sticker-placement';
 
@@ -74,4 +76,34 @@ export function useImagePlacementSpace(imageId?: number) {
   );
 
   return { space: data, isLoading };
+}
+
+/**
+ * Placing a sticker, shared by whatever triggers it.
+ *
+ * One hook rather than the mutation inline, so the tray and the sticker's own
+ * buy button cannot drift into two versions of what happens on success.
+ */
+export function useCreateStickerPlacement() {
+  const utils = trpc.useUtils();
+  const close = useStickerPlacementDraftStore((state) => state.close);
+
+  return trpc.placement.createSticker.useMutation({
+    onSuccess: async (result) => {
+      showSuccessNotification({
+        title: 'Sticker placed',
+        message:
+          result.status === 'pending'
+            ? 'Only you can see it until the creator approves it.'
+            : 'It is live on the image now.',
+      });
+      await utils.placement.invalidate();
+      close();
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: "Couldn't place that sticker",
+        error: new Error(error.message),
+      }),
+  });
 }

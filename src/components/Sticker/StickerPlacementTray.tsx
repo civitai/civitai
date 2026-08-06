@@ -9,7 +9,6 @@ import {
   pointerOverSurface,
   useStickerPlacementDraftStore,
 } from '~/store/sticker-placement-draft.store';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -25,7 +24,6 @@ import { trpc } from '~/utils/trpc';
 export function StickerPlacementTray() {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
-  const utils = trpc.useUtils();
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const draft = useStickerPlacementDraftStore((state) => state.draft);
@@ -36,25 +34,6 @@ export function StickerPlacementTray() {
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
-  });
-
-  const create = trpc.placement.createSticker.useMutation({
-    onSuccess: async (result) => {
-      showSuccessNotification({
-        title: 'Sticker placed',
-        message:
-          result.status === 'pending'
-            ? 'Only you can see it until the creator approves it.'
-            : 'It is live on the image now.',
-      });
-      await utils.placement.invalidate();
-      close();
-    },
-    onError: (error) =>
-      showErrorNotification({
-        title: "Couldn't place that sticker",
-        error: new Error(error.message),
-      }),
   });
 
   if (targetImageId == null) return null;
@@ -79,7 +58,6 @@ export function StickerPlacementTray() {
   };
 
   const price = space?.price ?? 0;
-  const selectedBalance = draft ? balanceFor(draft.cosmeticId) : undefined;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-3 bg-white p-3 shadow-lg dark:border-dark-4 dark:bg-dark-7">
@@ -130,25 +108,6 @@ export function StickerPlacementTray() {
               </Text>{' '}
               Buzz + one use
             </Text>
-            <Button
-              disabled={!draft || selectedBalance === 0}
-              loading={create.isPending}
-              onClick={() =>
-                draft &&
-                create.mutate({
-                  imageId: draft.imageId,
-                  data: {
-                    cosmeticId: draft.cosmeticId,
-                    x: draft.x,
-                    y: draft.y,
-                    scale: draft.scale,
-                    rotation: draft.rotation,
-                  },
-                })
-              }
-            >
-              Place
-            </Button>
             <Button variant="subtle" color="gray" onClick={close} leftSection={<IconX size={16} />}>
               Cancel
             </Button>
@@ -163,11 +122,11 @@ export function StickerPlacementTray() {
             </Alert>
           )}
 
-          {!draft && (
-            <Text size="xs" c="dimmed" mt={6}>
-              Drag a sticker onto the image.
-            </Text>
-          )}
+          <Text size="xs" c="dimmed" mt={6}>
+            {draft
+              ? 'Drag it where you want it, then press Place under the sticker.'
+              : 'Drag a sticker onto the image.'}
+          </Text>
         </div>
       </Group>
     </div>
