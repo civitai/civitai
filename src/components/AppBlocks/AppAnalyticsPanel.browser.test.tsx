@@ -540,3 +540,67 @@ describe('AppAnalyticsPanel — top-N cards are humanised, not raw tokens', () =
     expect(page.getByText('ai:write:budgeted').elements()).toHaveLength(0);
   });
 });
+
+/**
+ * 🔴 EVERY METRIC-CARD LABEL MUST RESOLVE TO EXACTLY ONE ELEMENT.
+ *
+ * This is a CLASS guard, not a nit. `getByText` in vitest browser mode is
+ * SUBSTRING + CASE-INSENSITIVE, so any other rendered text containing a card's
+ * label — most easily the coverage note two rows below it — makes that label's
+ * locator resolve to 2 elements, and every assertion using it dies with a
+ * strict-mode violation after the matcher timeout.
+ *
+ * That has now happened three times in this panel's history, twice while
+ * FIXING it:
+ *   - civitai#3606  `getByText('Generations')` collided with a tooltip whose
+ *                   copy contained the word.
+ *   - a later edit   put a literal `<strong>—</strong>` in the alert, which
+ *                   collided with `getByText('—', { exact: true })`.
+ *   - a later edit   put the literal string "Active installs" in the alert,
+ *                   which collided with the card label and killed five tests.
+ *
+ * Each cost a debugging cycle and each was invisible in review, because the
+ * copy reads perfectly and the collision only exists at query time. So the rule
+ * is pinned here rather than written in a comment somebody has to remember:
+ *
+ *   Alert/caption/tooltip copy must NOT contain a metric card's label verbatim.
+ *   Refer to the metric descriptively instead ("the engagement figures below",
+ *   "the installs figure"), or the guard below fails.
+ *
+ * It also caught a LATENT one when written: the coverage note used to open
+ * "Active users, API calls, and error rate…", so `Active users` already
+ * resolved to 2 — harmless only because no test happened to use that locator
+ * yet. Measured before the fix: `Active users=2`, every other label `=1`.
+ */
+describe('AppAnalyticsPanel — metric-card labels stay unambiguous', () => {
+  const CARD_LABELS = [
+    'Active installs',
+    'Runs (range)',
+    'Buzz purchased',
+    'Active users',
+    'App loads (range)',
+  ];
+
+  test('each card label resolves to exactly one element', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('Active installs', { exact: true })).toBeInTheDocument();
+
+    for (const label of CARD_LABELS) {
+      const n = page.getByText(label).elements().length;
+      expect(
+        n,
+        `"${label}" resolved to ${n} elements. Some other copy on this panel contains it ` +
+          `verbatim — getByText is substring+case-insensitive, so every locator using this ` +
+          `label is now a strict-mode violation. Reword the copy to refer to the metric ` +
+          `descriptively instead of naming it.`
+      ).toBe(1);
+    }
+  });
+
+  test('the label list itself is not silently empty', () => {
+    // Positive control: a guard that iterates an empty list passes vacuously
+    // and would report green while checking nothing.
+    expect(CARD_LABELS.length).toBeGreaterThanOrEqual(5);
+  });
+});
