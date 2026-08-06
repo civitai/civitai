@@ -113,7 +113,10 @@ export const CurrencyConfig: CurrencyConfig = {
 };
 
 export function getBuzzCurrencyConfig(type: BuzzSpendType = 'yellow') {
-  return CurrencyConfig.BUZZ.themes[type];
+  // Callers reach this with `CustomerSubscription.buzzType`, which is a subscription-KIND
+  // discriminator for some rows ('buzzPurchase', 'referral') rather than a currency. Those
+  // have no theme, and returning undefined crashed every consumer on `config.icon`.
+  return CurrencyConfig.BUZZ.themes[type] ?? CurrencyConfig.BUZZ.themes.yellow;
 }
 
 export function getCurrencyConfig(

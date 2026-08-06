@@ -144,10 +144,29 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     // `blocks.getMyViewer`), the successor to the deprecated /api/v1/blocks/me
     // call.
   } | null;                            // null for anon viewers
-  theme: 'light' | 'dark';             // matches host color scheme
+  theme: 'light' | 'dark';             // host color scheme AT MOUNT — see "Theme changes"
   renderMode: 'iframe' | 'inline';     // always 'iframe' today (the inline host is a stub)
 }
 ```
+
+### Theme changes
+
+`BLOCK_INIT.theme` is the theme **at mount**, and it cannot move afterwards: the
+SDK dedupes `BLOCK_INIT` (only the first is honored) and the host deliberately
+FREEZES the init URL fragment (`#civitai-block=v1&theme=…`, where that gate is
+on) at mount, so a toggle can never re-navigate a third-party frame. The live
+value arrives as a host→block push instead:
+
+- **`THEME_CHANGE`** — pushed whenever the viewer flips the site's color scheme,
+  carrying `{ theme: 'light' | 'dark' }`. Fire-and-forget; nothing is awaited. It
+  is sent only after the first `BLOCK_INIT` has gone out (before that there is
+  nothing to talk to). BOTH host surfaces push it — the model slot
+  (`IframeHost.tsx`) and the `/apps/run/<slug>` page (`PageBlockHost.tsx`).
+
+Handling it is **optional**: a block on an older SDK has no listener, its
+transport drops the message, and it keeps rendering its mount-time theme. A block
+that does listen should re-theme in place — the frame is never re-navigated for a
+theme change.
 
 ### Token refresh
 
@@ -202,8 +221,11 @@ read that file. As of this writing the families are:
   hangs the block). Flip the host entries to `required` in the inventory if/when
   a sink lands.
 
-The `SUSPEND` / `RESUME` messages flow the other direction (parent→block). The
-SDK degrades gracefully when a host does not handle a fire-and-forget surface.
+`SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
+(see "Theme changes") flow the other direction (host→block), which is why they
+are absent from that inventory — it covers block→host only. The SDK degrades
+gracefully when a host does not handle a fire-and-forget surface, and a block
+that ignores a host→block push is equally fine.
 
 ### Buzz and per-account spend
 

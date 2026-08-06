@@ -15,7 +15,13 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconBolt,
+  IconExclamationMark,
+  IconInfoCircle,
+  IconInfoTriangleFilled,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import Image from 'next/image';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -108,7 +114,15 @@ export function MembershipPlans({
 
   const isLoading = productsLoading;
 
+  // A Buzz membership is deliberately absent from the cash catalog and sits on a different
+  // provider, so both checks below would flag it as a discontinued plan. It isn't — it's a
+  // live membership from the other catalog, and it's meant to be replaceable by a cash one.
+  const subscriptionIsBuzzPurchase = !!(
+    subscription?.product?.metadata as SubscriptionProductMetadata | undefined
+  )?.buzzPurchase;
+
   const currentMembershipUnavailable =
+    !subscriptionIsBuzzPurchase &&
     !features.disablePayments &&
     ((subscription && !subscription?.product?.active) ||
       (!!subscription &&
@@ -119,7 +133,10 @@ export function MembershipPlans({
         !(products ?? []).some((p) => p.provider === subscription.product.provider)));
 
   const activeSubscriptionIsNotDefaultProvider =
-    !features.disablePayments && subscription && subscriptionPaymentProvider !== paymentProvider;
+    !subscriptionIsBuzzPurchase &&
+    !features.disablePayments &&
+    subscription &&
+    subscriptionPaymentProvider !== paymentProvider;
   const isHolidays = isHolidaysTime();
   const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
 
@@ -218,6 +235,35 @@ export function MembershipPlans({
               </Text>
             </AlertWithIcon>
           )}
+          {features.buzzMemberships && (
+            <Center>
+              <div className="flex items-center gap-3 rounded-lg border border-blue-5/30 bg-gradient-to-r from-blue-5/15 via-blue-5/5 to-transparent px-4 py-2.5">
+                <ThemeIcon variant="light" color="blue" size="md" radius="xl" className="shrink-0">
+                  <IconBolt size={16} fill="currentColor" />
+                </ThemeIcon>
+                <Text size="sm" className="flex-1">
+                  Short on cash? You can buy a{' '}
+                  <Text component="span" fw={700} c="blue.4">
+                    perks-only membership
+                  </Text>{' '}
+                  with Buzz instead.
+                </Text>
+                <Button
+                  component={Link}
+                  href="/pricing/buzz"
+                  color="blue"
+                  variant="outline"
+                  size="compact-sm"
+                  radius="xl"
+                  rightSection={<IconArrowRight size={14} />}
+                  className="shrink-0"
+                >
+                  View perks memberships
+                </Button>
+              </div>
+            </Center>
+          )}
+
           {((features.annualMemberships && !features.isGreen) || interval === 'year') && (
             <Center>
               <SegmentedControl
