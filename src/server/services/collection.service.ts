@@ -54,6 +54,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
@@ -564,6 +565,60 @@ const inputToCollectionType = {
   postId: CollectionType.Post,
 } as const;
 
+/**
+ * Apply each collection's configured `metadata.autoTagId` to the images just added to
+ * it.
+ *
+ * Runs AFTER the write and independently of `CollectionItemStatus`, so a submission
+ * awaiting review is tagged the same as an accepted one — the point is to mark what was
+ * submitted, not what a moderator kept.
+ *
+ * Images only. `insertTagsOnImageNew` handles cache busting and the search-index push
+ * that feed filtering depends on, so nothing else needs syncing here.
+ *
+ * Never throws into the caller: a failed tag must not fail (or roll back) the
+ * submission itself.
+ */
+async function applyCollectionAutoTags(collectionIds: number[], imageIds: number[]) {
+  if (!collectionIds.length || !imageIds.length) return;
+
+  try {
+    const collections = await dbRead.collection.findMany({
+      where: { id: { in: [...new Set(collectionIds)] } },
+      select: { id: true, metadata: true },
+    });
+
+    const tagIds = [
+      ...new Set(
+        collections
+          .map((c) => (c.metadata as CollectionMetadataSchema | null)?.autoTagId)
+          .filter(isDefined)
+      ),
+    ];
+    if (!tagIds.length) return;
+
+    await insertTagsOnImageNew(
+      tagIds.flatMap((tagId) =>
+        [...new Set(imageIds)].map((imageId) => ({
+          imageId,
+          tagId,
+          source: 'User' as const,
+          confidence: 100,
+          automated: true,
+        }))
+      )
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-auto-tag-failed',
+      message: (error as Error).message,
+      collectionIds,
+      imageIds: imageIds.slice(0, 20),
+    }).catch();
+  }
+}
+
 export const saveItemInCollections = async ({
   input: {
     collections: upsertCollectionItems,
@@ -817,6 +872,12 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+
+  if (itemKey === 'imageId' && input.imageId)
+    await applyCollectionAutoTags(
+      data.map((d) => d.collectionId),
+      [input.imageId]
+    );
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
@@ -2742,6 +2803,8 @@ export const bulkSaveItems = async ({
   }
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  await applyCollectionAutoTags([collectionId], data.map((d) => d.imageId).filter(isDefined));
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
