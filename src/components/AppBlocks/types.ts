@@ -4,6 +4,20 @@
  * docs/features/app-blocks.md for the architecture overview.
  */
 
+/**
+ * The host's own PRODUCER-facing slot context shape — the loose supertype every
+ * concrete context extends. The index signature is deliberate and load-bearing:
+ * `projectBlockInitContext` writes allowlisted keys onto a fresh `SlotContext`
+ * by computed key, and several host call sites hand a partially-built context
+ * around before it is narrowed. Do NOT tighten it into a union here.
+ *
+ * The DISCRIMINATED UNION of what the host can actually produce is
+ * `BlockSlotContext` (= ModelSlotContext | PageContext) below — that is the type
+ * to reach for when you need to know WHICH slot you are holding. The SDK now
+ * mirrors `BlockSlotContext` as a real union on the block side, so a block gets
+ * exhaustiveness checking on `entityType` that this index-signature type cannot
+ * give it.
+ */
 export interface SlotContext {
   slotId: string;
   [key: string]: unknown;
@@ -145,7 +159,33 @@ export function slotRemountKey(args: {
  */
 export interface BlockInitPayload {
   blockInstanceId: string;
+  /**
+   * @deprecated BUILD-TIME identity. A block already knows its own `blockId` —
+   * it is baked into the bundle the publisher shipped — so the host telling it
+   * again carries no information. Enumerated against the deployed population
+   * (21 rows in the prod `app_blocks` table, 9 `approved`/live): ZERO deployed
+   * readers. Nothing in any live bundle reads this field after init.
+   *
+   * 🔴 DEPRECATED, NOT REMOVABLE — dropping it from the wire is a FLEET-WIDE
+   * OUTAGE. Every already-deployed bundle carries a compiled-in
+   * `isValidBlockInitPayload` guard that REJECTS the whole BLOCK_INIT payload
+   * when `blockId` is absent. We fetched and EXECUTED that guard from all 9 live
+   * bundles: a payload without this field fails validation, the block never
+   * initialises, and the viewer sees a blank block. It must keep being sent
+   * until every deployed bundle has been rebuilt against a v2 guard — which the
+   * platform cannot force, because publishers own their own release cadence.
+   */
   blockId: string;
+  /**
+   * @deprecated BUILD-TIME identity, exactly like `blockId` above: the OAuth
+   * client id is baked into the bundle, and the enumeration of the deployed
+   * population found ZERO readers of this field.
+   *
+   * 🔴 DEPRECATED, NOT REMOVABLE — same fleet-wide-outage mechanism: the
+   * `isValidBlockInitPayload` guard compiled into every already-deployed bundle
+   * rejects a BLOCK_INIT payload that is missing `appId`, so removing it from
+   * the wire blanks every live block at once.
+   */
   appId: string;
   /** Wrapped token + metadata so blocks don't have to JWT-decode. */
   token: {
@@ -161,9 +201,58 @@ export interface BlockInitPayload {
     publisherSettings: Record<string, unknown>;
     userSettings: Record<string, unknown>;
   };
+  /**
+   * Whether a signed-in viewer is present, and (deprecated) who they are.
+   *
+   * `null` = anonymous. An OBJECT = signed in.
+   *
+   * 🔴 THE WIRE SHAPE IS FROZEN AT `object-or-null`. The
+   * `isValidBlockInitPayload` guard compiled into every already-deployed bundle
+   * accepts only `null` or an object carrying a NUMERIC `id`; anything else
+   * (a boolean, a string, an object without `id`) fails validation and the block
+   * never initialises. So this cannot be collapsed to a bare `signedIn: boolean`
+   * on the payload root, however much tidier that would read.
+   */
   viewer: {
+    /**
+     * @deprecated Identity disclosed to the block UNCONDITIONALLY, at load,
+     * before the viewer has interacted with it at all — every block that renders
+     * learns who is looking at it whether or not it ever needed to know, and
+     * nothing records that it happened. The replacement is the scope-gated,
+     * per-call-auditable `GET_VIEWER` message (host-mediated
+     * `blocks.getMyViewer`), which requires the block to ASK, checks its token,
+     * and leaves an audit row per call.
+     *
+     * Still sent because the deployed guard requires the object shape (see the
+     * `viewer` doc above) AND because 5 of the 9 live apps read `viewer.id` at
+     * runtime for load-bearing logic — ownership filters and optimistic row
+     * authorship. Removing it silently breaks those five.
+     */
     id: number;
+    /**
+     * @deprecated Same unconditional-disclosure problem as `id`: the username is
+     * handed to every block on load with no interaction and no audit trail. Use
+     * `GET_VIEWER` / `blocks.getMyViewer` instead. Still sent for the deployed
+     * bundles that read it.
+     */
     username: string | null;
+    /**
+     * The forward-looking MINIMAL signal, and the only viewer field a v2 block
+     * should read: "is someone signed in?" — which is all the overwhelming
+     * majority of blocks actually branch on (render a sign-in prompt vs the app).
+     * Literally `true` when present; the field is ABSENT on an anonymous viewer
+     * because an anonymous viewer has no `viewer` object at all.
+     *
+     * OPTIONAL, and it must stay optional: `BlockInitPayload` is also the shape
+     * of BLOCK_INIT payloads constructed by older host code paths and by test
+     * fixtures, so a REQUIRED field here would break them at compile time for no
+     * wire benefit. On the wire it is an ADDED key, not a removed or reshaped
+     * one — so it cannot trip the deployed-guard failures documented above,
+     * which are all "required field missing / wrong shape". (Worth re-checking
+     * against a live bundle before the first v2 rollout if the guard ever turns
+     * out to reject unknown keys; nothing in the enumeration suggested it does.)
+     */
+    signedIn?: true;
   } | null;
   theme: 'light' | 'dark';
   renderMode: 'iframe' | 'inline';

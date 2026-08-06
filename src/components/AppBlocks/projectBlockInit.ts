@@ -93,18 +93,6 @@ export function projectBlockInitContext(
 }
 
 /**
- * Build the BLOCK_INIT `viewer` object from the slot context.
- *
- * `id` and `username` are documented contract fields blocks use for
- * personalization. The viewer's `status` (ban/mute moderation state) is
- * intentionally NOT sent: no block consumes it, and exposing a viewer's
- * moderation state to untrusted third-party publisher code is a privacy leak
- * with no benefit — a block's authoritative check is its own
- * `/api/v1/blocks/me` call.
- *
- * Returns `null` for anonymous viewers (no numeric viewer id).
- */
-/**
  * Project the color-domain maturity signal into the BLOCK_INIT contract fields.
  *
  * These are ADVISORY (block self-filtering / blur). The values are the
@@ -133,13 +121,56 @@ export function projectBlockInitMaturity(input: {
   return { domain, maxBrowsingLevel };
 }
 
-export function projectBlockInitViewer(
-  context: SlotContext
+/**
+ * Stamp the BLOCK_INIT `viewer` object with the v2 `signedIn` flag.
+ *
+ * 🔴 THIS EXISTS BECAUSE THERE ARE TWO PRODUCERS OF THAT OBJECT, NOT ONE.
+ * `IframeHost` (the model-slot surface) derives the viewer from the slot context
+ * via `projectBlockInitViewer` below. `PageBlockHost` (the W10 full-page
+ * surface) does NOT — it receives an already-resolved `viewer` PROP from the run
+ * route and passes it straight into `buildInitPayload`. The two hosts share no
+ * bridge (the gotcha-#73 class `hostHandlerParity.ts` documents), so a flag
+ * added inside `projectBlockInitViewer` alone reaches exactly half the fleet.
+ * Both paths funnel through THIS function so the stamped shape cannot drift.
+ *
+ * `signedIn` is the literal `true`, never a computed boolean: a present
+ * ViewerInfo IS a signed-in viewer — the host has no way to produce a viewer
+ * object for an anonymous session — so a computed value could only ever be
+ * `true` or a bug. Anonymous is represented by the ABSENCE of the object
+ * (`null`), which is the shape the deployed `isValidBlockInitPayload` guard
+ * requires; see BlockInitPayload.viewer.
+ *
+ * `id` / `username` are DEPRECATED but still stamped through unchanged — the
+ * deployed guard requires the numeric `id`, and 5 of the 9 live apps read it for
+ * load-bearing logic. See the field docs on BlockInitPayload.viewer.
+ */
+export function withSignedInFlag(
+  viewer: { id: number; username: string | null } | null | undefined
 ): BlockInitPayload['viewer'] {
+  if (!viewer) return null;
+  return {
+    id: viewer.id,
+    username: viewer.username,
+    signedIn: true,
+  };
+}
+
+/**
+ * Build the BLOCK_INIT `viewer` object from the slot context (the model-slot
+ * host's path — see `withSignedInFlag` for why there are two).
+ *
+ * The viewer's `status` (ban/mute moderation state) is intentionally NOT sent:
+ * no block consumes it, and exposing a viewer's moderation state to untrusted
+ * third-party publisher code is a privacy leak with no benefit — a block's
+ * authoritative check is its own `/api/v1/blocks/me` call.
+ *
+ * Returns `null` for anonymous viewers (no numeric viewer id).
+ */
+export function projectBlockInitViewer(context: SlotContext): BlockInitPayload['viewer'] {
   const source = context as Partial<ModelSlotContext>;
   if (typeof source.viewerUserId !== 'number') return null;
-  return {
+  return withSignedInFlag({
     id: source.viewerUserId,
     username: source.viewerUsername ?? null,
-  };
+  });
 }
