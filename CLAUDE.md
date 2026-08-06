@@ -279,8 +279,9 @@ Because of that 1:1 pinning, `playwright` / `@playwright/test` are pinned **exac
 A caret range is not a pin: `^1.61.1` resolves to the newest 1.x, which wants a *different* Chromium revision and
 re-breaks the host silently. When bumping, bump to the version whose bundled Chromium the environments provide —
 check `node_modules/.pnpm/playwright-core@<v>/node_modules/playwright-core/browsers.json` against
-`ls $PLAYWRIGHT_BROWSERS_PATH`, and bump the pinned `mcr.microsoft.com/playwright:vX.Y.Z-noble` CI images in the
-infra repo in the same change.
+`ls $PLAYWRIGHT_BROWSERS_PATH`. **CI also runs some Playwright jobs in version-matched container images that
+ship their own browsers**, so a bump here is not self-contained — ask an infra owner to move those image pins in
+the same window, or the e2e job hits this exact error with CI's revision instead of yours.
 
 Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
 chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
