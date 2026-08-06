@@ -422,7 +422,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             title="What engagement counts"
           >
             <Text size="sm">
-              Active users, API calls, and error rate reflect only{' '}
+              The engagement figures below reflect only{' '}
               <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
               (or one with no scoped API surface) will show revenue but flat engagement.{' '}
               <strong>App loads</strong> is the exception — it is measured on every load, so it
