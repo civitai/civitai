@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { createNotification } from '~/server/services/notification.service';
 import {
   CollectionCollaboratorRole,
   CollectionContributorPermission,
@@ -196,7 +198,7 @@ export async function inviteCollaborator({
 
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { userId: true },
+    select: { userId: true, name: true },
   });
   if (collection?.userId === targetUserId) {
     throw throwBadRequestError('The collection owner is already a collaborator.');
@@ -211,7 +213,7 @@ export async function inviteCollaborator({
     throw throwBadRequestError(`A collection can have at most ${MANAGER_CAP} managers.`);
   }
 
-  return dbWrite.collectionInvite.upsert({
+  const invite = await dbWrite.collectionInvite.upsert({
     where: { collectionId_userId: { collectionId, userId: targetUserId } },
     create: { collectionId, userId: targetUserId, invitedById: userId, role },
     update: {
@@ -222,6 +224,16 @@ export async function inviteCollaborator({
       respondedAt: null,
     },
   });
+
+  await createNotification({
+    userId: targetUserId,
+    type: 'collection-invite-received',
+    category: NotificationCategory.Update,
+    key: `collection-invite-received:${collectionId}:${targetUserId}`,
+    details: { collectionId, collectionName: collection?.name ?? 'a collection' },
+  });
+
+  return invite;
 }
 
 export async function respondToInvite({

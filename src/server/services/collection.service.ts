@@ -857,6 +857,40 @@ export const saveItemInCollections = async ({
 
   await dbWrite.$transaction(transactions);
 
+  const reviewCollectionIds = uniq(
+    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+  );
+  if (reviewCollectionIds.length > 0) {
+    const managers = await dbRead.collectionContributor.findMany({
+      where: {
+        collectionId: { in: reviewCollectionIds },
+        permissions: { has: CollectionContributorPermission.MANAGE },
+      },
+      select: { collectionId: true, userId: true },
+    });
+
+    await Promise.all(
+      reviewCollectionIds.map((collectionId) => {
+        const collection = collections.find((c) => c.id === collectionId);
+        if (!collection) return;
+
+        const recipients = uniq([
+          collection.userId,
+          ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
+        ]).filter((id) => id !== userId);
+        if (recipients.length === 0) return;
+
+        return createNotification({
+          userIds: recipients,
+          type: 'collection-submission-received',
+          category: NotificationCategory.Update,
+          key: `collection-submission-received:${collectionId}:${uuid()}`,
+          details: { collectionId, collectionName: collection.name },
+        });
+      })
+    );
+  }
+
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
     await bustFeaturedModelsCache();

@@ -9,7 +9,7 @@ import type * as CollectionService from '~/server/services/collection.service';
 // `dbWrite.collectionContributor.findMany` / `dbWrite.collectionInvite.findMany` back the
 // `tx` client used inside `countCollaborators`'s transaction. The owner-lookup default of
 // OWNER_ID lets every test that targets someone other than the owner pass through untouched.
-const { mockDbRead, mockDbWrite, mockGetPermissions } = vi.hoisted(() => {
+const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification } = vi.hoisted(() => {
   const OWNER_ID = 999;
   return {
     mockDbRead: {
@@ -39,6 +39,7 @@ const { mockDbRead, mockDbWrite, mockGetPermissions } = vi.hoisted(() => {
       $transaction: vi.fn(),
     },
     mockGetPermissions: vi.fn(),
+    mockCreateNotification: vi.fn(),
   };
 });
 
@@ -47,6 +48,10 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   getUserCollectionPermissionsById: mockGetPermissions,
+}));
+
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: mockCreateNotification,
 }));
 
 const {
@@ -108,6 +113,26 @@ describe('inviteCollaborator', () => {
       role: 'Manager',
     });
     expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  it('notifies the invitee, never the inviter', async () => {
+    asOwner();
+    mockDbRead.collection.findUnique.mockResolvedValue({ userId: OWNER_ID, name: 'My Collection' });
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+    });
+
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: TARGET_ID,
+        type: 'collection-invite-received',
+        details: { collectionId: COLLECTION_ID, collectionName: 'My Collection' },
+      })
+    );
   });
 
   it('refuses a Manager granting Manager', async () => {
