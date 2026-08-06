@@ -6315,17 +6315,34 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
     });
 
-    it('🔴 GATE 1 IS WIRED: a nodepack URN is rejected (arbitrary code execution, gated off)', async () => {
+    // 🔴 INVERTED, NOT DELETED — see `inline-comfy.service.test.ts`. The kill
+    // switch is on, so a nodepack must now reach the orchestrator INTACT. That
+    // last word is the point: it is not enough that the submit succeeds, the
+    // URN has to actually arrive in the step input the worker reads. A flip that
+    // stopped rejecting but silently dropped the URN would look identical from
+    // the caller's side and fail only at ComfyUI load time.
+    it('🔴 a nodepack URN now reaches the orchestrator INTACT in the step input', async () => {
+      const NODEPACK = 'urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0';
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: inlineBody({ resources: [NODEPACK] }),
+      });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+      expect(input.resources).toEqual([NODEPACK]);
+    });
+
+    it('🔴 an OCI container-image AIR is STILL rejected at the router — the flip is nodepack-only', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyInline();
       await expect(
         caller().submitWorkflow({
           blockToken: 'tok',
-          body: inlineBody({
-            resources: ['urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0'],
-          }),
+          body: inlineBody({ resources: ['urn:air:oci:image:ghcr:evil/comfy@v1'] }),
         })
-      ).rejects.toThrow(/nodepack resources are not permitted/);
+      ).rejects.toThrow(/is not permitted in an inline workflow/);
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
