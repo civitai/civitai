@@ -61,16 +61,19 @@ export function calculateWeightedScore(score: JudgeScoreInput): number | null {
  * claims: the response is a TypeScript cast, never a runtime parse, and a judge that declines to
  * score an entry returns `score: null`.
  */
-export type JudgeScoreInput = Score | Record<string, number> | null | undefined;
+export type JudgeScoreInput = Score | Record<string, unknown> | null | undefined;
 
 /**
  * Coerce a stored score to something every ranking path can read. An entry the judge refused to
  * score becomes `{}`, which the theme gate then excludes — it must never reach a caller as null,
  * because one unscorable entry used to take its whole challenge's winner-pick down with it.
+ *
+ * The values stay `unknown` on purpose. Only the object-ness is checked here; the model can put
+ * anything behind a key, so narrowing each value is the job of the clamp/filter that reads it.
  */
-export function normalizeJudgeScore(score: unknown): Record<string, number> {
+export function normalizeJudgeScore(score: unknown): Record<string, unknown> {
   if (!score || typeof score !== 'object' || Array.isArray(score)) return {};
-  return score as Record<string, number>;
+  return score as Record<string, unknown>;
 }
 
 /**
@@ -82,14 +85,14 @@ export function normalizeJudgeScore(score: unknown): Record<string, number> {
  */
 export function calculateCategoryScore(scores: JudgeScoreInput): number | null {
   const values = Object.values(normalizeJudgeScore(scores)).filter(
-    (v) => typeof v === 'number' && !Number.isNaN(v)
+    (v): v is number => typeof v === 'number' && !Number.isNaN(v)
   );
   if (values.length === 0) return null;
   const clamped = values.map((v) => Math.min(10, Math.max(0, v)));
   return clamped.reduce((a, b) => a + b, 0) / clamped.length;
 }
 
-const clampScore = (v: number) => Math.min(10, Math.max(0, Number(v) || 0));
+const clampScore = (v: unknown) => Math.min(10, Math.max(0, Number(v) || 0));
 
 /**
  * Read one category's score out of an AI review result. The review echoes category labels back
