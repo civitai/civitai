@@ -53,6 +53,10 @@ export function canSetGenerationOnly(user: SessionUser | undefined): boolean {
   return GENERATION_ONLY_TIERS.includes(user.tier ?? '');
 }
 
+export function tierGrantsGenerationOnly(tier: string | null | undefined): boolean {
+  return GENERATION_ONLY_TIERS.includes(tier ?? '');
+}
+
 // No subscription and the 'free' tier are the same thing everywhere — both resolve to 'free', so neither
 // the caps nor the UI ever needs to tell them apart.
 export const displayTier = (m: Membership): string => m.tier ?? 'free';
