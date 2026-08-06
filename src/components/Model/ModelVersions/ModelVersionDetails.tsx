@@ -1437,8 +1437,22 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
                         <Text size="sm">
-                          {numberWithCommas(Number(version.licensingFee))} / image
+                          {numberWithCommas(
+                            Number(version.effectiveLicensingFee ?? version.licensingFee)
+                          )}{' '}
+                          / image
                         </Text>
+                        {/* The owner is shown their stored fee everywhere else, so when the tier cap
+                            lowers it they need both numbers — otherwise they read the setting as what
+                            they earn (CU 868kn7zu4). */}
+                        {version.effectiveLicensingFee != null &&
+                          Number(version.effectiveLicensingFee) <
+                            Number(version.licensingFee ?? 0) && (
+                            <Text size="xs" c="dimmed">
+                              capped from {numberWithCommas(Number(version.licensingFee))} by your
+                              membership tier
+                            </Text>
+                          )}
                         <Popover
                           width={260}
                           shadow="md"

@@ -76,6 +76,22 @@
       : { label: 'Active', cls: 'text-green-5' };
   }
 
+  // Versions storing a fee above the creator's cap. They earn the capped amount, not the stored one, and
+  // the per-row "Over cap" chip only reaches someone already scanning the table — the creator in
+  // CU 868kn7zu4 set a fee before caps existed and had no reason to look again.
+  const overCapVersions = $derived.by(() => {
+    const out: { name: string; stored: number; effective: number }[] = [];
+    for (const m of data.models)
+      for (const v of m.versions) {
+        const fee = v.licensingFee ?? 0;
+        if (fee <= 0) continue;
+        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
+          .maxPerGeneration;
+        if (fee > cap) out.push({ name: `${m.name} · ${v.name}`, stored: fee, effective: cap });
+      }
+    return out;
+  });
+
   // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
   function feeChip(
     fee: number | null,
@@ -578,6 +594,29 @@
     </Select.Root>
   </label>
 </div>
+
+{#if overCapVersions.length > 0}
+  <div class="mb-3 rounded-lg border border-yellow-5/30 bg-yellow-5/10 px-3 py-2 text-sm">
+    <p class="font-medium text-yellow-4">
+      {overCapVersions.length} version{overCapVersions.length === 1 ? '' : 's'} earn less than the fee
+      you set
+    </p>
+    <p class="mt-0.5 text-xs text-dark-2">
+      Your membership tier caps what a generation can charge, so these are billed at the capped rate
+      — the stored fee applies again if you upgrade.
+    </p>
+    <ul class="mt-1.5 max-h-24 overflow-y-auto text-xs text-dark-1">
+      {#each overCapVersions.slice(0, 10) as v (v.name)}
+        <li class="truncate">
+          {v.name} — set {v.stored} ⚡, earning {v.effective} ⚡ / generation
+        </li>
+      {/each}
+    </ul>
+    {#if overCapVersions.length > 10}
+      <p class="mt-1 text-xs text-dark-2">…and {overCapVersions.length - 10} more.</p>
+    {/if}
+  </div>
+{/if}
 
 {#if data.total > 0 || selected.size > 0}
   <BulkBar
