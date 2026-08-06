@@ -8,10 +8,34 @@ left worth porting) · `dropped` (agreed not to port)
 
 ## Apps
 
-| App | Export | Queries | Components | Route | Status |
+| App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
-| Moderation Status | `Moderation%20Status.json` | 77 | 197 | `/retool/moderation-status` | not started |
-| User Lookup v2 | `User%20Lookup%20v2.json` | 170 | 433 | `/retool/user-lookup` | in progress |
+| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | in progress (8/11) |
+| Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
+| Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
+| User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
+| Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | not started |
+| Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | not started |
+| Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | not started |
+| Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | not started |
+| Workflows (2) | `868kn80u9` | — | — | cron, not a page | not started |
+
+**The exports are attached to the ClickUp subtasks of 868kkxqpn** — one subtask per app, listed above.
+That is the authoritative source; local folders go stale. To pull them:
+
+```bash
+cd /c/work/civitai/.claude/skills/clickup
+node query.mjs get 868kkxqpn --subtasks --json      # subtask ids
+node query.mjs get <subtaskId> --json               # attachment urls
+```
+
+Raw exports live **outside the repo** (`~/Downloads/Retool/`) because they contain live credentials —
+see [`docs/moderator-app/retool-exports/README.md`](../../../docs/moderator-app/retool-exports/README.md).
+Committed inventories (every query + SQL) sit in that folder and are the thing to read.
+
+**Check the subtasks before assuming this list is complete.** Five of these eight apps were only found
+by looking at subtask attachments; the first three were handed over piecemeal and the rest were sitting
+in ClickUp unnoticed.
 
 Counts are from `extract.mjs` and measure the Retool app, not the work — most apps carry dead queries,
 duplicates and Retool plumbing (`Function`, `State`, `Timer`).
@@ -25,9 +49,9 @@ Resources: `Replicated_Read_Prod`, `retool_db`, REST.
 A queue/stat board rather than a lookup tool. Roughly four things live in it, and they are separable —
 port them independently rather than as one page.
 
-- [ ] **Help requests** — `GetHelpers`, `GetImageData`, `UpdateHelpRequest`. Reads
-      `ModerationImageHelp` in **`retool_db`**, which does not exist here → needs a data migration
-      before this can move.
+- [ ] **Help requests** — `GetHelpers`, `GetImageData`, `UpdateHelpRequest`. **Unblocked** —
+      `ModerationImageHelp` is reachable through `getModeratorDb()` (37 open rows). `imageIds` is a
+      jsonb array; `GetImageData` then reads those images from the main database.
 - [ ] **Queue stats / throughput** — `HourlyImages`, `HourlyModels`, `MinorTimers`, `PoITimers`,
       `TagTimer`, `ModelTimer`, `ArticleTimer`, `FPATaskTimers`, `RRatingStats`, `TaggerRatio`,
       `MuteStats`. Charts and counters; overlaps the dashboard already built.
@@ -66,8 +90,16 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       actions by CONTENT id, so this is two shapes: rows pointing at the user (`user`,
       `impersonate`) and rows reached by joining their images/models/articles (~67ms each).
       Needs the append-only migration; history only accrues from it forward.
-- [ ] **Moderation memory** — `SelectUserNotes`, `InsertUpdateUserNotes`, `UserStrikes`. Lives in
-      **`retool_db`** → data migration required.
+- [x] **Moderation memory** — `SelectUserNotes`, `InsertUpdateUserNotes`, `UserStrikes`. Notes (read,
+      add, edit-own) and strikes (read-only) against the live moderator database, served from
+      `/api/user-memory/[userId]` with writes as form actions on the page.
+      **This is the reference example for a moderator-database slice** — see
+      `moderation-memory.service.ts`.
+      Writes put `locals.user.username` in `lastUpdateBy`, so the column now holds two naming schemes
+      (Retool display names historically, Civitai usernames going forward). Edit-own is enforced by
+      the `lastUpdateBy` predicate in the UPDATE, not in the handler.
+      Not ported: issuing a strike (needs the user notification, still blocked) and the
+      `deservedMute`/`spamWhitelist` flags.
 - [x] **Security signals** — `RegistrationIP`, `SimilarIps`, `PotentialSpammerV2`. Served from
       `/api/user-signals/[userId]`, not the page load: ~250ms for the IP roll-up plus ~750ms for the
       shared-IP scan over a 31M-row table.
@@ -88,7 +120,10 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       So: either route these through `/api/mod/retool/user` (explicit mute/unmute/forceLogout actions,
       Bearer mod API key — but breaks the spoke-owns-its-mutations pattern), or lift session
       invalidation into a shared package first. Not a slice-sized piece of work either way.
-- [ ] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `RemoveDeserveMute`, `CurrentUTCTime`
+- [ ] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `CurrentUTCTime`. The `TimedMutes` rows are
+      reachable through `getModeratorDb()`, but the table is **empty** — confirm the feature is still
+      used before building. Actually applying a mute to the account stays blocked on session
+      invalidation (see account actions).
 - [x] **Subscription + Buzz** — `UserSubscriptionStatus` (Postgres, in the page load) plus the Buzz
       balance from `GetAccountBuzz`, served via `/api/user-account/[userId]` since it is an external
       HTTP call. Buzz failures degrade to "Balance unavailable" rather than blanking the panel.
@@ -104,6 +139,35 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
 - [ ] **Support context** — `GetFreshdesk`. **Blocked**: no `FRESHDESK_*` credentials in the
       moderator app's env, and the Retool query hits `civitai.freshdesk.com/api/v2` directly. Needs an
       API key and a decision on whether the spoke calls Freshdesk or the main app proxies it.
+
+## User Reports
+
+Resources: `Replicated_Read_Prod`, `retool_db`, ClickHouse, REST. The smallest of the three, and the
+most action-heavy — 17 of its 57 components are buttons.
+
+A report-triage console centred on one user: pull their reports, review the offending images inline,
+then action them and strike the user. Overlaps `/reports` and the dashboard's "Most reported", so check
+both before building.
+
+- [ ] **Reports against a user** — `GetReports`, `ReceivedReports`, `ReportHistory`, `GetImageCount`.
+      Postgres, read-only. `ReceivedReports` is the per-entity-type union (model/image/post/…) with a
+      link to the content; `ReportHistory` is who set each status and when. Closest thing to unblocked
+      work in this app — but much of it duplicates the User Lookup reports panel and `/reports`.
+- [ ] **Image review inline** — `TOSImages`, `RemoveImages`, `RemoveImages2`, `RestoreImages`.
+      **Destructive**; hits `/api/mod/remove-images`. Same blocker as account actions.
+- [ ] **Strikes** — `UserStrikes`, `InsertStrike`, `LogStrike`, plus `RetoolActions`/`RetoolNotes`.
+      **Unblocked** via `getModeratorDb()`, same as User Lookup's moderation memory. Sending the
+      strike *notification* to the user is separate and still blocked (see notifications below).
+- [ ] **Notifications to the user** — `SendNotification2`, `PostNotification`, `SendCorrectNotif`.
+      Hits `/api/mod/send-mod-notification`; needs the same attribution decision as account actions.
+- [ ] **Report actioning** — `ActionReport`. **Already shipped** on the dashboard ("Most reported"),
+      using the same `setReportStatus` path.
+- [ ] **App enable/disable** — `DisableApp`, `EnableApp`, `DisableAppRestore`, `EnableApp2`. Retool
+      UI plumbing (locking the app while a batch runs), not functionality. Not portable, not needed.
+
+Note: 13 of the 34 queries are `JavascriptQuery` — Retool-side batching and selection glue
+(`query30` loops in batches of 10, `UnselectAll`, `log`). These are not data sources and have no
+equivalent here; a SvelteKit form action does the same job.
 
 ---
 

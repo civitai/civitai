@@ -75,6 +75,9 @@ for (const p of plugins) {
       body,
       url: tpl.url ?? null,
       method: tpl.queryType ?? tpl.method ?? null,
+      // GUI-mode queries (Retool's insert/update/bulk-upsert builder) carry no SQL at all — just a
+      // target table. Without this they read as empty queries and the table they write is invisible.
+      tableName: tpl.tableName ?? null,
       runOnLoad: tpl.runWhenPageLoads ?? null,
       bindings: [...new Set([...bindings(sql), ...bindings(body), ...bindings(tpl.url)])],
     });
@@ -112,6 +115,7 @@ for (const q of queries) {
   const where = q.url ? `${q.method ?? 'REST'} ${q.url}` : '';
   console.log(`\n### ${q.id}   [${q.subtype} / ${q.resource ?? '?'}] ${where}`);
   if (q.runOnLoad) console.log(`    (runs on page load)`);
+  if (q.tableName) console.log(`    GUI-mode write → table: ${q.tableName}`);
   if (q.bindings.length) console.log(`    depends on: ${q.bindings.join(', ')}`);
   const text = q.sql ?? q.body;
   if (text)

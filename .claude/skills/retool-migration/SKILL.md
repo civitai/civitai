@@ -18,7 +18,11 @@ The export is not plain JSON: `page.data.appState` is a **transit-js** encoded s
 tag, `["^ ", k, v, …]` maps, `^N` back-references). `JSON.parse` alone gets you an opaque blob.
 `extract.mjs` handles it; don't try to read the raw file.
 
-## 0. Check the tracker first
+## 0. Check the scope and tracker first
+
+[`CLICKUP-SCOPE.md`](CLICKUP-SCOPE.md) holds the content of the two ClickUp tickets that define this
+work — what to build (868kkxqpn) and which tables to move (868kn67aq) — as checklists, so the work does
+not depend on ClickUp access. Read it for *why*; read the tracker for *how far*.
 
 [`MIGRATIONS.md`](MIGRATIONS.md) in this directory lists every app handed to us and how far each has got.
 **Read it before starting** — a slice may already be shipped, blocked, or deliberately dropped.
@@ -29,10 +33,68 @@ Keep it current as part of the work:
 - a slice ships and verifies → tick it
 - something is skipped → record it with the reason
 
-Do not tick a slice because the page renders. `retool_db`-backed slices stay unticked until the data has
-actually moved, and an app is not `done` until the Retool original is switched off.
+Do not tick a slice because the page renders — an app is not `done` until the Retool original is switched
+off. Moderator-database slices *can* be ticked once they work: the app reads and writes that data live
+(see below), so there is no data migration to wait for.
+
+## The moderator database (`retool_db` in the exports)
+
+User notes, strikes, timed mutes and image help requests live in a database of their own, never in
+Civitai's. **The app reads and writes it through `getModeratorDb()`** — port these queries like any
+other; there is no need to wait for a data migration.
+
+```ts
+import { getModeratorDb } from '$lib/server/moderator-db';
+
+const notes = await getModeratorDb()
+  .selectFrom('UserNotes')
+  .select(['id', 'notes', 'lastUpdate', 'lastUpdateBy'])
+  .where('userId', '=', userId)
+  .orderBy('lastUpdate', 'desc')
+  .execute();
+```
+
+It points at Retool's Postgres today, so **Retool and the moderator app are writing to the same tables
+during the transition** — which is what makes an incremental cutover possible. Keep writes compatible
+with what Retool expects to read back.
+
+### Attribution: write the name, ids come later
+
+`createdBy` / `lastUpdateBy` / `handledBy` are free text holding Retool *display names*, and only 5 of
+37 map to a Civitai account. A name → userId table is being assembled separately.
+
+Until it lands, **write `locals.user.username` into those columns** and do not invent an id column. New
+rows are then at least resolvable (a Civitai username maps to an account trivially), while historical
+rows wait for the mapping. Record in the slice's tracker entry that its writes use usernames, so the
+backfill knows there are two naming schemes to reconcile.
+
+Do not block a slice on this. Functionality first; attribution is a follow-up migration.
+
+### Querying it directly
+
+For scoping and schema questions, outside the app:
+
+```bash
+cp .env.example .env      # then fill in RETOOL_DATABASE_URL
+node .claude/skills/retool-migration/retool-db.mjs --tables
+node .claude/skills/retool-migration/retool-db.mjs --describe UserStrikes
+node .claude/skills/retool-migration/retool-db.mjs "SELECT * FROM \"UserStrikes\" LIMIT 5"
+```
+
+**`retool-db.mjs` is read-only, not gated behind a flag** — writes are refused before the connection is
+even opened. It exists for scoping and schema questions; the app itself goes through `getModeratorDb()`,
+which does write.
 
 ## 1. Inventory the app
+
+Committed inventories for the apps handed over so far live in
+[`docs/moderator-app/retool-exports/`](../../../docs/moderator-app/retool-exports/) — read those first;
+you may not need the raw export at all.
+
+**Never commit a raw export.** `User Lookup v2.json` contains a hardcoded
+`Authorization: Bearer <token>` header repeated seven times; the others may too. Keep exports outside
+the repo (`~/Downloads/Retool/`) and commit the generated inventory instead — it carries the SQL and no
+auth config.
 
 ```bash
 node .claude/skills/retool-migration/extract.mjs "<export.json>"           # full inventory
@@ -68,7 +130,7 @@ narrow one presented honestly.
 | `Replicated_Read_Prod` | `dbRead` (`$lib/server/db`) |
 | `Prod` (write) | `dbWrite` |
 | `Clickhouse` | `$lib/server/clickhouse` |
-| `retool_db` | **no equivalent** — Retool's own Postgres, holds mod notes/strikes/timed mutes. Needs a data migration, not a port. Flag it. |
+| `retool_db` | `getModeratorDb()` (`$lib/server/moderator-db`) — a single read-write Kysely client over the **moderator database**. Points at Retool's own Postgres today, so the data is live; later it moves and only the connection string changes. Types: `ModeratorDB` in `moderator-db-types.ts`. |
 | `REST-WithoutResource` → `/api/mod/*` | existing main-app mod endpoints, or a spoke service |
 | `BuzzTemp` / buzz API | `$lib/server/buzz` |
 | `Notifications DB` | `$lib/server/notifications` |
