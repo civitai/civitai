@@ -1566,6 +1566,7 @@ export function ModelVersionUpsertForm({
                           )
                         }
                         title="Licensing fee"
+                        expanded={currentLicensingFee > licensingFeeCap}
                         perLabel={`${feeRatio.images} generation${
                           feeRatio.images === 1 ? '' : 's'
                         }`}
