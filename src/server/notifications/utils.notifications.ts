@@ -19,6 +19,7 @@ import { followNotifications } from '~/server/notifications/follow.notifications
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
+import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { strikeNotifications } from '~/server/notifications/strike.notifications';
@@ -39,6 +40,7 @@ export const notificationProcessors = {
   ...systemNotifications,
   ...userJourneyNotifications,
   ...unpublishNotifications,
+  ...minorFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
   ...appListingNotifications,

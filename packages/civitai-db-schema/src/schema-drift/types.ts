@@ -139,6 +139,20 @@ export interface CatalogForeignKey {
    */
   onDelete: ReferentialAction | null;
   onUpdate: ReferentialAction | null;
+  /**
+   * `pg_constraint.convalidated`.
+   *
+   * 🔴 A foreign key added `NOT VALID` is PRESENT but only half-enforcing: it constrains
+   * new and changed rows and has never checked the ones already there. Every catalog read
+   * that filters on `contype = 'f'` alone reports it as an ordinary foreign key, so a run
+   * that died between `ADD CONSTRAINT` and `VALIDATE CONSTRAINT` looks, to the next run,
+   * exactly like a finished one. That is not a hypothetical: `VALIDATE CONSTRAINT` scans
+   * the whole table, and a statement timeout will end it on the large tables.
+   *
+   * `null` means the catalog snapshot did not carry the field, which is NOT the same as
+   * `true` — consumers must not read an absent value as validated.
+   */
+  validated: boolean | null;
 }
 
 export interface CatalogUniqueIndex {
@@ -154,7 +168,7 @@ export interface DbCatalog {
    * Optional because captures predating the field exist. A CONSUMER OF A CAPTURED CATALOG
    * MUST TREAT ITS ABSENCE AS A PROBLEM, not as a default: a frozen catalog's age determines
    * how much of the schema a comparison against it can still say anything sharp about, and
-   * without a date that decay is invisible. `describeStaleness` in `gate.ts` is the guard.
+   * without a date that decay is invisible. `snapshotAge` in `gate.ts` is the guard.
    */
   capturedAt?: string;
   /** Ordinary + partitioned tables. Views are deliberately absent: see the README. */

@@ -85,6 +85,25 @@ export function urnToModelType(urnType: string): string {
   return urnToModelTypeMap.get(urnType) ?? urnType;
 }
 
+/**
+ * The `<ecosystem>` segment of an AIR: the root ecosystem's key, lowercased.
+ * Also the key the orchestrator's prompt-analysis service stores guides under,
+ * so both must derive it the same way or a generation and its prompt analysis
+ * disagree about which ecosystem they belong to.
+ *
+ * Accepts a base model name or an ecosystem key. Unresolvable input is passed
+ * through lowercased rather than throwing — callers send user-influenced values.
+ */
+export function getAirEcosystem(baseModelOrKey: string) {
+  let ecosystem = baseModelOrKey;
+  try {
+    ecosystem = getRootEcosystem(baseModelOrKey).key;
+  } catch {}
+  // Upscaler models use 'Other' in AIR for backwards compatibility
+  if (ecosystem === 'Upscaler') ecosystem = 'Other';
+  return ecosystem.toLowerCase();
+}
+
 export function stringifyAIR({
   baseModel,
   type,
@@ -108,18 +127,11 @@ export function stringifyAIR({
   fileType?: string;
   source?: string;
 }) {
-  let ecosystem = baseModel;
-  try {
-    ecosystem = getRootEcosystem(baseModel).key;
-  } catch {}
-  // Upscaler models use 'Other' in AIR for backwards compatibility
-  if (ecosystem === 'Upscaler') ecosystem = 'Other';
-
   const urnType =
     (fileType ? fileTypeUrnMap[fileType] : undefined) ?? typeUrnMap[type] ?? 'unknown';
 
   return Air.stringify({
-    ecosystem: ecosystem.toLowerCase(),
+    ecosystem: getAirEcosystem(baseModel),
     type: urnType,
     source,
     id: String(modelId),

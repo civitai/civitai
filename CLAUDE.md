@@ -4,29 +4,29 @@
 We use markdown documents to discuss plans. Documentation goes in the `docs/` folder.
 
 ### Inline Comments
-Occasionally, we comment back and forth as we make plans. Comments from us, are marked with `@dev:` and you can leave comments as well with `@ai:`. Please make comments inline in the document. If there are actions are requested in my comments, please take them.
-
-**New Comment Marking**: When you add new comments, use an asterisk after the mention (e.g., `@justin:*` or `@meta:*`). Once you reply or acknowledge a comment, remove the asterisk so that I know it's been seen. Note: Sometimes I might forget to add the asterisk to my new comments, so please check all comments regardless of marking.
-
-**Example**
-```
-@dev: This comment has been processed (asterisk removed)
-@ai: Of course
-@dev:* This is a new comment that needs attention
-```
+Comments from us are marked with `@dev:` and you can leave comments as well with `@ai:`.
 
 ## Tech Stack Overview
 
 ### Core Technologies
-- **Framework**: Next.js 14 with TypeScript
+- **Framework**: Next.js 16 with TypeScript
 - **UI Library**: Mantine v7
 - **Styling**: Tailwind CSS + SCSS Modules
 - **Database**: PostgreSQL with Prisma ORM
 - **API**: tRPC
 - **State Management**: Zustand
-- **Authentication**: NextAuth
+- **Authentication**: `@civitai/auth` — hub-driven `civ-token`. **NextAuth is fully removed**; `src/providers/SessionProvider.tsx` and `src/types/session.ts` are first-party replacements for `next-auth/react`. Remaining `next-auth` mentions in `src/` are comments about the cutover, not imports.
 - **Search**: Meilisearch
 - **Image Processing**: Sharp
+
+### Monorepo Layout
+This is a pnpm workspace, not just the Next.js app:
+- `src/` — the main civitai.com app (everything below unless stated otherwise)
+- `apps/` — sibling apps: `auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`, `orchestrator-gateway`, `storage`. Each has its own `dev`/`release` script (`pnpm dev:auth`, `pnpm release:moderator`, …).
+- `packages/civitai-*` — shared workspace packages consumed as `workspace:*` (`civitai-auth`, `civitai-db`, `civitai-db-schema`, `civitai-redis`, `civitai-ui`, `civitai-shared`, …).
+- `event-engine-common/` — a git **submodule**. It doesn't come with a fresh worktree; see Git Worktrees below.
+
+To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages/new-app-integration.md`.
 
 ### Additional Libraries
 - React Query (Tanstack Query) for data fetching
@@ -55,9 +55,14 @@ pnpm run prettier:write   # Auto-fix Prettier formatting
 
 ### Testing
 ```bash
-pnpm test                 # Run Playwright tests
-pnpm run test:ui          # Run tests with UI
+pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
+pnpm run test:component   # Vitest component suite (browser mode — see Git Worktrees for NixOS)
+pnpm run test:lint-rules  # Convention guards (see below)
+pnpm test                 # Playwright e2e
+pnpm run test:ui          # Playwright with UI
 ```
+
+Both vitest suites are projects in `vitest.config.mts` (`--project unit` / `--project component`).
 
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
@@ -74,10 +79,18 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
+#### Convention guards run as tests
+Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
+`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
+
 ### Database
 ```bash
-pnpm run db:migrate:empty  # Create an empty migration file
+pnpm run db:migrate:empty    # Create an empty migration file
+pnpm run db:generate         # Regenerate the slim schema + Prisma client
+pnpm run db:check-generated  # Fail if the committed generated client is stale
 ```
+
+**`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
 - Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
@@ -96,20 +109,20 @@ pnpm run release:major    # Major release (x.0.0)
 
 ## Server-Side Architecture Map
 
-`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is ~7.9K lines).
+`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is 8K+ lines).
 
-- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~93 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
-- **Images** — `services/image.service.ts` (**~7.9K lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
+- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~100 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
+- **Images** — `services/image.service.ts` (**8K+ lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
 - **Models** — `services/model.service.ts`, `search-index/models.search-index.ts`.
 - **Search (Meilisearch)** — `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).
 - **Redis / caching** — `redis/client.ts` (clients incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
 - **Orchestrator (generation)** — `orchestrator/get-orchestrator-token.ts` (`getOrchestratorToken`), `services/orchestrator/orchestrator.service.ts`.
-- **Auth** — `auth/next-auth-options.ts`, `auth/session-user.ts`, `auth/token-refresh.ts`.
+- **Auth** — `auth/get-server-auth-session.ts`, `auth/session-verifier.ts` + `auth/session-cache.ts` + `auth/session-invalidation.ts`, `auth/token-claims.ts`, `auth/civ-cookie.ts`, `auth/oauth-bridge.ts`, `auth/route-guard.ts`, `auth/bearer-token.ts`. Shared logic lives in `packages/civitai-auth`; the hub itself is `apps/auth`.
 - **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`).
 - **Metrics / analytics** — `metrics/*.metrics.ts` (ClickHouse-backed entity metrics), `clickhouse/`.
-- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client; schema `prisma/schema.prisma`. **Migrations are applied manually — see the Database rule above.**
+- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client. **Schema is `packages/civitai-db-schema/prisma/schema.full.prisma`, and migrations are applied manually — see the Database rule above.**
 - **Telemetry** — `src/instrumentation.node.ts` (OTEL: Prisma/Redis/HTTP auto-instrumentation + custom `withSpan()` from `utils/otel-helpers.ts`), `schema/track.schema.ts` (ClickHouse action/event tags), `prom/client.ts`.
-- **Health** — `src/pages/api/health.ts` runs sub-checks under `Promise.all`; a single slow check (e.g. `searchMetrics`) can exceed the kubelet probe budget. `HEALTHCHECK_TIMEOUT` env gates it.
+- **Health** — `src/pages/api/health.ts` runs sub-checks concurrently, each raced at `HEALTHCHECK_TIMEOUT` and the whole set raced against an overall deadline, reporting partial results as checks settle. Checks can be suppressed or demoted to non-critical via the `HEALTHCHECK_DISABLED` env var and the Redis-backed `DISABLED_HEALTHCHECKS` / `NON_CRITICAL_HEALTHCHECKS` keys.
 - **Other server domains** — `games/` (new-order/ratings), `webhooks/`, `paddle/` + `coinbase/` (payments), `notifications/`, `signals/`, `rewards/`; S3 helpers at `src/utils/s3-utils.ts`.
 
 ## Component Standards
@@ -261,7 +274,7 @@ cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clea
 ### Performance
 - Use dynamic imports for heavy components
 - Implement virtual scrolling for large lists
-- Optimize images with Next.js Image component
+- Serve images through `EdgeImage`/`EdgeMedia`, not `next/image` — see Image Handling
 
 ### Security
 - Never commit secrets or API keys
@@ -273,7 +286,9 @@ cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clea
 1. Run type checking: `pnpm run typecheck`
 2. Run linting: `pnpm run lint`
 3. Format code: `pnpm run prettier:write`
-4. Test changes locally
+4. Run the unit suite: `pnpm run test:unit:run`
+5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
+6. Test changes locally
 
 ### Stacked PRs — don't
 - **NEVER use stacked PRs** — base every PR directly on the integration branch (`main`, or a feature integration branch like `feat/...`), never on another open PR's branch. Stacked PRs silently mis-merge: a squash-merged parent doesn't retarget the child, so the child lands on the orphaned parent branch instead of the real base and its changes go missing.
@@ -290,7 +305,7 @@ Use Mantine modals with proper accessibility and keyboard handling.
 
 #### Dialog Registry System
 The project uses a dialog-registry system for managing modals:
-- Register dialogs in `src/components/Dialog/dialog-registry.ts` or `dialog-registry2.ts`
+- Register dialogs in `src/components/Dialog/dialog-registry2.ts` (URL-routed ones in `routed-dialog-registry.ts`)
 - Use `DialogProvider` for context-based modal management
 - `RoutedDialogProvider` for URL-based modal state
 - Access dialogs through the registry for consistent modal handling across the app

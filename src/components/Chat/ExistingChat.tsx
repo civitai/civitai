@@ -70,6 +70,7 @@ import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCleanText } from '~/hooks/useCheckProfanity';
 import {
   STICKER_SIZE,
+  isStickerOnlyContent,
   parseStickerIds,
   parseStickerLines,
   resolveStickerTokens,
@@ -1024,6 +1025,7 @@ function DisplayMessages({
                         className={clsx(classes.chatMessage, {
                           [classes.otherMessage]: !isMe,
                           [classes.myMessage]: isMe,
+                          [classes.stickerOnlyMessage]: isStickerOnlyContent(c.content),
                         })}
                       >
                         <ChatMessageContent
