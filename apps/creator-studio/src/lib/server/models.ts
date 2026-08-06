@@ -406,7 +406,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       usageControl: v.usageControl,
       hasPaidAccess: paidAccessConfig !== null,
       paidAccessConfig,
-      rightsAffirmed: hasCurrentRightsAffirmation(v.meta),
+      rightsAffirmed: hasCurrentRightsAffirmation(v.meta, userId),
     });
     byModel.set(v.modelId, list);
   }

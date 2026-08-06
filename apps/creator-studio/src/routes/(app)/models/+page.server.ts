@@ -329,6 +329,7 @@ export const actions: Actions = {
     const cookie = request.headers.get('cookie') ?? '';
     const result = await bulkSetPaidAccess(
       cookie,
+      locals.user.id,
       versionIds.data,
       {
         ...pricing.data,

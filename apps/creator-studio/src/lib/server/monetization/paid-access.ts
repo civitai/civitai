@@ -166,6 +166,7 @@ export type BulkPaidAccessResult =
 // price); versions that can't be gated (internal/external API) are skipped and counted as failed.
 export async function bulkSetPaidAccess(
   cookie: string,
+  userId: number,
   versionIds: number[],
   pricing: {
     accessPrice: number;
@@ -180,9 +181,13 @@ export async function bulkSetPaidAccess(
   rightsAffirmed = false
 ): Promise<BulkPaidAccessResult & { skippedPublished?: number }> {
   const rows = await dbRead
-    .selectFrom('ModelVersion')
-    .select(['id', 'usageControl', 'status', 'initialPublishedAt'])
-    .where('id', 'in', versionIds)
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .select(['mv.id', 'mv.usageControl', 'mv.status', 'mv.initialPublishedAt'])
+    .where('mv.id', 'in', versionIds)
+    // Ownership-scoped like its siblings: the endpoint authorizes the writes, but an unscoped read lets
+    // the skipped/failed counts report on versions the caller doesn't own.
+    .where('m.userId', '=', userId)
     .execute();
   const byId = new Map(rows.map((r) => [r.id, r]));
 
