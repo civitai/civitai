@@ -90,14 +90,42 @@ export async function createRecaptchaAssesment({
   }
 }
 
+/**
+ * Shape of a Turnstile `siteverify` response.
+ *
+ * This schema is EXECUTED (`safeParse`) against the response body — it used to be
+ * declared and then bypassed by an `as`-cast, which made it decorative: a changed
+ * or malformed upstream body flowed through with a fabricated type, and a
+ * non-boolean `success` (e.g. the string `"true"`) read as truthy.
+ *
+ * It is deliberately TOLERANT, because it sits on the buzz-purchase payment paths
+ * and a schema that is stricter than the wire format would convert benign upstream
+ * drift into a 100% denial:
+ *   - `looseObject` (not `object`) so fields Cloudflare adds later SURVIVE into the
+ *     failure telemetry instead of being silently stripped — a new field is most
+ *     useful precisely when we are trying to diagnose a change in behaviour.
+ *   - every field except `success` carries `.catch(...)`, so an unexpected type on a
+ *     purely INFORMATIONAL field degrades to a fallback rather than failing the
+ *     verification. None of these fields gates anything.
+ *   - `error-codes` in particular is only shown in Cloudflare's examples, not
+ *     contractually guaranteed on every response, and it was never validated
+ *     before — so it defaults to `[]` rather than being required.
+ *
+ * `success` is therefore the ONLY field that can fail the parse. A body that fails
+ * it is not a siteverify response at all (an HTML interstitial, an empty body, a
+ * proxy error page), and that is failed CLOSED with telemetry rather than guessed at.
+ */
 type SiteVerifyResponse = z.infer<typeof siteVerifyResponseSchema>;
-const siteVerifyResponseSchema = z.object({
+const siteVerifyResponseSchema = z.looseObject({
   success: z.boolean(),
-  challenge_ts: z.coerce.date().optional(),
-  hostname: z.string().optional(),
-  'error-codes': z.array(z.string()),
-  action: z.string().optional(),
-  cdata: z.string().optional(),
+  challenge_ts: z.coerce.date().optional().catch(undefined),
+  hostname: z.string().optional().catch(undefined),
+  'error-codes': z.array(z.string()).catch([]),
+  action: z.string().optional().catch(undefined),
+  cdata: z.string().optional().catch(undefined),
+  // Enterprise-only, absent on standard accounts. `looseObject` again so any
+  // additional metadata Cloudflare ships alongside `ephemeral_id` survives.
+  metadata: z.looseObject({ ephemeral_id: z.string().optional() }).optional().catch(undefined),
 });
 
 type CaptchaMeta = {
@@ -145,13 +173,46 @@ export async function verifyCaptchaToken({
         tokenPrefix,
         verifyLatencyMs,
         cfRay,
+        ip,
         meta,
       },
     }, 'civitai-prod').catch(() => undefined);
     throw throwBadRequestError('No response from captcha service');
   }
 
-  const outcome = (await result.json()) as SiteVerifyResponse;
+  // A non-JSON body (HTML interstitial, empty body, truncated payload) lands in
+  // the same malformed-response path below rather than escaping as a bare
+  // SyntaxError with no telemetry attached.
+  const rawBody = await result.json().catch(() => undefined);
+  const parsed = siteVerifyResponseSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    logToAxiom({
+      name: 'captcha-failure',
+      type: 'error',
+      error: {
+        reason: 'siteverify-malformed-response',
+        // Compact, bounded issue list: names the field that drifted, which is the
+        // whole diagnostic value. The raw body is deliberately NOT logged — it is
+        // unbounded third-party content.
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          code: issue.code,
+          message: issue.message,
+        })),
+        tokenPrefix,
+        verifyLatencyMs,
+        cfRay,
+        ip,
+        meta,
+      },
+    }, 'civitai-prod').catch(() => undefined);
+    // Fail CLOSED. An unidentifiable response must not be able to authorise a
+    // purchase, and the caller-visible error is the existing one, so this does
+    // not introduce a new failure class for callers to handle.
+    throw throwBadRequestError('Unable to verify captcha token');
+  }
+
+  const outcome: SiteVerifyResponse = parsed.data;
   if (outcome.success) {
     if (Math.random() < 0.01) {
       logToAxiom({
@@ -176,9 +237,19 @@ export async function verifyCaptchaToken({
     type: 'error',
     error: {
       response: outcome,
+      // Turnstile's device-fingerprint id (Enterprise only, absent otherwise).
+      // Promoted to a first-class field because it is the natural correlation key
+      // across failures from one device — reading it off the nested `response`
+      // blob requires knowing it is there. Typed by the schema's `metadata`
+      // declaration: drop that declaration and this line stops compiling.
+      ephemeralId: outcome.metadata?.ephemeral_id,
       tokenPrefix,
       verifyLatencyMs,
       cfRay,
+      // Recorded on FAILURE only. The success path (including its 1% sample above)
+      // deliberately omits it: a per-request address on every successful
+      // verification is PII volume for no diagnostic gain.
+      ip,
       meta,
     },
   }, 'civitai-prod').catch(() => undefined);
