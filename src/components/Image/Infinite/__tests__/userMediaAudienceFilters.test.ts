@@ -58,24 +58,43 @@ const audienceStoreKeys = (() => {
     .filter(Boolean);
 })();
 
-// Feeds that carry their own scope and so must neutralize the stored audience, whether
-// they pass the key through from the URL (`newCreators,`) or pin it (`newCreators: false`).
+// Feeds that carry their own scope and so must neutralize the stored audience.
 const SCOPED_FEEDS = [
   { name: 'UserMediaInfinite', file: '../UserMediaInfinite.tsx' },
   { name: 'home feed', file: '../../../../pages/home/index.tsx' },
 ];
+
+/** The `<ImagesInfinite ... />` props only — not the rest of the file. */
+const imagesInfiniteProps = (source: string) => {
+  const open = source.indexOf('<ImagesInfinite');
+  expect(open).toBeGreaterThan(-1);
+  const close = source.indexOf('/>', open);
+  expect(close).toBeGreaterThan(open);
+  return source.slice(open, close);
+};
+
+// The only two neutralizing forms: passed through from the URL params (`newCreators,`) or
+// pinned off (`newCreators: false,`). Anchored per line, so `newCreators: true,` — which
+// reintroduces the bug — does NOT satisfy the guard, and neither does a mention in a
+// comment or in some later component in the same file.
+const neutralized = (key: string) => new RegExp(`^\\s*${key}(,|: false,)$`, 'm');
 
 describe('audience filter neutralization', () => {
   it('reads a non-empty audience key set from FollowedFilter', () => {
     expect(audienceStoreKeys).toEqual(expect.arrayContaining(['followed', 'newCreators']));
   });
 
-  it.each(SCOPED_FEEDS)('$name passes every audience key into its override', ({ file }) => {
-    const source = readSource(file);
-    const overrides = source.slice(source.indexOf('<ImagesInfinite'));
+  it.each(SCOPED_FEEDS)('$name neutralizes every audience key', ({ file }) => {
+    const props = imagesInfiniteProps(readSource(file));
 
     for (const key of audienceStoreKeys) {
-      expect(overrides).toMatch(new RegExp(`\\b${key}\\s*[,:]`));
+      expect(props).toMatch(neutralized(key));
     }
+  });
+
+  it('rejects a key pinned to the filtering value', () => {
+    const pinnedOn = '<ImagesInfinite filters={{\n  followed: false,\n  newCreators: true,\n}} />';
+
+    expect(imagesInfiniteProps(pinnedOn)).not.toMatch(neutralized('newCreators'));
   });
 });
