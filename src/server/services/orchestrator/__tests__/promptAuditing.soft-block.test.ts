@@ -146,6 +146,26 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     expect(await softFlagOf(auditPromptServer(options))).toBe(true);
   });
 
+  it('an UNacknowledged soft block does NOT count toward the auto-mute either', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    await expect(auditPromptServer(options)).rejects.toBeDefined();
+    // Counting the warning would auto-mute the very users this feature helps,
+    // while the "Generate Anyway" button is rendered under the mute notice.
+    expect(mockSysRedis.lPush).not.toHaveBeenCalled();
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('a soft block carries no escalating account-review threat', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    await expect(auditPromptServer(options)).rejects.not.toThrow(/sent for review|been muted/);
+  });
+
+  it('a soft block is reported exactly once', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    await expect(auditPromptServer(options)).rejects.toBeDefined();
+    expect(mockProhibited).toHaveBeenCalledTimes(1);
+  });
+
   it('the soft marker never touches the user-facing message', async () => {
     flagWith(trigger('nsfw_blocklist'));
     // EnhanceTab and App Blocks match this message with `startsWith`.

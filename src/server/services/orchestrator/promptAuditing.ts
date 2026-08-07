@@ -346,11 +346,14 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
 
     const softBlock = isSoftBlock(error.triggers ?? []);
 
-    if (softBlock && acknowledgedSoftBlock) {
-      // The user was warned and proceeded. Record it so moderators can review what
-      // the loosened gate is letting through, but deliberately do NOT run it
-      // through addBlockedPrompt — an override must not march the user toward an
-      // auto-mute for a term we have decided is unreliable. `count: 0` keeps
+    if (softBlock) {
+      // A soft block NEVER counts toward the auto-mute — not when the user
+      // proceeds, and not when they see the warning and give up. The counter
+      // exists to catch someone repeatedly probing the gate; a term we have
+      // already decided is unreliable is not evidence of that. Counting the
+      // warning would auto-mute exactly the users this feature exists to help
+      // (`daughter` alone blocks 139 of them) while they are being told they may
+      // proceed. So: report it, never `addBlockedPrompt`, and `count: 0` keeps
       // reportProhibitedRequest below its mute threshold.
       await reportProhibitedRequest({
         prompt,
@@ -365,28 +368,35 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         inputVideo,
       });
 
-      // The ClickHouse `source` column is Enum8('Regex','External'), so the
+      // The ClickHouse `source` column is Enum8('Regex','External'), so an
       // override cannot be distinguished there without a manual column migration.
       // Until that lands this is the only queryable trail of what the loosened
       // gate let through — do not drop it on the assumption ClickHouse has it.
-      logToAxiom({
-        name: 'prompt-soft-block-override',
-        type: 'info',
-        userId,
-        details: {
-          triggers: error.triggers.map((t) => ({
-            category: t.category,
-            matchedWord: t.matchedWord,
-          })),
-        },
-      }).catch(() => null);
-      return;
+      if (acknowledgedSoftBlock) {
+        logToAxiom({
+          name: 'prompt-soft-block-override',
+          type: 'info',
+          userId,
+          details: {
+            triggers: error.triggers.map((t) => ({
+              category: t.category,
+              matchedWord: t.matchedWord,
+            })),
+          },
+        }).catch(() => null);
+        return;
+      }
     }
 
     // Build error message based on domain
     let message: string;
 
-    if (isGreen) {
+    if (softBlock) {
+      // Unacknowledged soft block. Already reported above, and deliberately not
+      // counted — so no escalating "your account will be sent for review" tail,
+      // which would be a threat we have decided not to carry out.
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+    } else if (isGreen) {
       // SFW-only domain (civitai.com) - stricter message
       message = `Your prompt was flagged: ${error.blockedFor.join(
         ', '

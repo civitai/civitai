@@ -92,7 +92,6 @@ describe('nsfw_blocklist severity is per word, not per category', () => {
     'kike',
     'spic',
     'gook',
-    'coon',
     'wetback',
     'paki',
     'raghead',
@@ -102,19 +101,15 @@ describe('nsfw_blocklist severity is per word, not per category', () => {
     'darkie',
     'beaner',
     'wop',
-    'kraut',
-    'dyke',
+    'rice nigger',
+    'dune coon',
+    'coonass',
+    'niglet',
+    'nignog',
+    'wigger',
+    'africoon',
     'retard',
-    'midget',
     'mongoloid',
-    'nazi',
-    'neonazi',
-    'kkk',
-    'swastika',
-    'third reich',
-    'gas chamber',
-    'terrorist',
-    'nappy',
     'pro-ana',
     'pro-mia',
   ])('hard tier: %s is NOT overridable', (word) => {
@@ -143,6 +138,28 @@ describe('nsfw_blocklist severity is per word, not per category', () => {
     'anorexic',
     'bulimia',
     'disordered eating',
+    // Homographs of ordinary words — a levee, a raccoon, a mite, sauerkraut,
+    // a nappy, a necromancer, a midget submarine. These are the substring
+    // false-positive machines the feature exists for.
+    'dike',
+    'dyke',
+    'coon',
+    'chigger',
+    'kraut',
+    'nappy',
+    'necro',
+    'rigor mortis',
+    'midget',
+    // Historical and political subjects with obvious legitimate depiction:
+    // WWII imagery, documentary and news work, and the swastika's use as a
+    // Hindu/Buddhist/Jain religious symbol.
+    'nazi',
+    'neonazi',
+    'swastika',
+    'third reich',
+    'kkk',
+    'gas chamber',
+    'terrorist',
   ])('soft tier: %s IS overridable', (word) => {
     expect(isSoftBlock([trigger('nsfw_blocklist', word)])).toBe(true);
   });
