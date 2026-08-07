@@ -558,6 +558,77 @@ export function IframeHost({
   const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  // Mirror of `status`, read by the four status-gated message handlers
+  // (RESIZE_IFRAME, REQUEST_SIGN_IN, REQUEST_CONSENT, OPEN_BUZZ_PURCHASE) via
+  // `readGateStatus` below.
+  //
+  // 🔴 ASSIGNED IN THE RENDER BODY, NOT IN AN EFFECT — that placement IS the fix,
+  // and an effect here is the bug. React writes the `data-block-ready` DOM
+  // attribute (and every other commit-time output) during the COMMIT, but flushes
+  // PASSIVE effects in a LATER scheduler task whenever the commit exhausts the 5ms
+  // frame budget (scheduler 0.23.2, MessageChannel transport, `frameYieldMs = 5`).
+  // So an effect-updated mirror is stale for exactly the window in which the host
+  // has already publicly announced readiness. A render-body assignment happens
+  // BEFORE the commit, so by the time anything observable says "ready" the mirror
+  // already is. This is the same defect, and the same fix, as PageBlockHost's —
+  // see the 🔴 note on its own `statusRef` for the measurement.
+  //
+  // CONCURRENT-RENDERING SAFETY. Writing a ref during render is impure, so the
+  // three ways that bites were each checked rather than assumed:
+  //   • StrictMode double-render writes the SAME value twice — idempotent.
+  //   • An interrupted/discarded concurrent render can leave the ref holding a
+  //     status that never committed. It converges: React always eventually renders
+  //     the latest state, and that render overwrites the ref.
+  //   • It is only ever written from `status` (component state), never derived
+  //     from props or anything a parent can change mid-render.
+  //
+  // 🔴 WHICH DIRECTION THAT TRANSIENT DISAGREEMENT RUNS IN — read this before
+  // pointing a NEW gate at the ref. "Ref ahead of the DOM" is NOT always the
+  // permissive direction; it inherits the direction of the transition in flight,
+  // and this component has transitions BOTH ways:
+  //   • loading → ready is PERMISSIVE. The ref says ready while `data-block-ready`
+  //     still reads "false", so a gate can open a beat before the host has publicly
+  //     announced readiness. Harmless, and it is the whole point of the fix.
+  //   • ready → fatal (`BLOCK_ERROR{fatal:true}`, the handler below) is
+  //     RESTRICTIVE. A concurrent render writes `statusRef.current = 'fatal'`,
+  //     yields before commit, and a queued OPEN_BUZZ_PURCHASE arriving in that gap
+  //     is REFUSED while `data-block-ready` still reads "true".
+  // The restrictive case is deliberate and is the safer side of the trade: the ref
+  // is the host's freshest knowledge of its own state, so refusing a spend on a
+  // host that has already decided it is broken is correct, and the DOM attribute is
+  // the thing lagging. A gate that must NOT tighten early (there is none today)
+  // would have to key off the committed `status`, not this ref.
+  //
+  // RESIDUAL WINDOW, stated rather than hidden: this closes the commit→passive-
+  // effect gap, NOT the larger message-received→render gap. `status` becomes
+  // 'ready' only as a RESULT of the block's own BLOCK_READY being processed
+  // (setStatus → render → commit), so a block that posts a gated request in the
+  // SAME turn as BLOCK_READY still meets a 'loading' mirror — React has not
+  // rendered yet. The NACK on OPEN_BUZZ_PURCHASE (the one repliable gate here) is
+  // what covers that remainder — a drop there fails FAST instead of hanging.
+  const statusRef = useRef<Status>('loading');
+  statusRef.current = status;
+  /**
+   * The ONE way a message handler asks "is the host ready?".
+   *
+   * Reads the RENDER-BODY-updated `statusRef` rather than closing over `status`,
+   * so the answer is current the moment the render that made the host ready is
+   * committed — not one scheduler task later, when React gets around to flushing
+   * passive effects and re-registering the listener with a fresh closure.
+   *
+   * No `'error' → 'no_token'` shim, unlike PageBlockHost's version: this host's
+   * local `Status` union is byte-identical to the shared gates' `HostStatus`
+   * (`openBuzzPurchaseGate.ts`), so the value passes straight through. Deliberately
+   * NOT imported from `pageBlockHostLogic` — the page host is a sibling surface,
+   * not a dependency of this one, and there is nothing to share but an identity fn.
+   *
+   * Stable identity (`[]` deps, ref read only) is load-bearing in its own right:
+   * it lets the four gated effects DROP `status` from their dependency arrays, so
+   * they now subscribe ONCE per mount instead of tearing down and re-registering
+   * on every status transition. The window this fix is about cannot exist if the
+   * listener never needs replacing.
+   */
+  const readGateStatus = useCallback((): Status => statusRef.current, []);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -1119,11 +1190,24 @@ export function IframeHost({
       // is visible-but-non-interactive (pointerEvents:none) before ready and
       // pinned at minHeight, so an early RESIZE would let a pre-ready block
       // push the slot height around before the handshake completes.
-      if (status !== 'ready') return;
+      //
+      // `readGateStatus()` (not a closed-over `status`) — see its definition: it
+      // reads the render-body-updated mirror, so it is current at COMMIT rather
+      // than one scheduler task later.
+      //
+      // NO NACK HERE, deliberately. RESIZE_IFRAME is fire-and-forget: it carries
+      // no requestId and there is no host→block reply message for it, so there is
+      // nothing to reply TO and no promise to fail fast. Dropping it costs the
+      // block one un-honoured height, not a hang.
+      if (readGateStatus() !== 'ready') return;
       applyHeight((raw as { height?: unknown }).height);
     });
     return off;
-  }, [onMessage, applyHeight, status]);
+    // `status` is deliberately ABSENT: the handler reads it through
+    // `readGateStatus` (a render-body-updated ref) instead of closing over it, so
+    // this subscribes ONCE per mount. Re-registering on every status transition is
+    // what opened the commit→passive-effect window in the first place.
+  }, [onMessage, applyHeight, readGateStatus]);
 
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_ERROR', (raw) => {
@@ -1146,7 +1230,14 @@ export function IframeHost({
   // after login). When absent or unsafe we fall through to the current page.
   useEffect(() => {
     const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
-      const resolved = resolveRequestSignIn(status, raw);
+      // `readGateStatus()` (not a closed-over `status`) — see its definition.
+      const resolved = resolveRequestSignIn(readGateStatus(), raw);
+      // NO NACK HERE, deliberately. REQUEST_SIGN_IN is fire-and-forget: the SDK
+      // sends it with `dispatch` (blocks-react 0.39.0 `useRequestSignIn`), the
+      // payload is `{ returnUrl? }` with NO requestId, and there is no host→block
+      // reply message for it. Nothing to reply to; a drop cannot hang the block —
+      // it just silently does nothing, which is precisely why the ROOT-CAUSE half
+      // of this fix has to hold for this handler.
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
       // Open the hub login in a popup (replaces the old in-page LoginModal). The host runs at TOP level — not
       // inside the sandboxed block iframe — so the popup works here; on completion it navigates back.
@@ -1154,7 +1245,8 @@ export function IframeHost({
       openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
-  }, [onMessage, status]);
+    // `status` deliberately absent — see the RESIZE_IFRAME deps note.
+  }, [onMessage, readGateStatus]);
 
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // token is missing a consent-gated scope) asks the host to open the consent UI
@@ -1168,7 +1260,14 @@ export function IframeHost({
   // and the block retries — there is no host→block reply (fire-and-forget).
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
-      const scopesToGrant = resolveRequestConsent(status, missingScopes ?? []);
+      // `readGateStatus()` (not a closed-over `status`) — see its definition.
+      //
+      // NO NACK HERE, deliberately. REQUEST_CONSENT is fire-and-forget in both
+      // directions: the SDK sends it with `dispatch` (blocks-react 0.39.0
+      // `useRequestConsent`), its payload is `{ scopes? }` with NO requestId, and
+      // there is no host→block reply message for it — so there is nothing to
+      // reply TO and no promise to fail fast. Dropping it cannot hang the block.
+      const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
       if (scopesToGrant == null) return; // not ready, or nothing missing — drop
       dialogStore.trigger({
         component: BlockConsentModal,
@@ -1183,9 +1282,10 @@ export function IframeHost({
       });
     });
     return off;
+    // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [
     onMessage,
-    status,
+    readGateStatus,
     missingScopes,
     install.appBlockId,
     install.manifest.name,
@@ -1269,9 +1369,35 @@ export function IframeHost({
         // still visible-but-non-interactive (pointerEvents:none). Summoning the
         // money-spend modal pre-ready would let an untrusted block nag the user
         // before any interaction. resolveBuzzPurchaseRequest returns null
-        // (silently dropped) when status !== 'ready' or the payload is bad.
-        const requestId = resolveBuzzPurchaseRequest(status, raw);
-        if (requestId == null || !raw) return; // !raw is implied by requestId != null; narrows for TS
+        // when status !== 'ready' or the payload is bad.
+        //
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        const requestId = resolveBuzzPurchaseRequest(readGateStatus(), raw);
+        if (requestId == null || !raw) {
+          // NEVER HANG. `resolveBuzzPurchaseRequest` returns null for TWO
+          // different reasons, and they need different answers:
+          //
+          //   • malformed payload (no string requestId) — UNREPLIABLE. There is
+          //     no id to thread a reply back on, so it can only be dropped.
+          //   • host not ready — REPLIABLE, and it must be replied to. The block
+          //     is awaiting BUZZ_PURCHASE_RESULT on a promise that rejects only
+          //     at the SDK's 30s default request timeout (blocks-react 0.39.0,
+          //     `DEFAULT_REQUEST_TIMEOUT_MS`), so a silent drop costs the user's
+          //     click plus half a minute of nothing happening.
+          //
+          // `purchased: false` is exactly what the modal's own onClose sends for
+          // a dismissed purchase below, and exactly what the SDK's
+          // `useBuzzPurchase` reads as "no purchase happened". Refusing is
+          // unchanged — no modal opens, nothing is charged; the block just finds
+          // out now instead of in 30 seconds.
+          //
+          // `!raw` is implied by requestId != null; the compound condition also
+          // narrows for TS.
+          if (raw && typeof raw.requestId === 'string' && raw.requestId.length > 0) {
+            send('BUZZ_PURCHASE_RESULT', { requestId: raw.requestId, purchased: false });
+          }
+          return;
+        }
         const rawAmount =
           typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
             ? raw.suggestedAmount
@@ -1333,14 +1459,24 @@ export function IframeHost({
       }
     );
     return off;
+    // `status` deliberately absent — see the RESIZE_IFRAME deps note.
+    //
+    // `modelCtx.slotId` IS present, and it was NOT before: the attribution branch
+    // above reads it, so omitting it was a stale-closure bug of the same family as
+    // the one this change is about. Unreachable today — BlockSlot re-keys this
+    // subtree on (slotId, entityType, entityId), so a slotId change remounts the
+    // host rather than re-rendering it — but the omission was not load-bearing and
+    // silently preserving it while rewriting this array would be inheriting a bug
+    // on purpose.
   }, [
     onMessage,
     send,
-    status,
+    readGateStatus,
     install.appId,
     install.appBlockId,
     install.blockInstanceId,
     modelCtx.modelId,
+    modelCtx.slotId,
   ]);
 
   // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
