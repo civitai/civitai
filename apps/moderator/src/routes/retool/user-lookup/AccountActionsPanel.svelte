@@ -9,7 +9,8 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { PageData } from './$types';
-  import { LINK_CLASS, dateTime, type FormResult } from './format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
+  import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
 
   type Identity = NonNullable<PageData['result']>['identity'];

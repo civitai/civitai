@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { PageData } from './$types';
-  import { dateTime, num } from './format';
+  import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
 
   type Subscription = NonNullable<PageData['result']>['subscription'];

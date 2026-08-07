@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, dateTime, num } from './format';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
 
   let { account, civitaiUrl }: { account: Promise<Account> | null; civitaiUrl: string } = $props();

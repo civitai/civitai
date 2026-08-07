@@ -2,7 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { PageData } from './$types';
   import { userUrl } from '$lib/entity-url';
-  import { LINK_CLASS, dateTime } from './format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
 
   type Identity = NonNullable<PageData['result']>['identity'];
   type Profile = NonNullable<PageData['result']>['profile'];

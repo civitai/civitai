@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
-  import { num } from './format';
+  import { num } from '$lib/format';
 
   type Result = NonNullable<PageData['result']>;
   type Stats = Result['stats'];

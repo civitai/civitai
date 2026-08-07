@@ -3,6 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { usersByIds } from './users.service';
+import { INTERNAL_IP_RANGE, IP_PATTERN } from './clickhouse-filters';
 
 // Everything behind `/api/user-signals` — the ban-evasion and abuse half of User Lookup.
 //
@@ -19,8 +20,6 @@ import { usersByIds } from './users.service';
 //
 // The ClickHouse helper interpolates values with NO escaping (formatSqlType returns strings verbatim), so
 // only numbers we control and IPs matched against IP_PATTERN are ever put into a query.
-const INTERNAL_IP_RANGE = '10.124.0.0/16';
-const IP_PATTERN = /^[0-9a-fA-F.:]{3,45}$/;
 
 export type UserIp = {
   ip: string;

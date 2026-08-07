@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, dateTime, num } from './format';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { fetchBuzzHistory } from './buzz-history';
 
   let { userId }: { userId: number } = $props();

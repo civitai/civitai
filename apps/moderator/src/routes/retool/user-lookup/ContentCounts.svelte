@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PageData } from './$types';
   import { userUrl } from '$lib/entity-url';
-  import { LINK_CLASS, num } from './format';
+  import { LINK_CLASS, num } from '$lib/format';
 
   type Counts = NonNullable<PageData['result']>['counts'];
 

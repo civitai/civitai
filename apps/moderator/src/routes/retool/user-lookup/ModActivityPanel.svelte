@@ -2,7 +2,7 @@
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { entityUrl } from '$lib/entity-url';
-  import { LINK_CLASS, dateTime } from './format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
 
   export type ModActivityRow = {
     id: number;

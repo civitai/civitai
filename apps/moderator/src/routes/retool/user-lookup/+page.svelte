@@ -5,7 +5,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PageData } from './$types';
-  import type { FormResult } from './format';
+  import type { FormResult } from './form-result';
   import { fetchAccount } from './user-account';
   import AccountActionsPanel from './AccountActionsPanel.svelte';
   import BuzzHistoryPanel from './BuzzHistoryPanel.svelte';

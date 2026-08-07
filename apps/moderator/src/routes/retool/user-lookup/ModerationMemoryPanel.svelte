@@ -5,7 +5,8 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { LINK_CLASS, dateTime, type FormResult } from './format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
+  import type { FormResult } from './form-result';
   import { fetchMemory } from './user-memory';
 
   let { userId, form }: { userId: number; form: FormResult } = $props();
