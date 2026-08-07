@@ -20,7 +20,69 @@ export type FilterClause =
 export type SortClause = { field: string; direction: 'Asc' | 'Desc' };
 
 const BITDEX_URL = process.env.BITDEX_URL || '';
+// The batch documents endpoint sits in BitDex's admin route group (unlike
+// /query, which is open). require_admin waives auth for no-X-Forwarded-For
+// (in-cluster) traffic, so the token is only required when BITDEX_URL routes
+// through a proxy that adds XFF. Only fetchBitdexDocuments uses this.
+const BITDEX_ADMIN_TOKEN = process.env.BITDEX_ADMIN_TOKEN || '';
 const BITDEX_TIMEOUT_MS = 30000;
+
+export type BitdexDocument = Record<string, unknown> & { id: number };
+
+/**
+ * Fetch documents by slot ID (= Postgres ID) from BitDex's batch document endpoint.
+ *
+ * Unlike queryBitdex, this THROWS on any failure. Its caller is the consistency
+ * audit, where a swallowed error would read as "no mismatches found" — a silent
+ * pass is the one outcome an audit must never produce.
+ *
+ * BitDex returns a row for every requested slot; a document that is not on disk
+ * comes back as bare `{ id }` with no other fields, so absence is observable
+ * rather than being conflated with a dropped row.
+ */
+export async function fetchBitdexDocuments(
+  indexName: string,
+  slotIds: number[],
+  fields?: string[]
+): Promise<BitdexDocument[]> {
+  if (!BITDEX_URL) throw new Error('BITDEX_URL is not configured');
+  if (!slotIds.length) return [];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BITDEX_TIMEOUT_MS);
+  const url = `${BITDEX_URL}/api/indexes/${indexName}/documents`;
+  const urlAttr = safeUrl(url);
+  try {
+    const res = await withSpan(
+      'bitdex:http:documents',
+      { 'http.method': 'POST', 'http.url': urlAttr, 'bitdex.namespace': indexName },
+      () =>
+        fetch(url, {
+          method: 'POST',
+          // BitDex's require_admin waives auth for traffic without an
+          // X-Forwarded-For header (in-cluster calls); routed-through-proxy
+          // calls need the bearer. Send it when configured; if it's needed
+          // and absent, the 401 fails the fetch loudly — never a silent pass.
+          headers: {
+            'Content-Type': 'application/json',
+            ...(BITDEX_ADMIN_TOKEN ? { Authorization: `Bearer ${BITDEX_ADMIN_TOKEN}` } : {}),
+          },
+          body: JSON.stringify({ slot_ids: slotIds, ...(fields ? { fields } : {}) }),
+          signal: controller.signal,
+        })
+    );
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`BitDex documents fetch failed ${res.status}: ${errText.slice(0, 500)}`);
+    }
+    const body = (await res.json()) as { documents?: BitdexDocument[] };
+    if (!Array.isArray(body?.documents))
+      throw new Error('BitDex documents response missing `documents` array');
+    return body.documents;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export interface BitdexQueryResult {
   ids: number[];

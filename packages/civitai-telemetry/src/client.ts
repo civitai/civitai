@@ -280,6 +280,47 @@ export const reemitSkippedRateLimitCounter = registerCounter({
   help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
 });
 
+// The re-emitter's second scope: future-scheduled posts, which no trailing-past-window
+// scan can reach. Kept as separate series from the reemit_posts_scanned/images_emitted
+// pair above because this scan's volume is ~100x larger and steady — summing the two
+// would swamp the published-window emission signal.
+export const reemitScheduledPostsScannedCounter = registerCounter({
+  name: 'reemit_scheduled_posts_scanned_total',
+  help: 'Distinct future-scheduled posts (publishedAt > now()) scanned by the BitDex publish re-emitter across all runs',
+});
+export const reemitScheduledImagesEmittedCounter = registerCounter({
+  name: 'reemit_scheduled_images_emitted_total',
+  help: 'BitdexOps rows written by the BitDex publish re-emitter for images of future-scheduled posts across all runs',
+});
+
+// Metrics for the standing PG<->BitDex consistency audit (audit-bitdex-consistency).
+// checked_total is the liveness signal and the denominator; mismatch_total is the
+// alerting series. `stratum` is the sampled population, `kind` the failure mode —
+// both fixed low-cardinality enums (see MISMATCH_KINDS in the job).
+export const bitdexAuditCheckedCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_checked_total',
+  help: 'Images compared between PG and BitDex by the consistency audit, by sample stratum',
+  labelNames: ['stratum'] as const,
+});
+export const bitdexAuditMismatchCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_mismatch_total',
+  help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
+  labelNames: ['stratum', 'kind'] as const,
+});
+export const bitdexAuditRunsCounter = registerCounter({
+  name: 'bitdex_audit_runs_total',
+  help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',
+});
+export const bitdexAuditErrorsCounter = registerCounter({
+  name: 'bitdex_audit_errors_total',
+  help: 'BitDex consistency audit runs that threw (PG sample or BitDex fetch failed) before rethrowing',
+});
+export const bitdexAuditRunDurationHistogram = registerHistogram({
+  name: 'bitdex_audit_run_duration_seconds',
+  help: 'Wall-clock duration of a BitDex consistency audit run (both strata: PG sample + BitDex fetch + compare)',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+});
+
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',
