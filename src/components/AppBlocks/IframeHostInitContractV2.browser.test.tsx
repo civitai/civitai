@@ -94,7 +94,11 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
 // eslint-disable-next-line import/first
 import { IframeHost } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
-import type { BlockInitPayload, BlockInstall, ModelSlotContext } from '~/components/AppBlocks/types';
+import type {
+  BlockInitPayload,
+  BlockInstall,
+  ModelSlotContext,
+} from '~/components/AppBlocks/types';
 
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 
