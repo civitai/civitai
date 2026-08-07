@@ -509,8 +509,11 @@ function CreatorShopReviewPage() {
                             {item.title}
                           </Text>
                           <Text size="xs" c="dimmed" lineClamp={1}>
-                            @{item.cosmetic?.creator?.username ?? item.addedBy?.username ?? 'unknown'} ·{' '}
-                            {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
+                            @
+                            {item.cosmetic?.creator?.username ??
+                              item.addedBy?.username ??
+                              'unknown'}{' '}
+                            · {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
                           </Text>
                         </Stack>
                         {statusFilter === 'all' && (
@@ -805,31 +808,35 @@ function CreatorShopReviewPage() {
                       )}
                     </SimpleGrid>
 
-                    <ChecksCard
-                      icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
-                      title="Automated checks"
-                    >
-                      {checks.length ? (
-                        checks.map((c, i) => (
-                          <CheckRow
-                            key={c.key}
-                            state={c.passed ? 'pass' : 'fail'}
-                            label={c.label}
-                            detail={c.detail}
-                            withBorder={i < checks.length - 1}
-                          />
-                        ))
-                      ) : (
-                        <Group gap={9} px="md" py={9} align="center">
-                          <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
-                          <Text size="sm" c="dimmed">
-                            {isPack
-                            ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
-                            : 'No automated checks were recorded for this submission.'}
-                          </Text>
-                        </Group>
-                      )}
-                    </ChecksCard>
+                    {/* A pack supplies no artwork to scan, so an empty checks
+                        card reads as an anomaly rather than "not applicable". */}
+                    {!isPack && (
+                      <ChecksCard
+                        icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
+                        title="Automated checks"
+                      >
+                        {checks.length ? (
+                          checks.map((c, i) => (
+                            <CheckRow
+                              key={c.key}
+                              state={c.passed ? 'pass' : 'fail'}
+                              label={c.label}
+                              detail={c.detail}
+                              withBorder={i < checks.length - 1}
+                            />
+                          ))
+                        ) : (
+                          <Group gap={9} px="md" py={9} align="center">
+                            <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
+                            <Text size="sm" c="dimmed">
+                              {isPack
+                                ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
+                                : 'No automated checks were recorded for this submission.'}
+                            </Text>
+                          </Group>
+                        )}
+                      </ChecksCard>
+                    )}
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>

@@ -21,7 +21,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
+import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -515,6 +515,8 @@ export const getShopSectionsWithItems = async ({
   stickersEnabled?: boolean;
   userId?: number;
 } & GetShopInput = {}) => {
+  // 'Pack' rides in the same filter but is not a CosmeticType.
+  const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
   // Creator items are only visible to flagged viewers, so blocks only matter
   // there; official items (createdById null) are never block-filtered.
   const blockedPairIds =
@@ -548,20 +550,25 @@ export const getShopSectionsWithItems = async ({
             // section simply never rendered. The pack branch keeps them; their
             // members' types are enforced at purchase.
             OR: [
-              {
-                cosmeticId: null,
-                ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
-              },
+              // Packs show unless a type filter is on that doesn't include them.
+              ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
+                ? [
+                    {
+                      cosmeticId: null,
+                      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+                    },
+                  ]
+                : []),
               {
                 cosmetic: {
                   // Merged into ONE `type` filter. A second `type` key would silently
                   // overwrite the caller's requested types — with the flag off (the
                   // default for everyone), /shop?cosmeticTypes=Badge would return
                   // every non-sticker type instead of badges.
-                  ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
+                  ...(realTypes.length > 0 || !stickersEnabled
                     ? {
                         type: {
-                          ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
+                          ...(realTypes.length > 0 ? { in: realTypes } : {}),
                           // Stickers stay out of the official shop until the flag is
                           // on. Rendering is unaffected — this hides the storefront
                           // entry only.

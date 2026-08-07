@@ -31,7 +31,7 @@ export function ShopItemGrid({
   return (
     <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
       {items.map((item) => {
-        const creator = item.cosmetic?.creator;
+        const creator = item.cosmetic?.creator ?? item.addedBy;
         return (
           <ShopItem
             key={item.id}

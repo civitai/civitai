@@ -215,6 +215,8 @@ export const getPreviewImagesInput = z.object({
 
 export type GetShopInput = z.infer<typeof getShopInput>;
 export const getShopInput = z.object({
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' rides alongside the cosmetic types: a pack has no type of its own,
+  // but a shopper filtering the shelf thinks of it as one more kind of thing.
+  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
 });

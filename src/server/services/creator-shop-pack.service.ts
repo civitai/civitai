@@ -12,6 +12,8 @@ import {
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
   computePackAmountDue,
+  creatorCosmeticTypes,
+  isCreatorCosmeticType,
   isConsumableCosmeticType,
   packPriceFloor,
   type PackMemberPricing,
@@ -208,8 +210,8 @@ export const submitCreatorShopPack = async ({
             purchases: 0,
             submissionTxId: feeTxId,
             // `null` clears, `undefined` leaves alone — without the distinction
-          // the clear button emptied the form and saved nothing.
-          ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
+            // the clear button emptied the form and saved nothing.
+            ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
             coverTiles: coverTilesFrom(members),
             packMemberCount: members.length,
             acceptsBlueBuzz,
@@ -512,18 +514,19 @@ export const getBundlableCosmetics = async ({
   const listings = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
+      archivedAt: null,
       cosmeticId: { not: null },
       // One `cosmetic` object: two spreads onto the same key meant the type
-      // filter overwrote the search, and the router always sends types while the
-      // sticker flag is off — so typing in the picker filtered nothing.
-      ...(query || types?.length
-        ? {
-            cosmetic: {
-              ...(query ? { name: { contains: query, mode: 'insensitive' as const } } : {}),
-              ...(types?.length ? { type: { in: types } } : {}),
-            },
-          }
-        : {}),
+      // filter silently overwrote the search.
+      cosmetic: {
+        ...(query ? { name: { contains: query, mode: 'insensitive' as const } } : {}),
+        // Always bounded by what a creator may list. Without this the picker
+        // offered every published cosmetic — including NamePlates, which
+        // creators cannot make and which have no artwork to show.
+        type: {
+          in: types?.length ? types.filter(isCreatorCosmeticType) : [...creatorCosmeticTypes],
+        },
+      },
     },
     orderBy: { id: 'desc' },
     take: limit * 2,

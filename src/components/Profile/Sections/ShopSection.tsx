@@ -67,7 +67,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
                     sectionItemCreatedAt={item.createdAt}
                     alreadyOwned={item.cosmeticId != null && ownedCosmeticIds.has(item.cosmeticId)}
                     wishlisted={wishlistedIds.has(item.id)}
-                    creator={item.cosmetic?.creator}
+                    creator={item.cosmetic?.creator ?? item.addedBy}
                   />
                 </div>
               ))}

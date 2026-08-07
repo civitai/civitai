@@ -5,7 +5,7 @@ import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdo
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCommunityCosmetics } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
-import { creatorShopFilterTypes } from '~/components/CreatorShop/Submit/submit.constants';
+import { shopFilterTypesWithPack } from '~/components/CreatorShop/Submit/submit.constants';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ShopItem } from '~/components/Shop/ShopItem';
@@ -53,7 +53,7 @@ export function CommunityCosmeticsSection({
           <ShopFiltersDropdown
             filters={filters}
             setFilters={setFilters}
-            availableTypes={creatorShopFilterTypes}
+            availableTypes={shopFilterTypesWithPack}
             hideModifiers
           />
         </div>
@@ -74,7 +74,7 @@ export function CommunityCosmeticsSection({
                   // Attribute the purchase to the owner's shop so the creator
                   // keeps their full pool (never the platform-reseller split).
                   viaShopUserId={item.addedById ?? undefined}
-                  creator={item.cosmetic?.creator}
+                  creator={item.cosmetic?.creator ?? item.addedBy}
                 />
               ))}
             </div>

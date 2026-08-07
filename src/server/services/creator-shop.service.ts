@@ -54,6 +54,8 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // and badge. Only used by the creator storefront.
 const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   ...cosmeticShopItemSelect,
+  // A pack has no cosmetic creator; its author is whoever listed it.
+  addedBy: { select: userWithCosmeticsSelect },
   cosmetic: {
     select: {
       ...simpleCosmeticSelect,
@@ -953,6 +955,8 @@ export const getCommunityCosmetics = async ({
   // A block between viewer and a cosmetic's creator (either direction) hides
   // that creator's items from the feed.
   const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  // 'Pack' rides in the same filter but is not a CosmeticType.
+  const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
@@ -962,22 +966,39 @@ export const getCommunityCosmetics = async ({
       // Creator-submitted only (official cosmetics have no creator). Blocks
       // filter both the original creator and the lister — they can differ on
       // cross-listed items.
-      cosmetic: {
-        createdById: {
-          not: null,
-          ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
-        },
-        // Merged into one `type` filter: a second `type` key would silently
-        // overwrite the caller's requested types.
-        ...(cosmeticTypes?.length || !stickersEnabled
-          ? {
-              type: {
-                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
-                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+      //
+      // A pack is creator-submitted too, just via `addedById`, and a `cosmetic`
+      // relation filter is an EXISTS that would drop every one of them. This is
+      // the only site-wide discovery surface, so packs belong in it. A type
+      // filter still excludes them: a pack has no type to match.
+      OR: [
+        // Packs show when nothing is filtered, or when the Pack chip is on.
+        ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
+          ? [{ cosmeticId: null }]
+          : []),
+        ...(cosmeticTypes?.length && !realTypes.length
+          ? []
+          : [
+              {
+                cosmetic: {
+                  createdById: {
+                    not: null,
+                    ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+                  },
+                  // Merged into one `type` filter: a second `type` key would silently
+                  // overwrite the caller's requested types.
+                  ...(realTypes.length || !stickersEnabled
+                    ? {
+                        type: {
+                          ...(realTypes.length ? { in: realTypes } : {}),
+                          ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                        },
+                      }
+                    : {}),
+                },
               },
-            }
-          : {}),
-      },
+            ]),
+      ],
       // Only items whose owner's shop is public.
       addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),

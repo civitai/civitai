@@ -26,6 +26,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export type PackMemberListing = {
   cosmeticId: number;
+  name: string;
   type: CosmeticType;
   data: unknown;
   createdById: number | null;
@@ -56,7 +57,7 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
     select: {
       cosmeticId: true,
       floorAmount: true,
-      cosmetic: { select: { id: true, type: true, data: true, createdById: true } },
+      cosmetic: { select: { id: true, name: true, type: true, data: true, createdById: true } },
     },
   });
   if (!rows.length) return [];
@@ -117,6 +118,7 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
     return [
       {
         cosmeticId: row.cosmeticId,
+        name: row.cosmetic.name,
         type: row.cosmetic.type,
         data: row.cosmetic.data,
         createdById: row.cosmetic.createdById,
@@ -623,5 +625,9 @@ export const purchaseCosmeticPack = async ({
     });
   }
 
-  return { transactionId, granted: members.map((m) => m.cosmeticId) };
+  return {
+    transactionId,
+    // Names, not ids: the completion modal tells the buyer what they just got.
+    granted: members.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
+  };
 };

@@ -26,6 +26,9 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import type { CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -58,6 +61,14 @@ export const CosmeticPackPreviewModal = ({
   // repeatable, and each one stacks another consumable balance. Say so here
   // rather than letting the button fail.
   const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
+  // The card that opened this can be stale — a pack delisted, withdrawn or sold
+  // out since it rendered would otherwise show a priced, enabled button that the
+  // server refuses.
+  const offSale = !!pack && (!pack.listed || pack.status !== CosmeticShopItemStatus.Published);
+  const soldOut =
+    !!pack &&
+    pack.availableQuantity !== null &&
+    (pack.meta.purchases ?? 0) >= pack.availableQuantity;
   // The server refuses the lister outright. Without this the button renders
   // priced and enabled for the one person guaranteed to fail.
   const isOwnPack = !!pack?.isPackCreator;
@@ -65,13 +76,20 @@ export const CosmeticPackPreviewModal = ({
   const handlePurchase = async () => {
     if (!pack) return;
     try {
-      await purchaseShopItem({
+      const result = await purchaseShopItem({
         shopItemId: pack.id,
         viaShopUserId,
         payWith: acceptsBlue ? payWith : undefined,
       });
-      showSuccessNotification({ message: 'Pack purchased — every item is now in your inventory' });
       dialog.onClose();
+      // A pack buyer spent more Buzz on more things than a single purchase and
+      // was getting one line of toast; the single-item path opens a modal.
+      if (result && 'granted' in result)
+        dialogStore.trigger({
+          component: PackPurchaseCompleteModal,
+          props: { title: pack.title, granted: result.granted },
+        });
+      else showSuccessNotification({ message: 'Pack purchased' });
     } catch {
       // Handled in the hook.
     }
@@ -126,7 +144,15 @@ export const CosmeticPackPreviewModal = ({
                 {acceptsBlue && (
                   <PayWithSelector value={payWith} onChange={setPayWith} domainType={domainType} />
                 )}
-                {isOwnPack ? (
+                {offSale ? (
+                  <Text size="xs" c="dimmed">
+                    This pack isn&apos;t on sale right now.
+                  </Text>
+                ) : soldOut ? (
+                  <Text size="xs" c="dimmed">
+                    This pack is sold out.
+                  </Text>
+                ) : isOwnPack ? (
                   <Text size="xs" c="dimmed">
                     This is your pack. Anything in it made by other creators is on sale
                     individually.
@@ -139,7 +165,14 @@ export const CosmeticPackPreviewModal = ({
                   )
                 )}
                 <BuzzTransactionButton
-                  disabled={purchasingShopItem || unavailable || nothingLeftToBuy || isOwnPack}
+                  disabled={
+                    purchasingShopItem ||
+                    unavailable ||
+                    nothingLeftToBuy ||
+                    isOwnPack ||
+                    offSale ||
+                    soldOut
+                  }
                   loading={purchasingShopItem}
                   buzzAmount={pack.amountDue}
                   radius="xl"
@@ -208,20 +241,31 @@ export const CosmeticPackPreviewModal = ({
   );
 };
 
-export const PackPurchaseCompleteModal = ({ names }: { names: string[] }) => {
+export const PackPurchaseCompleteModal = ({
+  title,
+  granted,
+}: {
+  title: string;
+  granted: { cosmeticId: number; name: string; type: CosmeticType }[];
+}) => {
   const dialog = useDialogContext();
   return (
     <Modal {...dialog} size="md" withCloseButton={false} radius="lg">
       <Stack gap="lg" px="md">
         <Group justify="space-between">
-          <Text className="text-black dark:text-white">Your pack is unpacked!</Text>
+          <Text className="text-black dark:text-white">You unpacked {title}!</Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
         <Stack gap={4}>
-          {names.map((name) => (
-            <Text key={name} size="sm">
-              {name}
-            </Text>
+          {granted.map((item) => (
+            <Group key={item.cosmeticId} justify="space-between" wrap="nowrap">
+              <Text size="sm" lineClamp={1}>
+                {item.name}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {getDisplayName(item.type)}
+              </Text>
+            </Group>
           ))}
         </Stack>
         <Button radius="xl" mx="auto" onClick={dialog.onClose}>
