@@ -1,6 +1,8 @@
 import { env } from '$env/dynamic/private';
+import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { getBuzz } from './buzz';
+import { bustCacheTag, bustCachedObject } from './cache';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
@@ -53,7 +55,7 @@ async function callRetoolEndpoint(
   resource: string,
   body: Record<string, unknown>,
   label: string
-): Promise<ActionResult> {
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
   const key = env.CIVITAI_MOD_API_KEY;
   if (!key) return { ok: false, error: 'CIVITAI_MOD_API_KEY is not configured.' };
 
@@ -66,12 +68,17 @@ async function callRetoolEndpoint(
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
-    return { ok: true };
+    // The endpoints return the affected counts and they are the only way to tell a real deletion from
+    // a no-op — a stale panel or a second moderator re-submitting gets a 200 having changed nothing.
+    return { ok: true, body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown> };
   } catch (e) {
     console.error(`[user-actions] ${label} failed`, e);
     return { ok: false, error: `${label} failed.` };
   }
 }
+
+const countOf = (body: Record<string, unknown>, keys: string[]) =>
+  keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 
 // BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
 // endpoint's contract and Retool's Model Comments / Other Comments split.
@@ -96,7 +103,23 @@ export async function bulkCommentAction(input: {
   );
   if (!result.ok) return result;
 
-  await logAction(`comments:${input.action}`, input.userId, input.moderatorId);
+  // `removeAsTos` nests its counts per table; `bulkDelete` returns them flat.
+  const nested = (key: string) => {
+    const section = result.body[key];
+    return section && typeof section === 'object'
+      ? countOf(section as Record<string, unknown>, ['count'])
+      : 0;
+  };
+  const affected =
+    input.action === 'bulkDelete'
+      ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
+      : nested('comment') + nested('commentV2');
+
+  // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
+  if (affected === 0)
+    return { ok: false, error: 'Nothing changed — those comments may already be gone. Reload.' };
+
+  await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 
@@ -120,7 +143,11 @@ export async function bulkReviewAction(input: {
   );
   if (!result.ok) return result;
 
-  await logAction(`reviews:${input.action}`, input.userId, input.moderatorId);
+  const affected = countOf(result.body, ['count']);
+  if (affected === 0)
+    return { ok: false, error: 'Nothing changed — those reviews may already be gone. Reload.' };
+
+  await logAction(`reviews:${input.action}:${affected}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 
@@ -288,6 +315,23 @@ export async function setBanned(input: {
 // BUZZ SEND / DEDUCT (Retool's BuzzSend → POST buzz.civitai.com/transaction, plus its buzzSendAction
 // and buzzType option sets). The canned presets are UI config and live with the panel.
 export const BUZZ_TYPES = ['yellow', 'blue', 'green'] as const;
+
+// `type` is the LEDGER LABEL and must be sent explicitly. Omitting it either has the buzz service
+// reject the body — the grant silently never happens — or defaults it to 0, which is `Tip`, so a
+// moderator's compensation is recorded as a tip from account 0 and counted as one by every downstream
+// report. Values mirror the main app's TransactionType enum (src/shared/constants/buzz.constants.ts);
+// every main-app caller of createTransaction passes one.
+export const BUZZ_TRANSACTION_TYPES = {
+  compensation: 21,
+  reward: 5,
+  refund: 7,
+  chargeback: 11,
+} as const;
+
+export type BuzzTransactionType = keyof typeof BUZZ_TRANSACTION_TYPES;
+export const BUZZ_TRANSACTION_TYPE_KEYS = Object.keys(
+  BUZZ_TRANSACTION_TYPES
+) as BuzzTransactionType[];
 export type BuzzColor = (typeof BUZZ_TYPES)[number];
 
 /** Account 0 is Civitai's own — the counterparty for every moderator grant or deduction. */
@@ -298,6 +342,7 @@ export async function sendBuzz(input: {
   amount: number;
   buzzType: BuzzColor;
   action: 'send' | 'deduct';
+  transactionType: BuzzTransactionType;
   description: string;
   moderatorId: number;
 }): Promise<ActionResult> {
@@ -311,6 +356,7 @@ export async function sendBuzz(input: {
       toAccountId: toUser ? input.userId : CIVITAI_ACCOUNT_ID,
       fromAccountType: toUser ? 'yellow' : input.buzzType,
       toAccountType: toUser ? input.buzzType : 'yellow',
+      type: BUZZ_TRANSACTION_TYPES[input.transactionType],
       amount: input.amount,
       description: input.description,
       // Makes the transaction traceable to a person rather than to "a moderator tool".
@@ -322,7 +368,7 @@ export async function sendBuzz(input: {
   }
 
   await logAction(
-    `buzz:${input.action}:${input.buzzType}:${input.amount}`,
+    `buzz:${input.action}:${input.buzzType}:${input.transactionType}:${input.amount}`,
     input.userId,
     input.moderatorId
   );
@@ -390,6 +436,12 @@ export async function refundShopPurchase(input: {
       .where('claimKey', '=', input.buzzTransactionId)
       .execute();
   });
+
+  // The main app serves equipped cosmetics from a day-TTL cache with no stale-while-revalidate, so
+  // without this the refunded badge or frame keeps rendering on their profile, comments and images for
+  // up to 24 hours after the panel says it is gone.
+  await bustCachedObject(REDIS_KEYS.CACHES.USER_COSMETICS, input.userId);
+  await bustCacheTag(`${REDIS_KEYS.CACHES.COSMETICS}:${input.userId}`);
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true };

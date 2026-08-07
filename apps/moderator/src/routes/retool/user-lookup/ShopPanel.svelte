@@ -15,12 +15,14 @@
     canAct,
     form,
     onSubmit,
+    submitting,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
     form: FormResult;
     onSubmit: SubmitFunction;
+    submitting: boolean;
   } = $props();
 
   const error = $derived(form?.scope === 'shop' ? form.error : null);
@@ -66,7 +68,9 @@
                       name="buzzTransactionId"
                       value={p.buzzTransactionId}
                     />
-                    <Button type="submit" size="xs" variant="destructive">Refund</Button>
+                    <Button type="submit" size="xs" variant="destructive" disabled={submitting}>
+                      Refund
+                    </Button>
                   </form>
                 {/if}
               </li>
@@ -99,7 +103,7 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <Button type="submit" size="sm" disabled={!grantId}>Grant</Button>
+              <Button type="submit" size="sm" disabled={!grantId || submitting}>Grant</Button>
             </div>
           </form>
         {/if}

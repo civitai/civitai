@@ -1,10 +1,8 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { applyAction } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { ActionResult } from '@sveltejs/kit';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
+  import { writeEnhancer } from '../form-action';
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
@@ -38,25 +36,19 @@
   // Bumped after a write so the derived fetches rebuild. The panels' data comes from `/api/*`, not
   // from `load`, so invalidating the page would not bring it back.
   let version = $state(0);
+  let submitting = $state(false);
 
   // One fetch per endpoint per section, shared by whichever panels the section renders. Fetching per
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
 
-  // applyAction is what populates `form`; a custom enhance callback replaces the default handling, so
-  // without it every fail() is discarded and a refused action looks like a successful one.
-  const afterAction =
-    () =>
-    async ({ result: actionResult }: { result: ActionResult }) => {
-      await applyAction(actionResult);
-      if (actionResult.type === 'success') {
-        version += 1;
-        await invalidateAll();
-      }
-    };
-
-  const onSubmit = () => afterAction();
+  // Panels reset their own local state through `onWritten`; the page owns only the refresh, because it
+  // owns the promises. See form-action.ts for why this does not invalidate.
+  const onSubmit = writeEnhancer({
+    onSuccess: () => (version += 1),
+    busy: (value) => (submitting = value),
+  });
 </script>
 
 {#if result}
@@ -74,7 +66,14 @@
       />
       <AddressesPanel {signals} />
     {:else if section === 'socials'}
-      <SocialsPanel {signals} userId={result.identity.id} canAct={data.canAct} {form} {onSubmit} />
+      <SocialsPanel
+        {signals}
+        userId={result.identity.id}
+        canAct={data.canAct}
+        {form}
+        {onSubmit}
+        {submitting}
+      />
     {:else if section === 'content'}
       <ContentCounts
         counts={result.counts}
@@ -100,6 +99,7 @@
         canAct={data.canAct}
         {form}
         {onSubmit}
+        {submitting}
       />
     {:else if section === 'generation'}
       <GenerationPanel {signals} {account} civitaiUrl={data.civitaiUrl} />
@@ -115,6 +115,7 @@
         {form}
         civitaiUrl={data.civitaiUrl}
         {onSubmit}
+        {submitting}
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
@@ -133,6 +134,7 @@
         {form}
         civitaiUrl={data.civitaiUrl}
         {onSubmit}
+        {submitting}
       />
     {:else if section === 'reactions'}
       <ReactionsPanel {account} />
@@ -149,6 +151,7 @@
         canAct={data.canAct}
         {form}
         {onSubmit}
+        {submitting}
       />
     {:else}
       <!-- admin + mutes: AccountActionsPanel carries both the enforcement row and the timed-mute list. -->

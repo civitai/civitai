@@ -16,6 +16,7 @@
     form,
     civitaiUrl,
     onSubmit,
+    submitting,
   }: {
     account: Promise<Account> | null;
     userId: number;
@@ -23,6 +24,7 @@
     form: FormResult;
     civitaiUrl: string;
     onSubmit: SubmitFunction;
+    submitting: boolean;
   } = $props();
 
   const error = $derived(form?.scope === 'content' ? form.error : null);
@@ -73,10 +75,10 @@
             </ul>
             {#if canAct}
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
-                <Button type="submit" name="op" value="delete" size="sm" variant="destructive">
+                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
                   Delete selected
                 </Button>
-                <Button type="submit" name="op" value="tos" size="sm" variant="destructive">
+                <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
                   Remove as ToS
                 </Button>
               </div>
@@ -119,10 +121,10 @@
             </ul>
             {#if canAct}
               <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
-                <Button type="submit" name="op" value="delete" size="sm" variant="destructive">
+                <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
                   Delete selected
                 </Button>
-                <Button type="submit" name="op" value="tos" size="sm" variant="destructive">
+                <Button type="submit" name="op" value="tos" size="sm" variant="destructive" disabled={submitting}>
                   Remove as ToS
                 </Button>
               </div>

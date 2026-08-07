@@ -376,7 +376,11 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Shop
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
 export type AvailableCosmetic = { id: number; name: string };
 
-export async function getAvailableBadges(userId: number, limit = 200): Promise<AvailableCosmetic[]> {
+// Every badge, not a page of them: there are ~723 and the picker is a search-in-place dropdown, so a
+// limit silently makes the rest ungrantable. Capping at 200 ordered by id ASC hid every recent event
+// badge — the exact case a moderator is asked about — behind a panel that then read "already holds
+// every badge".
+export async function getAvailableBadges(userId: number): Promise<AvailableCosmetic[]> {
   return dbRead
     .selectFrom('Cosmetic as c')
     .select(['c.id', 'c.name'])
@@ -392,8 +396,8 @@ export async function getAvailableBadges(userId: number, limit = 200): Promise<A
         )
       )
     )
-    .orderBy('c.id')
-    .limit(limit)
+    // Newest first — a moderator asked to grant a badge is almost always asked about a recent one.
+    .orderBy('c.id', 'desc')
     .execute();
 }
 

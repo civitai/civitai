@@ -13,6 +13,7 @@ import {
   BAN_REASON_CODES,
   addSocial,
   addTimedMute,
+  BUZZ_TRANSACTION_TYPE_KEYS,
   BUZZ_TYPES,
   bulkCommentAction,
   bulkReviewAction,
@@ -333,6 +334,7 @@ export const actions: Actions = {
         amount: z.coerce.number().int().positive().max(1_000_000),
         buzzType: z.enum(BUZZ_TYPES),
         action: z.enum(['send', 'deduct']),
+        transactionType: z.enum(BUZZ_TRANSACTION_TYPE_KEYS).catch('compensation'),
         description: z.string().trim().min(1).max(500),
       }),
       await request.formData()
@@ -344,6 +346,7 @@ export const actions: Actions = {
       amount: input.amount,
       buzzType: input.buzzType,
       action: input.action,
+      transactionType: input.transactionType,
       description: input.description,
       moderatorId: locals.user.id,
     });

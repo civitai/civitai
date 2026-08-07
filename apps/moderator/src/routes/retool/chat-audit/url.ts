@@ -12,7 +12,10 @@ const BASE = '/retool/chat-audit';
 export function urlWith(params: Record<string, string | number | null>, tab?: Tab): string {
   const next = new URLSearchParams(page.url.searchParams);
   for (const [k, v] of Object.entries(params)) {
-    if (v === null || v === '' || v === 1) next.delete(k);
+    // `rpage: 1` is the canonical default and drops out of the URL. Scoped to that key on purpose —
+    // dropping ANY param equal to 1 meant `chatUrl(1)` cleared the chat selection instead of opening
+    // chat 1, and would silently do the same to the next numeric param added here.
+    if (v === null || v === '' || (k === 'rpage' && v === 1)) next.delete(k);
     else next.set(k, String(v));
   }
   const path = `${BASE}/${tab ?? page.params.tab ?? 'chats'}`;

@@ -15,12 +15,14 @@
     canAct,
     form,
     onSubmit,
+    submitting,
   }: {
     signals: Promise<Signals> | null;
     userId: number;
     canAct: boolean;
     form: FormResult;
     onSubmit: SubmitFunction;
+    submitting: boolean;
   } = $props();
 
   const error = $derived(form?.scope === 'socials' ? form.error : null);
@@ -59,7 +61,7 @@
             {/each}
           </Select.Content>
         </Select.Root>
-        <Button type="submit" size="sm">Add link</Button>
+        <Button type="submit" size="sm" disabled={submitting}>Add link</Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (adding = false)}>
           Cancel
         </Button>

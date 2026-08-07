@@ -32,12 +32,44 @@
 
   // Retool's BuzzTransferPopulate dropdown — canned amount, colour and description per label. These
   // exist in no query; they were widget config, and moderators use them daily.
+  // `transactionType` is the LEDGER LABEL — see BUZZ_TRANSACTION_TYPES. Each preset carries the one
+  // that matches what it is for; without it a chargeback retrieval files as a tip.
   const PRESETS = [
-    { label: 'Stripe Chargeback Retrieval', amount: '', buzzType: 'yellow', action: 'deduct' },
-    { label: 'Stripe Refund', amount: '', buzzType: 'yellow', action: 'deduct' },
-    { label: '1st Place Stream Bingo', amount: '5000', buzzType: 'yellow', action: 'send' },
-    { label: '2nd Place Stream Bingo', amount: '2500', buzzType: 'yellow', action: 'send' },
-    { label: '3rd Place Stream Bingo', amount: '1000', buzzType: 'yellow', action: 'send' },
+    {
+      label: 'Stripe Chargeback Retrieval',
+      amount: '',
+      buzzType: 'yellow',
+      action: 'deduct',
+      transactionType: 'chargeback',
+    },
+    {
+      label: 'Stripe Refund',
+      amount: '',
+      buzzType: 'yellow',
+      action: 'deduct',
+      transactionType: 'refund',
+    },
+    {
+      label: '1st Place Stream Bingo',
+      amount: '5000',
+      buzzType: 'yellow',
+      action: 'send',
+      transactionType: 'reward',
+    },
+    {
+      label: '2nd Place Stream Bingo',
+      amount: '2500',
+      buzzType: 'yellow',
+      action: 'send',
+      transactionType: 'reward',
+    },
+    {
+      label: '3rd Place Stream Bingo',
+      amount: '1000',
+      buzzType: 'yellow',
+      action: 'send',
+      transactionType: 'reward',
+    },
   ];
 
   let sending = $state(false);
@@ -46,12 +78,14 @@
   let description = $state('');
   let buzzType = $state('yellow');
   let action = $state('send');
+  let transactionType = $state('compensation');
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     amount = p.amount;
     description = p.label;
     buzzType = p.buzzType;
     action = p.action;
+    transactionType = p.transactionType;
   };
 
   const afterAction =
@@ -194,6 +228,15 @@
                 class="w-32"
                 required
               />
+
+              <Select.Root type="single" name="transactionType" bind:value={transactionType}>
+                <Select.Trigger class="w-36">{transactionType}</Select.Trigger>
+                <Select.Content>
+                  {#each ['compensation', 'reward', 'refund', 'chargeback'] as t (t)}
+                    <Select.Item value={t}>{t}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
 
               <Select.Root type="single" name="buzzType" bind:value={buzzType}>
                 <Select.Trigger class="w-28">{buzzType}</Select.Trigger>

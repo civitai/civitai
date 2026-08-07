@@ -15,12 +15,14 @@
     canAct,
     form,
     onSubmit,
+    submitting,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
     form: FormResult;
     onSubmit: SubmitFunction;
+    submitting: boolean;
   } = $props();
 
   const error = $derived(form?.scope === 'notify' ? form.error : null);
@@ -55,7 +57,9 @@
       <input type="hidden" name="userId" value={userId} />
       <Textarea name="message" rows={3} placeholder="What should this user be told?" required />
       <div class="mt-2 flex gap-2">
-        <Button type="submit" size="sm">Send</Button>
+        <Button type="submit" size="sm" disabled={submitting}>
+          {submitting ? 'Sending…' : 'Send'}
+        </Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (sending = false)}>
           Cancel
         </Button>

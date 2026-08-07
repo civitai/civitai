@@ -179,6 +179,17 @@
     </div>
     <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>
 
+    <!-- Strike failures share the `notes` scope, and the notes card is the other column — a
+         "recorded but not notified" message rendered only there is nowhere near the form. -->
+    {#if error}
+      <div
+        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+        role="alert"
+      >
+        {error}
+      </div>
+    {/if}
+
     {#if striking}
       <form method="POST" action="?/addStrike" use:enhance={onSubmit} class="mb-4">
         <input type="hidden" name="userId" value={userId} />
