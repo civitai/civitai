@@ -108,7 +108,7 @@ export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string
     () =>
       createCheckpointGraph({
         versions: { options: seedanceVersionOptions },
-        defaultModelId: seedanceVersionIds.v2,
+        defaultModelId: seedanceVersionIds['v2-mini'],
       }),
     []
   )
