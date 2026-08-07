@@ -38,6 +38,7 @@
     CollapsibleTrigger,
   } from '@civitai/ui/components/ui/collapsible/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
+  import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
@@ -203,7 +204,10 @@
       <div class="flex items-center gap-2 px-1 py-1">
         <Avatar class="size-8">
           {#if data.user?.image}
-            <AvatarImage src={data.user.image} alt={who} />
+            <!-- `image` is a bare Cloudflare key, not a URL. Handed straight to <img src> the browser
+                 resolves it against the current route, so every page requested `/<route-parent>/<guid>`
+                 and 404'd. getEdgeUrl builds the CDN URL — same as creator-studio's AccountSwitcher. -->
+            <AvatarImage src={getEdgeUrl(data.user.image, { width: 96 })} alt={who} />
           {/if}
           <AvatarFallback>{who.charAt(0).toUpperCase()}</AvatarFallback>
         </Avatar>
