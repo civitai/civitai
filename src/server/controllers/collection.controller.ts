@@ -41,6 +41,7 @@ import {
   getContributorCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
+  getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
   removeCollectionItem,
   removeContributorFromCollection,
@@ -346,7 +347,12 @@ export const upsertCollectionHandler = async ({
 
   try {
     const collection = await upsertCollection({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        isMember: !!user.tier && user.tier !== 'free',
+      },
     });
 
     const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
@@ -595,16 +601,12 @@ export const getPermissionDetailsHandler = async ({
     },
   });
 
-  // Get permissions for each of these
-  const permissions = await Promise.all(
-    collections.map((c) =>
-      getUserCollectionPermissionsById({
-        id: c.id,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
-    )
-  );
+  // Get permissions for each of these in a single query rather than one per collection.
+  const permissions = await getUserCollectionPermissionsByIds({
+    ids: collections.map((c) => c.id),
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
 
   return collections.map((c) => ({
     ...c,

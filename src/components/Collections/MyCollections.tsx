@@ -17,20 +17,24 @@ import { CollectionContributorPermission, CollectionType } from '~/shared/utils/
 import { IconFilter, IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { createElement, useMemo, useState } from 'react';
 import classes from './MyCollections.module.scss';
+import { CollectionInviteList } from '~/components/Collections/CollectionCollaborators/CollectionInviteList';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
-import { collectionTypeData } from './collection.utils';
+import { collectionTypeData, useCollectionsPermissionsMap } from './collection.utils';
 
 // Reusable collection nav link component
 function CollectionNavLink({
   collection,
   isActive,
+  isCollaborator,
   onClick,
 }: {
   collection: CollectionGetAllUserModel;
   isActive: boolean;
+  isCollaborator: boolean;
   onClick: () => void;
 }) {
   return (
@@ -56,16 +60,23 @@ function CollectionNavLink({
               {collection.name}
             </Text>
           </Group>
-          {collection.type && (
-            <Badge
-              size="xs"
-              variant="dot"
-              color={collectionTypeData[collection.type].color}
-              className={classes.typeBadge}
-            >
-              {collectionTypeData[collection.type].label}
-            </Badge>
-          )}
+          <Group gap={4} wrap="nowrap">
+            {isCollaborator && (
+              <Badge size="xs" variant="light" color="blue">
+                Shared
+              </Badge>
+            )}
+            {collection.type && (
+              <Badge
+                size="xs"
+                variant="dot"
+                color={collectionTypeData[collection.type].color}
+                className={classes.typeBadge}
+              >
+                {collectionTypeData[collection.type].label}
+              </Badge>
+            )}
+          </Group>
         </Group>
       }
     />
@@ -77,6 +88,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
@@ -118,6 +130,12 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
   const ownedFilteredCollections = sortedCollections.filter((collection) => collection.isOwner);
   const contributingFilteredCollections = sortedCollections.filter(
     (collection) => !collection.isOwner
+  );
+
+  // Owned rows never carry isCollaborator, so only the contributing side needs the lookup.
+  const { map: collaboratorPermissionsMap } = useCollectionsPermissionsMap(
+    contributingFilteredCollections.map((c) => c.id),
+    { enabled: features.collaborativeCollections }
   );
 
   const FilterBox = (
@@ -163,6 +181,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           key={c.id}
           collection={c}
           isActive={router.query?.collectionId === c.id.toString()}
+          isCollaborator={false}
           onClick={() => selectCollection(c.id)}
         />
       ))}
@@ -174,6 +193,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
           key={c.id}
           collection={c}
           isActive={router.query?.collectionId === c.id.toString()}
+          isCollaborator={!!collaboratorPermissionsMap.get(c.id)?.isCollaborator}
           onClick={() => selectCollection(c.id)}
         />
       ))}
@@ -197,11 +217,14 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
     </Skeleton>
   );
 
+  const InviteList = <CollectionInviteList />;
+
   if (children) {
     return children({
       FilterBox,
       TypeFilter,
       Collections,
+      InviteList,
       collections: sortedCollections,
       isLoading,
       noCollections,
@@ -210,6 +233,7 @@ export function MyCollections({ children, onSelect, sortOrder = 'asc' }: MyColle
 
   return (
     <Stack gap={4}>
+      {InviteList}
       {FilterBox}
       {TypeFilter}
       <ScrollArea>{Collections}</ScrollArea>
@@ -224,6 +248,7 @@ type MyCollectionsProps = {
     FilterBox: React.ReactNode;
     TypeFilter: React.ReactNode;
     Collections: React.ReactNode;
+    InviteList: React.ReactNode;
     collections: CollectionGetAllUserModel[];
     isLoading: boolean;
     noCollections: boolean;

@@ -83,4 +83,22 @@ export const collectionNotifications = createNotificationProcessor({
       url: `/collections/${details.collectionId}`,
     }),
   },
+  'collection-submission-received': {
+    displayName: 'New entry submitted to your collection',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `A new entry was submitted to "${details.collectionName}" and is waiting for review.`,
+      url: `/collections/${details.collectionId}/review`,
+    }),
+  },
+  'collection-invite-received': {
+    displayName: 'You were invited to collaborate on a collection',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `You've been invited to help run "${details.collectionName}".`,
+      url: `/collections/${details.collectionId}`,
+    }),
+  },
 });

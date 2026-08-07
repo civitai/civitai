@@ -346,6 +346,23 @@ export const useCollection = (
   };
 };
 
+// `getAllUser` rows carry no permission flags, so callers needing isCollaborator/collaborationDisabled
+// batch-fetch them here via getPermissionDetails, keyed by collection id.
+export const useCollectionsPermissionsMap = (
+  collectionIds: number[],
+  opts?: { enabled?: boolean }
+) => {
+  const enabled = (opts?.enabled ?? true) && collectionIds.length > 0;
+  const { data = [], isLoading } = trpc.collection.getPermissionDetails.useQuery(
+    { ids: collectionIds },
+    { enabled }
+  );
+
+  const map = useMemo(() => new Map(data.map((c) => [c.id, c.permissions])), [data]);
+
+  return { map, isLoading: enabled && isLoading };
+};
+
 export const contestCollectionReactionsHidden = (
   collection: Pick<NonNullable<CollectionByIdModel>, 'mode' | 'metadata'>
 ) => {

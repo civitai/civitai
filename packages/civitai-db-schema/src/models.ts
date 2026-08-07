@@ -138,6 +138,10 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
+export type CollectionCollaboratorRole = "Contributor" | "Manager";
+
+export type CollectionInviteStatus = "Pending" | "Accepted" | "Declined";
+
 export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion" | "FeaturedCollections" | "Feed";
 
 export type Currency = "USD" | "BUZZ" | "USDC";
@@ -560,6 +564,8 @@ export interface User {
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
+  collectionInvitesReceived?: CollectionInvite[];
+  collectionInvitesSent?: CollectionInvite[];
   homeBlocks?: HomeBlock[];
   bounties?: Bounty[];
   bountyEntries?: BountyEntry[];
@@ -2861,8 +2867,10 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
+  invites?: CollectionInvite[];
   tags?: TagsOnCollection[];
   post?: Post[];
   reports?: CollectionReport[];
@@ -2917,6 +2925,20 @@ export interface CollectionContributor {
   collectionId: number;
   collection?: Collection;
   permissions: CollectionContributorPermission[];
+}
+
+export interface CollectionInvite {
+  id: number;
+  collectionId: number;
+  collection?: Collection;
+  userId: number;
+  user?: User;
+  invitedById: number;
+  invitedBy?: User;
+  role: CollectionCollaboratorRole;
+  status: CollectionInviteStatus;
+  createdAt: Date;
+  respondedAt: Date | null;
 }
 
 export interface TagsOnCollection {
