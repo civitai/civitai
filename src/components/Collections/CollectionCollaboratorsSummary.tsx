@@ -51,12 +51,11 @@ export function CollectionCollaboratorsSummary({
   supportsCollaborators: boolean;
 }) {
   const features = useFeatureFlags();
-  // The server already withholds a roster for curated and system-owned collections; re-checking
-  // here keeps the rule enforced on the render path too, not only on the wire.
-  const enabled = features.collaborativeCollections && supportsCollaborators && owner.id > 0;
+  const enabled = !!features.collaborativeCollections && supportsCollaborators && owner.id > 0;
 
+  // The system account owns Featured sets and never gets an avatar or a profile link.
   if (!enabled || !collaborators.length) {
-    return <UserAvatar user={owner} withUsername linkToProfile />;
+    return owner.id > 0 ? <UserAvatar user={owner} withUsername linkToProfile /> : null;
   }
 
   const shown = collaborators.slice(0, MAX_AVATARS - 1);
