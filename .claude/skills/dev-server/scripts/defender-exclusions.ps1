@@ -8,8 +8,12 @@
 
 #Requires -RunAsAdministrator
 
+# Add-MpPreference accepts a path that does not exist, so a wrong root here reports success and
+# excludes nothing. Override with -ReposRoot on any machine that doesn't use this layout.
+param([string]$ReposRoot = 'C:\Dev\Repos\work')
+
 $paths = @(
-  'C:\Dev\Repos\work',
+  $ReposRoot,
   "$env:LOCALAPPDATA\pnpm",
   "$env:LOCALAPPDATA\pnpm-store"
 )

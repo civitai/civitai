@@ -531,6 +531,7 @@ class DevSession {
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
+    this.addLog('info', `Env: ${this.envPath}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
 
     if (skillConfig.perBranchDistDir) {
@@ -714,7 +715,7 @@ class DevSession {
         // postinstall runs db:generate, so a schema change needs no separate pass.
         await runCommand(pnpmCmd, ['install', '--prefer-offline'], this.worktree, env, log);
       } else if (skillConfig.autoInstall && schemaChanged) {
-        this.addLog('info', 'prisma/schema.prisma changed — regenerating client');
+        this.addLog('info', 'schema.full.prisma changed — regenerating client');
         await this.stop();
         await runCommand(pnpmCmd, ['run', 'db:generate'], this.worktree, env, log);
       }
@@ -929,6 +930,7 @@ class DevSession {
       id: this.id,
       worktree: this.worktree,
       branch: this.branch,
+      envPath: this.envPath,
       distDir: this.distDir,
       switching: this.switching,
       prewarming: this.prewarming,
@@ -1347,6 +1349,13 @@ const spokeApps = new Map(
   Object.entries(SPOKE_APPS).map(([name, cfg]) => [name, new SpokeApp(name, cfg.path, cfg.port)])
 );
 
+// Spokes bind with --strictPort, so one left running past daemon exit makes the next start of
+// that app fail with EADDRINUSE against a process nothing is tracking any more.
+async function stopSpokeApps() {
+  for (const app of spokeApps.values()) {
+    if (app.status === 'running') await app.stop();
+  }
+}
 
 // Session manager
 const sessions = new Map();
@@ -1758,6 +1767,7 @@ async function main() {
         sessions.clear();
         await rgbProxy.stop();
         await authHub.stop();
+        await stopSpokeApps();
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
@@ -1824,6 +1834,7 @@ async function main() {
     }
     await rgbProxy.stop();
     await authHub.stop();
+    await stopSpokeApps();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -1836,6 +1847,7 @@ async function main() {
     }
     await rgbProxy.stop();
     await authHub.stop();
+    await stopSpokeApps();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);

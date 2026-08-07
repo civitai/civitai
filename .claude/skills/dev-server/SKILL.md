@@ -264,7 +264,9 @@ The server stayed healthy across every switch. Routes it wasn't asked to rebuild
 
 ### Prewarming
 
-`PREWARM_ROUTES` (default `/,/models,/images`) is compiled in the background the moment the server reports ready — on start and after every branch switch. Cold-compiling the first route costs ~45s because it pulls the whole shared graph; prewarming moves that off you.
+`PREWARM_ROUTES` is compiled in the background once the server reports ready, and again after every branch switch. Cold-compiling the first route costs ~45s because it pulls the whole shared graph; prewarming moves that off you.
+
+**It is empty by default and the skill `.env` is gitignored, so a fresh checkout does no prewarming at all** — set `PREWARM_ROUTES` yourself (see `.env.example`). Prewarm-on-start also needs `HEALTH_CHECK_URL` configured: readiness detected from log patterns alone does not trigger it. Prewarm after a branch switch runs either way.
 
 Measured on a branch with no cache at all:
 
@@ -276,9 +278,9 @@ Measured on a branch with no cache at all:
 
 Add the routes you actually land on. The cost of a longer list is only more background work, but the list is sequential — parallel requests contend for the same compiler and make the first route land later. Set it empty to disable.
 
-**List pages don't warm their detail pages.** `/models` and `/models/[id]/[[...slug]]` are separate routes with separate compiles — a warm `/models` leaves a model page at a ~30s cold hit. That's why the default list includes a specific model id; the id is arbitrary, only the route it resolves to matters. Redirects are followed, so `/models/<id>` reaches the slug route fine.
+**List pages don't warm their detail pages.** `/models` and `/models/[id]/[[...slug]]` are separate routes with separate compiles — a warm `/models` leaves a model page at a ~30s cold hit. So include a specific model id in your list; the id is arbitrary, only the route it resolves to matters. Redirects are followed, so `/models/<id>` reaches the slug route fine.
 
-The skill `.env` is re-read on every session start, so edits to `PREWARM_ROUTES` apply at the next branch switch without restarting the daemon.
+The skill `.env` is re-read on every session **start**. A keep-alive branch switch does not restart the session, so edits to `PREWARM_ROUTES` reach it only after a switch that forces a restart (lockfile or schema change) or an explicit `restart`.
 
 ### Why the cache is so big
 
@@ -300,7 +302,7 @@ It earns the space: **45.8s cold vs 4.3s warm** on the same route after a restar
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `DIST_CACHE_KEEP`, `AUTO_INSTALL`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`.
 
 ## Worktrees
 
@@ -312,7 +314,9 @@ node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 
 What's already handled:
 
-- **No per-worktree `.env` needed.** Sessions fall back to the main project root's `.env` (`mainEnvPath`). Verified: a worktree with no `.env` at all boots healthy.
+- **A worktree's own `.env` wins.** A session loads `<worktree>/.env` when one exists, and falls back to the project root's `.env` only when it doesn't — so a worktree with no `.env` still boots healthy. The chosen file is logged as `Env: <path>` at session start and returned as `envPath` in session status.
+
+  **The two are not merged.** Whichever file is chosen supplies every key; nothing is inherited from the other. A worktree `.env` that is a partial copy will therefore be missing whatever it doesn't restate, and different files can point a session at a different database — check the `Env:` line if a session behaves unlike its neighbours.
 - **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
 - **Independent branch watching + prewarming** per session.
 
