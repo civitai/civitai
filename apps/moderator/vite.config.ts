@@ -12,6 +12,22 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [tailwindcss(), sveltekit()],
+    // Precompile the routes at startup instead of on first request. Vite dev compiles a route the
+    // first time it is hit, which on this app is tens of seconds — long enough to read as a hang
+    // rather than a cold start, and it recurs after every restart.
+    server: {
+      warmup: {
+        ssrFiles: [
+          './src/routes/+layout.server.ts',
+          './src/routes/xguard/+page.server.ts',
+          './src/routes/xguard/+page.svelte',
+          './src/routes/xguard/labels/+page.svelte',
+          './src/routes/xguard/labels/[name]/+page.svelte',
+          './src/routes/xguard/runs/+page.svelte',
+        ],
+      },
+    },
+
     // @civitai/* packages ship raw TS (main: ./src/index.ts) — let Vite transpile them.
     // (Their deps like pg/kysely/jose stay external/node_modules.)
     ssr: {

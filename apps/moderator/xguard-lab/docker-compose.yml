@@ -1,0 +1,23 @@
+services:
+  xguard-lab-db:
+    image: postgres:16-alpine
+    container_name: xguard-lab-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xguard
+      POSTGRES_PASSWORD: xguard
+      POSTGRES_DB: xguard_lab
+    # 5433 so it cannot collide with a local Civitai Postgres on 5432.
+    ports:
+      - '5433:5432'
+    volumes:
+      - xguard-lab-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U xguard -d xguard_lab']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  xguard-lab-data:
