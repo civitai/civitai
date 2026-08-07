@@ -501,6 +501,7 @@ export async function getMyInvites({ userId }: { userId: number }) {
       role: true,
       createdAt: true,
       invitedById: true,
+      invitedBy: { select: { id: true, username: true, deletedAt: true } },
       collection: {
         select: {
           id: true,

@@ -1,13 +1,12 @@
-import { Alert, Badge, Button, Group, Paper, Stack, Text } from '@mantine/core';
-import { IconPhoto } from '@tabler/icons-react';
+import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core';
+import { IconCheck, IconHourglass, IconPhoto } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { INVITE_EXPIRY_DAYS } from '~/server/services/collection-invite.utils';
-import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
+import { CollectionCollaboratorRole, MediaType } from '~/shared/utils/prisma/enums';
 import type { CollectionMyInvite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -18,6 +17,11 @@ const roleLabels: Record<CollectionCollaboratorRole, string> = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function inviterLabel(invitedBy: CollectionMyInvite['invitedBy']) {
+  if (!invitedBy.username || invitedBy.deletedAt) return 'Someone';
+  return `@${invitedBy.username}`;
+}
 
 export function CollectionInviteList() {
   const features = useFeatureFlags();
@@ -58,6 +62,7 @@ export function CollectionInviteList() {
       <Text size="sm" fw="bold">
         Invitations
       </Text>
+      {/* Expiry is display-only; never filter rows the server returned. */}
       {invites.map((invite) => {
         const isResponding = respondMutation.variables?.inviteId === invite.id;
         const expiresAt = new Date(
@@ -66,33 +71,42 @@ export function CollectionInviteList() {
         const expiringSoon = expiresAt.getTime() - Date.now() < DAY_MS;
 
         return (
-          <Paper key={invite.id} withBorder radius="sm" p="xs">
-            <Stack gap={6}>
-              <Group wrap="nowrap" gap="xs" align="flex-start">
+          <Paper
+            key={invite.id}
+            withBorder
+            radius="sm"
+            p="xs"
+            className="border-blue-6 bg-white dark:bg-dark-5"
+          >
+            <Stack gap={8}>
+              <Group wrap="nowrap" gap={8} align="center">
                 <InviteCover collection={invite.collection} />
-                <Stack gap={2} style={{ minWidth: 0 }}>
-                  <Text size="sm" fw={500} lineClamp={1}>
+                <Stack gap={1} style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={600} lineClamp={1}>
                     {invite.collection.name}
                   </Text>
-                  <Group gap={4} wrap="nowrap">
-                    <Badge size="xs" variant="light">
-                      {roleLabels[invite.role]}
-                    </Badge>
-                    <Text size="xs" c="dimmed">
-                      Invited by
-                    </Text>
-                    <UserAvatar userId={invite.invitedById} withUsername size="xs" />
-                  </Group>
+                  <Text size="xs" c="dimmed" lineClamp={1}>
+                    {inviterLabel(invite.invitedBy)} invited you · {roleLabels[invite.role]}
+                  </Text>
                 </Stack>
               </Group>
-              {/* Display only. The server drops expired invites from this query, so a client-side
-                  clock that ran ahead must never hide a row the server still considers live. */}
-              <Text size="xs" c={expiringSoon ? 'red.6' : 'yellow.6'}>
-                Expires <DaysFromNow date={expiresAt} />
+              <Text
+                fz={11}
+                c={expiringSoon ? 'red.6' : 'yellow.6'}
+                className="flex items-center gap-[5px]"
+              >
+                <IconHourglass size={12} className="shrink-0" />
+                <span>
+                  Expires <DaysFromNow date={expiresAt} />
+                </span>
               </Text>
-              <Group gap={4} wrap="nowrap">
+              <Group grow gap={8}>
                 <Button
-                  size="compact-xs"
+                  size="xs"
+                  h={26}
+                  radius="sm"
+                  color="success.5"
+                  leftSection={<IconCheck size={14} />}
                   loading={isResponding && respondMutation.variables?.accept === true}
                   disabled={respondMutation.isPending && !isResponding}
                   onClick={() => respondMutation.mutate({ inviteId: invite.id, accept: true })}
@@ -100,7 +114,9 @@ export function CollectionInviteList() {
                   Accept
                 </Button>
                 <Button
-                  size="compact-xs"
+                  size="xs"
+                  h={26}
+                  radius="sm"
                   variant="default"
                   loading={isResponding && respondMutation.variables?.accept === false}
                   disabled={respondMutation.isPending && !isResponding}
@@ -122,24 +138,28 @@ function InviteCover({ collection }: { collection: CollectionMyInvite['collectio
 
   if (!image)
     return (
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-sm bg-gray-1 dark:bg-dark-6">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-6">
         <IconPhoto size={16} className="text-gray-6 dark:text-dark-2" />
       </div>
     );
 
   return (
-    <div className="relative size-8 shrink-0 overflow-hidden rounded-sm bg-gray-1 dark:bg-dark-6">
+    <div className="relative size-8 shrink-0 overflow-hidden rounded-sm border border-gray-3 bg-gray-1 dark:border-dark-4 dark:bg-dark-6">
       <ImageGuard2 image={image} explain={false} connectType="collection" connectId={collection.id}>
         {(show) =>
           show ? (
+            // A video cover goes through EdgeVideo, whose 80px play-button overlay swallows a
+            // 32px tile. Request the transcoded still and render it as a plain image instead.
             <EdgeMedia
               src={image.url}
-              type={image.type}
+              type="image"
+              transcode={image.type === MediaType.video}
+              anim={false}
               width={64}
+              alt=""
               className="size-full object-cover"
               placeholder="empty"
               loading="lazy"
-              anim={false}
             />
           ) : (
             <MediaHash {...image} />
