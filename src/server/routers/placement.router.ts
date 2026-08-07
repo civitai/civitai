@@ -2,6 +2,7 @@ import {
   actOnStickerPlacementSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
+  getPlacementSpaceRowSchema,
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
   getPlacementSettlementStatesSchema,
@@ -12,6 +13,8 @@ import {
 } from '~/server/schema/placement.schema';
 import { placementPriceRange } from '~/server/services/placement.service';
 import {
+  clearPlacementSpace,
+  getPlacementSpaceRow,
   getPlacementSpaces,
   resolvePlacementSpaceFor,
   setPlacementSpace,
@@ -53,6 +56,17 @@ export const placementRouter = router({
   getSpace: publicProcedure
     .input(getPlacementSpaceSchema)
     .query(({ input }) => resolvePlacementSpaceFor(input)),
+
+  // The row for one level, so a toggle shows what that level is set to rather
+  // than what it inherits.
+  getSpaceRow: protectedProcedure
+    .input(getPlacementSpaceRowSchema)
+    .query(({ input, ctx }) => getPlacementSpaceRow({ ...input, userId: ctx.user.id })),
+
+  clearSpace: protectedProcedure.input(getPlacementSpaceRowSchema).mutation(({ input, ctx }) => {
+    assertPlacementEnabled(ctx);
+    return clearPlacementSpace({ ...input, userId: ctx.user.id });
+  }),
 
   getMySpaces: protectedProcedure
     .input(placementPriceRangeSchema)

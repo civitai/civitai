@@ -242,3 +242,54 @@ export const getPlacementSpaces = ({
     where: { surface, entityType: 'user', entityId: userId },
     select: { entityType: true, entityId: true, mode: true, price: true, settings: true },
   });
+
+/**
+ * One level's own row, for editing that level rather than the resolved cascade.
+ *
+ * The cascade answers "what governs this image"; this answers "what has this
+ * post been set to", which is what a toggle has to show. Conflating them would
+ * make an inherited account setting look like a post-level one, and turning it
+ * off would appear to do nothing.
+ */
+export async function getPlacementSpaceRow({
+  surface,
+  entityType,
+  entityId,
+  userId,
+}: {
+  surface: PlacementSurface;
+  entityType: PlacementSpaceEntity;
+  entityId: number;
+  userId: number;
+}) {
+  await assertOwnsSpaceEntity({ entityType, entityId, userId });
+
+  return dbRead.placementSpace.findUnique({
+    where: { surface_entityType_entityId: { surface, entityType, entityId } },
+    select: { mode: true, price: true, settings: true },
+  });
+}
+
+/**
+ * Removes a level's own row so it inherits again.
+ *
+ * A delete, not `mode: 'off'`. Those are different statements — off is a
+ * deliberate no at this level, inherit is deferring to the level above — and
+ * writing one for the other means an owner who later changes their account
+ * setting finds this post silently ignoring it.
+ */
+export async function clearPlacementSpace({
+  surface,
+  entityType,
+  entityId,
+  userId,
+}: {
+  surface: PlacementSurface;
+  entityType: PlacementSpaceEntity;
+  entityId: number;
+  userId: number;
+}) {
+  await assertOwnsSpaceEntity({ entityType, entityId, userId });
+
+  await dbWrite.placementSpace.deleteMany({ where: { surface, entityType, entityId } });
+}

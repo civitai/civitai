@@ -82,3 +82,9 @@ export const actOnStickerPlacementsSchema = z.object({
   placementIds: z.array(z.number().int().positive()).min(1).max(50),
   action: z.enum(['approve', 'decline', 'remove']),
 });
+
+export const getPlacementSpaceRowSchema = z.object({
+  surface: placementSurfaceSchema,
+  entityType: z.enum(['image', 'post', 'user']),
+  entityId: z.number().int().positive(),
+});
