@@ -10,6 +10,8 @@ const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram, mockGetJobDate, m
       errors: { inc: vi.fn() },
       posts: { inc: vi.fn() },
       images: { inc: vi.fn() },
+      scheduledPosts: { inc: vi.fn() },
+      scheduledImages: { inc: vi.fn() },
       skipped: { inc: vi.fn() },
     },
     mockHistogram: { observe: vi.fn() },
@@ -29,6 +31,8 @@ vi.mock('~/server/prom/client', () => ({
   reemitErrorsCounter: mockCounters.errors,
   reemitPostsScannedCounter: mockCounters.posts,
   reemitImagesEmittedCounter: mockCounters.images,
+  reemitScheduledPostsScannedCounter: mockCounters.scheduledPosts,
+  reemitScheduledImagesEmittedCounter: mockCounters.scheduledImages,
   reemitRunDurationHistogram: mockHistogram,
   reemitSkippedRateLimitCounter: mockCounters.skipped,
 }));
@@ -41,8 +45,10 @@ vi.mock('~/server/jobs/job', () => ({
 
 import {
   buildReemitQuery,
+  buildScheduledReemitQuery,
   getReemitConfig,
   getReemitMinIntervalSecs,
+  getScheduledSweepEnabled,
   reemitBitdexOps,
 } from '~/server/jobs/reemit-bitdex-ops';
 
@@ -53,6 +59,7 @@ beforeEach(() => {
   delete process.env.REEMIT_LOOKBACK_SECS;
   delete process.env.REEMIT_SETTLE_SECS;
   delete process.env.REEMIT_MIN_INTERVAL_SECS;
+  delete process.env.REEMIT_SCHEDULED_SWEEP_ENABLED;
   // Default: last emit was long ago (epoch) so the rate-limit never trips unless a
   // test explicitly pins a recent last-run time.
   mockGetJobDate.mockResolvedValue([new Date(0), mockSetLastRun]);
@@ -62,6 +69,7 @@ afterEach(() => {
   delete process.env.REEMIT_LOOKBACK_SECS;
   delete process.env.REEMIT_SETTLE_SECS;
   delete process.env.REEMIT_MIN_INTERVAL_SECS;
+  delete process.env.REEMIT_SCHEDULED_SWEEP_ENABLED;
 });
 
 describe('buildReemitQuery', () => {
@@ -95,6 +103,64 @@ describe('buildReemitQuery', () => {
     expect(query.values).toEqual([900, 10]);
     // The seconds are placeholders, not baked into the text.
     expect(query.sql).not.toContain('900');
+  });
+});
+
+describe('buildScheduledReemitQuery', () => {
+  const sql = () => buildScheduledReemitQuery({ settleSecs: 10 }).sql;
+
+  it('calls BOTH shared PG functions and concatenates them (shape parity)', () => {
+    // The scheduled scope must reuse the shared op shape, never re-spell a
+    // "remove" op locally — bitdex_post_fanout_ops' own CASE guard is what turns a
+    // future publishedAt into remove ops.
+    expect(sql()).toContain('bitdex_post_fanout_ops(p)');
+    expect(sql()).toContain('bitdex_image_sortat_ops(i)');
+    expect(sql()).toMatch(/bitdex_post_fanout_ops\(p\)\s*\|\|\s*bitdex_image_sortat_ops\(i\)/);
+  });
+
+  it('is a single INSERT ... SELECT emission', () => {
+    const text = sql();
+    expect(text.match(/INSERT INTO "BitdexOps"/g)).toHaveLength(1);
+    expect(text).toContain('INSERT INTO "BitdexOps" (entity_id, ops)');
+  });
+
+  it('scans ONLY future-scheduled posts (publishedAt > now(), no lookback bound)', () => {
+    const text = sql();
+    expect(text).toContain('"publishedAt" > now()');
+    // The published-window bounds must not leak in — they are what made scheduled
+    // posts unreachable in the first place.
+    expect(text).not.toContain('"publishedAt" <= now()');
+    expect(text).not.toContain('"publishedAt" >= now() -');
+  });
+
+  it('applies the same settle belt on updatedAt', () => {
+    expect(sql()).toContain('"updatedAt"  <  now() - make_interval');
+  });
+
+  it('parameterizes settle only (no literal injection, no lookback param)', () => {
+    const query = buildScheduledReemitQuery({ settleSecs: 30 });
+    expect(query.values).toEqual([30]);
+    expect(query.sql).not.toContain('30');
+  });
+});
+
+describe('getScheduledSweepEnabled', () => {
+  it('defaults ON — the sweep is the only healer that reaches scheduled posts', () => {
+    expect(getScheduledSweepEnabled()).toBe(true);
+  });
+
+  it('honors the off switch in its several spellings', () => {
+    for (const raw of ['false', 'FALSE', '0', 'off', 'no', ' false ']) {
+      process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = raw;
+      expect(getScheduledSweepEnabled()).toBe(false);
+    }
+  });
+
+  it('stays ON for anything that is not an off value', () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'true';
+    expect(getScheduledSweepEnabled()).toBe(true);
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'gibberish';
+    expect(getScheduledSweepEnabled()).toBe(true);
   });
 });
 
@@ -173,27 +239,70 @@ describe('reemitBitdexOps job body', () => {
     await runJob();
 
     expect(mockCounters.skipped.inc).not.toHaveBeenCalled();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // Both scans ran (the scheduled sweep is on by default).
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(2);
     // The window advances only after a successful emit.
     expect(mockSetLastRun).toHaveBeenCalledTimes(1);
   });
 
-  it('emits once and records metrics from the returned counts when ON', async () => {
+  it('runs BOTH scans and records per-scope metrics when ON', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([{ postsScanned: 3, imagesEmitted: 12 }])
+      .mockResolvedValueOnce([{ postsScanned: 700, imagesEmitted: 5600 }]);
+
+    const result = await runJob();
+
+    // One statement per scope — the published window first, then the sweep.
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(mockDbWrite.$queryRaw.mock.calls[0][0].sql).toContain('"publishedAt" <= now()');
+    expect(mockDbWrite.$queryRaw.mock.calls[1][0].sql).toContain('"publishedAt" > now()');
+
+    expect(mockCounters.attempts.inc).toHaveBeenCalledTimes(1);
+    expect(mockCounters.runs.inc).toHaveBeenCalledTimes(1);
+    expect(mockCounters.errors.inc).not.toHaveBeenCalled();
+    // The scheduled volume must NOT be folded into the published-window counters —
+    // it is ~100x larger and would swamp the signal the existing alerts read.
+    expect(mockCounters.posts.inc).toHaveBeenCalledWith(3);
+    expect(mockCounters.images.inc).toHaveBeenCalledWith(12);
+    expect(mockCounters.scheduledPosts.inc).toHaveBeenCalledWith(700);
+    expect(mockCounters.scheduledImages.inc).toHaveBeenCalledWith(5600);
+    expect(mockHistogram.observe).toHaveBeenCalledTimes(1);
+    expect(mockSetLastRun).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      postsScanned: 3,
+      imagesEmitted: 12,
+      scheduledPostsScanned: 700,
+      scheduledImagesEmitted: 5600,
+    });
+  });
+
+  it('skips the second scan (and reports zeroes) when the sweep is switched off', async () => {
+    process.env.REEMIT_SCHEDULED_SWEEP_ENABLED = 'false';
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw.mockResolvedValue([{ postsScanned: 3, imagesEmitted: 12 }]);
 
     const result = await runJob();
 
-    // Single statement — exactly one query executed.
+    // The published-window scan is unaffected by the sweep knob.
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(mockCounters.attempts.inc).toHaveBeenCalledTimes(1);
-    expect(mockCounters.runs.inc).toHaveBeenCalledTimes(1);
-    expect(mockCounters.errors.inc).not.toHaveBeenCalled();
-    expect(mockCounters.posts.inc).toHaveBeenCalledWith(3);
-    expect(mockCounters.images.inc).toHaveBeenCalledWith(12);
-    expect(mockHistogram.observe).toHaveBeenCalledTimes(1);
-    expect(mockSetLastRun).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ postsScanned: 3, imagesEmitted: 12 });
+    expect(mockDbWrite.$queryRaw.mock.calls[0][0].sql).toContain('"publishedAt" <= now()');
+    expect(mockCounters.scheduledPosts.inc).toHaveBeenCalledWith(0);
+    expect(mockCounters.scheduledImages.inc).toHaveBeenCalledWith(0);
+    expect(result).toMatchObject({ scheduledPostsScanned: 0, scheduledImagesEmitted: 0 });
+  });
+
+  it('counts the error and rethrows when the SCHEDULED scan fails', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([{ postsScanned: 3, imagesEmitted: 12 }])
+      .mockRejectedValueOnce(new Error('scheduled scan blew up'));
+
+    await expect(runJob()).rejects.toThrow(/scheduled scan blew up/);
+    expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
+    expect(mockCounters.runs.inc).not.toHaveBeenCalled();
+    // A partial run must not advance the rate-limit window.
+    expect(mockSetLastRun).not.toHaveBeenCalled();
   });
 
   it('counts the attempt + error but NOT a run, and rethrows, on a PG error', async () => {
