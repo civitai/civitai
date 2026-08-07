@@ -119,7 +119,12 @@
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
     {:else if section === 'reports'}
-      <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
+      <ReportsPanel
+        userId={result.identity.id}
+        reportsFiled={result.reportsFiled}
+        reportedContent={result.reportedContent}
+        civitaiUrl={data.civitaiUrl}
+      />
     {:else if section === 'reviews'}
       <ReviewsPanel
         {account}
