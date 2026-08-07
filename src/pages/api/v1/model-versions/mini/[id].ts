@@ -28,7 +28,6 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -387,9 +386,11 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
+  // A version charging its own fee earns through that channel instead of tips + creator comp. The
+  // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
-    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisablePayout);
+    !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
 
   const data = {
     air,

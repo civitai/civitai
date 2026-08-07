@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
 
 import { env } from '~/env/server';
@@ -11,6 +10,7 @@ import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -36,20 +36,26 @@ export default PublicEndpoint(
     // edge after the origin returns 404. Override with no-store.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
-    // Get ip so that we can block exploits we catch
-    const ip = requestIp.getClientIp(req);
-    const ipBlacklist = (
-      ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
-      ''
-    ).split(',');
+    // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+    // (edge-attested or transport peer only) — an enforcement control must not key
+    // on an address the caller supplies. Do not swap this for an inline resolver.
+    //
+    // Operator note before you add an entry to `ip-blacklist`: a request that did
+    // not transit the Cloudflare edge is attributed to the transport peer, so
+    // where that peer is a shared hop, listing its address blocks all such
+    // traffic to every download route at once rather than one abuser. See
+    // `parseIpBlocklist`.
+    const ip = getTrustedClientIp(req);
+    const ipBlacklist = parseIpBlocklist(
+      (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+    );
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
     const session = await getServerAuthSession({ req, res });
     if (!!session?.user) {
-      const userBlacklist = (
-        ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
-          ?.value as string) ?? ''
-      ).split(',');
+      const userBlacklist = parseUserBlocklist(
+        (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
+      );
       if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
     }
 

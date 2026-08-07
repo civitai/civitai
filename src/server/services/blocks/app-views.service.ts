@@ -45,15 +45,36 @@ import { logToAxiom } from '~/server/logging/client';
  * table carries no status column, so this reader cannot exclude them. An app
  * that fails to load for everyone still reports loads.
  *
- * ⚠️ TRUST CAVEAT — this number is not adversary-proof, and reading it here is
- * what makes that matter. The writer, `/api/track/block-render`, is a
- * `PublicEndpoint` whose only gate is an Origin/Referer host comparison, which
- * any non-browser client can forge, and `appBlockId` arrives from the client.
- * So anyone can inflate an arbitrary author's load count. That is a pre-existing
- * WRITER-side weakness, deliberately not fixed in the change that added this
- * reader (it needs its own change to the ingest path) — but do not build
- * payouts, ranking, or anything else with an incentive to cheat on top of this
- * figure until the writer is authenticated.
+ * ⚠️ TRUST CAVEAT — TREAT THESE NUMBERS AS UNTRUSTED INPUT.
+ *
+ * The rows this reads are produced by an UNAUTHENTICATED write path, and the
+ * app they are attributed to is chosen by the caller. Both counters below are
+ * therefore influenceable from outside — and note that `uniqueViewers` is NOT
+ * the safer of the two: for signed-out viewers it is derived from request
+ * metadata that the origin does not independently verify, so it is at least as
+ * influenceable as the raw count. Do not reason about it as a harder-to-game
+ * number just because it is a distinct-count.
+ *
+ * (Specifics of the write path have been reported to security@civitai.com per
+ * SECURITY.md, and are deliberately not restated here. If you are changing the
+ * ingest path or the IP derivation, ask them for the report first — the
+ * mechanism matters and this comment is not sufficient to design against.)
+ *
+ * This is a pre-existing WRITER-side weakness, deliberately not fixed in the
+ * change that added this reader: an ingest gate that wrongly rejects beacons
+ * would make these counts UNDER-report silently and permanently, because the
+ * beacon is fire-and-forget and this table has no status column — so a wrongly
+ * dropped beacon leaves no trace anywhere. Fixing it well means adding
+ * provenance to the row so the READER can filter, which needs a coordinated
+ * change to the out-of-repo tracker service and the ClickHouse schema (there is
+ * no DDL for this table in this repo).
+ *
+ * Until then: do NOT build payouts, revenue share, ranking, discovery, or
+ * author-visible leaderboards on these figures. Present-day exposure is low in
+ * absolute terms (~3 rows/day platform-wide; both feature flags are mod-only),
+ * but there is no provenance column, so rows written now cannot later be sorted
+ * into trusted and untrusted. If inflation happens first the history is
+ * unrecoverable rather than repairable — which is the real cost of waiting.
  */
 
 /** Impressions for a set of owned app blocks over a bounded range. */

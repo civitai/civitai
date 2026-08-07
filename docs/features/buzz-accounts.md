@@ -15,34 +15,40 @@ Buzz is Civitai's virtual currency used for:
 
 | File | Purpose |
 |------|---------|
-| `src/shared/constants/buzz.constants.ts` | Account types and transaction types |
-| `src/server/services/buzz.service.ts` | Transaction handling |
+| `packages/civitai-buzz/src/account-types.ts` | The account-type model + friendly↔API name map |
+| `src/shared/constants/buzz.constants.ts` | `TransactionType`, per-type config, derived type lists |
+| `src/server/schema/buzz.schema.ts` | Authoritative zod input contracts |
+| `src/server/services/buzz.service.ts` | Transaction handling (thin wrappers over `@civitai/buzz`) |
 | `src/server/services/bounty.service.ts` | Prize pool pattern reference |
 
 ## Buzz Types
 
-There are different "colors" of buzz with different properties:
+The account-type model lives in `@civitai/buzz` and is re-exported through
+`buzz.constants.ts`. The three user-facing spend types:
 
 ```typescript
-// Spend types (user-facing)
 yellow: 'User'       // NSFW-enabled, bankable, purchasable
 green: 'Green'       // Bankable, purchasable
 blue: 'Generation'   // Non-bankable (generation credits)
 ```
 
+There are **nine** account types in total, not three. Beyond the above: `red` (a spend type
+currently flagged `disabled`, so it's excluded from `buzzSpendTypes`), `creatorProgramBank`,
+`creatorProgramBankGreen`, `cashPending`, `cashSettled` and `club`. Derive lists from
+`buzzSpendTypes` / `buzzBankTypes` / `buzzPurchaseTypes` rather than hardcoding colors.
+
 ## Transaction Types
 
+**Do not hardcode these numbers.** `TransactionType` in `src/shared/constants/buzz.constants.ts`
+is the only source of truth — always import the enum and reference members by name:
+
 ```typescript
-enum TransactionType {
-  Tip = 1,           // Tipping creators
-  Reward = 5,        // Prize distribution
-  Purchase = 6,      // Buying buzz
-  Bounty = 8,        // Bounty/competition fees
-  BountyEntry = 9,   // Entry fee collection
-  Fee = 10,          // Generic fees
-  // ... others
-}
+import { TransactionType } from '~/shared/constants/buzz.constants';
 ```
+
+The values are not in any intuitive order (`Tip` is `0`, not `1`), the enum has grown over time,
+and a wrong literal books a transaction as a *different real type* with no type error and no
+runtime failure. An earlier version of this doc restated the values and got two of six wrong.
 
 ## Usage
 
@@ -59,33 +65,53 @@ await createBuzzTransaction({
 });
 ```
 
-### Multi-Account Transaction (Prize Pools)
+### Multi-Account Transaction (spending across buzz colors)
 
-For collecting fees into a central pool and distributing prizes:
+`createMultiAccountBuzzTransaction` debits **one user** across several of their buzz colors. It is
+not the prize-pool API — `fromAccountId` is `min(1)` in the schema, so it cannot pay *out of* the
+central bank.
+
+`externalTransactionIdPrefix` is required, and it is also the refund key:
+`refundMultiAccountTransaction` takes only that prefix, so a transaction created without a
+meaningful one cannot be refunded through the supported path.
 
 ```typescript
 import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
 
-// Collect entry fee into central bank (account 0)
 await createMultiAccountBuzzTransaction({
-  fromAccountId: userId,
-  fromAccountTypes: ['yellow'],  // Deduct from yellow buzz
-  toAccountId: 0,                // Central bank holds pool
-  amount: entryFee,
-  type: TransactionType.Fee,
-  details: { entityId: contestId, entityType: 'Contest' },
-});
-
-// Distribute prize from central bank
-await createMultiAccountBuzzTransaction({
-  fromAccountId: 0,              // From central bank
-  fromAccountTypes: ['yellow'],
-  toAccountId: winnerId,
-  amount: prizeAmount,
-  type: TransactionType.Reward,
-  details: { entityId: contestId, entityType: 'Contest' },
+  fromAccountId: ctx.user.id,
+  fromAccountTypes: getAllowedAccountTypes(ctx.features),
+  toAccountId: recipientUserId,
+  amount: price,
+  type: TransactionType.Purchase,
+  description: `Early access: ${name}`,
+  details: { comicChapterId: chapter.id },
+  externalTransactionIdPrefix: `comic-ea-${chapter.id}-${ctx.user.id}`,
 });
 ```
+
+### Prize pools (paying out of the central bank)
+
+Payouts from account `0` use the **single**-account API instead:
+
+```typescript
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+
+await createBuzzTransactionMany(
+  winners.map(({ userId }) => ({
+    type: TransactionType.Reward,
+    fromAccountId: 0, // central bank
+    toAccountId: userId,
+    toAccountType: 'blue',
+    amount: prizeAmount,
+    description: `Challenge Prize: ${challenge.title}`,
+    externalTransactionId: `challenge-prize-${challengeId}-${userId}`,
+  }))
+);
+```
+
+Fee collection runs the same way in reverse, with `toAccountId: 0`. See `challenge.service.ts` for
+both directions.
 
 ## Central Bank (Account 0)
 
@@ -97,8 +123,11 @@ Account ID `0` is the central bank used for:
 ## Balance Checking
 
 ```typescript
-import { getUserBuzzAccount } from '~/server/services/buzz.service';
+import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 
-const account = await getUserBuzzAccount({ accountId: userId });
-// Returns balance for each buzz type
+// One entry per spend type
+const accounts = await getUserBuzzAccounts({ userId });
 ```
+
+`getUserBuzzAccount` (singular) returns a **one-element array defaulted to yellow** unless you pass
+`accountTypes` — it is not the per-type balance call despite the name.

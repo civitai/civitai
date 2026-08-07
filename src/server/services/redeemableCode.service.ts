@@ -24,6 +24,7 @@ import { generateToken } from '~/utils/string-helpers';
 import {
   deliverMonthlyCosmetics,
   syncFreshdeskMembership,
+  supersedeBuzzMembershipForPaidSubscription,
 } from '~/server/services/subscriptions.service';
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
@@ -587,6 +588,9 @@ export async function consumeRedeemableCode({
   );
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
+    // Same reason as the Stripe path: this writes the yellow slot and would otherwise leave
+    // a Buzz-purchased membership stacked on top, still granting its (possibly higher) tier.
+    await supersedeBuzzMembershipForPaidSubscription({ userId });
     await invalidateSubscriptionCaches(userId);
     await syncFreshdeskMembership({ userId });
   }

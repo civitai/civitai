@@ -45,6 +45,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
   // job is registered but no-ops until this flag is flipped on.
   BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
+  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
+  // Separate from the re-emitter flag on purpose: the audit is read-only and the
+  // healer is write-side, so switching one off must not blind or unblind the other.
+  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
+  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -60,6 +65,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Kill switch for BOTH unattended paths that flag a model minor by SHA256
+  // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
+  // returns false for an unknown flag or an unreachable Flipt, and for a path
+  // that auto-restricts other people's models, not flagging is the safe
+  // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
+  // rollback stays usable after the switch is thrown.
+  MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
@@ -115,6 +127,10 @@ const FLIPT_EVAL_CACHE_MAX = 10_000;
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
+  // Thrown when auto-flagging is misfiring, so propagation should be the 60s
+  // config poll alone. Evaluated once per model-file scan and once per nightly
+  // job run — nowhere near hot enough for the cache to be worth the extra lag.
+  FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
 ]);
 
 type FliptCacheEntry<T> = { value: T; expiresAt: number };

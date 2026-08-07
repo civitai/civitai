@@ -1,6 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { clearCacheByPattern, clearCacheByPatterns } from '~/server/utils/cache-helpers';
+import {
+  clearCacheByPattern,
+  clearCacheByPatterns,
+  scopeCachePatternToNamespace,
+} from '~/server/utils/cache-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -15,7 +19,7 @@ const schema = z.object({
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const parsed = schema.parse(req.query);
   const target = parsed.target ?? 'main';
-  const patterns = parsed.patterns
+  const rawPatterns = parsed.patterns
     ? parsed.patterns
         .split(',')
         .map((p) => p.trim())
@@ -23,6 +27,23 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     : parsed.pattern
     ? [parsed.pattern]
     : [];
+
+  // 🔴 A cache-clear glob is written against the PRODUCTION key shape (`packed:caches:*`), and
+  // every deployment shares one cache instance. On a deployment whose cache keys are namespaced
+  // that glob matches production's keys and none of this deployment's own, so an unscoped clear
+  // from here would purge production while leaving the environment it was aimed at untouched.
+  // Scoping it to this deployment's namespace makes the endpoint able to address ONLY its own
+  // keyspace. Identity in production (no namespace ⇒ no prefix ⇒ the exact patterns as typed).
+  //
+  // 🔴 THIS CONFINEMENT COVERS `target: 'main'` ONLY. `target: 'sys'` is deliberately NOT scoped,
+  // because system keys are never namespaced on any deployment — prefixing one would match
+  // nothing. That is a fact about the KEYS, not a safety property of the keyspace: a deployment's
+  // system-Redis instance is not guaranteed to be distinct from production's, so a
+  // `?target=sys` clear issued from a non-production deployment CAN delete production data, and
+  // this endpoint does not stop it. Unlike cache entries, system values are not regenerable from
+  // the database. Treat any `?target=sys` call as a production operation.
+  // See `scopeCachePatternToNamespace` / `cacheNamespacePrefix`.
+  const patterns = rawPatterns.map((p) => scopeCachePatternToNamespace(p, target));
 
   if (patterns.length === 0) {
     res.status(400).json({ error: 'Provide either ?pattern= or ?patterns=a,b,c' });

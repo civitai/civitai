@@ -9,7 +9,10 @@ import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
 import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
-import { isModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import {
+  readModelSubstitutionsFromMetadata,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
+} from '~/shared/data-graph/generation/model-substitution';
 import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
@@ -33,8 +36,12 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
 };
 
 /**
- * 🔴 KEY under which the submit path stores the request's silent checkpoint
- * substitutions on the ORCHESTRATOR WORKFLOW's `metadata` (issue #3520).
+ * 🔴 The key + reader for silent checkpoint substitutions persisted on the
+ * ORCHESTRATOR WORKFLOW's `metadata` (issue #3520) now live in
+ * `~/shared/data-graph/generation/model-substitution` — the tRPC generation path
+ * needs the identical parse (#3665), and a second copy of a validating predicate
+ * is how the same bug gets fixed at one site and not the other. Re-exported here
+ * because this module is where the block path's callers already look for it.
  *
  * WHY THE ORCHESTRATOR AND NOT A COLUMN. The record is produced during graph
  * validation, which happens once, at submit. But blocks render from the
@@ -43,54 +50,21 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
  * `Workflow` with no access to that long-gone request context. A submit-reply-
  * only field is therefore gone by the time there is anything to display beside
  * it, and `block_workflows` does not retain the submitted body, so it is not
- * recoverable afterwards either — i.e. the field would not achieve the thing
- * #3520 asks for ("a caller billed for model A and given model B must be able to
- * find that out").
+ * recoverable afterwards either.
  *
  * `WorkflowTemplate.metadata` is a free-form `{ [key: string]: unknown }` bag
- * that the orchestrator persists and echoes back on every read of the workflow,
- * which makes it the natural carrier: written once at submit, readable on every
- * subsequent poll, and NO database change (no Prisma migration — which in this
- * org is a manually-applied, per-environment human operation, not something a
- * code PR should imply).
+ * that the orchestrator persists and echoes back on every read, which makes it
+ * the natural carrier: written once at submit, readable on every subsequent
+ * poll, and NO database change.
  *
- * The app already relies on this round-trip for its own non-standard top-level
- * metadata keys — `remixOfId` and `isPrivateGeneration` are written here at
- * submit and read back from `workflow.metadata` in
- * `orchestration-new.service.ts`'s workflow formatter — so this is an existing,
- * exercised path rather than a new assumption. The formatter builds its
- * normalized metadata from a fixed key list, so an extra key is inert there.
+ * 🔴 The old note here said the generation formatter "builds its normalized
+ * metadata from a fixed key list, so an extra key is inert there". That was
+ * true, and it was the defect #3665 had to fix: the key round-tripped fine but
+ * `formatGenerationResponse2` dropped it on read-back, so the generation path
+ * could persist the record and still never surface it. The formatter now passes
+ * it through explicitly.
  */
-export const WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY = 'modelSubstitutions';
-
-/**
- * Read substitutions back off a fetched workflow's metadata.
- *
- * 🔴 VALIDATED, not cast. This crosses a service boundary: the value is whatever
- * the orchestrator hands back, and the snapshot it feeds is a public wire
- * contract whose `reason` is also a bounded prom label. So each entry is checked
- * structurally and its `reason` narrowed against the code-owned union; anything
- * else is dropped. Returns `undefined` (not `[]`) when there is nothing to
- * report, so the caller can keep OMITTING the field entirely.
- */
-function readModelSubstitutionsFromMetadata(
-  workflow: Workflow
-): BlockWorkflowSnapshot['modelSubstitutions'] {
-  const raw = (workflow.metadata as Record<string, unknown> | null | undefined)?.[
-    WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY
-  ];
-  if (!Array.isArray(raw)) return undefined;
-  const out: NonNullable<BlockWorkflowSnapshot['modelSubstitutions']> = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const { requested, applied, reason } = entry as Record<string, unknown>;
-    if (typeof requested !== 'number' || !Number.isFinite(requested)) continue;
-    if (typeof applied !== 'number' || !Number.isFinite(applied)) continue;
-    if (!isModelSubstitutionReason(reason)) continue;
-    out.push({ requested, applied, reason });
-  }
-  return out.length ? out : undefined;
-}
+export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMetadata };
 
 /**
  * Flatten an orchestrator Workflow into the wire-stable shape the iframe
@@ -186,7 +160,7 @@ export function snapshotFromWorkflow(
   // metadata, which is what makes the field survive to the terminal poll.
   const modelSubstitutions = extra?.modelSubstitutions?.length
     ? extra.modelSubstitutions
-    : readModelSubstitutionsFromMetadata(workflow);
+    : readModelSubstitutionsFromMetadata(workflow.metadata);
   return {
     // A whatif/estimate workflow has no orchestrator id. The block SDK's
     // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
@@ -1087,4 +1061,69 @@ export function createBlockCustomComfyStep(
     timeout: formatStepTimeout(stepTimeoutSeconds),
     input,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LONG-POLL BOUNDS for `blocks.pollWorkflow`.
+//
+// The orchestrator's `GET /v2/consumer/workflows/{id}` accepts `?wait=<seconds>`
+// and holds the response until the workflow reaches a terminal status, replying
+// 202 with the current snapshot if the hold elapses first
+// (`GetWorkflowData.query.wait`, `@civitai/client`). civitai already uses it on
+// four non-blocks paths (`orchestrator.service.ts`, `comics/orchestrator-chat`,
+// `product-badge.service`, `training.service`); the blocks poll did not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The longest hold `blocks.pollWorkflow` will ask the orchestrator for.
+ *
+ * 🔴 THIS CEILING IS SET BY A CONSTANT IN ANOTHER FILE, NOT BY TASTE.
+ * `getWorkflow` (`~/server/services/orchestrator/workflows`) applies
+ * `AbortSignal.timeout(ORCHESTRATOR_GET_TIMEOUT_MS)` — 20_000 — UNCONDITIONALLY
+ * to every single-workflow read. A hold at or above 20s is therefore killed by
+ * our own backstop before the orchestrator can answer, and it fails as a
+ * `TimeoutError` mapped to a retry-able 503 — i.e. it would look like an
+ * orchestrator outage rather than a misconfigured bound. 15 leaves 5s of slack
+ * for connect + the response itself.
+ *
+ * 🔴 RAISING THIS REQUIRES CHANGING THAT BACKSTOP FIRST, and that backstop is
+ * shared with the whole generation status-update path (#2883, added to stop a
+ * parked orchestrator read from pinning an api-pool slot). Do not raise it here
+ * alone: the result is silently ineffective.
+ *
+ * The second ceiling, further out: the poll runs an inline output-moderation
+ * scan (`screenGeneratedText`, ~12s hard deadline) AFTER this read,
+ * sequentially — so the procedure's own worst case is 15 + 12 = 27s. That is
+ * the number to check against the edge/proxy response budgets before raising
+ * this bound; both were verified to sit well above it at the time of writing.
+ */
+export const MAX_BLOCK_POLL_WAIT_SECONDS = 15;
+
+/**
+ * Normalize a caller-supplied `waitSeconds` into a value safe to hand the
+ * orchestrator.
+ *
+ * 🔴 THE INPUT IS UNTRUSTED — it originates in an app block's iframe, forwarded
+ * by the host. It is clamped rather than rejected because a block asking for a
+ * hold longer than we allow is not an error, it is a request we satisfy less
+ * generously; failing the poll would break a generation over a tuning value.
+ *
+ * 🔴 THE DEFAULT IS 0 — NO HOLD — AND THAT IS DELIBERATE, NOT AN OVERSIGHT.
+ * Enabling long polling for every caller would change the CONCURRENCY profile of
+ * every already-deployed block, whose poll loops we do not control and cannot
+ * assume are sequential. A block driving `setInterval(poll, 2000)` against a
+ * 15s hold stacks ~7 concurrent requests per workflow instead of one — the
+ * opposite of the intended effect. So the hold is opt-in per request, and the
+ * SDK only sends it from `useBuzzWorkflow().watch()`, whose loop awaits each
+ * poll before issuing the next.
+ *
+ * Returns `undefined` (rather than 0) when there is no hold, so the caller can
+ * omit the `query` entirely and keep the request byte-identical to today's.
+ */
+export function resolveBlockPollWaitSeconds(waitSeconds?: number): number | undefined {
+  if (typeof waitSeconds !== 'number' || !Number.isFinite(waitSeconds)) return undefined;
+  // Floor before the bounds check: 0.9 must read as "no hold", not as a hold.
+  const floored = Math.floor(waitSeconds);
+  if (floored <= 0) return undefined;
+  return Math.min(floored, MAX_BLOCK_POLL_WAIT_SECONDS);
 }

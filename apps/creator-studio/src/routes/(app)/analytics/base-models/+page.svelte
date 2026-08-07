@@ -4,11 +4,12 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
+  import { analyticsMetric, type AnalyticsMetric } from '$lib/stores/analytics-metric';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import { IconArrowUp, IconArrowDown, IconArrowsSort } from '@tabler/icons-svelte';
   import { page } from '$app/state';
-  import { setSortParam } from '$lib/table-nav';
+  import { tableSortState } from '$lib/state/table-sort.svelte';
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
   import { baseModelTrendSelection } from '$lib/stores/base-model-trend';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
@@ -49,7 +50,6 @@
   ];
   const DEFAULT_SHOWN = 6;
   const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
-  let trendMetric = $state<'generations' | 'downloads'>('generations');
   const trends = $derived(data.platformTrends ?? []);
   const ownSet = $derived(new Set(data.ownBaseModels ?? []));
   const compareByBase = $derived(
@@ -79,7 +79,7 @@
   const trendData = $derived.by(() => {
     const current = shownTrends.map((t) => {
       const color = colorOf.get(t.baseModel);
-      const byDate = new Map(t.points.map((p) => [p.date, p[trendMetric]]));
+      const byDate = new Map(t.points.map((p) => [p.date, p[analyticsMetric.value]]));
       const own = ownSet.has(t.baseModel);
       return {
         label: own ? `★ ${t.baseModel}` : t.baseModel,
@@ -95,7 +95,10 @@
     const compare = shownTrends.map((t) => {
       const color = colorOf.get(t.baseModel);
       const byDate = new Map(
-        (compareByBase.get(t.baseModel)?.points ?? []).map((p) => [p.date, p[trendMetric]])
+        (compareByBase.get(t.baseModel)?.points ?? []).map((p) => [
+          p.date,
+          p[analyticsMetric.value],
+        ])
       );
       return {
         type: 'line' as const,
@@ -149,8 +152,12 @@
   const cell = (b: NonNullable<PageData['baseModels']>[number], currency: string) =>
     b.currencies.find((c) => c.currency === currency) ?? { currency, total: 0, prev: 0 };
 
-  const sortKey = $derived(page.url.searchParams.get('sort') ?? 'generations');
-  const sortDir = $derived(page.url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc');
+  const sorting = tableSortState('base-models', () => data.tableSort, {
+    sort: 'generations',
+    dir: 'desc',
+  });
+  const sortKey = $derived(sorting.key);
+  const sortDir = $derived(sorting.dir);
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const sortValue = (b: NonNullable<PageData['baseModels']>[number], key: string): number =>
@@ -179,16 +186,16 @@
       <p class="text-sm font-medium text-white">
         Civitai-wide base-model usage
         <span class="text-xs text-dark-3">
-          · {trendMetric}
+          · {analyticsMetric.value}
           {periodLabel} · dashed = {data.compare.label} · ★ marks yours
         </span>
       </p>
       <div class="flex flex-wrap items-center gap-2">
         <ToggleGroup
           type="single"
-          value={trendMetric}
+          value={analyticsMetric.value}
           onValueChange={(v: string) => {
-            if (v) trendMetric = v as 'generations' | 'downloads';
+            if (v) analyticsMetric.set(v as AnalyticsMetric);
           }}
           variant="outline"
           size="sm"
@@ -246,7 +253,7 @@
       <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
         <button
           type="button"
-          onclick={() => setSortParam(key, sortKey, sortDir)}
+          onclick={() => sorting.toggle(key)}
           class="flex w-full cursor-pointer items-center justify-end gap-1 hover:text-white {active
             ? 'font-medium text-white'
             : 'text-dark-3'}"

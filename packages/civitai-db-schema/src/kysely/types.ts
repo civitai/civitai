@@ -2339,6 +2339,7 @@ export type Leaderboard = {
   query: string;
   active: boolean;
   public: boolean;
+  domain: Generated<DomainColor[]>;
 };
 export type LeaderboardResult = {
   leaderboardId: string;

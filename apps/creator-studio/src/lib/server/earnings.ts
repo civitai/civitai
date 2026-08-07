@@ -23,10 +23,14 @@ export type EarningsBucket = {
 // source with toggle chips (E4). Currency detail stays in the by-source×currency summary/table.
 export type EarningsPoint = { date: string; source: EarningsSource; total: number };
 
+// Access sales carry one of two id prefixes: `permanent-access-` for a permanent paid-access sale,
+// `early-access-` for a timed window. Rows written before the split are all `early-access-`, whichever
+// product they were, so both must be matched here and neither can be dropped.
+const ACCESS_SALE_PREFIXES = `(externalTransactionId LIKE 'early-access-%' OR externalTransactionId LIKE 'permanent-access-%')`;
 // Only the creator's *receiving* rows count as earnings: tip / compensation / licenseFee (+ the `'27'` mislabel) /
-// cosmetic `sell`, plus `purchase` rows that are early-access sales (a bare `purchase` is mostly the creator
+// cosmetic `sell`, plus `purchase` rows that are access sales (a bare `purchase` is mostly the creator
 // topping up their own buzz — see handoff doc §gotchas).
-const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell') OR (type = 'purchase' AND externalTransactionId LIKE 'early-access-%'))`;
+const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell') OR (type = 'purchase' AND ${ACCESS_SALE_PREFIXES}))`;
 // `from`/`to` are validated ISO dates (parseRange), so they're interpolated directly; the upper bound is
 // exclusive-next-day so it's inclusive of the whole `to` day.
 const whereClause = (uid: number, from: string, to: string) =>

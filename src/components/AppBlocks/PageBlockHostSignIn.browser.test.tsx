@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * W10 sign-in-bridge gap regression (page surface).
@@ -122,6 +123,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Budgeted Generator',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -147,10 +150,69 @@ async function driveToReady() {
   });
 }
 
+/**
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
+ *
+ * Cancellable is load-bearing: a drive left running past the end of a test posts
+ * BLOCK_READY into the NEXT test's freshly-mounted host — measured, that turned the
+ * "before BLOCK_READY is dropped" guard below red for a reason having nothing to do
+ * with the race under study. Callers stop it in a `finally`.
+ */
+async function startReadyDrive() {
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
+}
+
 describe('PageBlockHost REQUEST_SIGN_IN (W10 anonymous-conversion wiring)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     vi.mocked(openLoginPopup).mockClear();
+  });
+
+  /**
+   * REGRESSION GUARD for the host-ready stale-closure race.
+   *
+   * REQUEST_SIGN_IN is fire-and-forget — it carries no requestId and has no reply
+   * message — so a post dropped in this window is gone for good and the anonymous
+   * viewer's click on "Sign in" does nothing at all, silently. There is no NACK
+   * available to soften it, which is exactly why the root-cause fix (reading a
+   * render-body-updated `statusRef` instead of a closed-over `status`) has to hold
+   * for this handler.
+   *
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT from a MutationObserver.
+   * That is the difference between a guard and a coin flip — see test/commitWindow.tsx
+   * for the two approaches that were measured and rejected. The short version: a
+   * MutationObserver callback is a microtask that runs at the END of the scheduler
+   * task, by which point React has often already flushed the passive effects, so the
+   * first version of this guard survived the mutant roughly one run in three.
+   *
+   * Proven reachable by mutation: move `statusRef.current = status` out of the render
+   * body and back into an effect and this goes red on `expected "openLoginPopup" to
+   * be called 1 times, but got 0 times`.
+   */
+  test("REQUEST_SIGN_IN posted in React's commit→passive-effect gap still starts the login", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    // Fires synchronously on React's own stack, at the instant the host writes
+    // data-block-ready="true" — strictly before this commit's passive effects
+    // re-register a listener holding the fresh status.
+    const unpatch = onReadyAttributeWrite(() => postFromBlock('REQUEST_SIGN_IN', {}));
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => {
+          expect(openLoginPopup).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
   });
 
   test('after BLOCK_READY, REQUEST_SIGN_IN starts the hub login (defaults to the current page)', async () => {

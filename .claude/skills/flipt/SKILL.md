@@ -25,19 +25,14 @@ node .claude/skills/flipt/flipt.mjs <command> [options]
 | `add-variant` / `remove-variant` / `set-rollout` | Same |
 
 **Reads work over the API; writes are deliberately refused.** This Flipt is
-**v2** (v2.10.0), GitOps-backed by `civitai/flipt-state` (`poll_interval: 30s`,
-so merge → visible takes up to ~30s).
+**v2**, GitOps-backed by a private state repo, so a merged change becomes visible
+within about a poll interval.
 
-Writes are blocked by choice, not by capability. There is **no Flipt auth at
-all** — the `Authorization: Bearer` value in `.env` is a Traefik ingress bypass
-header, not a Flipt credential, and Flipt applies no authz behind it. The pod
-holds an SSH deploy key for `flipt-state`, and v2's git-write model implies a
-write would **commit and push to `main` directly** — inferred from the manifest,
-not observed. A write path that *may* bypass review on a file gating production
-is reason enough to refuse either way, which is why this skill does. Change flags
-by PR to `civitai/flipt-state`.
+**Never write through the API.** Flag state is reviewed material — change flags by
+opening a PR against the state repo, never by calling the API. This skill refuses
+writes for that reason.
 
-Treat that bearer value as a real secret: read it from env, never inline it, and
+Treat `FLIPT_API_TOKEN` as a live secret: read it from env, never inline it, and
 don't copy it into anything new.
 
 Flags live at `/api/v2/environments/{env}/namespaces/{ns}/resources/flipt.core.Flag`.

@@ -793,6 +793,7 @@ enum ModelType {
   Poses
   Wildcards
   Workflows
+  ComfyWorkflows
   Detection
   VisionLanguage
   CLIP
@@ -1803,6 +1804,7 @@ model Image {
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+  @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
 }
 
@@ -4207,7 +4209,7 @@ model ArticleMetric {
 }
 
 model Leaderboard {
-  id                 String  @id
+  id                 String        @id
   index              Int
   title              String
   description        String
@@ -4215,6 +4217,7 @@ model Leaderboard {
   query              String
   active             Boolean
   public             Boolean
+  domain             DomainColor[] @default([all])
 
   results LeaderboardResult[]
 }
@@ -4425,6 +4428,7 @@ enum HomeBlockType {
   CosmeticShop
   FeaturedModelVersion
   FeaturedCollections
+  Feed
 }
 
 model HomeBlock {

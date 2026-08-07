@@ -46,6 +46,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -331,6 +332,7 @@ export const getInfiniteImagesHandler = async ({
       return await getAllImagesIndex({
         ...input,
         user,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
@@ -349,6 +351,7 @@ export const getInfiniteImagesHandler = async ({
       return await getAllImages({
         ...input,
         user,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
@@ -431,6 +434,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // (modelVersionId filter) stay on BitDex where they're needed.
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
+        domain: getRequestBoardDomainColor(ctx.req),
         // Don't filter by model version/model for pinned posts â€” we already have
         // exact postIds. The ImageResourceNew join that modelVersionId triggers
         // excludes videos and other media that lack resource-detection entries,
@@ -474,6 +478,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
+        domain: getRequestBoardDomainColor(ctx.req),
         useCombinedNsfwLevel: !features.canViewNsfw,
         cursor,
         ids: fetchHidden ? versionHiddenImages : undefined,

@@ -30,7 +30,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
@@ -109,6 +109,11 @@ export const getAllModelsSchema = z.object({
   supportsGeneration: z.coerce.boolean().optional(),
   fromPlatform: z.coerce.boolean().optional(),
   followed: z.coerce.boolean().optional(),
+  // Restrict to creators currently on the "new & upcoming" board. Server resolves
+  // the board from this flag plus the request domain; the client sends no user list.
+  // booleanString, not z.coerce.boolean: the REST endpoint parses raw query strings,
+  // where coerce makes `?newCreators=false` truthy.
+  newCreators: booleanString().optional(),
   archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
@@ -266,6 +271,19 @@ export const toggleModelLockSchema = z.object({
 export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
 export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
 
+export type MinorFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto' | 'manual';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
+  prevMinorImageIds?: number[];
+};
+
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
   customMessage: string;
@@ -285,6 +303,10 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  minorFlagSnapshot: MinorFlagSnapshot;
+  minorHashDismissed: { at: string; by: number };
+  minorHashCleared: { at: string };
+  minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean;

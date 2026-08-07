@@ -10,7 +10,17 @@ export type NotificationProcessor = {
   prepareMessage: (notification: Omit<BareNotification, 'id'>) => NotificationMessage | undefined;
   getDetails?: (notifications: BareNotification[]) => BareNotification[];
   category: NotificationCategory;
-  defaultDisabled?: boolean;
+  /**
+   * Inverts what a `UserNotificationSettings` row MEANS for this type: subscribed, rather than the
+   * global default of opted-out. A processor may only set this if its query derives recipients by
+   * joining that table (`cosmetic-shop-item-added-to-section` is the only one) — pairing it with the
+   * usual `NOT EXISTS` clause ships the notification ON while the UI renders it OFF.
+   *
+   * Read by the toggle handler, not just the UI, so a row is never written with the wrong polarity.
+   * Opt-in types are excluded from the bulk on/off toggles: those pass a raw type list, and an INSERT
+   * meant as "off" would subscribe the user instead.
+   */
+  optIn?: boolean;
   showCategory?: boolean;
 };
 

@@ -11,7 +11,16 @@ This skill authors a new system prompt for an ecosystem the user names and (opti
 
 ## Inputs the user must provide
 
-1. **Ecosystem key** — the lowercase identifier matching what the orchestrator returns and what the codebase uses for that ecosystem (e.g. `happyhorse`, `flux2`, `wanvideo-25-i2v`). If unsure, ask the user; do not guess.
+1. **Ecosystem key** — the ecosystem's `key` from `packages/civitai-shared/src/basemodel.constants.ts`, lowercased. `MiniMaxH3` → `minimaxh3`, `Flux1Kontext` → `flux1kontext`, `WanVideo-25-I2V` → `wanvideo-25-i2v`, `HyV1` → `hyv1`. Confirm the key exists in that file before using it — note the copy at `src/shared/constants/basemodel.constants.ts` is stale.
+
+   **It is the AIR ecosystem value, lowercased** — the same string that appears in `urn:air:<ecosystem>:...`. `getAirEcosystem` in [air.ts](../../../src/shared/utils/air.ts) is the single source for both: `stringifyAIR` uses it, and so does `createPromptEnhancementStep`. If you know a model's AIR, you know its prompt-analysis key.
+
+   The consequence to watch: `getRootEcosystem` follows `parentEcosystemId`, so a child ecosystem never appears in an AIR and never reaches prompt analysis. Pony, Illustrious, and NoobAI all arrive as `sdxl`. Check `parentEcosystemId` before writing a guide — if the target has a parent, the guide belongs on the parent and has to serve every sibling.
+
+   **Not the engine name.** `engine: 'minimax-h3'` in the handler is a different identifier that happens to coincide with the ecosystem key for `kling`, `seedance`, and `veo3`. Guides filed under an engine name are dead — nothing reads them.
+
+   Handlers that build their own enhancement step (e.g. `ltx.handler.ts`) pass their graph ecosystem raw; `createPromptEnhancementStep` normalizes it, so they land on the same key as the generator.
+
 2. **Reference material** — at least one of:
    - A URL (HuggingFace model card, official announcement, provider docs page)
    - A pasted model description / prompting guide
@@ -43,7 +52,7 @@ If the user gave a description instead of a URL, mine the same fields out of it.
 
 Every guide follows the same shape. Stick to it — the prompt-analysis service depends on consistent structure across ecosystems.
 
-```
+```text
 You are a prompt engineering expert for <Model name and one-clause context>. Analyze the user's prompt and provide structured feedback.
 
 Ecosystem-specific rules:
@@ -86,42 +95,44 @@ Accept edits. Re-paste the final version after any changes.
 
 ### 5. Deploy to the orchestrator (optional)
 
-If the user wants the guide pushed live, use the orchestrator manager API. Two env vars are required:
-
-- `ORCHESTRATOR_ENDPOINT` — base URL of the orchestrator manager
-- `ORCHESTRATOR_ACCESS_TOKEN` — bearer token with manager scope
-
-Endpoints:
-
-- `GET /v1/manager/prompt-analysis/{ecosystem}` — check whether the ecosystem is already registered. 404 means it isn't.
-- `POST /v1/manager/prompt-analysis` with body `{ "ecosystem": "<key>" }` — register a new ecosystem. Expect 204.
-- `PUT /v1/manager/prompt-analysis/{ecosystem}` with body `{ "systemPrompt": "<full guide>", "modelId": "<analysis-model-id>", "samples": [] }` — set or replace the guide. Expect 204.
-
-Default `modelId` for new guides is `x-ai/grok-4.1-fast` unless the user specifies otherwise. Ask if you're not sure which analysis model to bind.
-
-A minimal one-shot deployment via `curl`:
+Use `manage.mjs` in this skill directory rather than hand-rolled `curl`. It reads `ORCHESTRATOR_ENDPOINT` and `ORCHESTRATOR_ACCESS_TOKEN` from the project `.env`, gates every state-changing call behind `--writable`, and verifies the readback after a `put`.
 
 ```bash
-# Register if not present (ignore 409/204 — both are fine)
-curl -sS -X POST "$ORCHESTRATOR_ENDPOINT/v1/manager/prompt-analysis" \
-  -H "Authorization: Bearer $ORCHESTRATOR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"ecosystem":"<key>"}'
+# What is already registered, and which ecosystems have a real guide
+node .claude/skills/add-prompt-enhancement-guide/manage.mjs status
 
-# Update the system prompt
-curl -sS -X PUT "$ORCHESTRATOR_ENDPOINT/v1/manager/prompt-analysis/<key>" \
-  -H "Authorization: Bearer $ORCHESTRATOR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data-binary @body.json
+# Read an existing guide as precedent before writing a sibling
+node .claude/skills/add-prompt-enhancement-guide/manage.mjs get seedance --prompt-only
+
+# Deploy — writes the file's contents as the system prompt, then reads it back
+node .claude/skills/add-prompt-enhancement-guide/manage.mjs put <key> --prompt-file guide.txt --writable
 ```
 
-Where `body.json` is `{ "systemPrompt": "...", "modelId": "x-ai/grok-4.1-fast", "samples": [] }`. Use a file rather than inline JSON because the system prompt contains backticks, newlines, and quotes that break shell escaping.
+Pass the guide as a plain-text file via `--prompt-file`; it contains backticks, newlines, and quotes that break shell escaping. `--file` takes a full JSON body instead if you need `samples`.
 
-If the user prefers Node/PowerShell, the same three calls work — register → PUT — and the response codes are the same.
+**Always bind new guides to `urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar`.** The orchestrator's built-in `PromptAnalysisGrain.DefaultModelId` is still `x-ai/grok-4.1-fast`, which is no longer used — a `put` that doesn't pass `--model` on a brand-new ecosystem silently inherits it. Pass `--model` explicitly.
+
+To rebind an existing guide without touching its text, use `set-model`:
+
+```bash
+node .claude/skills/add-prompt-enhancement-guide/manage.mjs set-model <key> \
+  --model 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar' --writable
+```
+
+It refuses on an ecosystem that has no guide of its own. Those report a `modelId` because the grain falls back to the const, not because anything was stored; writing one would freeze today's fallback text as that ecosystem's permanent guide and cut it off from future changes to the built-in default. Fix the const in `civitai-orchestration` instead.
+
+`register` is not a required step — a `put` registers the ecosystem on its own.
+
+**Two orchestrator behaviors that will mislead you** (both in `PromptAnalysisGrain.cs` / `PromptAnalysisController.cs` in `civitai-orchestration`):
+
+- **A GET registers.** `GetPromptAnalysisRequestAsync` calls `EnsureRegisteredAsync`, so reading an ecosystem that was never set up silently adds it to the registry with default config. GET never 404s and never distinguishes registered from not. Probing candidate key spellings pollutes the registry permanently — use `status` (one list call) instead of GETing guesses.
+- **Only POST lowercases the key.** GET/PUT/DELETE address the Orleans grain by the exact path string, so `MiniMaxH3` and `minimaxh3` are two separate configs. `manage.mjs` lowercases for you; `--raw-key` targets an odd-cased entry, which is the only way to `delete` one.
+
+The registry already contains junk from past probing (`notarealecosystem`, `SDLX`, `Flux.1 D`, bare `flux`, …). Don't add to it, and don't read a name's presence in `list` as evidence that anything uses it.
 
 ### 6. Verify
 
-After deploy, GET the ecosystem back and confirm the `systemPrompt` returned matches what was sent. Report success with the ecosystem key and a one-line summary of the guide's main points (encoder, weight-syntax stance, negative-prompt stance, any unique feature).
+`put` already reads the config back and fails loudly if the stored `systemPrompt` differs from what was sent. Report success with the ecosystem key and a one-line summary of the guide's main points (encoder, weight-syntax stance, negative-prompt stance, any unique feature).
 
 ## Anti-patterns to avoid
 
@@ -130,3 +141,4 @@ After deploy, GET the ecosystem back and confirm the `systemPrompt` returned mat
 - **Don't soften incompatibility.** "Weight syntax may not work" is wrong if the encoder ignores it entirely. Say "ignored" or "unsupported."
 - **Don't drop the two trailing Guidelines bullets** ("Limit recommendations to the 3 most impactful improvements" and "The enhanced prompt should be a single, ready-to-use prompt..."). They're load-bearing for the analyzer's output format.
 - **Don't push to the orchestrator without showing the user the guide first.** Once deployed, it shapes every prompt-analysis call for that ecosystem.
+- **Don't probe for the right key by GETing candidates.** Every GET registers what it reads, so guessing spellings leaves permanent junk behind. Derive the key from `basemodel.constants.ts` and confirm against one `status` call.

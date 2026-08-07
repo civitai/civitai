@@ -97,6 +97,8 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
 import { IframeHost } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import type { BlockInstall, ModelSlotContext } from '~/components/AppBlocks/types';
+// eslint-disable-next-line import/first
+import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
 
 /**
  * Analytics Phase 2 — block render/impression beacon on the MODEL slot host.
@@ -359,5 +361,47 @@ describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () 
     expect(mocks.balance).not.toHaveBeenCalled();
     expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
     replies.stop();
+  });
+});
+
+/**
+ * The readiness-announce SEAM on the model-slot host — the one link no pure
+ * unit test can reach, because it is a claim about how the COMPONENT is wired
+ * rather than about what the controller computes.
+ *
+ * What `notifyHello` DOES (and, crucially, does not do — it never cancels the
+ * retry loop or the readiness timeout) is pinned deterministically in
+ * `__tests__/iframeInitController.test.ts`. Asserting the CALL here rather than
+ * counting BLOCK_INIT posts is deliberate: a count would race the host's own
+ * 400ms retry tick and could pass for the wrong reason.
+ */
+describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
+  test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    expect(helloSpy).not.toHaveBeenCalled(); // positive control: nothing yet
+
+    postFromBlock('BLOCK_HELLO');
+
+    await vi.waitFor(() => expect(helloSpy).toHaveBeenCalled());
+    helloSpy.mockRestore();
+  });
+
+  test('an unrelated message type does NOT reach notifyHello (negative control)', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+
+    postFromBlock('BLOCK_HELLO_NOT_REALLY');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(helloSpy).not.toHaveBeenCalled();
+    helloSpy.mockRestore();
   });
 });

@@ -104,6 +104,8 @@ export class IframeInitController {
   private readonly opts: Required<IframeInitControllerOptions>;
   private started = false;
   private stopped = false;
+  /** One-shot latch for `notifyHello()` — see its doc comment. */
+  private helloHandled = false;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -151,6 +153,32 @@ export class IframeInitController {
   /** Whether start() has run (i.e. at least one BLOCK_INIT was posted). */
   hasStarted(): boolean {
     return this.started;
+  }
+
+  /**
+   * The block announced it is listening (`BLOCK_HELLO` — the inverted
+   * handshake). Push BLOCK_INIT NOW rather than waiting out the remainder of
+   * the current retry tick.
+   *
+   * 🔴 THIS IS AN ACCELERATOR, NOT A GATE. The retry interval and the readiness
+   * timeout armed by `start()` are untouched, so:
+   *   - a block on an OLDER SDK, which never sends `BLOCK_HELLO`, is served by
+   *     the unchanged retry loop exactly as it is today;
+   *   - a block that never announces AND never acks still hits `onReadyTimeout`
+   *     at `readyTimeoutMs` — it cannot hang the host.
+   * Nothing here may ever become a precondition for sending init.
+   *
+   * Honored AT MOST ONCE per controller: an announce is a one-shot signal from
+   * the block's transport, so a repeat is either a duplicate or noise, and
+   * answering every one would let a chatty frame amplify host work. An announce
+   * that lands BEFORE `start()` is recorded and costs nothing — `start()` posts
+   * init immediately on its own.
+   */
+  notifyHello(): void {
+    if (this.helloHandled) return;
+    this.helloHandled = true;
+    if (!this.started || this.stopped) return;
+    this.opts.sendInit();
   }
 
   /**

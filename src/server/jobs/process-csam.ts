@@ -54,6 +54,9 @@ const archiveCsamReportDataJob = createJob(
   { dedicated: true }
 );
 
+// Unfinished, deliberately not in `csamJobs` — the removal step has never been written, so
+// `contentRemovedAt` is never set and `remove-blocked-images` is currently the only thing that
+// deletes CSAM media. See docs/csam-retention-followups.md before wiring this up.
 const removeContentForCsamReportsJob = createJob(
   'remove-csam-content',
   '40 */1 * * *',

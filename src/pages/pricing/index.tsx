@@ -60,6 +60,7 @@ export default function Pricing() {
   const { subscription, subscriptionPaymentProvider, isFreeTier } = useActiveSubscription({
     checkWhenInBadState: true,
     buzzType: selectedBuzzType,
+    includeBuzzPurchase: true,
   });
 
   useEffect(() => {

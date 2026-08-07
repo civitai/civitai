@@ -63,32 +63,13 @@ node .claude/skills/postgres-query/query.mjs --json "SELECT id, username FROM \"
 
 ## Querying the dev database (cnpg)
 
-The dev database lives in the `cnpg-database-dev` namespace and is reached through the `civitai` SSH bastion, which forwards local port `15432` to the in-cluster pgbouncer pooler.
+The dev database is not reachable directly — it needs an SSH tunnel to an internal
+host. **Ask an infra owner for the connection recipe**; the specifics are not
+documented here because this repository is public (see the Security section of
+`CLAUDE.md`).
 
-### Setup
-
-1. Make sure your `~/.ssh/config` has the `civitai` host with this forward (already configured):
-
-   ```
-   # dev db (cnpg pgbouncer pooler)
-   LocalForward 15432 pgbouncer-pooler-dev.cnpg-database-dev.svc.cluster.local:5432
-   ```
-
-2. Open the tunnel in a terminal (stays open):
-
-   ```bash
-   ssh civitai -N
-   ```
-
-3. Make sure `DEV_DATABASE_URL` is set in `.claude/skills/postgres-query/.env`:
-
-   ```
-   DEV_DATABASE_URL=postgresql://postgres:<password>@localhost:15432/civitai?sslmode=no-verify&schema=public
-   ```
-
-   Use `sslmode=no-verify` (not `require`) — the cnpg pooler presents a
-   self-signed cert, and the connection is already encrypted inside the
-   SSH tunnel.
+Once the tunnel is up, set `DEV_DATABASE_URL` in
+`.claude/skills/postgres-query/.env` to point at your local forwarded port.
 
 ### Running dev queries
 
@@ -100,55 +81,22 @@ node .claude/skills/postgres-query/query.mjs --dev "SELECT count(*) FROM \"User\
 node .claude/skills/postgres-query/query.mjs --dev --writable "UPDATE ..."
 ```
 
-## Querying the notifications-db (DataPacket)
+## Querying the notifications-db
 
-The notifications-db lives on the DataPacket cluster. Direct network access from your laptop isn't allowed — connect via the SSH bastion.
+The notifications database is not reachable directly — it needs an SSH tunnel to an
+internal host, and access has to be granted first.
 
-### One-time setup
+**Ask an infra owner for access and the connection recipe.** The bastion host, the
+forward target, and where the credentials live are deliberately not documented here,
+because this repository is public — see the Security section of `CLAUDE.md`.
 
-1. Make sure your SSH public key has been added to the bastion. If you don't have access yet, ask zach to add your `~/.ssh/id_ed25519.pub` to:
-
-   `clusters/production/apps/notifications-db/secrets/bastion-ssh-keys.enc.yaml`
-
-2. Get the bastion host, port, and forward target from zach (or read
-   them out of the `datapacket-talos` repo: bastion deployment is at
-   `clusters/production/apps/notifications-db/bastion.yaml`, public
-   host/port are in `clusters/production/apps/minio/nginx-reverse-proxy.yaml`).
-
-3. Add an SSH config entry (`~/.ssh/config`) so the tunnel is one command:
-
-   ```
-   Host notif-bastion
-     HostName <bastion-host>
-     Port <bastion-port>
-     User bastion
-     IdentityFile ~/.ssh/id_ed25519
-     # Tunnel local 5433 → in-cluster ro pgbouncer pooler
-     LocalForward 5433 <ro-pooler-host>:5432
-     ServerAliveInterval 60
-   ```
-
-4. Add the connection string to your project `.env` (or `.claude/skills/postgres-query/.env`):
-
-   ```
-   NOTIFICATION_DB_REPLICA_URL=postgresql://notifications_readonly:<password>@127.0.0.1:5433/notification_prod?sslmode=disable
-   ```
-
-   Get the password from zach (stored in the `bastion-pg-creds.enc.yaml`
-   secret in the datapacket-talos repo). The same password is also
-   preloaded inside the bastion's `.pgpass` for in-pod use.
+Once you have the tunnel open, set `NOTIFICATION_DB_REPLICA_URL` in
+`.claude/skills/postgres-query/.env` to point at your local forwarded port.
 
 ### Running queries
 
 ```bash
-# 1. Open the SSH tunnel in one terminal (stays open)
-ssh notif-bastion
-
-#    The bastion's MOTD shows the available tables and tools.
-#    You can run ad-hoc psql in this terminal too — `psql` is preloaded
-#    with .pgpass and PGHOST/PGUSER env vars.
-
-# 2. In another terminal, run queries via the skill
+# With the tunnel open in another terminal:
 node .claude/skills/postgres-query/query.mjs --notifications \
   "SELECT count(*) FROM \"Notification\""
 

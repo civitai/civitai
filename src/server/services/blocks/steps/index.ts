@@ -453,8 +453,9 @@ export const AIR_URN_PREFIX = 'urn:air:';
  * Recursion budget for {@link containsAirReference}.
  *
  * 🔴 THE SCAN IS TOTAL, NOT PARTIAL — it must never throw. Its declared contract
- * is a `boolean` (and, one layer up, a `PolicyDecision`), never "may throw", and
- * `evaluateSubmittedStep` does not wrap it. An unbounded recursion over
+ * is a `boolean`, never "may throw", and neither of its callers wraps it: the
+ * registry's load-time clause-7 probe below, and the request-time re-assert in
+ * `blocks.router.ts`'s step submit branch. An unbounded recursion over
  * attacker-shaped JSON hits `RangeError: Maximum call stack size exceeded` at
  * roughly 5k nesting levels, which a ~10 KB `[[[[…]]]]` request body reaches
  * trivially — a free 500 from a value the guard was supposed to *decide* on.
@@ -620,12 +621,12 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  *
  * 🔴 `mediaRating.blockedReason` USED TO BE ON THAT LIST AND WAS REMOVED, not
  * overlooked. `blockedReason` is platform-AUTHORED moderation copy, not
- * external free text, and it is now recorded per-row in
- * `platformDiagnosticFields` (`./request-time-policy`) across the 24 `$type`s
- * whose output carries it — a `Blob` field, so it reaches far more rows than
- * `mediaRating` alone. `mediaRating` remains `undecidedNeedsDomainOwner` on its
- * own merits (`labels[]`, `ageClassification.error`), which is why deleting it
- * from this list licenses nothing.
+ * external free text. It was for a time also recorded per-row in a parallel
+ * request-time policy table; that table was scaffolding for a pivot that was
+ * dropped and has been deleted, so no per-row record of it survives anywhere.
+ * `mediaRating` remains `undecidedNeedsDomainOwner` on its own merits
+ * (`labels[]`, `ageClassification.error`), which is why deleting it from this
+ * list licenses nothing.
  *
  * An unlisted text-IN type registering as `'none'` skips an
  * audit it should run — a real gap, RECORDED AND NOT CLOSED, and a different

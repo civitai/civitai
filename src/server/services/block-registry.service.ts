@@ -3113,7 +3113,9 @@ export class BlockRegistry {
     const queryLike = query ? `%${query.toLowerCase()}%` : null;
     const categoryFilter = category ?? null;
 
-    // Keyset cursor = `${sortKey} ${id}` of the last row of the prior page.
+    // Keyset cursor of the last row of the prior page: `sortKey␟id`, or
+    // `sortKey␟id␟mean` for the `rating` sort. ␟ is CURSOR_SEPARATOR, the ASCII
+    // unit separator \x1f — NOT a NUL, which is what this comment used to claim.
     // Split it back into (sortKey, id, mean) so the WHERE clause resumes after
     // it and the `rating` sort reuses the SAME pinned mean across all pages.
     const { cursorSortKey, cursorId, cursorMean } = decodeMarketplaceCursor(cursor);

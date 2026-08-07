@@ -2,9 +2,30 @@ name: Lint
 
 # Regression guard for code quality.
 #
-# Typecheck is full-repo and BLOCKING on internal PRs, and is the only real gate
-# here. It is skipped on fork PRs (see the job comment), so a fork gets no gating
-# from this workflow at all.
+# Typecheck is full-repo, and as of talos-infra #855 it is now a NARROW job: it
+# runs only where the in-cluster Tekton `pr-check` pipeline does not reach. For
+# an internal PR targeting `main` — every PR merged here in living memory — the
+# authoritative typecheck is the `tekton / typecheck` commit status, and this job
+# skips. See the `typecheck` job comment for the two cases it still covers and
+# how each was measured.
+#
+# 🔴 Read this before treating the fork case as covered. The job carries no
+# secret and is not gated by us on the PR's origin — but GitHub gates it for us,
+# and the practical outcome is that FORK PRs GET NO TYPECHECK AT ALL TODAY.
+# Measured 2026-08-07 over all 16 fork-originated PRs among the ~500 most recent
+# PRs: 11 have a retained `Lint` run and ALL ELEVEN sit at
+# `conclusion=action_required` (awaiting maintainer approval, zero repository
+# code executed); the other 5 are closed PRs whose runs have aged out. `gh pr
+# checks` on the open ones reports "no checks reported". Not one fork PR has ever
+# produced a Typecheck result.
+#
+# Two earlier revisions of this comment got this wrong in opposite directions —
+# first "typecheck is skipped on fork PRs", then (correcting that) "it runs on
+# fork PRs TOO". Both were reasoning from the workflow's CONFIGURATION, which
+# says nothing about whether the job RUNS. The configuration genuinely does not
+# gate on origin; the approval policy does. Keep the job — it is where fork
+# coverage will land the moment a maintainer approves a run, and the sandbox is
+# GitHub's rather than ours — but do not cite it as active fork protection.
 #
 # ESLint and Prettier are split by how the PR touched the file:
 #
@@ -149,12 +170,46 @@ jobs:
           echo "all modified files formatted"
 
   typecheck:
-    name: Typecheck
+    name: Typecheck (fork PRs / non-main base)
     runs-on: ubuntu-latest
-    # Runs on forks now. event-engine-common is public and fetched over HTTPS, so
-    # this needs no secret — which is why the ssh-agent step is gone rather than
-    # merely unused. Leaving it in would have kept the fork case broken AND masked
-    # the HTTPS path: webfactory/ssh-agent rewrites
+    # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
+    # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
+    # the `tekton / typecheck` commit status. Running this job as well typechecks
+    # the same tree a second time on every internal PR. Tekton is the one that
+    # kept reporting through the 2026-08-06 Actions `major_outage` — it POLLS the
+    # PR API on a 1m interval rather than taking a webhook, and the incident
+    # degraded webhook delivery.
+    #
+    # This `if:` is the complement of what Tekton covers. Both disjuncts were
+    # measured on 2026-08-07, not assumed:
+    #
+    #   fork PR  — the Tekton side gates fork-authored PRs away by author
+    #     association, deliberately: it executes PR code on our own
+    #     infrastructure, and GitHub's untrusted-code sandbox is doing work we
+    #     would otherwise have to build. So this job is the only typecheck a fork
+    #     PR can get. ⚠️ In practice this arm is DORMANT — see the header.
+    #
+    #   base != main — the Tekton side only watches PRs targeting `main`, so a
+    #     PR targeting `release` gets no check from it at all. Rare but real: 4
+    #     PRs have ever targeted `release` (0 of the last 200 merged) — most
+    #     recent #2582, closed 2026-06-16; last merged #2248, 2026-05-09. Rare is
+    #     what makes this cheap, not a reason to drop it.
+    #
+    # Deleting either disjunct silently removes the only typecheck on that path.
+    # The honest way to retire this job entirely is to widen Tekton's coverage
+    # first and prove it on a real PR of each shape.
+    #
+    # The name changed with the gate so the checks list explains its own absence.
+    # Safe: neither `main` nor `release` has any required_status_checks (verified
+    # 2026-08-07 via the branch-protection API), so no merge gate keys on the old
+    # name.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
+    # event-engine-common is public and fetched over HTTPS, so this needs no
+    # secret — which is why the ssh-agent step is gone rather than merely unused.
+    # Leaving it in would have kept the fork case broken AND masked the HTTPS
+    # path: webfactory/ssh-agent rewrites
     # url."git@key-<sha>.github.com:<owner>/<repo>".insteadOf "https://github.com/<owner>/<repo>"
     # for any loaded key whose comment names a github.com repo, silently sending
     # the new HTTPS URL back over SSH.
@@ -187,8 +242,14 @@ jobs:
     runs-on: ubuntu-latest
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
-    # on purpose: they need Chromium and carry the cold-optimizeDeps flake
-    # documented at vitest.config.mts:98-124.
+    # on purpose: they need Chromium, which this job does not install. That is
+    # the whole reason. This comment used to add "and carry the cold-optimizeDeps
+    # flake documented at vitest.config.mts:98-124", which was wrong: those lines
+    # document the FIX for that flake, not an open one. vitest.config.mts:109-127
+    # dedupes React and pre-bundles `vitest-browser-react` + the JSX runtimes so
+    # the optimize pass happens BEFORE the run instead of reloading mid-run, and
+    # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
+    # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
     # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
     # timed out 5 tests under machine load; every one of them passed in isolation
@@ -219,3 +280,103 @@ jobs:
 
       - name: Unit tests
         run: pnpm run test:unit:run
+
+  packages:
+    name: Package unit tests
+    runs-on: ubuntu-latest
+    # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
+    # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
+    # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
+    # suite. That is not a small gap: the schema-drift detector shipped 81 tests into it,
+    # and two of them had been RED on `main` since #3592 corrected the schema out from under
+    # their assertions, with nothing to say so.
+    #
+    # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
+    # buy: `main` has branch protection but NO required_status_checks, so a red check here
+    # does not prevent a merge. The difference from `unit` is that this renders RED rather
+    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
+    # hides. Making it an actual interlock means adding "Package unit tests" to the required
+    # checks, which is a repo-settings change, not a workflow one.
+    #
+    # The reasoning that made `unit` report-only still does not transfer, which is why this
+    # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
+    # import/transform phase per file, and it timed out five tests under load. This is 616
+    # tests with no browser, no database and no Next module graph — ~15s locally.
+    #
+    # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
+    # `.env`, which does not exist on a runner, so its 4 DB-backed tests across two files
+    # (3 in tag.db.explain, 1 in enum-array-parsers.explain) report as skipped. They are
+    # visible as skips in the summary rather than as a silent absence.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Package unit tests
+        run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
+
+      # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
+      # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
+      # workspace package with a vitest config and a test file on disk must appear in the
+      # results — so the job fails when the executed set shrinks, which is the regression the
+      # totals cannot see.
+      - name: Assert every package suite actually ran
+        if: always()
+        run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
+
+  apps:
+    name: App unit tests
+    runs-on: ubuntu-latest
+    # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
+    # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
+    # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
+    # in CI. They only ever ran for whoever remembered `pnpm --filter <app> test` by hand.
+    #
+    # A SEPARATE job rather than folding the apps into `packages`, because the two selectors
+    # have to stay disjoint anyway (see the `apps/*` note in vitest.config.mts) and separate
+    # jobs keep the blame attributable: a red app suite should not make the package suites
+    # look broken. Costs one more `pnpm install`; these suites run in seconds.
+    #
+    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
+    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # no required_status_checks — it is a signal someone has to look at and dismiss.
+    #
+    # `apps/event-engine` and `apps/moderator` are absent on purpose: neither has a vitest
+    # config, and event-engine's one test file is a `node:test` suite by deliberate choice.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: App unit tests
+        run: pnpm run test:apps:run --reporter=default --reporter=json --outputFile=apps-report.json
+
+      # Same positive control as the packages job, and it earns its keep harder here: these
+      # projects are named by hand (`app:auth`, ...), so an app that loses its `test.name`
+      # stops being selected while the other four keep the run green and exit 0. Measured,
+      # not assumed — see the script header.
+      - name: Assert every app suite actually ran
+        if: always()
+        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps

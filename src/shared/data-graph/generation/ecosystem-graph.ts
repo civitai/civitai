@@ -74,6 +74,7 @@ import { maiGraph } from './mai-graph';
 import { reveGraph } from './reve-graph';
 import { mageFlowGraph } from './mage-flow-graph';
 import { seedanceGraph } from './seedance-graph';
+import { flux3VideoGraph } from './flux3-video-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { polyGenGraph } from './polygen-graph';
@@ -422,6 +423,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Grok'] as const, graph: grokGraph },
     { values: ['Seedance'] as const, graph: seedanceGraph },
     { values: ['HappyHorse'] as const, graph: happyHorseGraph },
+    { values: ['Flux3Video'] as const, graph: flux3VideoGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the

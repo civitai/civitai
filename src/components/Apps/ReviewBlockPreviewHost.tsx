@@ -227,6 +227,9 @@ export function ReviewBlockPreviewHost({
         blockInstanceId={mintData.blockInstanceId}
         appName={mintData.appName}
         iframeSrc={iframeSrc}
+        // Moderator review surfaces (the review modal and the full-page
+        // preview both mount PageBlockHost through this component).
+        surface="review-preview"
         // Clamp the manifest sandbox to the review render-only set: drop
         // allow-popups / allow-downloads / allow-modals / allow-pointer-lock (+ the
         // top-nav / escape tokens intersectSandbox already strips) so an untrusted

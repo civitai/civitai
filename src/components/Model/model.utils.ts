@@ -46,6 +46,7 @@ const modelQueryParamSchema = z
     hidden: booleanString(),
     archived: booleanString(),
     followed: booleanString(),
+    newCreators: booleanString(),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'private', 'draft', 'training']),
     collectionId: z.coerce.number(),

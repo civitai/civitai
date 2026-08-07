@@ -869,6 +869,7 @@ const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
 /** Model types whose primary file is an archive/config rather than model weights */
 const archivePrimaryModelTypes: ModelType[] = [
   ModelType.Workflows,
+  ModelType.ComfyWorkflows,
   ModelType.Poses,
   ModelType.Wildcards,
   ModelType.Other,
@@ -1233,6 +1234,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...archiveExts, ...configExts],
       fileTypes: [...primaryFileTypesByModelType.Workflows],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 1,
+    },
+  },
+  ComfyWorkflows: {
+    primary: {
+      extensions: [...archiveExts, ...configExts],
+      fileTypes: [...primaryFileTypesByModelType.ComfyWorkflows],
       maxFiles: 1,
     },
     additional: {

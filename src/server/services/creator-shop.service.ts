@@ -9,10 +9,13 @@ import {
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import {
+  appendItemHistory,
   buildCosmeticData,
   creatorGrantRemaining,
   patchCosmeticData,
 } from '~/server/services/creator-shop.data';
+import type { StickerEconomics } from '~/shared/utils/sticker-token';
+import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -39,6 +42,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type {
   CosmeticPurchaseMeta,
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
@@ -65,6 +69,7 @@ import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
   cosmeticPriceFloor,
+  stickerPerUseFloor,
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
@@ -232,6 +237,9 @@ const buildRightsAffirmation = (userId: number) => ({
   statement: RIGHTS_AFFIRMATION_STATEMENT,
 });
 
+const offsetsLabel = (offsets?: CosmeticOffsets | null) =>
+  offsets ? `T${offsets.top} R${offsets.right} B${offsets.bottom} L${offsets.left}` : undefined;
+
 // ---------------------------------------------------------------------------
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
@@ -252,6 +260,7 @@ export const submitCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  pricePerUse,
   rightsAffirmed,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The zod schema already requires it; this keeps the item from ever being
@@ -274,6 +283,13 @@ export const submitCreatorShopItem = async ({
         stickerUses * STICKER_MIN_BUZZ_PER_USE
       } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     );
+
+  // Top-up price is sticker-only and has its own floor — the list floor governs
+  // an offer of N uses, which is a different thing from one use.
+  const stickerPricePerUse = cosmeticType === CosmeticType.Sticker ? pricePerUse : undefined;
+  const perUseFloor = stickerPerUseFloor(cosmeticType);
+  if (stickerPricePerUse && stickerPricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -312,14 +328,10 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(
-            cosmeticType,
-            imageUrl,
-            animated,
-            offsets,
-            normalizedSlug,
-            stickerUses
-          ) as Prisma.InputJsonValue,
+          data: buildCosmeticData(cosmeticType, imageUrl, animated, offsets, normalizedSlug, {
+            uses: stickerUses,
+            pricePerUse: stickerPricePerUse,
+          }) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
@@ -343,6 +355,14 @@ export const submitCreatorShopItem = async ({
             sellerShare: sellableByOthers ? sellerShare : 0,
             acceptsBlueBuzz,
             rightsAffirmation: buildRightsAffirmation(userId),
+            history: [
+              {
+                at: new Date().toISOString(),
+                userId,
+                kind: 'submitted',
+                status: CosmeticShopItemStatus.PendingReview,
+              },
+            ],
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
@@ -365,6 +385,10 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
+      // Prior values, so an edit can record what it moved from.
+      title: true,
+      description: true,
+      availableQuantity: true,
       cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
@@ -391,6 +415,7 @@ export const updateCreatorShopItem = async ({
   offsets,
   slug,
   uses,
+  pricePerUse,
   rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
@@ -422,11 +447,21 @@ export const updateCreatorShopItem = async ({
   const nextSlug = requestedSlug ?? existingSlug;
   const slugChange = requestedSlug !== undefined && requestedSlug !== existingSlug;
   // Same carry-forward reasoning as the slug: rebuilding `data` would drop the
-  // use count, and buyers' balances were sized by it.
-  const existingUses = (existing.cosmetic.data as { uses?: number } | null)?.uses;
+  // economics, and buyers' balances and top-ups were priced by them. Read as one
+  // object so a field added later is carried without a new call site to update.
+  const existingEconomics = stickerEconomicsFromCosmeticData(existing.cosmetic.data);
   const requestedUses = isStickerItem ? uses : undefined;
-  const nextUses = requestedUses ?? existingUses;
-  const usesChange = requestedUses !== undefined && requestedUses !== existingUses;
+  const requestedPricePerUse = isStickerItem ? pricePerUse : undefined;
+  const nextEconomics: StickerEconomics = {
+    ...existingEconomics,
+    ...(requestedUses !== undefined ? { uses: requestedUses } : {}),
+    ...(requestedPricePerUse !== undefined ? { pricePerUse: requestedPricePerUse } : {}),
+  };
+  const nextUses = nextEconomics.uses;
+  const usesChange = requestedUses !== undefined && requestedUses !== existingEconomics.uses;
+  const pricePerUseChange =
+    requestedPricePerUse !== undefined && requestedPricePerUse !== existingEconomics.pricePerUse;
+  const economicsChange = usesChange || pricePerUseChange;
 
   // Cross-listings point at another creator's shared cosmetic — the seller may
   // never touch its art/name/description/payment terms, only price & quantity.
@@ -441,7 +476,7 @@ export const updateCreatorShopItem = async ({
       acceptsBlueBuzz !== undefined ||
       offsetsChange ||
       slugChange ||
-      usesChange)
+      economicsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
@@ -462,6 +497,9 @@ export const updateCreatorShopItem = async ({
         nextUses * STICKER_MIN_BUZZ_PER_USE
       } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
     );
+  const perUseFloor = stickerPerUseFloor(existing.cosmetic.type);
+  if (nextEconomics.pricePerUse && nextEconomics.pricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
@@ -517,7 +555,7 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
-      // nextUses matters here: replacing artwork REBUILDS `data` rather than
+      // The economics matter here: replacing artwork REBUILDS `data` rather than
       // patching it (patchCosmeticData returns artworkData wholesale), so
       // omitting uses silently turned a finite sticker into an unlimited one for
       // every future buyer.
@@ -527,7 +565,7 @@ export const updateCreatorShopItem = async ({
         animated,
         nextOffsets,
         nextSlug,
-        nextUses
+        nextEconomics
       ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
@@ -541,7 +579,7 @@ export const updateCreatorShopItem = async ({
     artChanged ||
     offsetsChange ||
     slugChange ||
-    usesChange;
+    economicsChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -555,16 +593,49 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
+  const changes: CosmeticShopItemHistoryChange[] = [];
+  const recordChange = (
+    field: string,
+    from: string | number | null | undefined,
+    to: string | number | null | undefined
+  ) => {
+    if (from !== to) changes.push({ field, from, to });
+  };
+  if (name !== undefined) recordChange('name', existing.title, name);
+  if (description !== undefined) recordChange('description', existing.description, description);
+  // The pre-swap url, captured before `data` is rebuilt — it's the only way the
+  // queue can show what the artwork used to be.
+  if (artChanged) recordChange('artwork', existingData.url as string | undefined, imageUrl);
+  if (offsetsChange)
+    recordChange('offsets', offsetsLabel(existingData.offsets), offsetsLabel(nextOffsets));
+  if (slugChange) recordChange('slug', existingSlug, nextSlug);
+  if (usesChange) recordChange('uses', existingEconomics.uses, nextEconomics.uses);
+  if (pricePerUseChange)
+    recordChange('pricePerUse', existingEconomics.pricePerUse, nextEconomics.pricePerUse);
+  if (price != null) recordChange('price', existing.unitAmount, price);
+  if (availableQuantity !== undefined)
+    recordChange('quantity', existing.availableQuantity, availableQuantity);
+
+  const reviewNote = !backToReview
+    ? undefined
+    : isPublished
+    ? `Returned to review: price moved more than ${Math.round(
+        PRICE_REVIEW_THRESHOLD * 100
+      )}% from the approved ${base} Buzz`
+    : existing.status === CosmeticShopItemStatus.RequestedChanges
+    ? 'Resubmitted for review after requested changes'
+    : 'Edited while awaiting review';
+
   if (contentChanged) {
     const patchedData = patchCosmeticData({
       existingData,
       artworkData: artwork?.data as Record<string, unknown> | undefined,
       offsetsChange,
       slugChange,
-      usesChange,
+      economicsChange,
       nextOffsets,
       nextSlug,
-      nextUses,
+      nextEconomics,
     }) as Prisma.InputJsonValue | undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
@@ -576,6 +647,31 @@ export const updateCreatorShopItem = async ({
     });
   }
 
+  const updatedMeta: CosmeticShopItemMeta = {
+    ...meta,
+    ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
+    ...(artwork
+      ? {
+          autoChecks: artwork.checks,
+          imageMeta: artwork.imageMeta,
+          imageHash: artwork.imageHash,
+        }
+      : {}),
+    ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+  };
+  // An edit that moved nothing (e.g. a resubmit with identical values) isn't
+  // worth a row in the history.
+  const nextMeta = changes.length
+    ? appendItemHistory(updatedMeta, {
+        at: new Date().toISOString(),
+        userId,
+        kind: 'edited',
+        status,
+        note: reviewNote,
+        changes,
+      })
+    : updatedMeta;
+
   return dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
@@ -586,18 +682,7 @@ export const updateCreatorShopItem = async ({
       status,
       // Clear the prior verdict whenever it re-enters the review queue.
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
-      meta: {
-        ...meta,
-        ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
-        ...(artwork
-          ? {
-              autoChecks: artwork.checks,
-              imageMeta: artwork.imageMeta,
-              imageHash: artwork.imageHash,
-            }
-          : {}),
-        ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
-      } as Prisma.InputJsonValue,
+      meta: nextMeta as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });
@@ -1236,6 +1321,29 @@ export const reviewCreatorShopItem = async ({
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
+  const nextStatus =
+    action === 'approve'
+      ? CosmeticShopItemStatus.Published
+      : action === 'reject'
+      ? CosmeticShopItemStatus.Rejected
+      : action === 'revert'
+      ? CosmeticShopItemStatus.PendingReview
+      : CosmeticShopItemStatus.RequestedChanges;
+  // The verdict is recorded on the history too, not just on rejectionReason —
+  // the next edit clears that column, and a re-review needs to see what was
+  // said last time.
+  const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
+    appendItemHistory(
+      { ...meta, ...extra },
+      {
+        at: now.toISOString(),
+        userId: reviewerId,
+        kind: 'reviewed',
+        status: nextStatus,
+        action,
+        note: rejectionReason ?? undefined,
+      }
+    ) as Prisma.InputJsonValue;
 
   const updated =
     action === 'approve'
@@ -1245,9 +1353,9 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status: CosmeticShopItemStatus.Published,
+            status: nextStatus,
             rejectionReason: null,
-            meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
           },
           select: creatorShopItemSelect,
         })
@@ -1258,13 +1366,9 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status:
-              action === 'reject'
-                ? CosmeticShopItemStatus.Rejected
-                : action === 'revert'
-                ? CosmeticShopItemStatus.PendingReview
-                : CosmeticShopItemStatus.RequestedChanges,
+            status: nextStatus,
             rejectionReason: rejectionReason ?? null,
+            meta: reviewedMeta({}),
           },
           select: creatorShopItemSelect,
         });
@@ -1383,10 +1487,16 @@ export const takedownCosmeticShopItem = async ({
       status: CosmeticShopItemStatus.Archived,
       listed: false,
       archivedAt: now,
-      meta: {
-        ...meta,
-        takedown: { reason, moderatorId, at: now.toISOString() },
-      } as Prisma.InputJsonValue,
+      meta: appendItemHistory(
+        { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
+        {
+          at: now.toISOString(),
+          userId: moderatorId,
+          kind: 'takedown',
+          status: CosmeticShopItemStatus.Archived,
+          note: reason,
+        }
+      ) as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });

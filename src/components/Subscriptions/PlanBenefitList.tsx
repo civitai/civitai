@@ -1,6 +1,7 @@
 import type { DefaultMantineColor, ThemeIconVariant } from '@mantine/core';
-import { Anchor, Divider, List, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Divider, List, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
+import { finiteOrNull, maxPaidAccessPrice } from '@civitai/buzz';
 
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
@@ -22,6 +23,7 @@ const defaultBenefits = [
   { content: 'Early access to new features' },
   {
     tiers: ['bronze', 'silver', 'gold'], // Not available in supporter / founder.
+    creatorProgram: true,
     content: (
       <Text>
         <Text td="underline" component="a" href="/creator-program" target="_blank">
@@ -32,16 +34,34 @@ const defaultBenefits = [
     ),
   },
   {
+    // Deliberately NOT creatorProgram-gated: the price caps ride on the tier itself, so
+    // Buzz-purchased memberships keep them even though they get no Creator Program.
     tiers: ['bronze', 'silver', 'gold'],
-    content: (
-      <Text>
-        Higher{' '}
-        <Text td="underline" component="a" href="/creator-program" target="_blank">
-          licensing-fee &amp; paid-access price caps
-        </Text>{' '}
-        at higher tiers
-      </Text>
-    ),
+    // Rendered per card from the enforced cap table, so a card can never advertise a price the server
+    // would reject. The un-owned rendering (greyed card, or a tier with no cap entry) falls back to the
+    // qualitative line rather than quoting someone else's ceiling.
+    content: (tier?: string) => {
+      const cap = tier ? finiteOrNull(maxPaidAccessPrice(tier)) : undefined;
+      return (
+        <Text>
+          {cap === undefined ? (
+            <>Higher </>
+          ) : (
+            <>
+              Charge up to{' '}
+              <Text component="span" fw={600}>
+                {cap === null ? 'any price' : `${cap.toLocaleString()} ⚡`}
+              </Text>{' '}
+              for paid access, and higher{' '}
+            </>
+          )}
+          <Text td="underline" component="a" href="/creator-program" target="_blank">
+            licensing-fee caps
+          </Text>
+          {cap === undefined ? <> at higher tiers</> : <> (5× for video models)</>}
+        </Text>
+      );
+    },
   },
   {
     content: 'Unrestricted generation with Blue Buzz',
@@ -55,6 +75,7 @@ export const PlanBenefitList = ({
   benefits,
   useDefaultBenefits = true,
   defaultBenefitsDisabled,
+  creatorProgramDisabled,
   tier,
   buzzType,
 }: Props) => {
@@ -99,11 +120,20 @@ export const PlanBenefitList = ({
           <Divider />
           <List size="md" center>
             <Stack gap="xs">
-              {defaultBenefits.map(({ content, tiers, subType }, index) => {
+              {defaultBenefits.map(({ content, tiers, subType, creatorProgram }, index) => {
                 const isUnavailable =
-                  defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
+                  defaultBenefitsDisabled ||
+                  (tiers && (!tier || !tiers.includes(tier))) ||
+                  (creatorProgram && creatorProgramDisabled);
 
                 if (subType && buzzType !== subType) return null;
+
+                // A greyed-out card is showing a tier the viewer doesn't have; quoting its number there
+                // would read as an entitlement they hold.
+                const resolved =
+                  typeof content === 'function'
+                    ? content(isUnavailable ? undefined : tier)
+                    : content;
 
                 return (
                   <List.Item
@@ -124,7 +154,7 @@ export const PlanBenefitList = ({
                     }
                     key={index}
                   >
-                    {content}
+                    {resolved}
                   </List.Item>
                 );
               })}
@@ -140,6 +170,8 @@ type Props = {
   benefits: BenefitItem[];
   useDefaultBenefits?: boolean;
   defaultBenefitsDisabled?: boolean;
+  /** Crosses out the Creator Program perks regardless of tier — for Buzz-purchased plans. */
+  creatorProgramDisabled?: boolean;
   tier?: string;
   buzzType?: string;
 };

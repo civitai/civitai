@@ -204,10 +204,10 @@ async function propagateBlock(touched: TouchedImage[]) {
 }
 
 /**
- * `trg_blocked_image_delete_queue` only fires on an `ingestion` transition, so the rows this pass
- * re-pointed off `AiNotVerified` carry no queue row — and neither do rows blocked in the week the
- * trigger migration's backfill deliberately excluded. `remove-blocked-images` reads nothing but
- * the queue, so without this they are retained forever on an account that asked to be deleted.
+ * Belt and braces. `trg_blocked_image_delete_queue` covers the `blockedFor` repoint this pass
+ * performs, but `remove-blocked-images` reads nothing but the queue, so a gap there retains
+ * content forever on an account that asked to be deleted. `ON CONFLICT DO NOTHING` keeps this
+ * from restamping a clock the trigger already set.
  */
 async function queueBlockedImagesForDelete(userId: number) {
   await dbWrite.$executeRaw`
@@ -260,9 +260,9 @@ async function blockUserImages(
       const touched: TouchedImage[] = [];
 
       if (hide.length) {
-        // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it — and it is the
-        // clock remove-blocked-images counts the `moderated` retention window from, so restamping
-        // an already-blocked row would push its purge out another 7 days.
+        // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it. The
+        // `ingestion <> 'Blocked'` guard is what preserves the real prior ingestion in metadata —
+        // re-running over an already-blocked row would record 'Blocked' as its own predecessor.
         touched.push(
           ...(await dbWrite.$queryRaw<TouchedImage[]>`
             UPDATE "Image"

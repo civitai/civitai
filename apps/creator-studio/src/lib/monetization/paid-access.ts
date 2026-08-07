@@ -73,6 +73,8 @@ export type PaidAccessConfig = {
   generationPrice?: number;
   // Gate the download but leave generation free for everyone (no price, no trial limit).
   freeGeneration?: boolean;
+  // Accept Blue Buzz at the same price — and be paid in it (Blue Buzz is not withdrawable).
+  acceptsBlueBuzz?: boolean;
   // Free generations a non-buyer gets before purchase is required.
   freePreviewGenerations: number;
   donationGoalEnabled: boolean;
@@ -95,6 +97,9 @@ export const CREATOR_USAGE_CONTROLS = [
 ] as const;
 
 export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
+
+export const GENERATION_ONLY_HINT =
+  'On-site-generation-only resources require a Gold membership.';
 
 export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
   CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

@@ -105,11 +105,15 @@ export function endpointBucketLabel(endpoint: string): string {
   }
 
   // Everything else is a REST path from `normalizeEndpoint(req.url)`. Passed through
-  // verbatim, and NOT claimed to be safe or pretty: that function templates only
-  // numeric and ULID-shaped segments, so a slug/UUID segment survives, the row is
-  // written from `res.on('finish')` regardless of status code, and the value is
-  // therefore partly caller-influenced. React escapes it (no injection) and the cell
-  // clamps to one line. Inventing a name for it would be worse than showing it.
+  // verbatim, and NOT claimed to be pretty. Since `KNOWN_STATIC_ENDPOINT_SEGMENTS` landed
+  // that function is allowlist-first — only the static segments of the wrapped routes
+  // survive, everything else collapses to `:id`/`:ulid`/`:uuid`/`:seg` — so a NEW row's
+  // path is bounded and no longer caller-influenced. Two caveats before you treat it as a
+  // closed set: rows written before that change were not backfilled and still hold
+  // slugs/UUIDs verbatim, and the row is
+  // written from `res.on('finish')` regardless of status code, so 4xx paths appear too.
+  // React escapes it (no injection) and the cell clamps to one line. Inventing a name for
+  // it would be worse than showing it.
   return endpoint;
 }
 

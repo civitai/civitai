@@ -349,6 +349,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
+    // Restrict the feed to creators currently on the "new & upcoming" board. The
+    // board id is resolved server-side from this flag plus the request domain —
+    // the client never supplies a user list.
+    newCreators: z.boolean().optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),

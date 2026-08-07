@@ -71,7 +71,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   },
   // Moveable (if created through API)
   'cosmetic-shop-item-added-to-section': {
-    defaultDisabled: true,
+    optIn: true,
     displayName: 'Shop: New Products Available',
     category: NotificationCategory.System,
     prepareMessage: () => ({

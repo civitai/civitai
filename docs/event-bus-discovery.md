@@ -34,8 +34,8 @@ Three source materials seeded this, plus two pieces of Civitai prior art found d
 
 1. **The Justin/Briant transcript** — the verbal pitch.
 2. **The earlier Claude conversation** ("Island-based UI architecture…") — islands → plugin platform → **mediated event bus** → strangler migration.
-3. **The `hub` .NET repo** (`C:\work\hub`) — a partially-built reference implementation of the pattern (§2).
-4. **`metric-event-watcher`** (`C:\work\metric-event-watcher`) — Civitai's **own production CDC pipeline**, found mid-discovery; reference-only (§2b).
+3. **The `hub` .NET repo** (`<local-path>/`) — a partially-built reference implementation of the pattern (§2).
+4. **`metric-event-watcher`** (`<local-path>/`) — Civitai's **own production CDC pipeline**, found mid-discovery; reference-only (§2b).
 
 The core idea, in one sentence:
 
@@ -54,7 +54,7 @@ Two things are conflated in the conversation and worth separating:
 
 ## 2. Reference: the `hub` repo (.NET) — patterns to port, not code to import
 
-**~70% of the backend *patterns* for layer A are already worked out** in `C:\work\hub`, a .NET 5 / Kafka solution. It de-risks the design because the hard primitives have been built once. **Crucial caveat:** `hub` is .NET; the Civitai monorepo is 100% TypeScript (§4) — so `hub` is a *design reference*, not a dependency.
+**~70% of the backend *patterns* for layer A are already worked out** in `<local-path>/`, a .NET 5 / Kafka solution. It de-risks the design because the hard primitives have been built once. **Crucial caveat:** `hub` is .NET; the Civitai monorepo is 100% TypeScript (§4) — so `hub` is a *design reference*, not a dependency.
 
 ### What `hub` proves out
 
@@ -403,9 +403,9 @@ Roughly **6–8 weeks** to a credible Phase 0. OTA hot-loading and the frontend 
 ---
 
 ### Appendix: source map
-- Vision: `C:\Users\Briant\Downloads\transcript.md`
-- Long-form design: `C:\Users\Briant\Downloads\Claude-Island-based UI architecture for micro app systems.md`
-- Reference (.NET): `C:\work\hub` (`Libraries/Library.Messages/`, `plopfile.js`, `docker-compose.yaml`)
-- Reference (production CDC): `C:\work\metric-event-watcher` (Debezium→Kafka→handlers; `event-engine-common` submodule)
+- Vision: `<local-path>/Downloads\transcript.md`
+- Long-form design: `<local-path>/Downloads\Claude-Island-based UI architecture for micro app systems.md`
+- Reference (.NET): `<local-path>/` (`Libraries/Library.Messages/`, `plopfile.js`, `docker-compose.yaml`)
+- Reference (production CDC): `<local-path>/` (Debezium→Kafka→handlers; `event-engine-common` submodule)
 - Civitai monorepo: `pnpm-workspace.yaml`, [apps/auth](apps/auth/), [apps/moderator](apps/moderator/), [packages/](packages/)
 - DevOps findings: §14 (conversation with Zacx, 2026-06-29/30)

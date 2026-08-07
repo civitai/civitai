@@ -23,6 +23,10 @@
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import AccountSwitcher from '$lib/components/AccountSwitcher.svelte';
   import { activeNavHref, isNavChildActive, navForMember } from '$lib/nav';
+  import {
+    earlyAccessDaysForScore,
+    earlyAccessQuantityForScore,
+  } from '$lib/monetization/paid-access';
   import { refetching } from '$lib/state/refetching.svelte';
   import type { LayoutData } from './$types';
 
@@ -48,6 +52,28 @@
     document.cookie = value
       ? `cs-test-membership=${value}; path=/; max-age=86400; samesite=lax`
       : 'cs-test-membership=; path=/; max-age=0; samesite=lax';
+    invalidateAll();
+  }
+
+  // The early-access ladder keys off the models score, not membership, so simulating a tier can't reach
+  // those flows on an account below the first rung (40k).
+  const scoreOptions = [
+    { value: '', label: 'Real score' },
+    ...[40000, 90000, 250000].map((score) => {
+      const days = earlyAccessDaysForScore(score);
+      const slots = earlyAccessQuantityForScore(score);
+      return {
+        value: String(score),
+        label: `${score / 1000}k · ${days} day${days === 1 ? '' : 's'}, ${slots} slot${
+          slots === 1 ? '' : 's'
+        }`,
+      };
+    }),
+  ];
+  function setTestModelsScore(value: string) {
+    document.cookie = value
+      ? `cs-test-models-score=${value}; path=/; max-age=86400; samesite=lax`
+      : 'cs-test-models-score=; path=/; max-age=0; samesite=lax';
     invalidateAll();
   }
 </script>
@@ -161,6 +187,34 @@
             </Select.Trigger>
             <Select.Content>
               {#each membershipOptions as opt (opt.value)}
+                <Select.Item value={opt.value} label={opt.label} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <div class="px-1 pb-1">
+          <label
+            for="cs-sim-score"
+            class="mb-1 block text-[10px] font-medium uppercase tracking-wider text-dark-3"
+          >
+            Simulate models score (test)
+          </label>
+          <Select.Root
+            type="single"
+            value={data.testModelsScore ?? ''}
+            onValueChange={(v: string) => setTestModelsScore(v)}
+          >
+            <Select.Trigger
+              id="cs-sim-score"
+              size="sm"
+              class="w-full text-xs text-white"
+              aria-label="Simulate models score"
+            >
+              {scoreOptions.find((o) => o.value === (data.testModelsScore ?? ''))?.label ??
+                'Real score'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each scoreOptions as opt (opt.value)}
                 <Select.Item value={opt.value} label={opt.label} />
               {/each}
             </Select.Content>

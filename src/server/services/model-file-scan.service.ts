@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { WorkflowEvent } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import type { NextApiRequest } from 'next';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -13,6 +14,7 @@ import {
   findOfficialFileByHash,
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
+import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createModelFileScanRequest,
@@ -232,15 +234,29 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       }
     }
 
-    // D2: hash-blocking is intentionally disabled here, matching legacy
-    // scan-result.ts:126-128 which is also commented out. Re-enable as a
-    // separate decision; will need pre-existing SHA256 capture above.
-    // const newSha256 = outcome.hashes.SHA256;
-    // const existingSha256 = existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash;
-    // const hashChanged = !existingSha256 || existingSha256 !== newSha256;
-    // if (newSha256 && hashChanged && (await isModelHashBlocked(newSha256))) {
-    //   await unpublishBlockedModel(file.modelVersionId);
-    // }
+    const scannedSha256 = outcome.hashes.SHA256;
+    const scannedModelId = file.modelVersion?.modelId;
+    const scannedUserId = file.modelVersion?.model?.userId;
+    // Scan requests aren't type-filtered, but the sweep and the review queue
+    // both only cover MINOR_HASH_FILE_TYPE. Without this gate a Training
+    // Data/VAE/Config match would auto-flag on a path no sweep reaches, or
+    // queue for a review page that can never surface it.
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      // Checked last so the kill switch is the only thing evaluated per scan
+      // once the cheap local gates have already excluded the file.
+      (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
+    ) {
+      await checkMinorHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
   }
 
   // Safety net for uploads that slipped past the client-side check: a non-official

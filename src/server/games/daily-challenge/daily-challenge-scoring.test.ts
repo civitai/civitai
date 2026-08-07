@@ -6,6 +6,7 @@ import {
   FIXED_JUDGING_CATEGORIES,
   isFixedJudgeScore,
   lookupCategoryScore,
+  normalizeJudgeScore,
   resolveDisplayScore,
   SCORE_WEIGHTS,
   THEME_DISQUALIFY_THRESHOLD,
@@ -179,6 +180,66 @@ describe('lookupCategoryScore', () => {
     expect(lookupCategoryScore({ Theme: 12 }, 'Theme')).toBe(10);
     expect(lookupCategoryScore({ Theme: -3 }, 'Theme')).toBe(0);
     expect(lookupCategoryScore({ Theme: 5 }, 'Humor')).toBe(0);
+  });
+});
+
+// A judge that declines to score an entry (the model's safety rejection) returns `score: null`,
+// which reached every ranking path as-is and threw `Object.entries(null)` — bricking the whole
+// challenge's winner-pick, not just the one entry. See normalizeJudgeScore.
+describe('unscorable judge results', () => {
+  const cats = [
+    { key: 'theme', label: 'Theme', weight: 50 },
+    { key: 'creativity', label: 'Creativity', weight: 50 },
+  ];
+  const unscorable = [null, undefined, 'nope', 42, []];
+
+  it('normalizes any non-object score to an empty record', () => {
+    for (const value of unscorable) expect(normalizeJudgeScore(value)).toEqual({});
+    expect(normalizeJudgeScore({ Theme: 7 })).toEqual({ Theme: 7 });
+  });
+
+  it('reports 0 rather than throwing when looking a category up on one', () => {
+    for (const value of unscorable) {
+      expect(lookupCategoryScore(value as never, 'Theme')).toBe(0);
+    }
+  });
+
+  it('ranks one as null (excluded) instead of throwing', () => {
+    for (const value of unscorable) {
+      expect(calculateCategoryScore(value as never)).toBeNull();
+      expect(calculateWeightedCategoryScore(value as never, cats)).toBeNull();
+      expect(calculateWeightedScore(value as never)).toBeNull();
+      expect(resolveDisplayScore(value as never, cats)).toBeNull();
+      expect(resolveDisplayScore(value as never)).toBeNull();
+    }
+  });
+
+  it('does not mistake one for the fixed daily key set', () => {
+    for (const value of unscorable) expect(isFixedJudgeScore(value as never)).toBe(false);
+  });
+
+  it('excludes an empty score object via the theme gate', () => {
+    expect(calculateWeightedCategoryScore({}, cats)).toBeNull();
+  });
+
+  // The model can put anything behind a key, not just a non-object in place of the whole score.
+  // These pin what each reader does with a junk VALUE — the two disagree, and that predates this
+  // guard: lookupCategoryScore coerces via Number(), calculateCategoryScore drops non-numbers.
+  it('handles junk category values without throwing', () => {
+    expect(lookupCategoryScore({ Theme: '8' } as never, 'Theme')).toBe(8);
+    expect(lookupCategoryScore({ Theme: 'abc' } as never, 'Theme')).toBe(0);
+    expect(lookupCategoryScore({ Theme: null } as never, 'Theme')).toBe(0);
+    expect(lookupCategoryScore({ Theme: { nested: 1 } } as never, 'Theme')).toBe(0);
+
+    expect(calculateCategoryScore({ a: '8', b: 6 } as never)).toBe(6);
+    expect(calculateCategoryScore({ a: 'abc' } as never)).toBeNull();
+  });
+
+  // The note that stalled challenge 463 in Completing for three days.
+  it('ranks a persisted safety-rejection note as null', () => {
+    const note = '{"score":null,"summary":"Entry rejected due to safety policy.","judgeId":1}';
+    const { score } = JSON.parse(note);
+    expect(calculateWeightedCategoryScore(score, cats)).toBeNull();
   });
 });
 

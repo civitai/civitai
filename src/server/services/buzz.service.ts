@@ -85,18 +85,22 @@ type AccountType = 'User' | 'CreatorProgramBank' | 'CashPending' | 'CashSettled'
 export const buzzService = createBuzzClient({
   endpoint: env.BUZZ_ENDPOINT,
   log: isDev ? (message, ...args) => console.log(message, ...args) : undefined,
+  // Every branch carries the BuzzApiError as `cause`: the mapping is lossy (400 and 409 share one
+  // code and message), so a caller that has to tell them apart has nothing else to read. Recover it
+  // with `getBuzzApiStatus`; tRPC's error shape does not send `cause` to clients.
   mapError: (error) => {
     switch (error.status) {
       case 400:
-        throw throwBadRequestError();
+        throw throwBadRequestError(null, error);
       case 404:
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found' });
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found', cause: error });
       case 409:
-        throw throwBadRequestError('There is a conflict with the transaction');
+        throw throwBadRequestError('There is a conflict with the transaction', error);
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'An unexpected error ocurred, please try again later',
+          cause: error,
         });
     }
   },
@@ -1509,6 +1513,10 @@ type Row = {
   total: number;
 };
 
+// Cash spellings seen in orchestration.resourceCompensations for licenseFee rows; the table also carries the
+// lower-cased variants elsewhere, so both are listed.
+const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -1552,12 +1560,17 @@ export const getDailyCompensationRewardByUser = async ({
         AND amount > 0
         AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
-        -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
+        -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
+        -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under
+        -- a control that says "Yellow" made the chart disagree with the yellow transaction list by exactly the
+        -- blue+green amount, which reads as missing payouts.
         AND ${
-          accountType && source !== 'licenseFee'
-            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
+          accountType
+            ? `(accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
                 accountType
-              )}')`
+              )}')${
+                source === 'licenseFee' ? ` OR accountType IN (${CASH_ACCOUNT_TYPES_SQL})` : ''
+              })`
             : '1=1'
         }
       GROUP BY modelVersionId, accountType, date

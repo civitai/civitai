@@ -9,10 +9,14 @@ export default defineConfig({
     alias: {
       $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
       '$env/dynamic/private': fileURLToPath(new URL('./src/test/env.mock.ts', import.meta.url)),
-      '$app/environment': fileURLToPath(new URL('./src/test/app-environment.mock.ts', import.meta.url)),
+      '$app/environment': fileURLToPath(
+        new URL('./src/test/app-environment.mock.ts', import.meta.url)
+      ),
     },
   },
   test: {
+    // Required — see the `apps/*` note in the root vitest.config.mts.
+    name: 'app:auth',
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],
   },

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   STICKER_JUMBO_LIMIT,
   formatStickerToken,
+  isStickerOnlyContent,
   isValidStickerSlug,
   parseStickerContent,
   parseStickerIds,
@@ -167,6 +168,28 @@ describe('parseStickerLines', () => {
       { type: 'text', value: 'hi ' },
       { type: 'sticker', cosmeticId: 4 },
     ]);
+  });
+});
+
+describe('isStickerOnlyContent', () => {
+  it('is true for stickers and blank space alone', () => {
+    expect(isStickerOnlyContent(':sticker:1:')).toBe(true);
+    expect(isStickerOnlyContent(' :sticker:1: :sticker:2: ')).toBe(true);
+    expect(isStickerOnlyContent(':sticker:1:\n\n:sticker:2:')).toBe(true);
+  });
+
+  it('is false once any text rides along, on any line', () => {
+    expect(isStickerOnlyContent('hey :sticker:1:')).toBe(false);
+    expect(isStickerOnlyContent(':sticker:1:\nnice right')).toBe(false);
+  });
+
+  it('is false with no sticker at all', () => {
+    expect(isStickerOnlyContent('')).toBe(false);
+    expect(isStickerOnlyContent('just text')).toBe(false);
+  });
+
+  it('is false past the jumbo limit, matching how those lines render', () => {
+    expect(isStickerOnlyContent(':sticker:1:'.repeat(STICKER_JUMBO_LIMIT + 1))).toBe(false);
   });
 });
 
