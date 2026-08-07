@@ -296,7 +296,9 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
  * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
  * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
-export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
+export async function getChallengesToReconcileFromDb(
+  windowHours = 48
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT c.id
     FROM "Challenge" c
@@ -456,7 +458,13 @@ export async function createChallengeCollection(input: {
   const { resolveChallengeCollectionOwnerId } = await import(
     '~/server/games/daily-challenge/challenge-collection-owner'
   );
-  const userId = await resolveChallengeCollectionOwnerId(input.judgeId);
+  const { getChallengeConfig } = await import(
+    '~/server/games/daily-challenge/daily-challenge.utils'
+  );
+  const [userId, config] = await Promise.all([
+    resolveChallengeCollectionOwnerId(input.judgeId),
+    getChallengeConfig(),
+  ]);
 
   const collection = await dbWrite.collection.create({
     data: {
@@ -468,6 +476,7 @@ export async function createChallengeCollection(input: {
         maxItemsPerUser: input.maxEntriesPerUser,
         submissionStartDate: input.startsAt,
         submissionEndDate: input.endsAt,
+        autoTagId: config.challengeTagId,
         forcedBrowsingLevel: input.allowedNsfwLevel ?? sfwBrowsingLevelsFlag, // Enforce NSFW restrictions
       },
     },

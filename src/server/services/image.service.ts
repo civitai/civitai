@@ -37,6 +37,7 @@ import {
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import {
+  dailyChallengeConfig,
   parseJudgeScore,
   type JudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
@@ -1384,6 +1385,23 @@ const imageMetricsClickhouseTimeoutCounter = registerCounter({
   help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
 });
 
+/**
+ * Resolve the `hideChallenges` flag into an `excludedTagIds` entry, in place.
+ * Mirrors `enforceBlockedBrowsingTags`: the client sends intent, the server owns
+ * the tag id, and every query path picks it up from `excludedTagIds` unchanged.
+ * Reads the static config rather than `getChallengeConfig()` so the feed doesn't
+ * take a sysRedis round-trip per request.
+ */
+function applyHideChallengesExclusion(input: {
+  hideChallenges?: boolean;
+  excludedTagIds?: number[];
+}) {
+  if (!input.hideChallenges) return;
+  input.excludedTagIds = [
+    ...new Set([...(input.excludedTagIds ?? []), dailyChallengeConfig.challengeTagId]),
+  ];
+}
+
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -1395,6 +1413,7 @@ export const getAllImages = async (
     isModerator: input.user?.isModerator,
   });
   if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  applyHideChallengesExclusion(input);
 
   const {
     limit,
@@ -2414,6 +2433,7 @@ export const getAllImagesIndex = async (
     isModerator: user?.isModerator,
   });
   if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  applyHideChallengesExclusion(input);
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');

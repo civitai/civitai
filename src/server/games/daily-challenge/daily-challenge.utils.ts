@@ -44,6 +44,7 @@ const challengeConfigSchema = z.object({
   challengeType: z.string(),
   challengeCollectionId: z.number(),
   judgedTagId: z.number(),
+  challengeTagId: z.number(),
   reviewMeTagId: z.number(),
   userCooldown: z.string(),
   resourceCooldown: z.string(),
@@ -76,6 +77,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   challengeType: 'world-morph',
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
+  challengeTagId: 676575, // collection:daily-challenge — applied to every entry via Collection.metadata.autoTagId.
   reviewMeTagId: 301770,
   userCooldown: '14 day',
   resourceCooldown: '90 day',
