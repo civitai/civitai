@@ -180,7 +180,7 @@ the deprecation covers one:
 1. `viewer.id` / `viewer.username` — deprecated (this section).
 2. `context.viewerUserId` / `context.viewerUsername` — **full-page surface only.**
    `PageBlockHost` does not project its context, so `BLOCK_INIT.context` on the
-   `app.page` surface still carries both verbatim. (The model-slot host *does*
+   `app.page` surface still carries both verbatim. (The model-slot host _does_
    project, and drops both.) Those page-context fields are deprecated too, but
    nothing has been removed from the wire.
 3. `token.raw` — **both surfaces, undeprecated, and not going away.** The block
@@ -188,7 +188,7 @@ the deprecation covers one:
    `user:<id>` for a signed-in viewer (see "Tokens" above), so any block can read
    the viewer's numeric id by base64url-decoding a value it was handed — no
    scope, no round-trip, and nothing server-side can observe that it did. This is
-   not a bug to be closed: the token *is* the auth mechanism and the block needs
+   not a bug to be closed: the token _is_ the auth mechanism and the block needs
    it.
 
 So what the deprecation actually buys is narrower than "identity is no longer
