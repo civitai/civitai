@@ -169,6 +169,7 @@ export function Home() {
                           types: undefined,
                           hidden: undefined,
                           followed: false,
+                          newCreators: false,
                           withMeta: true,
                         }}
                       />

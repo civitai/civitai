@@ -43,10 +43,10 @@ const readSource = (relative: string) => readFileSync(path.resolve(__dirname, re
 
 /**
  * Drift guard. FollowedFilter's `setFilters({ ... })` call is the only writer of audience
- * state into the filter store, so its key list — not a copy of it — is the set a
- * user-scoped feed has to neutralize. A third audience key added there without a matching
- * override in UserMediaInfinite would reproduce this bug, and an expectation hardcoded
- * here would stay green through it.
+ * state into the filter store, so its key list — not a copy of it — is the set a feed with
+ * its own scope has to neutralize. A third audience key added there without a matching
+ * override would reproduce this bug, and an expectation hardcoded here would stay green
+ * through it.
  */
 const audienceStoreKeys = (() => {
   const source = readSource('../../../Filters/FollowedFilter.tsx');
@@ -58,17 +58,24 @@ const audienceStoreKeys = (() => {
     .filter(Boolean);
 })();
 
-describe('UserMediaInfinite', () => {
+// Feeds that carry their own scope and so must neutralize the stored audience, whether
+// they pass the key through from the URL (`newCreators,`) or pin it (`newCreators: false`).
+const SCOPED_FEEDS = [
+  { name: 'UserMediaInfinite', file: '../UserMediaInfinite.tsx' },
+  { name: 'home feed', file: '../../../../pages/home/index.tsx' },
+];
+
+describe('audience filter neutralization', () => {
   it('reads a non-empty audience key set from FollowedFilter', () => {
     expect(audienceStoreKeys).toEqual(expect.arrayContaining(['followed', 'newCreators']));
   });
 
-  it('passes every audience key into the ImagesInfinite override', () => {
-    const source = readSource('../UserMediaInfinite.tsx');
+  it.each(SCOPED_FEEDS)('$name passes every audience key into its override', ({ file }) => {
+    const source = readSource(file);
     const overrides = source.slice(source.indexOf('<ImagesInfinite'));
 
     for (const key of audienceStoreKeys) {
-      expect(overrides).toMatch(new RegExp(`^\\s*${key},$`, 'm'));
+      expect(overrides).toMatch(new RegExp(`\\b${key}\\s*[,:]`));
     }
   });
 });
