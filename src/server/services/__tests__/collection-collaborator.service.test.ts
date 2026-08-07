@@ -1,53 +1,60 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as CollectionService from '~/server/services/collection.service';
+import type * as SessionClientModule from '~/server/auth/session-client';
 
 // `dbRead.collection.findUnique`, `dbRead.collectionContributor.findMany`, and
 // `dbWrite.collectionInvite.deleteMany` aren't in the original brief's mock shape but the
 // service calls all three (owner-protection lookup, roster query, invite cleanup on
-// removal); stubbed here so those calls don't crash the suite. `dbWrite.collection` /
-// `dbWrite.collectionContributor.findMany` / `dbWrite.collectionInvite.findMany` back the
-// `tx` client used inside `countCollaborators`'s transaction. The owner-lookup default of
+// removal); stubbed here so those calls don't crash the suite. The `dbRead` trio also backs
+// `countCollaborators`, which reads the caps off the replica. The owner-lookup default of
 // OWNER_ID lets every test that targets someone other than the owner pass through untouched.
-const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification } = vi.hoisted(() => {
-  const OWNER_ID = 999;
-  return {
-    mockDbRead: {
-      collection: {
-        findUnique: vi
-          .fn()
-          .mockResolvedValue({ userId: OWNER_ID, read: 'Private', write: 'Private' }),
+const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification, mockGetSessionUser } =
+  vi.hoisted(() => {
+    const OWNER_ID = 999;
+    return {
+      mockDbRead: {
+        collection: {
+          findUnique: vi
+            .fn()
+            .mockResolvedValue({ userId: OWNER_ID, read: 'Private', write: 'Private', mode: null }),
+        },
+        collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
+        collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
       },
-      collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
-      collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
-    },
-    mockDbWrite: {
-      collection: { findUnique: vi.fn() },
-      collectionInvite: {
-        upsert: vi.fn(),
-        update: vi.fn(),
-        findUnique: vi.fn(),
-        findMany: vi.fn(),
-        deleteMany: vi.fn(),
+      mockDbWrite: {
+        collection: { findUnique: vi.fn() },
+        collectionInvite: {
+          upsert: vi.fn(),
+          update: vi.fn(),
+          findUnique: vi.fn(),
+          findMany: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        collectionContributor: {
+          upsert: vi.fn(),
+          delete: vi.fn(),
+          findUnique: vi.fn(),
+          findMany: vi.fn(),
+        },
+        $transaction: vi.fn(),
       },
-      collectionContributor: {
-        upsert: vi.fn(),
-        delete: vi.fn(),
-        findUnique: vi.fn(),
-        findMany: vi.fn(),
-      },
-      $transaction: vi.fn(),
-    },
-    mockGetPermissions: vi.fn(),
-    mockCreateNotification: vi.fn(),
-  };
-});
+      mockGetPermissions: vi.fn(),
+      mockCreateNotification: vi.fn(),
+      mockGetSessionUser: vi.fn(),
+    };
+  });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   getUserCollectionPermissionsById: mockGetPermissions,
+}));
+
+vi.mock('~/server/auth/session-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionClientModule>()),
+  sessionClient: { getSessionUserById: mockGetSessionUser },
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -91,16 +98,30 @@ function asManager() {
   });
 }
 
+// `countCollaborators` now reads the raw rows, so the caps are arranged as the rows a
+// Private collection would hold: every non-owner ADD/MANAGE row is elevated there (the free
+// baseline is empty), which is the shape the cap arithmetic is defined over.
 function arrangeCounts({ collaborators = 0, managers = 0 } = {}) {
+  mockDbRead.collectionContributor.findMany.mockResolvedValue(
+    Array.from({ length: collaborators }, (_, i) => ({
+      userId: 2000 + i,
+      permissions: i < managers ? ['VIEW', 'ADD', 'MANAGE'] : ['VIEW', 'ADD'],
+    }))
+  );
   mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
-  mockDbWrite.$transaction.mockResolvedValue([collaborators, managers]);
 }
 
 describe('inviteCollaborator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbRead.collection.findUnique.mockResolvedValue({ userId: OWNER_ID });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+    });
     arrangeCounts();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'gold' });
     mockDbWrite.collectionInvite.upsert.mockResolvedValue({ id: 1 });
   });
 
@@ -111,19 +132,27 @@ describe('inviteCollaborator', () => {
       userId: OWNER_ID,
       targetUserId: TARGET_ID,
       role: 'Manager',
+      isMember: true,
     });
     expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
   });
 
   it('notifies the invitee, never the inviter', async () => {
     asOwner();
-    mockDbRead.collection.findUnique.mockResolvedValue({ userId: OWNER_ID, name: 'My Collection' });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      name: 'My Collection',
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+    });
 
     await inviteCollaborator({
       collectionId: COLLECTION_ID,
       userId: OWNER_ID,
       targetUserId: TARGET_ID,
       role: 'Contributor',
+      isMember: true,
     });
 
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
@@ -201,6 +230,7 @@ describe('inviteCollaborator', () => {
         userId: OWNER_ID,
         targetUserId: TARGET_ID,
         role: 'Contributor',
+        isMember: true,
       })
     ).rejects.toThrow();
   });
@@ -214,6 +244,7 @@ describe('inviteCollaborator', () => {
         userId: OWNER_ID,
         targetUserId: TARGET_ID,
         role: 'Manager',
+        isMember: true,
       })
     ).rejects.toThrow();
 
@@ -222,8 +253,82 @@ describe('inviteCollaborator', () => {
       userId: OWNER_ID,
       targetUserId: TARGET_ID,
       role: 'Contributor',
+      isMember: true,
     });
     expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  // D1: the owner holds their own elevated {VIEW, ADD, MANAGE} row, so counting it left an
+  // owner able to invite only 4 Managers and 24 collaborators.
+  it('does not charge the owner a seat, so a full 5 Managers can still be invited', async () => {
+    asOwner();
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([
+      { userId: OWNER_ID, permissions: ['VIEW', 'ADD', 'MANAGE'] },
+      ...Array.from({ length: MANAGER_CAP - 1 }, (_, i) => ({
+        userId: 3000 + i,
+        permissions: ['VIEW', 'ADD', 'MANAGE'],
+      })),
+    ]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Manager',
+      isMember: true,
+    });
+    expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  // I3: "Unfollow" deletes the contributor row but leaves the invite Accepted. Counting that
+  // ghost burned a seat the roster no longer shows, so it could never be freed.
+  it('releases the seat of an Accepted invite whose contributor row is gone', async () => {
+    asOwner();
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValue(
+      Array.from({ length: COLLABORATOR_CAP }, (_, i) => ({
+        userId: 4000 + i,
+        role: 'Contributor',
+        status: 'Accepted',
+      }))
+    );
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: true,
+    });
+    expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  it('still charges a seat for an Accepted invite whose collaborator is present', async () => {
+    asOwner();
+    mockDbRead.collectionContributor.findMany.mockResolvedValue(
+      Array.from({ length: COLLABORATOR_CAP }, (_, i) => ({
+        userId: 4000 + i,
+        permissions: ['VIEW', 'ADD'],
+      }))
+    );
+    mockDbRead.collectionInvite.findMany.mockResolvedValue(
+      Array.from({ length: COLLABORATOR_CAP }, (_, i) => ({
+        userId: 4000 + i,
+        role: 'Contributor',
+        status: 'Accepted',
+      }))
+    );
+
+    await expect(
+      inviteCollaborator({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+        isMember: true,
+      })
+    ).rejects.toThrow();
   });
 
   it('refuses on a Bookmark collection', async () => {
@@ -248,8 +353,8 @@ describe('inviteCollaborator', () => {
 describe('inviteCollaborator — organic followers do not inflate the caps', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbRead.collection.findUnique.mockResolvedValue({ userId: OWNER_ID });
     mockDbWrite.collectionInvite.upsert.mockResolvedValue({ id: 1 });
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'gold' });
     asOwner();
   });
 
@@ -257,35 +362,140 @@ describe('inviteCollaborator — organic followers do not inflate the caps', () 
     // COLLABORATOR_CAP plain followers, each carrying ADD for free (write:Public) — the
     // pre-fix filter (`permissions && ARRAY['ADD','MANAGE']`) would count every one of these
     // toward the cap and reject the invite below; the fix must see zero real collaborators.
-    mockDbWrite.collection.findUnique.mockResolvedValue({ read: 'Public', write: 'Public' });
-    mockDbWrite.collectionContributor.findMany.mockResolvedValue(
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Public',
+      mode: null,
+    });
+    mockDbRead.collectionContributor.findMany.mockResolvedValue(
       Array.from({ length: COLLABORATOR_CAP }, (_, i) => ({
         userId: 1000 + i,
         permissions: ['VIEW', 'ADD'],
       }))
     );
-    mockDbWrite.collectionInvite.findMany.mockResolvedValue([]);
-    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
-      fn({
-        collection: { findUnique: mockDbWrite.collection.findUnique },
-        collectionContributor: { findMany: mockDbWrite.collectionContributor.findMany },
-        collectionInvite: { findMany: mockDbWrite.collectionInvite.findMany },
-      })
-    );
+    mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
 
     await inviteCollaborator({
       collectionId: COLLECTION_ID,
       userId: OWNER_ID,
       targetUserId: TARGET_ID,
       role: 'Contributor',
+      isMember: true,
     });
 
+    expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  it('reads the caps off the replica without opening a write transaction', async () => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+    });
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: true,
+    });
+
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+    expect(mockDbRead.collectionContributor.findMany).toHaveBeenCalled();
+  });
+});
+
+// C1: the invite path had no membership gate at all, and pending invites write no
+// contributor rows — so a free user could quietly build a 25-person shared collection that
+// the reconciler never sees while the invites are outstanding.
+describe('inviteCollaborator — membership gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+    });
+    arrangeCounts();
+    mockDbWrite.collectionInvite.upsert.mockResolvedValue({ id: 1 });
+  });
+
+  it('refuses a free owner, even on a fully private collection', async () => {
+    asOwner();
+    await expect(
+      inviteCollaborator({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+        isMember: false,
+      })
+    ).rejects.toThrow(/membership/i);
+    expect(mockDbWrite.collectionInvite.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a member Manager inviting on behalf of a lapsed owner', async () => {
+    asManager();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
+
+    await expect(
+      inviteCollaborator({
+        collectionId: COLLECTION_ID,
+        userId: MANAGER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+        isMember: true,
+      })
+    ).rejects.toThrow(/membership/i);
+    expect(mockGetSessionUser).toHaveBeenCalledWith(OWNER_ID);
+    expect(mockDbWrite.collectionInvite.upsert).not.toHaveBeenCalled();
+  });
+
+  it('lets a Manager invite when the OWNER holds the membership', async () => {
+    asManager();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'bronze' });
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: MANAGER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: false,
+    });
+    expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
+  });
+
+  it('lets a moderator through without resolving a tier', async () => {
+    asManager();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: MANAGER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isModerator: true,
+    });
     expect(mockDbWrite.collectionInvite.upsert).toHaveBeenCalled();
   });
 });
 
 describe('respondToInvite', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+    });
+  });
 
   it('unions the role bits onto existing follow permissions', async () => {
     mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
@@ -344,6 +554,30 @@ describe('respondToInvite', () => {
     await expect(
       respondToInvite({ inviteId: 1, userId: MANAGER_ID, accept: true })
     ).rejects.toThrow();
+  });
+
+  // M4: inviteCollaborator refuses Contest/Bookmark, so accepting must too — otherwise a
+  // mode flipped after the invite was sent still lands a MANAGE grant.
+  it('refuses to accept onto a collection that flipped to Contest after the invite', async () => {
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
+      id: 1,
+      collectionId: COLLECTION_ID,
+      userId: TARGET_ID,
+      role: 'Manager',
+      status: 'Pending',
+      createdAt: new Date(),
+    });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: 'Contest',
+    });
+
+    await expect(
+      respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: true })
+    ).rejects.toThrow();
+    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -455,7 +689,12 @@ describe('removeCollaborator', () => {
 describe('getCollaborators', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbRead.collection.findUnique.mockResolvedValue({ read: 'Public', write: 'Public' });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Public',
+      mode: null,
+    });
     mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
     mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
   });
@@ -542,6 +781,82 @@ describe('getCollaborators', () => {
     await expect(
       getCollaborators({ collectionId: COLLECTION_ID, userId: TARGET_ID })
     ).rejects.toThrow();
+  });
+
+  // D3: Featured Models (id 104) is read:Public, mode null, owned by system user -1, and
+  // carries 14 staff ADD/MANAGE rows — the internal curation roster, returned to anonymous
+  // callers before this guard.
+  it('refuses a system-owned curation collection', async () => {
+    mockGetPermissions.mockResolvedValue({
+      isOwner: false,
+      manage: false,
+      read: true,
+      collaborationDisabled: false,
+      collectionMode: null,
+    });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: -1,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+    });
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([
+      { userId: 111, permissions: ['VIEW', 'ADD', 'MANAGE'] },
+    ]);
+
+    await expect(getCollaborators({ collectionId: 104 })).rejects.toThrow();
+    expect(mockDbRead.collectionContributor.findMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Contest collection', async () => {
+    asOwner();
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Review',
+      mode: 'Contest',
+    });
+
+    await expect(
+      getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID })
+    ).rejects.toThrow();
+  });
+
+  // D1: the owner's own elevated row made them a roster entry, so the modal rendered them
+  // twice — once as Owner, once as "Contributor" with a trash icon that always 400s.
+  it('excludes the collection owner from the roster', async () => {
+    asOwner();
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([
+      { userId: MANAGER_ID, permissions: ['VIEW', 'ADD', 'MANAGE'] },
+    ]);
+    mockDbRead.collectionInvite.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+    expect(result.collaborators).toEqual([{ userId: MANAGER_ID, role: 'Manager' }]);
+    const rosterQuery = mockDbRead.collectionContributor.findMany.mock.calls[0][0];
+    expect(rosterQuery.where.userId).toEqual({ not: OWNER_ID });
+  });
+
+  // Re-inviting an accepted collaborator flips their invite back to Pending; a roster that
+  // only looked at Accepted dropped them while the caps kept charging for them.
+  it('keeps a re-invited collaborator on the roster while their invite is Pending', async () => {
+    asOwner();
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([
+      { userId: TARGET_ID, permissions: ['VIEW', 'ADD'] },
+    ]);
+    mockDbRead.collectionInvite.findMany
+      .mockResolvedValueOnce([{ userId: TARGET_ID }])
+      .mockResolvedValueOnce([]);
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+    expect(result.collaborators).toEqual([{ userId: TARGET_ID, role: 'Contributor' }]);
+    const inviteQuery = mockDbRead.collectionInvite.findMany.mock.calls[0][0];
+    expect(inviteQuery.where.OR).toEqual([
+      { status: 'Accepted' },
+      { status: 'Pending', createdAt: { gte: expect.any(Date) } },
+    ]);
   });
 });
 

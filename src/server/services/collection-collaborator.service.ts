@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { sessionClient } from '~/server/auth/session-client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -92,6 +93,20 @@ function hasElevatedPermission(
   );
 }
 
+// The invites that represent a live or still-open seat. Shared by the caps and the roster so
+// the two can't disagree about who occupies one — re-inviting an accepted collaborator flips
+// their invite back to Pending, and a roster that only looked at Accepted dropped them while
+// the caps still charged for them.
+function liveInviteWhere(collectionId: number) {
+  return {
+    collectionId,
+    OR: [
+      { status: CollectionInviteStatus.Accepted },
+      { status: CollectionInviteStatus.Pending, createdAt: { gte: inviteExpiryCutoff() } },
+    ],
+  };
+}
+
 // Both counts must include non-expired pending invites, not just accepted rows — counting
 // only accepted rows would let someone issue hundreds of invites and stay under the cap
 // until they all land. `excludeUserId` is the invite target: re-inviting them replaces
@@ -101,17 +116,12 @@ async function countCollaborators(
   collectionId: number,
   excludeUserId: number
 ): Promise<[collaborators: number, managers: number]> {
-  return dbWrite.$transaction(async (tx) => {
-    const collection = await tx.collection.findUnique({
+  const [collection, contributorRows, inviteRows] = await Promise.all([
+    dbRead.collection.findUnique({
       where: { id: collectionId },
-      select: { read: true, write: true },
-    });
-    const freeBaseline = collection
-      ? freeGrantBaseline(collection)
-      : new Set<CollectionContributorPermission>();
-    const cutoff = inviteExpiryCutoff();
-
-    const contributorRows = await tx.collectionContributor.findMany({
+      select: { userId: true, read: true, write: true },
+    }),
+    dbRead.collectionContributor.findMany({
       where: {
         collectionId,
         userId: { not: excludeUserId },
@@ -120,38 +130,51 @@ async function countCollaborators(
         },
       },
       select: { userId: true, permissions: true },
-    });
+    }),
+    dbRead.collectionInvite.findMany({
+      where: { ...liveInviteWhere(collectionId), userId: { not: excludeUserId } },
+      select: { userId: true, role: true, status: true },
+    }),
+  ]);
 
-    const inviteRows = await tx.collectionInvite.findMany({
-      where: {
-        collectionId,
-        userId: { not: excludeUserId },
-        OR: [
-          { status: CollectionInviteStatus.Accepted },
-          { status: CollectionInviteStatus.Pending, createdAt: { gte: cutoff } },
-        ],
-      },
-      select: { userId: true, role: true },
-    });
+  const freeBaseline = collection
+    ? freeGrantBaseline(collection)
+    : new Set<CollectionContributorPermission>();
+  const ownerId = collection?.userId;
 
-    const collaboratorIds = new Set<number>();
-    const managerIds = new Set<number>();
+  const collaboratorIds = new Set<number>();
+  const managerIds = new Set<number>();
+  const contributorIds = new Set(contributorRows.map((row) => row.userId));
 
-    for (const row of contributorRows) {
-      if (!hasElevatedPermission(row.permissions, freeBaseline)) continue;
-      collaboratorIds.add(row.userId);
-      if (row.permissions.includes(CollectionContributorPermission.MANAGE)) {
-        managerIds.add(row.userId);
-      }
+  for (const row of contributorRows) {
+    if (row.userId === ownerId) continue;
+    if (!hasElevatedPermission(row.permissions, freeBaseline)) continue;
+    collaboratorIds.add(row.userId);
+    if (row.permissions.includes(CollectionContributorPermission.MANAGE)) {
+      managerIds.add(row.userId);
     }
+  }
 
-    for (const row of inviteRows) {
-      collaboratorIds.add(row.userId);
-      if (row.role === CollectionCollaboratorRole.Manager) managerIds.add(row.userId);
-    }
+  for (const row of inviteRows) {
+    if (row.userId === ownerId) continue;
+    // An Accepted invite with no contributor row left is a departed collaborator — "Unfollow"
+    // deletes the row and leaves the invite Accepted. Charging for it burns a seat with no
+    // roster entry to remove, so the owner eventually can't invite anyone.
+    if (row.status === CollectionInviteStatus.Accepted && !contributorIds.has(row.userId)) continue;
+    collaboratorIds.add(row.userId);
+    if (row.role === CollectionCollaboratorRole.Manager) managerIds.add(row.userId);
+  }
 
-    return [collaboratorIds.size, managerIds.size];
-  });
+  return [collaboratorIds.size, managerIds.size];
+}
+
+// The collection owner's membership is what licenses collaboration, so a Manager inviting on
+// the owner's behalf has to be checked against the OWNER's tier. `getSessionUserById` is the
+// same hub-backed resolver `ctx.user.tier` comes from, so both sides of the gate agree.
+async function isMemberUser(userId?: number) {
+  if (!userId || userId <= 0) return false;
+  const user = await sessionClient.getSessionUserById(userId);
+  return !!user?.tier && user.tier !== 'free';
 }
 
 export async function inviteCollaborator({
@@ -160,12 +183,14 @@ export async function inviteCollaborator({
   targetUserId,
   role,
   isModerator,
+  isMember,
 }: {
   collectionId: number;
   userId: number;
   targetUserId: number;
   role: CollectionCollaboratorRole;
   isModerator?: boolean;
+  isMember?: boolean;
 }) {
   const permission = await getUserCollectionPermissionsById({
     id: collectionId,
@@ -202,6 +227,15 @@ export async function inviteCollaborator({
   });
   if (collection?.userId === targetUserId) {
     throw throwBadRequestError('The collection owner is already a collaborator.');
+  }
+
+  if (!isModerator) {
+    const ownerIsMember = permission.isOwner ? !!isMember : await isMemberUser(collection?.userId);
+    if (!ownerIsMember) {
+      throw throwAuthorizationError(
+        'A membership is required to add collaborators to this collection.'
+      );
+    }
   }
 
   const [collaborators, managers] = await countCollaborators(collectionId, targetUserId);
@@ -256,6 +290,19 @@ export async function respondToInvite({
   }
   if (invite.createdAt < inviteExpiryCutoff()) {
     throw throwBadRequestError('This invite has expired.');
+  }
+
+  // The collection can change between send and accept; a mode that `inviteCollaborator`
+  // refuses must not be reachable by accepting an invite issued before the flip.
+  const collection = await dbRead.collection.findUnique({
+    where: { id: invite.collectionId },
+    select: { mode: true },
+  });
+  if (
+    collection?.mode === CollectionMode.Bookmark ||
+    collection?.mode === CollectionMode.Contest
+  ) {
+    throw throwBadRequestError('This collection does not support collaborators.');
   }
 
   if (!accept) {
@@ -373,21 +420,28 @@ export async function getCollaborators({
 
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { read: true, write: true },
+    select: { userId: true, read: true, write: true, mode: true },
   });
-  const freeBaseline = collection
-    ? freeGrantBaseline(collection)
-    : new Set<CollectionContributorPermission>();
+
+  // Curated collections (Contest/Bookmark) and the system-owned curation set carry staff
+  // ADD/MANAGE rows that are an internal roster, not a collaboration — publishing them would
+  // hand every reader of e.g. Featured Models the list of who curates it.
+  if (!collection || collection.mode !== null || collection.userId <= 0) {
+    throw throwBadRequestError('This collection does not support collaborators.');
+  }
+
+  const freeBaseline = freeGrantBaseline(collection);
 
   // CollectionContributor also holds follow rows — on a write:Public collection a plain
   // Follow carries ADD too, so this must never return every row for the collection. A row
   // qualifies as a roster entry when its permissions are elevated beyond the free baseline,
   // or (to catch a Contributor invite accepted on a write:Public collection, whose granted
-  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user has an
-  // Accepted CollectionInvite — a signal only the invite/accept flow produces.
+  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user holds an
+  // invite that occupies a seat — a signal only the invite/accept flow produces.
   const rows = await dbRead.collectionContributor.findMany({
     where: {
       collectionId,
+      userId: { not: collection.userId },
       permissions: {
         hasSome: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
       },
@@ -395,17 +449,16 @@ export async function getCollaborators({
     select: { userId: true, permissions: true },
   });
 
-  const acceptedInvites = await dbRead.collectionInvite.findMany({
-    where: { collectionId, status: CollectionInviteStatus.Accepted },
+  const seatedInvites = await dbRead.collectionInvite.findMany({
+    where: liveInviteWhere(collectionId),
     select: { userId: true },
   });
-  const acceptedInviteUserIds = new Set(acceptedInvites.map((invite) => invite.userId));
+  const seatedInviteUserIds = new Set(seatedInvites.map((invite) => invite.userId));
 
   const collaborators = rows
     .filter(
       (row) =>
-        hasElevatedPermission(row.permissions, freeBaseline) ||
-        acceptedInviteUserIds.has(row.userId)
+        hasElevatedPermission(row.permissions, freeBaseline) || seatedInviteUserIds.has(row.userId)
     )
     .map((row) => ({
       userId: row.userId,

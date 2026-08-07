@@ -230,7 +230,12 @@ export const collectionRouter = router({
     .input(inviteCollaboratorInput)
     .use(isFlagProtected('collaborativeCollections'))
     .mutation(({ input, ctx }) =>
-      inviteCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      inviteCollaborator({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        isMember: !!ctx.user.tier && ctx.user.tier !== 'free',
+      })
     ),
   respondToInvite: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
