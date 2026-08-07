@@ -64,7 +64,12 @@ export function StickerPlacementHoverCard({
   );
 
   const stickerCreator = data?.sticker?.creator;
-  const shopHref = stickerCreator ? `/user/${stickerCreator.username}/shop` : null;
+  // Guarded on the username, not the relation. `deleteUser` soft-deletes — it
+  // nulls `username` and leaves the row — so `Cosmetic.createdById` still points
+  // at a real user and the relation is present with nothing to link to. Testing
+  // the relation produced a live link to `/user/null/shop`.
+  const creatorName = stickerCreator?.username ?? null;
+  const shopHref = creatorName ? `/user/${creatorName}/shop` : null;
 
   return (
     <HoverCard
@@ -108,11 +113,11 @@ export function StickerPlacementHoverCard({
                       {data.sticker.name}
                     </Text>
                   )}
-                  {stickerCreator && shopHref && (
+                  {shopHref && (
                     <>
                       {' by '}
                       <Anchor component={Link} href={shopHref} underline="always" inherit>
-                        {stickerCreator.username}
+                        {creatorName}
                       </Anchor>
                     </>
                   )}

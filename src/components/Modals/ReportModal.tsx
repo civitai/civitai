@@ -32,6 +32,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { getDisplayName } from '~/utils/string-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
@@ -319,6 +320,7 @@ export default function ReportModal({
   };
 
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   useEffect(() => {
     if (currentUser) return;
     router.push(getLoginLink({ returnUrl: router.asPath, reason: 'report-content' }));
@@ -360,6 +362,10 @@ export default function ReportModal({
                         return !data?.reportStats?.ownershipPending;
                       }
                     }
+                    // Offering a reason for a feature the reporter cannot see is
+                    // an invitation to a form with nothing in it.
+                    if (item.reason === ReportReason.StickerPlacement)
+                      return !!features.stickerPlacement;
                     return true;
                   }) // TEMP FIX
                   .map(({ key, label }) => (

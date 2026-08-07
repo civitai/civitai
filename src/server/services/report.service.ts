@@ -70,21 +70,54 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findUnique({ where: { id }, select });
 };
 
+/**
+ * The `details.placementId` predicate, for reasons that carry one.
+ *
+ * Returned as a spreadable fragment rather than branching inside the query, so a
+ * reason without a placement produces no predicate at all and the generic dedupe
+ * behaves exactly as it did.
+ */
+const reportedPlacementFilter = ({
+  reason,
+  details,
+}: {
+  reason: ReportReason;
+  details?: MixedObject;
+}) => {
+  if (reason !== ReportReason.StickerPlacement) return {};
+  const placementId = (details as { placementId?: number } | undefined)?.placementId;
+  if (typeof placementId !== 'number') return {};
+  return { details: { path: ['placementId'], equals: placementId } };
+};
+
 const validateReportCreation = async ({
   userId,
   reportType,
   entityReportId,
   reason,
+  details,
 }: {
   userId: number;
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
+  details?: MixedObject;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
+    where: {
+      reason,
+      [reportType]: { [entityIdField]: entityReportId },
+      // A sticker report names one placement, and an image can carry several.
+      // Deduping on (reason, image) alone folds a report about placement 2 into
+      // an existing one about placement 1 and drops the new details, so a
+      // moderator acting on it removes the wrong person's sticker and keeps
+      // their Buzz. Narrowed to the placement so the same one still dedupes and
+      // a different one does not. Every other reason is unaffected — the
+      // predicate is only added when there is a placement to add it for.
+      ...reportedPlacementFilter({ reason, details }),
+    },
     orderBy: { id: 'desc' },
   });
 
@@ -222,6 +255,7 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
+          details: data.details as MixedObject,
         })
       : null;
   if (validReport) return validReport;

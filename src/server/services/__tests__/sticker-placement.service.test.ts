@@ -48,6 +48,8 @@ const placementCount = vi.fn(async () => 0);
 const placementFindMany = vi.fn(async () => [] as unknown[]);
 const placementGroupBy = vi.fn(async () => [] as unknown[]);
 const transactionFindMany = vi.fn(async () => [] as unknown[]);
+const placementFindFirst = vi.fn(async () => null as unknown);
+const cosmeticFindUnique = vi.fn(async () => null as unknown);
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
@@ -55,14 +57,22 @@ vi.mock('~/server/db/client', () => ({
     placement: { create: placementCreate, count: placementCount, findUnique: vi.fn() },
   },
   dbRead: {
-    placement: { findMany: placementFindMany, groupBy: placementGroupBy },
+    placement: {
+      findMany: placementFindMany,
+      groupBy: placementGroupBy,
+      findFirst: placementFindFirst,
+    },
     placementTransaction: { findMany: transactionFindMany },
+    cosmetic: { findUnique: cosmeticFindUnique },
   },
 }));
 
-const { createStickerPlacement, getStickerPlacements, getPlacementSettlementStates } = await import(
-  '~/server/services/sticker-placement.service'
-);
+const {
+  createStickerPlacement,
+  getStickerPlacements,
+  getPlacementSettlementStates,
+  getStickerPlacementDetail,
+} = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: PRICE, price: PRICE, cap: 5000 };
 
@@ -465,5 +475,86 @@ describe('settlement state comes from the ledger, never from Placement.status', 
       where: { kind: { notIn: string[] } };
     };
     expect(where.kind.notIn).toEqual(['holdFee', 'holdPrincipal']);
+  });
+});
+
+describe('the hover-card detail', () => {
+  const DETAIL_PLACEMENT = 137;
+  const CREATOR = 148;
+
+  const givenPlacement = () =>
+    placementFindFirst.mockResolvedValue({
+      id: DETAIL_PLACEMENT,
+      createdAt: new Date(0),
+      status: 'approved',
+      data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+      placer: { id: PLACER, username: 'placer' },
+    });
+
+  beforeEach(() => {
+    placementFindFirst.mockReset();
+    cosmeticFindUnique.mockReset();
+  });
+
+  it('carries the sticker and its creator', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue({
+      id: COSMETIC,
+      name: 'Gumdong',
+      creator: { id: CREATOR, username: 'maker' },
+    });
+
+    const detail = await getStickerPlacementDetail({
+      placementId: DETAIL_PLACEMENT,
+      viewerId: PLACER,
+    });
+
+    expect(detail.sticker).toMatchObject({ id: COSMETIC, name: 'Gumdong' });
+    expect(detail.sticker?.creator).toMatchObject({ id: CREATOR, username: 'maker' });
+  });
+
+  /**
+   * `deleteUser` soft-deletes: it nulls `username` and leaves the row, so the
+   * relation is still present with nothing to link to. A consumer testing the
+   * relation rather than the username built `/user/null/shop`.
+   */
+  it('reports a deleted creator as a null username rather than omitting them', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue({
+      id: COSMETIC,
+      name: 'Gumdong',
+      creator: { id: CREATOR, username: null },
+    });
+
+    const detail = await getStickerPlacementDetail({
+      placementId: DETAIL_PLACEMENT,
+      viewerId: PLACER,
+    });
+
+    expect(detail.sticker?.creator?.username).toBeNull();
+  });
+
+  it('scopes pending to the placer and the owner, and refuses a stranger', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue(null);
+
+    await getStickerPlacementDetail({ placementId: DETAIL_PLACEMENT, viewerId: PLACER });
+
+    const [query] = placementFindFirst.mock.calls[0] as [{ where: { OR: MixedObject[] } }];
+    const pending = query.where.OR.filter((clause) => clause.status === 'pending');
+    expect(pending).toEqual([
+      { status: 'pending', placerId: PLACER },
+      { status: 'pending', ownerId: PLACER },
+    ]);
+  });
+
+  it('asks for approved only when nobody is signed in', async () => {
+    givenPlacement();
+    cosmeticFindUnique.mockResolvedValue(null);
+
+    await getStickerPlacementDetail({ placementId: DETAIL_PLACEMENT });
+
+    const [query] = placementFindFirst.mock.calls[0] as [{ where: { OR: MixedObject[] } }];
+    expect(query.where.OR.map((clause) => clause.status)).toEqual(['approved']);
   });
 });

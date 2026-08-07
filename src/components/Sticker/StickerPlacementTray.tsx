@@ -99,8 +99,12 @@ export function StickerPlacementTray() {
               // They pressed it to place it and hit the wall. Having paid, they
               // should not have to find it in the row again — the draft starts
               // centred on the image, ready to drag.
+              // Only when nothing is already positioned. Replacing a draft the
+              // placer has spent time placing, to hand them a centred one they
+              // did not ask for, loses work silently — and they can still press
+              // the sticker themselves.
               onPurchased={() => {
-                begin(topUp.id, undefined, maxScale);
+                if (!draft) begin(topUp.id, undefined, maxScale);
                 setTopUp(null);
               }}
             />

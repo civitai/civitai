@@ -22,14 +22,23 @@ function StickerPlacementFields() {
   const placements = target ? byImage.get(target.entityId) ?? [] : [];
   const { sticker } = useStickerCosmetics(placements.map((p) => p.data.cosmeticId));
 
+  // The field stays mounted with no options rather than being replaced by the
+  // alert. `placementId` is required and Submit lives in the parent modal, so an
+  // unmounted field meant pressing Submit failed validation with nowhere to
+  // render the error — the button simply did nothing.
   if (!placements.length)
     return (
-      <Alert color="yellow">
-        <Text size="xs">
-          There are no stickers on this image right now. If one was just removed, there is nothing
-          left to report.
-        </Text>
-      </Alert>
+      <Stack gap="xs">
+        <Alert color="yellow">
+          <Text size="xs">
+            There are no stickers on this image right now. If one was just removed, there is nothing
+            left to report.
+          </Text>
+        </Alert>
+        <InputRadioGroup name="placementId" label="Which sticker?" withAsterisk>
+          <div />
+        </InputRadioGroup>
+      </Stack>
     );
 
   return (
