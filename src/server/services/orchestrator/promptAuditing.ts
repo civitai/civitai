@@ -399,11 +399,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     let message: string;
 
     if (softBlock) {
-      // Not counted, so no escalating "sent for review" tail — that would be a
-      // threat we have decided not to carry out. Green keeps its redirect: the
-      // user may proceed, but the reason they were stopped is still the domain.
+      // No escalating "sent for review" tail (not counted), and on green no
+      // "go to civitai.red" redirect. Soft means we are NOT confident this is
+      // mature — that uncertainty is the whole reason we offer a proceed button,
+      // so sending them to the adult domain would contradict it and push users
+      // there over a false positive.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
-      if (isGreen) message += `.\n\n${GREEN_SFW_REDIRECT}`;
     } else if (isGreen) {
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
     } else {

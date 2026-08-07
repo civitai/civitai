@@ -220,8 +220,18 @@ describe('auditPromptServer — proceeding past a soft block', () => {
   // The override applies on every domain, green included. `profanity` only ever
   // fires on green (checkProfanity = isGreen), so this is the ONLY path that
   // makes that category reachable at all.
-  it('a green soft block keeps the SFW redirect', async () => {
+  // Soft means we are not confident the prompt is mature, which is exactly why a
+  // proceed button is offered. Sending the user to the adult domain would
+  // contradict that, and would push them there over a false positive.
+  it('a green soft block does NOT redirect to the mature domain', async () => {
     flagWith(trigger('profanity', 'damn'));
+    await expect(auditPromptServer({ ...options, isGreen: true })).rejects.not.toThrow(
+      /civitai\.red/
+    );
+  });
+
+  it('a green HARD block still redirects', async () => {
+    flagWith(trigger('inappropriate_minor'));
     await expect(auditPromptServer({ ...options, isGreen: true })).rejects.toThrow(/civitai\.red/);
   });
 
