@@ -165,7 +165,7 @@ describe('upsertCollection authorization', () => {
     expect(args.where.userId.notIn).toContain(OWNER_ID);
   });
 
-  it('leaves accepted collaborators out of the resync', async () => {
+  it('leaves seated collaborators out of the resync, Accepted or still-Pending', async () => {
     arrangeDowngrade({ currentWrite: 'Public', nextWrite: 'Private' });
     mockDbWrite.collectionInvite.findMany.mockResolvedValue([{ userId: MANAGER_ID }]);
 
@@ -181,6 +181,45 @@ describe('upsertCollection authorization', () => {
 
     const args = mockDbWrite.collectionContributor.updateMany.mock.calls[0][0];
     expect(args.where.userId.notIn).toEqual(expect.arrayContaining([OWNER_ID, MANAGER_ID]));
+    // Same seat definition the caps and the roster use — a re-invited collaborator's invite is
+    // flipped back to Pending, and must stay protected for that window.
+    const inviteQuery = mockDbWrite.collectionInvite.findMany.mock.calls[0][0];
+    expect(inviteQuery.where.OR).toEqual([
+      { status: 'Accepted' },
+      { status: 'Pending', createdAt: { gte: expect.any(Date) } },
+    ]);
+  });
+
+  // The resync has never run in production, so the stored rows assume it never will: rows
+  // granted by anything other than following (the contest-manager join URL, historical staff
+  // rows) must be untouchable by it. Matching the OLD free grant exactly is what guarantees
+  // that — a granted row holds something the free grant never contained.
+  it('only re-derives rows that are exactly the previous free grant', async () => {
+    arrangeDowngrade({ currentWrite: 'Public', nextWrite: 'Private' });
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        write: 'Private',
+        userId: OWNER_ID,
+        isMember: false,
+      },
+    } as never);
+
+    const { where, data } = mockDbWrite.collectionContributor.updateMany.mock.calls[0][0];
+    expect(where.permissions).toEqual({ equals: ['VIEW', 'ADD'] });
+
+    // Apply the clause to the row shapes that actually exist on the dev clone.
+    const matches = (row: { userId: number; permissions: string[] }) =>
+      !where.userId.notIn.includes(row.userId) &&
+      row.permissions.length === where.permissions.equals.length &&
+      row.permissions.every((p, i) => p === where.permissions.equals[i]);
+
+    expect(matches({ userId: 1, permissions: ['VIEW', 'ADD'] })).toBe(true); // plain follower
+    expect(matches({ userId: 2, permissions: ['VIEW', 'ADD', 'MANAGE'] })).toBe(false); // staff/judge
+    expect(matches({ userId: 3, permissions: ['ADD', 'MANAGE', 'VIEW'] })).toBe(false); // join-as-manager
+    expect(data.permissions).toEqual(['VIEW']);
   });
 
   it('does not resync when neither read nor write changed', async () => {

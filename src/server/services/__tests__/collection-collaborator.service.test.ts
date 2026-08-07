@@ -556,6 +556,32 @@ describe('respondToInvite', () => {
     ).rejects.toThrow();
   });
 
+  // Declining must never be blocked by the mode guard — otherwise a stale invite on a
+  // collection that flipped to Contest sits in the inbox until it expires.
+  it('lets a user decline an invite on a collection that flipped to Contest', async () => {
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
+      id: 1,
+      collectionId: COLLECTION_ID,
+      userId: TARGET_ID,
+      role: 'Manager',
+      status: 'Pending',
+      createdAt: new Date(),
+    });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: 'Contest',
+    });
+
+    await expect(
+      respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: false })
+    ).resolves.toEqual({ accepted: false });
+    expect(mockDbWrite.collectionInvite.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Declined' }) })
+    );
+  });
+
   // M4: inviteCollaborator refuses Contest/Bookmark, so accepting must too — otherwise a
   // mode flipped after the invite was sent still lands a MANAGE grant.
   it('refuses to accept onto a collection that flipped to Contest after the invite', async () => {

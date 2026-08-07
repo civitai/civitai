@@ -3,6 +3,7 @@ import { sessionClient } from '~/server/auth/session-client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { inviteExpiryCutoff, liveInviteWhere } from '~/server/services/collection-invite.utils';
 import { createNotification } from '~/server/services/notification.service';
 import {
   CollectionCollaboratorRole,
@@ -16,7 +17,6 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 
 export const COLLABORATOR_CAP = 25;
 export const MANAGER_CAP = 5;
-export const INVITE_EXPIRY_DAYS = 7;
 
 export const ROLE_PERMISSIONS: Record<
   CollectionCollaboratorRole,
@@ -40,10 +40,6 @@ export type PendingInvite = {
   role: CollectionCollaboratorRole;
   createdAt: Date;
 };
-
-function inviteExpiryCutoff() {
-  return new Date(Date.now() - INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-}
 
 function roleFromPermissions(
   permissions: CollectionContributorPermission[]
@@ -91,20 +87,6 @@ function hasElevatedPermission(
         p === CollectionContributorPermission.MANAGE) &&
       !freeBaseline.has(p)
   );
-}
-
-// The invites that represent a live or still-open seat. Shared by the caps and the roster so
-// the two can't disagree about who occupies one — re-inviting an accepted collaborator flips
-// their invite back to Pending, and a roster that only looked at Accepted dropped them while
-// the caps still charged for them.
-function liveInviteWhere(collectionId: number) {
-  return {
-    collectionId,
-    OR: [
-      { status: CollectionInviteStatus.Accepted },
-      { status: CollectionInviteStatus.Pending, createdAt: { gte: inviteExpiryCutoff() } },
-    ],
-  };
 }
 
 // Both counts must include non-expired pending invites, not just accepted rows — counting
@@ -292,8 +274,17 @@ export async function respondToInvite({
     throw throwBadRequestError('This invite has expired.');
   }
 
+  if (!accept) {
+    await dbWrite.collectionInvite.update({
+      where: { id: inviteId },
+      data: { status: CollectionInviteStatus.Declined, respondedAt: new Date() },
+    });
+    return { accepted: false };
+  }
+
   // The collection can change between send and accept; a mode that `inviteCollaborator`
-  // refuses must not be reachable by accepting an invite issued before the flip.
+  // refuses must not be reachable by accepting an invite issued before the flip. Checked
+  // after the decline branch so a stale invite can always be cleared off the inbox.
   const collection = await dbRead.collection.findUnique({
     where: { id: invite.collectionId },
     select: { mode: true },
@@ -303,14 +294,6 @@ export async function respondToInvite({
     collection?.mode === CollectionMode.Contest
   ) {
     throw throwBadRequestError('This collection does not support collaborators.');
-  }
-
-  if (!accept) {
-    await dbWrite.collectionInvite.update({
-      where: { id: inviteId },
-      data: { status: CollectionInviteStatus.Declined, respondedAt: new Date() },
-    });
-    return { accepted: false };
   }
 
   await dbWrite.$transaction(async (tx) => {

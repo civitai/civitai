@@ -79,7 +79,6 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
-  CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -93,6 +92,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -365,6 +365,27 @@ export async function getUserCollectionPermissionsById({
 }): Promise<CollectionContributorPermissionFlags> {
   const results = await getUserCollectionPermissionsByIds({ ids: [id], userId, isModerator });
   return results[0] ?? createEmptyPermissions(id);
+}
+
+// The exact permissions array a follow row is written with for a given read/write pair.
+// Order matters — the contributor resync compares it against stored rows with `equals` — so it
+// must stay identical to the order `getUserCollectionPermissionsByIds` builds
+// `followPermissions` in above.
+function freeGrantPermissions(collection: {
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+}): CollectionContributorPermission[] {
+  const permissions: CollectionContributorPermission[] = [];
+  if (collection.read !== CollectionReadConfiguration.Private) {
+    permissions.push(CollectionContributorPermission.VIEW);
+  }
+  if (collection.write === CollectionWriteConfiguration.Public) {
+    permissions.push(CollectionContributorPermission.ADD);
+  }
+  if (collection.write === CollectionWriteConfiguration.Review) {
+    permissions.push(CollectionContributorPermission.ADD_REVIEW);
+  }
+  return permissions;
 }
 
 function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
@@ -1124,30 +1145,28 @@ export const upsertCollection = async ({
       (nextWrite && nextWrite !== currentCollection.write) ||
       (nextRead && nextRead !== currentCollection.read)
     ) {
-      const permissions: CollectionContributorPermission[] = [];
-      if (updated.read !== CollectionReadConfiguration.Private) {
-        permissions.push(CollectionContributorPermission.VIEW);
-      }
-
-      if (updated.write === CollectionWriteConfiguration.Public) {
-        permissions.push(CollectionContributorPermission.ADD);
-      }
-
-      if (updated.write === CollectionWriteConfiguration.Review) {
-        permissions.push(CollectionContributorPermission.ADD_REVIEW);
-      }
+      const previousFreeGrant = freeGrantPermissions(currentCollection);
+      const permissions = freeGrantPermissions(updated);
 
       // An invited collaborator's grant is theirs, not the collection's — resetting it here
-      // would revoke every collaborator the moment the owner touches privacy.
+      // would revoke every collaborator the moment the owner touches privacy. Matches the
+      // seat definition the caps and the roster use, so a re-invited collaborator (invite
+      // flipped back to Pending) stays protected.
       const collaborators = await dbWrite.collectionInvite.findMany({
-        where: { collectionId: updated.id, status: CollectionInviteStatus.Accepted },
+        where: liveInviteWhere(updated.id),
         select: { userId: true },
       });
 
+      // Only rows that are EXACTLY the grant the collection used to hand out for free — i.e.
+      // rows `addContributorToCollection` wrote from `followPermissions`. Rows carrying
+      // anything else were granted by something other than following (an accepted invite, the
+      // contest-manager join URL, historical staff rows), and this resync has never run in
+      // production, so "not explicitly excluded" would silently revoke all of them.
       await dbWrite.collectionContributor.updateMany({
         where: {
           collectionId: updated.id,
           userId: { notIn: [updated.userId, ...collaborators.map((c) => c.userId)] },
+          permissions: { equals: previousFreeGrant },
         },
         data: {
           permissions,
