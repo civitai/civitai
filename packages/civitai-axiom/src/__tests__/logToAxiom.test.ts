@@ -235,6 +235,29 @@ describe('logToAxiom injected sink (deps.emitLog)', () => {
     expect(h.ingestEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('LATE REGISTRATION: a sink attached to the deps object AFTER the logger is built still fires', async () => {
+    // The app registers its sink from a server-only entry point at boot, which happens
+    // after this factory has already run. That works only because `deps.emitLog` is read
+    // per call rather than captured at construction — this pins exactly that.
+    const deps: { emitLog?: (body: string) => void } = {};
+    const bodies: string[] = [];
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED, deps);
+
+    // Before registration: nothing to call, and the logger still works.
+    await logToAxiom(ERR);
+    expect(bodies).toHaveLength(0);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    // Register late, exactly as the app does.
+    deps.emitLog = (body: string) => {
+      bodies.push(body);
+    };
+
+    await logToAxiom(ERR);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toBe(errorSpy.mock.calls[1][0]);
+  });
+
   it('is OPTIONAL: with no deps the logger behaves exactly as before', async () => {
     const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
 

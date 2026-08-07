@@ -11,7 +11,12 @@ import {
   TraceIdRatioBasedSampler,
 } from '@opentelemetry/sdk-trace-node';
 import { logs } from '@opentelemetry/api-logs';
-import { createOtelLoggerProvider, registerOtelShutdown } from '@civitai/telemetry/otel-logs';
+import {
+  createOtelLoggerProvider,
+  emitOtelLog,
+  registerOtelShutdown,
+} from '@civitai/telemetry/otel-logs';
+import { setStructuredLogSink } from '~/server/logging/client';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
@@ -107,6 +112,18 @@ void import('~/server/warmup')
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
   });
+
+// Attach the OTel sink to the shared structured logger.
+//
+// Registered from HERE, rather than imported by `~/server/logging/client`, because that
+// module is reachable from the client entry point — importing the bridge there bundles
+// prom-client for the browser and fails the build. This file only ever runs on the
+// server, so it is the correct place for the edge. See the note in that module.
+//
+// Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
+// off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a
+// live positive control that the wiring exists at all.
+setStructuredLogSink(emitOtelLog);
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
