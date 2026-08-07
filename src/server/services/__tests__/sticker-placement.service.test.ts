@@ -344,14 +344,19 @@ describe('what gets written to the row', () => {
 });
 
 describe('a pending placement is visible to the person who paid for it and nobody else', () => {
-  it('scopes the pending clause to the viewer', async () => {
+  it('scopes pending to the placer and the owner, and to nobody else', async () => {
     await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
 
     const { where } = placementFindMany.mock.calls[0][0] as {
-      where: { OR: { status: string; placerId?: number }[] };
+      where: { OR: { status: string; placerId?: number; ownerId?: number }[] };
     };
-    const pendingClause = where.OR.find((clause) => clause.status === 'pending');
-    expect(pendingClause?.placerId).toBe(PLACER);
+    const pending = where.OR.filter((clause) => clause.status === 'pending');
+
+    // Exactly two, each pinned to the viewer: the person who paid for it and the
+    // person being asked to accept it. An unpinned clause here would show every
+    // pending placement to everyone, which is the feature working in reverse.
+    expect(pending).toHaveLength(2);
+    expect(pending.map((clause) => clause.placerId ?? clause.ownerId)).toEqual([PLACER, PLACER]);
   });
 
   it('asks for approved placements only when nobody is signed in', async () => {

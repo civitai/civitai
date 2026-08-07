@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { useMemo } from 'react';
 
@@ -74,6 +75,26 @@ export function StickerPlacementOverlay({
         // Stacking the hover card on top of that would answer a question you did
         // not ask with the one you did buried under it, and you already know who
         // placed it.
+        // The owner is the other person who can see a pending placement, and the
+        // only one who can answer it. Deciding on the image rather than in a list
+        // is the point: a queue can say something is waiting, not whether you
+        // want it on your work.
+        if (placement.isPending && placement.ownerId === viewerId)
+          return (
+            <div key={placement.id} className="pointer-events-none">
+              {body}
+              <div
+                className="pointer-events-auto absolute z-10 -translate-x-1/2"
+                style={{
+                  left: `${placement.data.x * 100}%`,
+                  top: `calc(${placement.data.y * 100}% + ${placement.data.scale * 50}%)`,
+                }}
+              >
+                <StickerPlacementActions placementIds={[placement.id]} compact />
+              </div>
+            </div>
+          );
+
         if (isOwnPending)
           return (
             <Tooltip

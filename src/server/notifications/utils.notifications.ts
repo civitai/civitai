@@ -13,6 +13,7 @@ import { challengeNotifications } from '~/server/notifications/challenge.notific
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
+import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
@@ -47,6 +48,7 @@ export const notificationProcessors = {
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
+  ...placementNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

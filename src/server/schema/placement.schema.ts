@@ -77,3 +77,8 @@ export const countPendingPlacementsFromSchema = z.object({
 export const getStickerPlacementDetailSchema = z.object({
   placementId: z.number().int().positive(),
 });
+
+export const actOnStickerPlacementsSchema = z.object({
+  placementIds: z.array(z.number().int().positive()).min(1).max(50),
+  action: z.enum(['approve', 'decline', 'remove']),
+});

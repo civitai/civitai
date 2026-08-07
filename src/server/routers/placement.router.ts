@@ -1,5 +1,6 @@
 import {
   actOnStickerPlacementSchema,
+  actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceSchema,
   countPendingPlacementsFromSchema,
@@ -18,6 +19,7 @@ import {
 import { countPendingPlacementsFrom } from '~/server/services/placement-moderation.service';
 import {
   actOnStickerPlacement,
+  actOnStickerPlacements,
   createStickerPlacement,
   getPendingStickerPlacements,
   getStickerPlacementDetail,
@@ -109,6 +111,12 @@ export const placementRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+
+  actOnStickers: protectedProcedure
+    .input(actOnStickerPlacementsSchema)
+    .mutation(({ input, ctx }) =>
+      actOnStickerPlacements({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   getPending: protectedProcedure.query(({ ctx }) =>
     getPendingStickerPlacements({ ownerId: ctx.user.id })

@@ -323,10 +323,16 @@ export async function getStickerPlacements({
       targetId: { in: imageIds },
       OR: [
         { status: 'approved' },
-        // A pending placement is visible to the person who paid for it and to
-        // nobody else. Without the placerId this becomes "everyone sees every
-        // pending placement", which is the feature working in reverse.
-        ...(viewerId ? [{ status: 'pending' as const, placerId: viewerId }] : []),
+        // A pending placement is visible to exactly two people: the one who paid
+        // for it, and the one being asked to accept it. Without both ids scoped
+        // this becomes "everyone sees every pending placement", which is the
+        // feature working in reverse.
+        ...(viewerId
+          ? [
+              { status: 'pending' as const, placerId: viewerId },
+              { status: 'pending' as const, ownerId: viewerId },
+            ]
+          : []),
       ],
     },
     select: {
@@ -461,15 +467,21 @@ export async function actOnStickerPlacement({
   return settlePlacement({ placementId, action: settleAction, actorId: userId });
 }
 
-/** The owner's review queue: pending placements across all of their content. */
-export const getPendingStickerPlacements = ({
+/**
+ * The owner's review queue: everything pending across all of their content.
+ *
+ * Carries the image and the placer with it, because the queue's whole job is
+ * deciding without leaving — a list of ids would send someone to eleven pages to
+ * answer eleven placements.
+ */
+export async function getPendingStickerPlacements({
   ownerId,
   limit = 50,
 }: {
   ownerId: number;
   limit?: number;
-}) =>
-  dbRead.placement.findMany({
+}) {
+  const rows = await dbRead.placement.findMany({
     where: { surface: SURFACE, ownerId, status: 'pending' },
     select: {
       id: true,
@@ -479,7 +491,69 @@ export const getPendingStickerPlacements = ({
       data: true,
       createdAt: true,
       expiresAt: true,
+      placer: { select: { id: true, username: true, image: true } },
     },
     orderBy: { createdAt: 'asc' },
     take: limit,
   });
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: rows.map((row) => row.targetId) } },
+    select: { id: true, url: true, name: true, width: true, height: true, type: true },
+  });
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return rows
+    .filter((row) => isStickerPlacementData(row.data))
+    .map((row) => ({
+      ...row,
+      data: row.data as StickerPlacementData,
+      image: byId.get(row.targetId) ?? null,
+    }));
+}
+
+/**
+ * Acting on several at once.
+ *
+ * Loops the same single-placement path rather than growing a bulk one that talks
+ * to the ledger itself. A second route to a state that already has rules is
+ * where every defect in this feature has come from, and "it is the same thing
+ * but faster" is exactly how the two drift.
+ *
+ * Failures are collected rather than thrown: one placement whose payout leg is
+ * having a bad day must not silently drop the other nine the owner just
+ * actioned.
+ */
+export async function actOnStickerPlacements({
+  placementIds,
+  action,
+  userId,
+  isModerator = false,
+}: {
+  placementIds: number[];
+  action: OwnerAction;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const failed: number[] = [];
+  let settled = 0;
+
+  for (const placementId of placementIds) {
+    try {
+      const result = await actOnStickerPlacement({ placementId, action, userId, isModerator });
+      if (result.settled) settled++;
+    } catch (error) {
+      failed.push(placementId);
+      logToAxiom({
+        name: 'sticker-placement',
+        type: 'error',
+        message: 'bulk action could not settle a placement',
+        placementId,
+        action,
+        error: (error as Error).message,
+      }).catch(() => null);
+    }
+  }
+
+  return { considered: placementIds.length, settled, failed };
+}
