@@ -1,9 +1,12 @@
 import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
 import clsx from 'clsx';
+import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
+import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   pointerOverSurface,
@@ -27,6 +30,10 @@ import { trpc } from '~/utils/trpc';
 export function StickerPlacementTray() {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
+  // The sticker they tried to place with nothing left. Buying uses here rather
+  // than sending them to the shop is the point — a tray they have to leave is a
+  // placement they don't make.
+  const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const draft = useStickerPlacementDraftStore((state) => state.draft);
@@ -52,15 +59,13 @@ export function StickerPlacementTray() {
    * leaves it there, so choosing and positioning are one gesture rather than two
    * steps with a modal in between.
    */
+  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
+
   const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
     event.preventDefault();
     // Undefined when the press is outside the image, which it always is on the
     // first grab — the draft then starts centred and follows the pointer in.
-    begin(
-      cosmeticId,
-      pointerOverSurface(event.clientX, event.clientY) ?? undefined,
-      stickerMaxScale(space?.settings as Record<string, unknown> | undefined)
-    );
+    begin(cosmeticId, pointerOverSurface(event.clientX, event.clientY) ?? undefined, maxScale);
     setInteraction('move');
   };
 
@@ -86,43 +91,61 @@ export function StickerPlacementTray() {
           <CloseButton onClick={close} aria-label="Cancel placing a sticker" />
         </div>
 
-        <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
-          <Group gap="xs" wrap="nowrap" p="xs">
-            {isLoading && <Text size="sm">Loading your stickers…</Text>}
-            {!isLoading && !sticker.length && (
-              <Text size="sm" c="dimmed">
-                You don&apos;t own any stickers yet.
-              </Text>
-            )}
-            {sticker.map((option) => {
-              const remaining = balanceFor(option.id);
-              const exhausted = remaining === 0;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={exhausted}
-                  onPointerDown={exhausted ? undefined : grab(option.id)}
-                  className={clsx(
-                    'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
-                    draft?.cosmeticId === option.id ? 'border-blue-5' : 'border-transparent',
-                    exhausted && 'cursor-not-allowed opacity-40'
-                  )}
-                  style={{ touchAction: 'none' }}
-                >
-                  <EdgeImage
-                    src={option.url}
-                    alt={`:${option.slug}:`}
-                    options={{ height: 96, anim: option.animated, optimized: true }}
-                    style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
-                    draggable={false}
-                  />
-                  <Text size="10px">{remaining === null ? '∞' : remaining ?? '…'}</Text>
-                </button>
-              );
-            })}
-          </Group>
-        </ScrollArea.Autosize>
+        {topUp ? (
+          <div className="p-3">
+            <StickerTopUp
+              sticker={topUp}
+              onCancel={() => setTopUp(null)}
+              // They pressed it to place it and hit the wall. Having paid, they
+              // should not have to find it in the row again — the draft starts
+              // centred on the image, ready to drag.
+              onPurchased={() => {
+                begin(topUp.id, undefined, maxScale);
+                setTopUp(null);
+              }}
+            />
+          </div>
+        ) : (
+          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
+            <Group gap="xs" wrap="nowrap" p="xs">
+              {isLoading && <Text size="sm">Loading your stickers…</Text>}
+              {!isLoading && !sticker.length && (
+                <Text size="sm" c="dimmed">
+                  You don&apos;t own any stickers yet.
+                </Text>
+              )}
+              {sticker.map((option) => {
+                const remaining = balanceFor(option.id);
+                const exhausted = remaining === 0;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    // An exhausted sticker opens the top-up instead of doing
+                    // nothing. It stays a pointer-down like the others so the two
+                    // outcomes of pressing a sticker share one gesture.
+                    onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
+                    className={clsx(
+                      'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
+                      draft?.cosmeticId === option.id ? 'border-blue-5' : 'border-transparent',
+                      exhausted && 'opacity-40'
+                    )}
+                    style={{ touchAction: 'none' }}
+                  >
+                    <EdgeImage
+                      src={option.url}
+                      alt={`:${option.slug}:`}
+                      options={{ height: 96, anim: option.animated, optimized: true }}
+                      style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
+                      draggable={false}
+                    />
+                    <Text size="10px">{remaining === null ? '∞' : remaining ?? '…'}</Text>
+                  </button>
+                );
+              })}
+            </Group>
+          </ScrollArea.Autosize>
+        )}
       </div>
     </div>
   );
