@@ -92,7 +92,7 @@ export const CosmeticPackPreviewModal = ({
               {pack?.meta.coverUrl ? (
                 <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
               ) : (
-                <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} />
+                <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} fallbackIcon />
               )}
             </Center>
             <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">

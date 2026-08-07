@@ -101,8 +101,13 @@ import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-acc
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
+// A `cosmetic` relation filter is an EXISTS on a nullable to-one, so ANY
+// condition nested under it silently excludes every pack. The pack branch keeps
+// them visible; a pack containing stickers is refused at purchase either way.
 const hideStickers = (stickersEnabled?: boolean) =>
-  stickersEnabled ? {} : { cosmetic: { type: { not: CosmeticType.Sticker } } };
+  stickersEnabled
+    ? {}
+    : { OR: [{ cosmeticId: null }, { cosmetic: { type: { not: CosmeticType.Sticker } } }] };
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({

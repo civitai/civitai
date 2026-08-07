@@ -471,7 +471,9 @@ export const submitCreatorShopPackSchema = z.object({
   // anyone receives, so it has none of the artwork rules a cosmetic does — and
   // without one the card shows the contents instead.
   imageUrl: z.string().optional(),
-  rightsAffirmed: rightsAffirmedSchema,
+  // Required only with a cover: it is a statement about artwork, and a pack
+  // without one supplies none. Its members were each affirmed at submission.
+  rightsAffirmed: rightsAffirmedSchema.optional(),
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
@@ -482,7 +484,8 @@ export const updateCreatorShopPackSchema = z.object({
   price: z.number().int().min(COSMETIC_PRICE_FLOOR_MIN).optional(),
   availableQuantity: z.number().int().positive().nullish(),
   acceptsBlueBuzz: z.boolean().optional(),
-  imageUrl: z.string().optional(),
+  // `null` clears the cover; omitted leaves it as-is.
+  imageUrl: z.string().nullish(),
   // Re-snapshots every member's floor, so changing contents re-prices the pack
   // against today's list prices rather than the ones it was built against.
   memberCosmeticIds: z

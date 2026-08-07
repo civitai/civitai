@@ -53,7 +53,7 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
       {item.cosmetic ? (
         <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
       ) : packTiles(item).length ? (
-        <PackCoverTiles tiles={packTiles(item)} size={44} className="shrink-0" />
+        <PackCoverTiles tiles={packTiles(item)} size={44} className="shrink-0" fallbackIcon />
       ) : (
         <ThemeIcon variant="light" color="gray" size={44} radius="md" className="shrink-0">
           <IconPackage size={22} />
@@ -168,7 +168,9 @@ function ItemActionsMenu({
                   <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
                   <Text size="xs" c="dimmed">
                     {item.listed
-                      ? 'Stops your own sales. Other creators can still bundle it.'
+                      ? item.cosmetic
+                        ? 'Stops your own sales. Other creators can still bundle it.'
+                        : 'Takes the pack off sale. Packs cannot be bundled by others.'
                       : 'Put it back on sale in your shop.'}
                   </Text>
                 </Stack>
@@ -217,9 +219,9 @@ export function useManageColumns(
         key: 'type',
         header: 'Type',
         width: 110,
-        render: () => (
+        render: (item) => (
           <Text size="sm" c="dimmed">
-            Cosmetic
+            {item.cosmetic ? 'Cosmetic' : 'Pack'}
           </Text>
         ),
       },

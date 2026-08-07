@@ -509,7 +509,7 @@ function CreatorShopReviewPage() {
                             {item.title}
                           </Text>
                           <Text size="xs" c="dimmed" lineClamp={1}>
-                            @{item.cosmetic?.creator?.username ?? 'unknown'} ·{' '}
+                            @{item.cosmetic?.creator?.username ?? item.addedBy?.username ?? 'unknown'} ·{' '}
                             {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
                           </Text>
                         </Stack>
@@ -746,10 +746,13 @@ function CreatorShopReviewPage() {
                         </>
                       )}
                       <MoneyTile
-                        label="Creator earns"
+                        // A pack's revenue splits per member creator, with only
+                        // the residual reaching the lister — a single figure
+                        // names money nobody receives.
+                        label={isPack ? 'Creators earn (split)' : 'Creator earns'}
                         value={`${numberWithCommas(
                           Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
-                        )} Buzz`}
+                        )} Buzz${isPack ? ' across members' : ''}`}
                         icon={<IconTrendingUp size={14} />}
                         iconColor="var(--mantine-color-green-5)"
                       />
@@ -820,7 +823,9 @@ function CreatorShopReviewPage() {
                         <Group gap={9} px="md" py={9} align="center">
                           <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
                           <Text size="sm" c="dimmed">
-                            No automated checks were recorded for this submission.
+                            {isPack
+                            ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
+                            : 'No automated checks were recorded for this submission.'}
                           </Text>
                         </Group>
                       )}

@@ -1,3 +1,5 @@
+import { ThemeIcon } from '@mantine/core';
+import { IconPackage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
@@ -11,13 +13,23 @@ export function PackCoverTiles({
   tiles,
   size = 256,
   className,
+  fallbackIcon,
 }: {
   tiles: string[];
   size?: number;
   className?: string;
+  /** Render a package icon rather than nothing when there are no tiles. */
+  fallbackIcon?: boolean;
 }) {
   const shown = tiles.slice(0, 4);
-  if (!shown.length) return null;
+  // Members without artwork (a NamePlate has no `url`) can leave a pack with no
+  // tiles at all, which rendered an empty well on the buyer's card.
+  if (!shown.length)
+    return fallbackIcon ? (
+      <ThemeIcon variant="light" color="gray" size={size} radius="md" className={className}>
+        <IconPackage size={Math.round(size / 2)} />
+      </ThemeIcon>
+    ) : null;
 
   // One member fills the frame; two or more share a 2x2 grid, so a three-member
   // pack reads as a pack rather than as a slightly-off single item.

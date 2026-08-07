@@ -543,42 +543,60 @@ export const getShopSectionsWithItems = async ({
         },
         where: {
           shopItem: {
-            cosmetic: {
-              // Merged into ONE `type` filter. A second `type` key would silently
-              // overwrite the caller's requested types — with the flag off (the
-              // default for everyone), /shop?cosmeticTypes=Badge would return
-              // every non-sticker type instead of badges.
-              ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
-                ? {
-                    type: {
-                      ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
-                      // Stickers stay out of the official shop until the flag is
-                      // on. Rendering is unaffected — this hides the storefront
-                      // entry only.
-                      ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
-                    },
-                  }
-                : {}),
-              // Creator-made cosmetics (createdById set — official items also
-              // have an addedById, the mod who listed them) are gated behind
-              // the creatorShop feature flag; a section of only creator items
-              // disappears entirely for unflagged viewers via the
-              // empty-section filter below.
-              ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
-              // A block between viewer and creator (either direction) hides
-              // that creator's items even when featured in official sections.
-              ...(blockedPairIds.length
-                ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
-                : {}),
-            },
+            // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so
+            // any condition under it drops every pack — a pack placed in a
+            // section simply never rendered. The pack branch keeps them; their
+            // members' types are enforced at purchase.
+            OR: [
+              {
+                cosmeticId: null,
+                ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+              },
+              {
+                cosmetic: {
+                  // Merged into ONE `type` filter. A second `type` key would silently
+                  // overwrite the caller's requested types — with the flag off (the
+                  // default for everyone), /shop?cosmeticTypes=Badge would return
+                  // every non-sticker type instead of badges.
+                  ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
+                    ? {
+                        type: {
+                          ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
+                          // Stickers stay out of the official shop until the flag is
+                          // on. Rendering is unaffected — this hides the storefront
+                          // entry only.
+                          ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                        },
+                      }
+                    : {}),
+                  // Creator-made cosmetics (createdById set — official items also
+                  // have an addedById, the mod who listed them) are gated behind
+                  // the creatorShop feature flag; a section of only creator items
+                  // disappears entirely for unflagged viewers via the
+                  // empty-section filter below.
+                  ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+                  // A block between viewer and creator (either direction) hides
+                  // that creator's items even when featured in official sections.
+                  ...(blockedPairIds.length
+                    ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
+                    : {}),
+                },
+              },
+            ],
             archivedAt: null,
             // Creator items in official sections can lose their Published
             // status after being featured (revert/reject), or be delisted by
             // their creator while staying Published — hide both.
-            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published, listed: true }),
-            OR: isModerator
-              ? undefined
-              : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
+            ...(isModerator
+              ? {}
+              : {
+                  status: CosmeticShopItemStatus.Published,
+                  listed: true,
+                  // Under AND rather than a second `OR` key, which would
+                  // overwrite the pack branch above and take the block filter
+                  // with it.
+                  AND: [{ OR: [{ availableTo: { gte: new Date() } }, { availableTo: null }] }],
+                }),
           },
         },
         orderBy: { index: 'asc' },
@@ -706,6 +724,8 @@ export const purchaseCosmeticShopItem = async ({
   });
 
   const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
+  // These guards run before the pack branch, so their copy has to work for both.
+  const noun = shopItem && shopItem.cosmeticId == null ? 'pack' : 'cosmetic';
 
   if (!shopItem) {
     throw new Error('Cosmetic not found');
@@ -714,12 +734,12 @@ export const purchaseCosmeticShopItem = async ({
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
-    throw new Error('Cosmetic is not available');
+    throw new Error(`This ${noun} is not available`);
   }
 
   // Delisted: still Published so it stays bundlable, but off individual sale.
   if (!shopItem.listed) {
-    throw new Error('Cosmetic is not available');
+    throw new Error(`This ${noun} is not available`);
   }
 
   // A pack carries no cosmetic of its own; the guards below are answered per
@@ -730,7 +750,7 @@ export const purchaseCosmeticShopItem = async ({
     // could otherwise pay for a sticker they can't place, since the picker is
     // gated too. Refuse at the mutation, where the cosmetic is already loaded.
     if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
-      throw new Error('Cosmetic is not available');
+      throw new Error(`This ${noun} is not available`);
     }
 
     // Creators can't buy their own cosmetic — they're granted it on approval.
@@ -748,7 +768,7 @@ export const purchaseCosmeticShopItem = async ({
         (id): id is number => id != null
       );
       if (sellerIds.some((id) => blockedPairIds.includes(id))) {
-        throw new Error('Cosmetic is not available');
+        throw new Error(`This ${noun} is not available`);
       }
     }
   }
@@ -769,15 +789,15 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
-    throw new Error('Cosmetic is out of stock');
+    throw new Error(`This ${noun} is out of stock`);
   }
 
   if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
-    throw new Error('Cosmetic is not available yet');
+    throw new Error(`This ${noun} is not available yet`);
   }
 
   if (shopItem.availableTo && shopItem.availableTo < new Date()) {
-    throw new Error('Cosmetic is no longer available');
+    throw new Error(`This ${noun} is no longer available`);
   }
 
   // Packs diverge here: the money path, the grant and the payout are all

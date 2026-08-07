@@ -156,7 +156,9 @@ export const submitCreatorShopPack = async ({
   rightsAffirmed,
   stickersEnabled,
 }: SubmitCreatorShopPackInput & { userId: number; stickersEnabled?: boolean }) => {
-  if (!rightsAffirmed)
+  // Only artwork needs affirming, and only a cover is artwork the lister
+  // supplied — the members were each affirmed when they were submitted.
+  if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
@@ -205,11 +207,17 @@ export const submitCreatorShopPack = async ({
           meta: {
             purchases: 0,
             submissionTxId: feeTxId,
-            ...(imageUrl ? { coverUrl: imageUrl } : {}),
+            // `null` clears, `undefined` leaves alone — without the distinction
+          // the clear button emptied the form and saved nothing.
+          ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
             coverTiles: coverTilesFrom(members),
             packMemberCount: members.length,
             acceptsBlueBuzz,
-            rightsAffirmation: buildRightsAffirmation(userId),
+            // Only when a cover was actually supplied. The affirmation is a
+            // statement about artwork; recording one for a pack with no cover
+            // makes the review panel quote it back to a moderator as though the
+            // lister claimed rights over art they never uploaded.
+            ...(imageUrl ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
           } satisfies CosmeticShopItemMeta as Prisma.InputJsonValue,
         },
       });
@@ -330,7 +338,9 @@ export const updateCreatorShopPack = async ({
           : {}),
         meta: {
           ...meta,
-          ...(imageUrl ? { coverUrl: imageUrl } : {}),
+          // `null` clears, `undefined` leaves alone — without the distinction
+          // the clear button emptied the form and saved nothing.
+          ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
           ...(memberCosmeticIds ? { coverTiles: coverTilesFrom(members) } : {}),
           // Only re-baselined when the contents were actually chosen. A member
           // Cosmetic being deleted cascades its join row away, so rewriting this
@@ -503,8 +513,17 @@ export const getBundlableCosmetics = async ({
     where: {
       status: CosmeticShopItemStatus.Published,
       cosmeticId: { not: null },
-      ...(query ? { cosmetic: { name: { contains: query, mode: 'insensitive' } } } : {}),
-      ...(types?.length ? { cosmetic: { type: { in: types } } } : {}),
+      // One `cosmetic` object: two spreads onto the same key meant the type
+      // filter overwrote the search, and the router always sends types while the
+      // sticker flag is off — so typing in the picker filtered nothing.
+      ...(query || types?.length
+        ? {
+            cosmetic: {
+              ...(query ? { name: { contains: query, mode: 'insensitive' as const } } : {}),
+              ...(types?.length ? { type: { in: types } } : {}),
+            },
+          }
+        : {}),
     },
     orderBy: { id: 'desc' },
     take: limit * 2,

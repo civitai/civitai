@@ -203,7 +203,7 @@ export const ShopItem = ({
                 ) : itemMeta.coverUrl ? (
                   <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
                 ) : (
-                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} />
+                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon />
                 )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>

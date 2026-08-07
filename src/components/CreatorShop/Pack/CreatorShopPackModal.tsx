@@ -180,7 +180,8 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         price,
         availableQuantity: quantity ?? null,
         acceptsBlueBuzz,
-        ...(imageId ? { imageUrl: imageId } : {}),
+        // Explicit null so clearing the cover actually clears it.
+        imageUrl: imageId ?? null,
         memberCosmeticIds,
       });
     else
@@ -193,7 +194,8 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         buzzType: 'yellow',
         acceptsBlueBuzz,
         ...(imageId ? { imageUrl: imageId } : {}),
-        rightsAffirmed: true,
+        // Only claimed when artwork was actually supplied.
+        rightsAffirmed: !imageId ? undefined : true,
       });
     dialog.onClose();
   };
