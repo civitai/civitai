@@ -1,5 +1,4 @@
 import {
-  actOnStickerPlacementSchema,
   actOnStickerPlacementsSchema,
   createStickerPlacementSchema,
   getPlacementSpaceRowSchema,
@@ -29,7 +28,6 @@ import {
   suspendPlacementPrivileges,
 } from '~/server/services/placement-moderation.service';
 import {
-  actOnStickerPlacement,
   actOnStickerPlacements,
   createStickerPlacement,
   getPendingStickerPlacements,
@@ -124,16 +122,16 @@ export const placementRouter = router({
       });
     }),
 
-  actOnSticker: protectedProcedure.input(actOnStickerPlacementSchema).mutation(({ input, ctx }) =>
-    // Deliberately NOT flag-gated. Turning the flag off must not trap a creator
-    // with pending placements on their content and no way to decline them.
-    actOnStickerPlacement({
-      ...input,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
-    })
-  ),
-
+  /**
+   * The one mutation here that is deliberately NOT flag-gated: turning the flag
+   * off must not trap a creator with pending placements on their content and no
+   * way to decline them. Ownership is still enforced — `actOnStickerPlacement`
+   * refuses anything that is not yours unless you are a moderator.
+   *
+   * Takes a list even for one placement, so the queue's bulk action and the
+   * buttons on the image are the same call rather than two paths to a settlement
+   * that already has rules.
+   */
   actOnStickers: protectedProcedure
     .input(actOnStickerPlacementsSchema)
     .mutation(({ input, ctx }) =>
@@ -163,7 +161,13 @@ export const placementRouter = router({
     // at 200 and returns `hasMore`, and nothing else resumes it — a placer with
     // 500 placements would otherwise be reported as fully handled with 300 still
     // live on other people's work. Capped so a runaway cannot hold the request.
-    let removed = { considered: 0, settled: 0, failed: [] as number[], takenDown: 0, hasMore: false };
+    let removed = {
+      considered: 0,
+      settled: 0,
+      failed: [] as number[],
+      takenDown: 0,
+      hasMore: false,
+    };
     for (let batch = 0; batch < 10; batch++) {
       const result = await removePlacementsByUser({
         placerId: input.userId,
