@@ -20,11 +20,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Minimal-seam mocking follows image-feed-clickhouse-failsoft.test.ts: stub the infra
 // clients and env so importing image.service doesn't boot anything real.
 
-const { queryBitdexOutcomeMock, queryBitdexMock, readUserMock, writeUserMock } = vi.hoisted(() => ({
+const {
+  queryBitdexOutcomeMock,
+  queryBitdexMock,
+  readUserMock,
+  writeUserMock,
+  recordBitdexErrorMock,
+} = vi.hoisted(() => ({
   queryBitdexOutcomeMock: vi.fn(),
   queryBitdexMock: vi.fn(),
   readUserMock: vi.fn(),
   writeUserMock: vi.fn(),
+  recordBitdexErrorMock: vi.fn(),
+}));
+
+vi.mock('~/server/bitdex/compare', () => ({
+  recordBitdexError: recordBitdexErrorMock,
+  compareBitdexResults: vi.fn(),
 }));
 
 vi.mock('~/server/bitdex/client', () => ({
@@ -211,5 +223,29 @@ describe('BitDex primary username lookup', () => {
 
     await expect(getImagesFromBitdexPreFilter(withUsername)).resolves.toBeTruthy();
     expect(writeUserMock).not.toHaveBeenCalled();
+  });
+
+  // The NOT_FOUND has to reach the client. Primary mode's catch treats a throw as "BitDex
+  // is broken, try Meili", which would send a rejected request down a second backend to
+  // reach the same 404 and count a client error against BitDex's health.
+  it('propagates NotFound out of primary mode instead of falling through to Meili', async () => {
+    readUserMock.mockResolvedValue(null);
+    writeUserMock.mockResolvedValue(null);
+
+    // Meili is unconfigured here, so consulting it resolves with `source: 'meili'`.
+    // Rejecting is therefore the observable proof that it was never consulted.
+    await expect(getImagesFromSearch({ ...withUsername })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(recordBitdexErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('still falls through to Meili for a non-TRPC failure', async () => {
+    readUserMock.mockResolvedValue({ id: 77 });
+    queryBitdexOutcomeMock.mockResolvedValue({ status: 'failed' });
+
+    const result = await getImagesFromSearch({ ...withUsername });
+
+    expect(result.source).toBe('meili');
   });
 });

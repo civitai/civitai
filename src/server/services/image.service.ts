@@ -3009,6 +3009,11 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
+      // A TRPCError is the request being rejected, not BitDex failing — the only one
+      // this path raises is the username NOT_FOUND. Falling through would re-run the
+      // same lookup on the Meili path to reach the same 404, and would count client
+      // error against BitDex's health.
+      if (err instanceof TRPCError) throw err;
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
     }
