@@ -172,6 +172,25 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     await expect(auditPromptServer(options)).rejects.toThrow(/^Your prompt was flagged/);
   });
 
+  // A soft regex block must not short-circuit the hosted classifier: appending an
+  // overridable word ("… pee") would otherwise buy a click-through past it, and
+  // `acknowledgedSoftBlock` is client-supplied.
+  it('an acknowledged soft block still runs external moderation', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    await auditPromptServer({ ...options, acknowledgedSoftBlock: true });
+    expect(mockModeratePrompt).toHaveBeenCalled();
+  });
+
+  it('external moderation overrides an acknowledged soft block', async () => {
+    flagWith(trigger('nsfw_blocklist'));
+    mockModeratePrompt.mockResolvedValueOnce({ flagged: true, categories: ['sexual/minors'] });
+    await expect(
+      auditPromptServer({ ...options, acknowledgedSoftBlock: true })
+    ).rejects.toBeDefined();
+    // External is hard, so this one counts toward the mute.
+    expect(mockSysRedis.lPush).toHaveBeenCalled();
+  });
+
   it('an acknowledgement does NOT unlock a hard block', async () => {
     flagWith(trigger('poi', 'Prompt cannot include celebrity names'));
     await expect(auditPromptServer({ ...options, acknowledgedSoftBlock: true })).rejects.toThrow(

@@ -6,7 +6,7 @@ import {
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
 import blockedNSFW from '~/utils/metadata/lists/blocklist-nsfw.json';
-import blockedNSFWSoft from '~/utils/metadata/lists/blocklist-nsfw-soft.json';
+import blockedNSFWOverridable from '~/utils/metadata/lists/blocklist-nsfw-overridable.json';
 
 /**
  * The generation gate lets a user proceed past the over-eager regex categories
@@ -59,11 +59,9 @@ describe('isSoftBlock — the overridable boundary', () => {
 });
 
 describe('nsfw_blocklist severity is per word, not per category', () => {
-  // `blocklist-nsfw.json` is ONE flat list holding real bans next to over-eager
-  // matches, so asserting on a synthetic `trigger('nsfw_blocklist')` proves
-  // nothing about what the category contains. These assert over LITERAL entries.
-  // An earlier revision made the whole category soft; every word below was
-  // click-through-able.
+  // Literal, and deliberately NOT derived from the file's complement: this list is
+  // a frozen "must never become overridable" contract, and deriving it would make
+  // it silently follow whatever the overridable file says.
   it.each([
     'rape',
     'raping',
@@ -110,58 +108,31 @@ describe('nsfw_blocklist severity is per word, not per category', () => {
     'africoon',
     'retard',
     'mongoloid',
+    'coon',
+    'coons',
+    'kraut',
+    'necro',
+    'puberty',
+    'gas chamber',
+    'kkk',
     'pro-ana',
     'pro-mia',
   ])('hard tier: %s is NOT overridable', (word) => {
     expect(isSoftBlock([trigger('nsfw_blocklist', word)])).toBe(false);
   });
 
-  it.each([
-    'daughter',
-    'juvenile',
-    'puberty',
-    'puerile',
-    'shit',
-    'pee',
-    'peeing',
-    'diaper',
-    'nappies',
-    'poop',
-    'diarrhea',
-    'urine',
-    'scat',
-    'smegma',
-    'menstruation',
-    'menstrual cycle',
-    'tampon',
-    'period blood',
-    'anorexic',
-    'bulimia',
-    'disordered eating',
-    // Homographs of ordinary words — a levee, a raccoon, a mite, sauerkraut,
-    // a nappy, a necromancer, a midget submarine. These are the substring
-    // false-positive machines the feature exists for.
-    'dike',
-    'dyke',
-    'coon',
-    'chigger',
-    'kraut',
-    'nappy',
-    'necro',
-    'rigor mortis',
-    'midget',
-    // Historical and political subjects with obvious legitimate depiction:
-    // WWII imagery, documentary and news work, and the swastika's use as a
-    // Hindu/Buddhist/Jain religious symbol.
-    'nazi',
-    'neonazi',
-    'swastika',
-    'third reich',
-    'kkk',
-    'gas chamber',
-    'terrorist',
-  ])('soft tier: %s IS overridable', (word) => {
+  // Derived, not re-listed: a word ADDED to the file is the dangerous direction,
+  // and a hand-kept copy would not cover it.
+  it.each(blockedNSFWOverridable as string[])('soft tier: %s IS overridable', (word) => {
     expect(isSoftBlock([trigger('nsfw_blocklist', word)])).toBe(true);
+  });
+
+  it('every blocklist word outside the overridable file is hard', () => {
+    const overridable = new Set(blockedNSFWOverridable as string[]);
+    const leaked = (blockedNSFW as string[])
+      .filter((w) => !overridable.has(w))
+      .filter((w) => isSoftBlock([trigger('nsfw_blocklist', w)]));
+    expect(leaked).toEqual([]);
   });
 
   it('an unrecognised matched word defaults to hard', () => {
@@ -169,12 +140,39 @@ describe('nsfw_blocklist severity is per word, not per category', () => {
     expect(isSoftBlock([{ category: 'nsfw_blocklist', message: 'x' }])).toBe(false);
   });
 
-  // A soft entry that is not in the main blocklist can never match anything, so it
-  // is dead config that reads like coverage. Catches typos in the soft file.
-  it('every soft-tier entry exists in the main blocklist', () => {
+  // An overridable entry missing from the main blocklist matches nothing, so it is
+  // dead config that reads like coverage. Catches typos in the overridable file.
+  it('every overridable entry exists in the main blocklist', () => {
     const main = new Set(blockedNSFW as string[]);
-    const orphans = (blockedNSFWSoft as string[]).filter((w) => !main.has(w));
+    const orphans = (blockedNSFWOverridable as string[]).filter((w) => !main.has(w));
     expect(orphans).toEqual([]);
+  });
+});
+
+describe('a hard word anywhere in the prompt beats an overridable one', () => {
+  // `auditPromptEnriched` used to report the FIRST blocklist match in file order.
+  // `daughter` is entry 23 of 191, so "daughter, <anything below it>" reported the
+  // soft `daughter` and offered a click-through — one overridable word was a
+  // universal override key for most of the hard tier.
+  it.each([
+    ['daughter, rape', 'rape'],
+    ['portrait of a woman, daughter, lolita', 'lolita'],
+    ['nazi, nigger', 'nigger'],
+    ['pee, bestiality', 'bestiality'],
+    ['anorexic, pro-ana', 'pro-ana'],
+    ['diaper, incest', 'incest'],
+  ])('%s reports the hard word and is not overridable', (prompt, expected) => {
+    const result = auditPromptEnriched(prompt);
+    expect(result.success).toBe(false);
+    expect(result.triggers[0].matchedWord).toBe(expected);
+    expect(isSoftBlock(result.triggers)).toBe(false);
+  });
+
+  it('a prompt whose only blocklist match is overridable stays overridable', () => {
+    const result = auditPromptEnriched('a portrait of my daughter');
+    expect(result.success).toBe(false);
+    expect(result.triggers[0].matchedWord).toBe('daughter');
+    expect(isSoftBlock(result.triggers)).toBe(true);
   });
 });
 

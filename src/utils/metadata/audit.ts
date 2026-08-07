@@ -2,7 +2,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
-import blockedNSFWSoft from './lists/blocklist-nsfw-soft.json';
+import blockedNSFWOverridable from './lists/blocklist-nsfw-overridable.json';
 import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
@@ -63,45 +63,32 @@ export interface PromptTrigger {
  * Categories a user may click through with a warning ("I know what I'm doing").
  * Everything not listed here is a hard block and has no override path.
  *
- * These are the over-eager checks — plain word/substring matching that fires
- * inside innocent words. Anything minor- or real-person-related is deliberately
- * absent. `minor_age` was evaluated for this set and rejected: it fires on
- * innocent text ("an 8 year old oak tree") but ALSO on suggestive-minor prompts
- * that carry no explicit term, which `inappropriate_minor` does not catch
- * because it requires an NSFW word. Measured examples that would have become
- * overridable: "12 year old girl, swimsuit, beach", "13 year old, revealing
- * outfit", "teen, 16 years old, short skirt". Separating those from the innocent
- * matches needs a classifier, not another regex — that is the XGuard work.
+ * Do NOT add anything minor- or real-person-related. `minor_age` is the near
+ * miss: it fires on innocent text ("an 8 year old oak tree") but also on
+ * suggestive-minor prompts carrying no explicit term, which `inappropriate_minor`
+ * cannot catch because it requires an NSFW word.
  *
- * `external` is likewise absent. Its trigger message is not a fixed vocabulary:
- * `extModeration.moderatePrompt` relabels each provider category through the
- * `EXTERNAL_MODERATION_CATEGORIES` env var (`key:label` pairs), so a deployment
- * that maps `sexual/minors` to any label of its choosing would decide, from an
- * env string, whether an OpenAI minors flag is overridable. Severity must not
- * hinge on runtime configuration no invariant covers. It is also not the problem
- * this set exists to fix — a hosted classifier does not substring-match inside
- * innocent words the way the local word lists do.
+ * Do NOT add `external`. Its trigger message is whatever a deployment configured
+ * — `extModeration.moderatePrompt` relabels provider categories through the
+ * `EXTERNAL_MODERATION_CATEGORIES` env var — so severity would hinge on an env
+ * string no invariant covers.
  */
 const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>(['nsfw_blocklist', 'profanity']);
 
 /**
- * `nsfw_blocklist` is NOT one severity. `blocklist-nsfw.json` is a flat list that
- * holds real bans (`rape`, `lolita`, `incest`, `bestiality`, racial slurs) next to
- * the over-eager matches this whole feature exists to soften (`daughter`, `pee`,
- * `anorexic`). Severity is therefore decided per matched WORD, and the default is
- * hard: a term is overridable only by being listed in `blocklist-nsfw-soft.json`.
- * Adding a word to the main blocklist can never accidentally make it soft.
+ * `nsfw_blocklist` is NOT one severity — the same flat list holds `rape` and
+ * `daughter`. Severity is per matched WORD and defaults to hard, so adding a term
+ * to the main blocklist can never accidentally make it overridable.
  *
- * The soft file is severity only — it does not affect what matches. Every entry
- * must also appear in `blocklist-nsfw.json`, which `audit-soft-block.test.ts`
- * enforces so a typo cannot create an entry that silently matches nothing.
+ * Distinct from `nsfwWordsSoft` above, which is mild-NSFW *matching* vocabulary.
+ * This file changes nothing about what matches.
  */
-const softNsfwWords = new Set(blockedNSFWSoft);
+const overridableNsfwWords = new Set(blockedNSFWOverridable);
 
-export function isSoftBlockTrigger(trigger: PromptTrigger) {
+function isSoftBlockTrigger(trigger: PromptTrigger) {
   if (!SOFT_BLOCK_CATEGORIES.has(trigger.category)) return false;
   if (trigger.category === 'nsfw_blocklist') {
-    return trigger.matchedWord != null && softNsfwWords.has(trigger.matchedWord);
+    return trigger.matchedWord != null && overridableNsfwWords.has(trigger.matchedWord);
   }
   return true;
 }
@@ -242,11 +229,21 @@ export const auditPromptEnriched = (
   }
 
   // 4. NSFW blocklist check
+  // A HARD term anywhere in the prompt wins over a soft term that happens to sit
+  // earlier in the list. Returning the first match outright would let any soft
+  // word act as a universal override key: `daughter` is entry 23 of 191, so
+  // "daughter, <any hard term below it>" would report the soft `daughter` and
+  // offer a click-through. Only a prompt whose every blocklist match is soft may
+  // be soft. Cost is bounded — the full scan already runs on every clean prompt,
+  // and a hard match still exits immediately.
   const nsfwBlock = timer.time('nsfw_blocklist', () => {
+    let softMatch: string | undefined;
     for (const { word, regex } of blockedNSFWRegexLazy()) {
-      if (regex.test(prompt)) return word;
+      if (!regex.test(prompt)) continue;
+      if (!overridableNsfwWords.has(word)) return word;
+      softMatch ??= word;
     }
-    return undefined;
+    return softMatch;
   });
   if (nsfwBlock != null) {
     timer.finish(prompt, negativePrompt);

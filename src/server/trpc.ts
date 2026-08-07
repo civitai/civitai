@@ -106,10 +106,9 @@ const t = initTRPC
       )
     ),
     errorFormatter({ shape, error }) {
-      // Surface the generation gate's soft-block flag as structured data. It used
-      // to ride a sentinel prefix on the message, which broke every consumer that
-      // matched the message with `startsWith` and leaked the marker into
-      // user-facing error toasts. Nothing else reads `cause.softBlock`.
+      // `cause.softBlock` is set only by the generation gate (auditPromptServer)
+      // and read only by the generator form. Keep it off the message: consumers
+      // match that with `startsWith`.
       const cause = error.cause as { softBlock?: boolean } | undefined;
       if (cause?.softBlock === true) {
         return { ...shape, data: { ...shape.data, softBlock: true } };

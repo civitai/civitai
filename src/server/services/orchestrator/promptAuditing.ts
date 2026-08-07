@@ -241,8 +241,7 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
-  // The user saw a soft-block warning and chose to proceed. Only ever honored for
-  // a block whose every trigger is soft — see `isSoftBlock`.
+  // Only honored when every trigger is soft — see `isSoftBlock`.
   acknowledgedSoftBlock?: boolean;
 }
 
@@ -305,15 +304,24 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       checkProfanity
     );
 
+    let softRegexBlock: { blockedFor: string[]; triggers: PromptTrigger[]; type: string } | null =
+      null;
+
     if (!success) {
       // Filter out allowlisted triggers before counting toward mute
       const remainingTriggers = filterAllowlistedTriggers(triggers, allowlist);
       if (remainingTriggers.length > 0) {
-        throw {
+        const regexBlock = {
           blockedFor: remainingTriggers.map((t) => t.message),
           triggers: remainingTriggers,
           type: 'regex',
         };
+        // A hard block short-circuits. A soft one must NOT — throwing here would
+        // skip the external classifier below, so appending any overridable word
+        // ("… pee") to a prompt would buy a click-through past it. Hold the block
+        // and let external moderation run first; it can only escalate.
+        if (!isSoftBlock(remainingTriggers)) throw regexBlock;
+        softRegexBlock = regexBlock;
       }
     }
 
@@ -341,20 +349,18 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         };
       }
     }
+
+    // External moderation cleared it; now honor the held soft block.
+    if (softRegexBlock) throw softRegexBlock;
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
 
     const softBlock = isSoftBlock(error.triggers ?? []);
 
     if (softBlock) {
-      // A soft block NEVER counts toward the auto-mute — not when the user
-      // proceeds, and not when they see the warning and give up. The counter
-      // exists to catch someone repeatedly probing the gate; a term we have
-      // already decided is unreliable is not evidence of that. Counting the
-      // warning would auto-mute exactly the users this feature exists to help
-      // (`daughter` alone blocks 139 of them) while they are being told they may
-      // proceed. So: report it, never `addBlockedPrompt`, and `count: 0` keeps
-      // reportProhibitedRequest below its mute threshold.
+      // A soft block never counts toward the auto-mute, acknowledged or not.
+      // Counting the warning would auto-mute exactly the users this exists to help
+      // (`daughter` alone blocks 139 of them) while offering them a proceed button.
       await reportProhibitedRequest({
         prompt,
         negativePrompt,
@@ -368,10 +374,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         inputVideo,
       });
 
-      // The ClickHouse `source` column is Enum8('Regex','External'), so an
-      // override cannot be distinguished there without a manual column migration.
-      // Until that lands this is the only queryable trail of what the loosened
-      // gate let through — do not drop it on the assumption ClickHouse has it.
+      // ClickHouse `source` is Enum8('Regex','External') and cannot record the
+      // override, so this is the only trail of it until a column migration lands.
       if (acknowledgedSoftBlock) {
         logToAxiom({
           name: 'prompt-soft-block-override',
@@ -392,9 +396,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     let message: string;
 
     if (softBlock) {
-      // Unacknowledged soft block. Already reported above, and deliberately not
-      // counted — so no escalating "your account will be sent for review" tail,
-      // which would be a threat we have decided not to carry out.
+      // Not counted, so no escalating "sent for review" tail — that would be a
+      // threat we have decided not to carry out.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
     } else if (isGreen) {
       // SFW-only domain (civitai.com) - stricter message
@@ -449,9 +452,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       }
     }
 
-    // The soft flag rides `cause`, not the message — trpc.ts's errorFormatter
-    // lifts it onto `error.data.softBlock`. Consumers that match this message with
-    // `startsWith` (EnhanceTab, App Blocks) keep working untouched.
+    // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
     throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
   }
 }
