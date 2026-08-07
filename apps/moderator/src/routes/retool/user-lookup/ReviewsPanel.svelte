@@ -62,6 +62,9 @@
                     </a>
                   {/if}
                   {#if r.rating !== null}<span class="text-dark-0">{r.rating}★</span>{/if}
+                  {#if r.imageCount}
+                    <span class="text-xs text-dark-2">{r.imageCount} img</span>
+                  {/if}
                   {#if r.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                   {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
                   <span class="text-xs text-dark-2">{dateTime(r.createdAt)}</span>

@@ -25,6 +25,8 @@ export type UserReview = {
   tosViolation: boolean | null;
   exclude: boolean | null;
   modelCreator: string | null;
+  /** Null when the review has no helper row at all, which is not the same as zero images. */
+  imageCount: number | null;
 };
 
 export async function getReviews(userId: number, limit = 25): Promise<UserReview[]> {
@@ -32,6 +34,9 @@ export async function getReviews(userId: number, limit = 25): Promise<UserReview
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
+    // Retool's SubmittedReviewImageCount, folded in rather than run as a second query keyed on the ids
+    // the first returned. A review carrying images is a different thing from a bare rating.
+    .leftJoin('ResourceReviewHelper as h', 'h.resourceReviewId', 'rr.id')
     .select([
       'rr.id',
       'rr.createdAt',
@@ -40,6 +45,7 @@ export async function getReviews(userId: number, limit = 25): Promise<UserReview
       'rr.tosViolation',
       'rr.exclude',
       'u.username as modelCreator',
+      'h.imageCount',
     ])
     .where('rr.userId', '=', userId)
     .orderBy('rr.createdAt', 'desc')

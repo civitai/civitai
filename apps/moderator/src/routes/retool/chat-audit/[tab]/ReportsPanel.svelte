@@ -12,7 +12,7 @@
   } from '@civitai/ui/components/ui/pagination/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { chatUrl, urlWith } from './url';
+  import { chatUrl, urlWith } from '../url';
   import type { PageData } from './$types';
 
   let {

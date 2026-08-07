@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { chatUrl, urlWith } from './url';
+  import { chatUrl, urlWith } from '../url';
   import type { PageData } from './$types';
 
   type Search = NonNullable<PageData['search']>;

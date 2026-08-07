@@ -7,7 +7,7 @@
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { chatUrl } from './url';
+  import { chatUrl } from '../url';
   import type { ChatInsights } from './chat-insights';
 
   let { stats }: { stats: ChatInsights['stats'] } = $props();

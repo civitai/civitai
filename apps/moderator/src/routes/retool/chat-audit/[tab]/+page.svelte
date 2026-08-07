@@ -1,7 +1,5 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { cn } from '@civitai/ui/utils.js';
-  import LookupSearch from '$lib/components/LookupSearch.svelte';
   import type { PageData } from './$types';
   import ChatListPanel from './ChatListPanel.svelte';
   import NewestPanel from './NewestPanel.svelte';
@@ -11,42 +9,14 @@
   import TranscriptPanel from './TranscriptPanel.svelte';
   import UserMessagesPanel from './UserMessagesPanel.svelte';
   import { fetchChatInsights } from './chat-insights';
-  import { TABS, TAB_LABELS } from './tabs';
-  import { tabUrl } from './url';
 
   let { data }: { data: PageData } = $props();
 
-  // Every query behind this scans the 4.2M-row ChatMessage table, so it runs only for the two tabs
-  // that display it — opening a transcript used to trigger all three roll-ups as well.
+  // Every query behind this scans the 4.2M-row ChatMessage table, so it runs only on the two tabs that
+  // display it — opening a transcript used to trigger all three roll-ups as well.
   const wantsInsights = $derived(data.tab === 'stats' || data.tab === 'newest');
   const insights = $derived(browser && wantsInsights ? fetchChatInsights() : null);
 </script>
-
-<header class="page-header">
-  <h1>Chat Audit</h1>
-  <p>
-    Search direct messages by chat id, username or message text. These are private conversations — read
-    them because an investigation needs it.
-  </p>
-</header>
-
-<LookupSearch q={data.q} placeholder="chat id, username, or message text" />
-
-<nav class="mb-4 flex flex-wrap gap-1 border-b border-dark-4">
-  {#each TABS as tab (tab)}
-    <a
-      href={tabUrl(tab)}
-      class={cn(
-        '-mb-px border-b-2 px-3 py-2 text-sm',
-        data.tab === tab
-          ? 'border-blue-500 text-white'
-          : 'border-transparent text-dark-2 hover:text-dark-0'
-      )}
-    >
-      {TAB_LABELS[tab]}
-    </a>
-  {/each}
-</nav>
 
 {#if data.tab === 'chats'}
   {#if data.search}
@@ -84,10 +54,10 @@
   {/if}
 {:else if data.tab === 'reports'}
   <ReportsPanel
-    reports={data.reports}
-    total={data.reportsTotal}
-    page={data.reportsPage}
-    perPage={data.reportsPerPage}
+    reports={data.reports ?? []}
+    total={data.reportsTotal ?? 0}
+    page={data.reportsPage ?? 1}
+    perPage={data.reportsPerPage ?? 20}
     chatId={data.chatId}
   />
 {:else}

@@ -13,6 +13,7 @@ export type Review = {
   tosViolation: boolean | null;
   exclude: boolean | null;
   modelCreator: string | null;
+  imageCount: number | null;
 };
 
 export type ReceivedReview = {

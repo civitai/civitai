@@ -2,7 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { chatUrl } from './url';
+  import { chatUrl } from '../url';
 
   // `username` is null for ~8.5k deleted accounts — the id fallback keeps those from rendering as an
   // empty link.
