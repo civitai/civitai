@@ -1,4 +1,5 @@
 import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
   ActionIcon,
@@ -148,7 +149,6 @@ import {
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -1437,10 +1437,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
                         <Text size="sm">
-                          {numberWithCommas(
-                            Number(version.effectiveLicensingFee ?? version.licensingFee)
-                          )}{' '}
-                          / image
+                          {formatLicensingFee(
+                            Number(version.effectiveLicensingFee ?? version.licensingFee),
+                            version.baseModel
+                          )}
                         </Text>
                         {/* The owner is shown their stored fee everywhere else, so when the tier cap
                             lowers it they need both numbers — otherwise they read the setting as what
@@ -1449,8 +1449,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           Number(version.effectiveLicensingFee) <
                             Number(version.licensingFee ?? 0) && (
                             <Text size="xs" c="dimmed">
-                              capped from {numberWithCommas(Number(version.licensingFee))} by your
-                              membership tier
+                              capped from{' '}
+                              {formatLicensingFee(Number(version.licensingFee), version.baseModel)}{' '}
+                              by your membership tier
                             </Text>
                           )}
                         <Popover
