@@ -2,9 +2,20 @@ name: Lint
 
 # Regression guard for code quality.
 #
-# Typecheck is full-repo and BLOCKING on internal PRs, and is the only real gate
-# here. It is skipped on fork PRs (see the job comment), so a fork gets no gating
-# from this workflow at all.
+# Typecheck is full-repo and BLOCKING, and is the only full-repo gate here. It
+# runs on fork PRs TOO — no job in this file carries a top-level `if:`, so none
+# of them are gated on the PR's origin. That is deliberate and load-bearing, not
+# an oversight: the job needs no secret (event-engine-common is public and
+# fetched over HTTPS), which is why the ssh-agent step was REMOVED rather than
+# left unused. See the job comment for why leaving it in would have broken the
+# fork path AND masked the HTTPS one.
+#
+# An earlier version of this comment claimed the opposite — that typecheck "is
+# skipped on fork PRs, so a fork gets no gating from this workflow at all". That
+# was wrong, and wrong in a costly direction: this is currently the only
+# typechecking a fork PR gets, so a maintainer acting on that sentence could
+# reasonably delete the job as dead weight for forks and silently remove the one
+# place untrusted code is type-checked in a sandbox we do not have to build.
 #
 # ESLint and Prettier are split by how the PR touched the file:
 #
