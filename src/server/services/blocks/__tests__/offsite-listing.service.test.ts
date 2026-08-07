@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import sharp from 'sharp';
 
+import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+  validateListingImage,
+} from '~/server/schema/blocks/app-listing.schema';
 import {
   MAX_PENDING_OFFSITE_SUBMISSIONS,
   OffsiteRequestError,
@@ -14,6 +20,7 @@ import type {
   PersistListingAssetImageInput,
   SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import type * as S3Utils from '~/utils/s3-utils';
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
@@ -114,6 +121,11 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
 
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
 
+// `persistListingAssetImage` measures the uploaded bytes by reading the object
+// back out of the image store. Only the backend accessor is replaced — the probe
+// itself, and the sharp decode inside it, run for real against real bytes.
+const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -124,6 +136,48 @@ vi.mock('~/server/utils/app-block-ids', () => ({
 // approve/reject emit an owner notification post-commit; assert it without pulling
 // the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof S3Utils>()),
+  getImageUploadBackend: async () => ({
+    s3: { send: mockS3Send },
+    bucket: 'test-image-bucket',
+    backend: 'backblaze' as const,
+  }),
+}));
+
+const fixtureCache = new Map<string, Buffer>();
+async function cachedFixture(key: string, make: () => Promise<Buffer>) {
+  const hit = fixtureCache.get(key);
+  if (hit) return hit;
+  const made = await make();
+  fixtureCache.set(key, made);
+  return made;
+}
+
+/** Real, decodable image bytes — the whole point is that nothing here is declared. */
+function flatPng(width: number, height: number) {
+  return cachedFixture(`png:${width}x${height}`, () =>
+    sharp({ create: { width, height, channels: 3, background: { r: 8, g: 8, b: 8 } } })
+      .png()
+      .toBuffer()
+  );
+}
+function flatGif(width: number, height: number) {
+  return cachedFixture(`gif:${width}x${height}`, () =>
+    sharp({ create: { width, height, channels: 3, background: { r: 8, g: 8, b: 8 } } })
+      .gif()
+      .toBuffer()
+  );
+}
+
+/** Put `bytes` at the key the probe will read, answering its ranged GET. */
+function storeObject(bytes: Buffer, opts: { totalSize?: number } = {}) {
+  const totalSize = opts.totalSize ?? bytes.byteLength;
+  mockS3Send.mockResolvedValue({
+    Body: { transformToByteArray: async () => new Uint8Array(bytes) },
+    ContentRange: `bytes 0-${bytes.byteLength - 1}/${totalSize}`,
+  });
+}
 
 const CALLER = 42;
 const OTHER = 99;
@@ -184,6 +238,7 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   mockCreateImage.mockReset().mockResolvedValue({ id: 12345 });
   mockNotify.mockReset().mockResolvedValue(undefined);
+  mockS3Send.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -1287,6 +1342,8 @@ describe('persistListingAssetImage (scan invariant)', () => {
     sizeBytes: 4096,
   };
 
+  beforeEach(async () => storeObject(await flatPng(512, 512)));
+
   it('creates the image OWNED BY THE CALLER and WITHOUT skipIngestion (Pending → ingestImage)', async () => {
     const res = await persistListingAssetImage({ input: persistInput, userId: CALLER });
     expect(res).toEqual({ imageId: 12345 });
@@ -1300,7 +1357,7 @@ describe('persistListingAssetImage (scan invariant)', () => {
     expect('skipIngestion' in arg && arg.skipIngestion === true).toBe(false);
     // Sanity: the persisted row carries the byte size the P1 validator reads.
     expect(arg).toMatchObject({ url: persistInput.url, type: 'image', userId: CALLER });
-    expect(arg.metadata).toEqual({ size: 4096 });
+    expect(arg.metadata).toEqual({ size: (await flatPng(512, 512)).byteLength });
   });
 
   it('binds the owner to the caller even for a different user id', async () => {
@@ -1308,5 +1365,164 @@ describe('persistListingAssetImage (scan invariant)', () => {
     const arg = mockCreateImage.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.userId).toBe(OTHER);
     expect(arg.skipIngestion).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage — DECLARED-vs-ACTUAL geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * The attach procs' per-kind rules (`validateListingImage`) read `Image.width` /
+ * `height` / `mimeType` / `metadata.size`. If those columns carry what the
+ * uploader SAID about the file, every one of those rules is self-reported: a
+ * client can declare a shape that clears the bounds for bytes that do not. These
+ * pin that the columns describe the stored bytes instead — including the
+ * end-to-end consequence, that the gate now rejects the mismatched upload.
+ */
+describe('persistListingAssetImage (measures the uploaded bytes)', () => {
+  const KEY = '22222222-2222-4222-8222-222222222222';
+
+  /** A cover that clears every bound: aspect 1.78, 800px wide. */
+  const HONEST_COVER = { url: KEY, width: 800, height: 450, mimeType: 'image/png' as const };
+
+  function persistedRow() {
+    const arg = mockCreateImage.mock.calls[0][0] as {
+      width?: number;
+      height?: number;
+      mimeType?: string;
+      type: string;
+      metadata?: { size?: number };
+    };
+    return {
+      type: arg.type,
+      width: arg.width,
+      height: arg.height,
+      mimeType: arg.mimeType,
+      sizeBytes: arg.metadata?.size ?? null,
+    };
+  }
+
+  it('persists the ACTUAL dimensions, so the cover gate rejects a mismatched upload', async () => {
+    // 200×200 bytes behind a 800×450 declaration: square, and 600px short of the
+    // 640px cover floor, but the declared pair satisfies both.
+    storeObject(await flatPng(200, 200));
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 200, height: 200 });
+    expect(validateListingImage(persistedRow(), 'cover')).toMatchObject({ ok: false });
+  });
+
+  it('NEGATIVE CONTROL: an honest upload still persists and still passes the gate', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/png' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('persists the ACTUAL byte size, not the declared one', async () => {
+    const bytes = await flatPng(800, 450);
+    storeObject(bytes);
+
+    await persistListingAssetImage({ input: { ...HONEST_COVER, sizeBytes: 1 }, userId: CALLER });
+
+    expect(persistedRow().sizeBytes).toBe(bytes.byteLength);
+  });
+
+  it('derives the MIME from the bytes, not the declared content type', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persistListingAssetImage({
+      input: { ...HONEST_COVER, mimeType: 'image/webp' },
+      userId: CALLER,
+    });
+
+    expect(persistedRow().mimeType).toBe('image/png');
+  });
+
+  it('rejects a format outside the allowlist however it is declared', async () => {
+    storeObject(await flatGif(800, 450));
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('"gif"') });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an image past the absolute per-side ceiling', async () => {
+    storeObject(await flatPng(LISTING_ASSET_MAX_DIMENSION_PX + 1, 100));
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining(`${LISTING_ASSET_MAX_DIMENSION_PX}px per side`),
+    });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('reports a quarter-turned JPEG the way a renderer shows it', async () => {
+    // Stored 450×800 with EXIF orientation 6 — every viewer draws it 800×450, and
+    // that is the shape the cover rules are about.
+    storeObject(
+      await sharp({
+        create: { width: 450, height: 800, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 6 })
+        .jpeg()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/jpeg' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('rejects an upload whose bytes are not there', async () => {
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } })
+    );
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an object above the loosest per-kind byte cap without downloading it', async () => {
+    const oversize = MAX_LISTING_ASSET_SIZE_BYTES + 1;
+    // A ranged read: the store reports the true total, we only hold the prefix.
+    storeObject(await flatPng(800, 450), { totalSize: oversize });
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const command = mockS3Send.mock.calls[0][0] as { input: { Range?: string } };
+    expect(command.input.Range).toBe(`bytes=0-${MAX_LISTING_ASSET_SIZE_BYTES}`);
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects bytes that are not a decodable image', async () => {
+    storeObject(Buffer.from('<!doctype html><html>not an image</html>'));
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('a store outage is an INTERNAL error, not the uploader being blamed', async () => {
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('boom'), { $metadata: { httpStatusCode: 503 } })
+    );
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
   });
 });

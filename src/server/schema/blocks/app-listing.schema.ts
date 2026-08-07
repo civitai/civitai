@@ -24,6 +24,17 @@ export const MAX_LISTING_ICON_SIZE_BYTES = 1 * 1024 * 1024; // 1 MiB
 export const MAX_LISTING_COVER_SIZE_BYTES = 4 * 1024 * 1024; // 4 MiB
 
 /**
+ * The loosest per-kind byte cap. Bytes above this satisfy NO asset kind, so an
+ * upload-time path that does not yet know the kind can reject there — and bound
+ * how much it reads back out of the store to measure an upload.
+ */
+export const MAX_LISTING_ASSET_SIZE_BYTES = Math.max(
+  MAX_LISTING_ICON_SIZE_BYTES,
+  MAX_LISTING_COVER_SIZE_BYTES,
+  MAX_LISTING_SCREENSHOT_SIZE_BYTES
+);
+
+/**
  * Aspect (= width / height) + minimum-dimension caps per asset kind:
  *   - icon    — square-ish (a store avatar). Rejects wildly non-square images.
  *   - cover   — landscape hero (roughly 4:3 → 21:9).
@@ -53,6 +64,21 @@ export const LISTING_ASSET_MAX_DIMENSION_PX = 8192;
 
 /** Only real raster image MIME types (mirrors E5 SCREENSHOT_EXTENSIONS). */
 export const LISTING_ASSET_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'] as const;
+
+/**
+ * A decoded container format (sharp's `metadata().format`) → the listing MIME it
+ * is stored as, for ingest paths that read the MIME off the DECODED BYTES instead
+ * of a client-declared content type. Doubles as the format allowlist for those
+ * paths: a format absent here is rejected at ingest.
+ */
+export const LISTING_ASSET_FORMAT_TO_MIME: Record<
+  string,
+  (typeof LISTING_ASSET_ALLOWED_MIME)[number]
+> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
 
 /** Max caption length (a one-line gallery caption, not markdown). */
 export const LISTING_SCREENSHOT_CAPTION_MAX = 280;
