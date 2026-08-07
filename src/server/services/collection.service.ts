@@ -55,6 +55,7 @@ import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import { TagType } from '~/shared/utils/prisma/enums';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
@@ -566,54 +567,62 @@ const inputToCollectionType = {
 } as const;
 
 /**
- * Apply each collection's configured `metadata.autoTagId` to the images just added to
- * it.
+ * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
  *
  * Runs AFTER the write and independently of `CollectionItemStatus`, so a submission
  * awaiting review is tagged the same as an accepted one — the point is to mark what was
  * submitted, not what a moderator kept.
  *
- * Images only. `insertTagsOnImageNew` handles cache busting and the search-index push
- * that feed filtering depends on, so nothing else needs syncing here.
+ * Takes the metadata rather than a collection id: both callers already hold the
+ * collection in scope, and re-reading it would add a query to every image submission on
+ * the site for a field almost no collection sets.
+ *
+ * `insertTagsOnImageNew` handles cache busting and the search-index push that feed
+ * filtering depends on, so nothing else needs syncing here.
  *
  * Never throws into the caller: a failed tag must not fail (or roll back) the
  * submission itself.
  */
-async function applyCollectionAutoTags(collectionIds: number[], imageIds: number[]) {
-  if (!collectionIds.length || !imageIds.length) return;
+async function applyCollectionAutoTag(
+  metadata: CollectionMetadataSchema | null | undefined,
+  imageIds: number[]
+) {
+  const tagId = metadata?.autoTagId;
+  if (!tagId || !imageIds.length) return;
 
   try {
-    const collections = await dbRead.collection.findMany({
-      where: { id: { in: [...new Set(collectionIds)] } },
-      select: { id: true, metadata: true },
-    });
-
-    const tagIds = [
-      ...new Set(
-        collections
-          .map((c) => (c.metadata as CollectionMetadataSchema | null)?.autoTagId)
-          .filter(isDefined)
-      ),
-    ];
-    if (!tagIds.length) return;
+    // Defense in depth. `upsertCollection` already restricts `autoTagId` to moderators,
+    // because nothing in the save path validates that the submitter OWNS the images —
+    // so a self-owned collection plus someone else's imageIds would otherwise write tags
+    // onto a stranger's content. A MODERATED tag is the sharp end of that: it drives
+    // `updateImageNsfwLevels` and could push another user's image out of view. Refuse
+    // those here too, so a value set outside `upsertCollection` still can't reach it.
+    const tag = await dbRead.tag.findUnique({ where: { id: tagId }, select: { type: true } });
+    if (!tag || tag.type === TagType.Moderation) {
+      logToAxiom({
+        type: 'warning',
+        name: 'collection-auto-tag-refused',
+        message: !tag ? 'autoTagId does not exist' : 'autoTagId is a moderation tag',
+        tagId,
+      }).catch();
+      return;
+    }
 
     await insertTagsOnImageNew(
-      tagIds.flatMap((tagId) =>
-        [...new Set(imageIds)].map((imageId) => ({
-          imageId,
-          tagId,
-          source: 'User' as const,
-          confidence: 100,
-          automated: true,
-        }))
-      )
+      [...new Set(imageIds)].map((imageId) => ({
+        imageId,
+        tagId,
+        source: 'User' as const,
+        confidence: 100,
+        automated: true,
+      }))
     );
   } catch (error) {
     logToAxiom({
       type: 'error',
       name: 'collection-auto-tag-failed',
       message: (error as Error).message,
-      collectionIds,
+      tagId,
       imageIds: imageIds.slice(0, 20),
     }).catch();
   }
@@ -873,11 +882,15 @@ export const saveItemInCollections = async ({
 
   await dbWrite.$transaction(transactions);
 
-  if (itemKey === 'imageId' && input.imageId)
-    await applyCollectionAutoTags(
-      data.map((d) => d.collectionId),
-      [input.imageId]
-    );
+  if (itemKey === 'imageId' && input.imageId) {
+    const imageId = input.imageId;
+    for (const { collectionId } of data) {
+      const collection = collections.find((c) => c.id === collectionId);
+      await applyCollectionAutoTag(collection?.metadata as CollectionMetadataSchema | null, [
+        imageId,
+      ]);
+    }
+  }
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
@@ -932,6 +945,15 @@ export const upsertCollection = async ({
     tags,
     ...collectionItem
   } = input;
+
+  // `autoTagId` writes tag rows onto every image submitted to the collection, including
+  // images the submitter doesn't own (nothing in the save path validates image
+  // ownership). In a collection anyone can create and manage, that would let a user
+  // stamp an arbitrary tag onto a stranger's image — and a MODERATED tag additionally
+  // drives `updateImageNsfwLevels`, so it could raise someone else's image out of view.
+  // Moderator-only. Every other field here only affects the collection itself.
+  if (metadata && 'autoTagId' in metadata && !isModerator)
+    throw throwAuthorizationError('Only moderators can set a collection auto-tag');
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -2803,15 +2825,14 @@ export const bulkSaveItems = async ({
   }
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
-
-  await applyCollectionAutoTags([collectionId], data.map((d) => d.imageId).filter(isDefined));
+  const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
   // refunded (see challenge-funding.ts) — on a partial charge we keep the paid entries and
   // roll back only the unpaid rows; a Buzz charge can't be undone by a Postgres rollback.
   if (collection.mode === CollectionMode.Contest) {
-    const chargeImageIds = data.map((d) => d.imageId).filter(isDefined);
+    const chargeImageIds = savedImageIds;
     const rollbackItems = async (imageIds: number[], originalError: unknown) => {
       await dbWrite.collectionItem
         .deleteMany({
@@ -2850,9 +2871,14 @@ export const bulkSaveItems = async ({
 
     if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
       await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
-      // The paid entries above stay committed, so bust the cache before aborting the request.
-      if (chargeResult.paidImageIds.length > 0)
+      // The paid entries above stay committed, so tag and bust the cache before aborting
+      // the request. The unpaid ones were just deleted and must NOT be tagged — a rolled-back
+      // submission that stayed tagged would be filtered out of feeds for an entry that never
+      // landed, with nothing to undo it.
+      if (chargeResult.paidImageIds.length > 0) {
+        await applyCollectionAutoTag(metadata, chargeResult.paidImageIds);
         await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+      }
       throw throwInsufficientFundsError(
         chargeResult.paidImageIds.length > 0
           ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
@@ -2862,6 +2888,9 @@ export const bulkSaveItems = async ({
       );
     }
   }
+
+  // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
+  await applyCollectionAutoTag(metadata, savedImageIds);
 
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
