@@ -196,9 +196,16 @@ export default defineConfig({
             // as UID 0; without --no-sandbox Chromium refuses to start, and the
             // container's small /dev/shm crashes it without --disable-dev-shm-usage).
             // Harmless locally.
-            // CI uses Playwright's bundled Chromium (env unset). NixOS can't run
-            // that generic binary; point this at a system Chromium, e.g.
-            // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium)`.
+            // CI installs Playwright's own Chromium into the image (env unset),
+            // so it resolves by revision as normal. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+            // is the escape hatch for a host whose browser bundle does not carry the
+            // revision this playwright release pins (the NixOS
+            // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
+            // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
+            // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
+            // rather than moving the pin; see CLAUDE.md "Browser/component tests on
+            // NixOS". A mismatch does not say "no browser" — it collects every file
+            // and executes none, which reads as a broken suite.
             provider: playwright({
               launchOptions: {
                 args: ['--no-sandbox', '--disable-dev-shm-usage'],

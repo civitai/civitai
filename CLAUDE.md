@@ -267,12 +267,40 @@ get system Node instead of the flake's pinned version. Measured: system Node **2
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 
-**Browser/component tests on NixOS need help — there is no `chromium` on `PATH`.** Two routes are known to work,
-and which one works has varied between attempts: `steam-run` plus an `LD_LIBRARY_PATH` carrying nss/nspr (in that
-attempt the documented `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` route hung), or `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
-pointed at a nix chromium together with `--browser.api.host=127.0.0.1 --browser.api.port=63501` (reached after a
-bare `--project component` hung for ~18 minutes). Before blaming either route: **a stale `node_modules/.vite`
-cache — typical after a `kill -9` — hangs for minutes at near-zero CPU. Clear it first**, then pick a route.
+**Browser/component tests on NixOS: the host's browser bundle must match this repo's playwright pin — fix the
+host, not `package.json`.**
+The failure is *not* "no `chromium` on `PATH`" — a NixOS host that sets `PLAYWRIGHT_BROWSERS_PATH` (nixpkgs
+`playwright-driver.browsers`) already has Chromium. Playwright pins **one exact Chromium build per release** and
+looks it up by revision under that path, so a driver/bundle mismatch fails with
+`browserType.launch: Executable doesn't exist at .../chromium_headless_shell-<rev>/...` — and the whole
+`component` project then reports **`Test Files (130)` / `Tests no tests`**, i.e. 0 of 130 executed. That reads
+like a broken suite, not a missing browser.
+
+**The repo pin is `^1.57.0` and stays there — adapt the host to it.** `playwright` / `@playwright/test` resolve
+to **1.57.0**, which wants Chromium revision **1200**. Before running, check the two numbers that have to be
+equal: `node_modules/playwright/../playwright-core/browsers.json` (the revision playwright will look for) against
+`ls $PLAYWRIGHT_BROWSERS_PATH` (the revisions the bundle actually has). If they differ, point
+`PLAYWRIGHT_BROWSERS_PATH` at a `playwright-driver` bundle of the *matching* version instead of bumping the repo.
+Nixpkgs carries exactly one playwright version per revision, so a host that drives several repos on different
+playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
+property of the host, not of this repo.
+
+**Do not "fix" this by bumping the pin — the bump is not self-contained.** It was tried and reverted. CI runs
+some Playwright jobs in **version-matched container images that ship their own browsers** (`PLAYWRIGHT_BROWSERS_PATH`
+pointing inside the image) while executing the *workspace-local* `./node_modules/.bin/playwright`. Bumping this
+repo alone desynchronises that pair and reproduces the same bug in CI: the preview smoke suite went **2 passed /
+59 failed**, and every one of the 59 was `browserType.launch: Executable doesn't exist at
+/ms-playwright/chromium_headless_shell-1228/...` — 177 occurrences (59 × 3 retries) and **zero** assertion or
+timeout failures. Not one spec executed. So a bump needs a lockstep image-tag change owned by someone else, in
+the same window, in both directions. Adapting the host costs one person nothing and no one else anything.
+
+A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floating within the 1.57
+line is fine (the Chromium build is stable across a minor line), but bumping the *minor* changes the revision.
+
+Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
+chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
+lookup entirely. Before blaming any of this: **a stale `node_modules/.vite` cache — typical after a `kill -9` —
+hangs for minutes at near-zero CPU. Clear it first.**
 
 ## Important Notes
 
