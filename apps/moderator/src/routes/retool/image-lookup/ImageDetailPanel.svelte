@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
-  import { entityUrl, userUrl } from '$lib/entity-url';
+  import { entityUrl, userUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
 
@@ -64,7 +64,7 @@
     {#if image.userBannedAt}
       <Badge variant="destructive">uploader banned</Badge>
     {/if}
-    <a href="/retool/user-lookup?q={image.userId}" class={LINK_CLASS}>look up uploader</a>
+    <a href={userLookupUrl(image.userId)} class={LINK_CLASS}>look up uploader</a>
     {#if postUrl}
       <a href={postUrl} target="_blank" rel="noreferrer" class={LINK_CLASS}>post {image.postId}</a>
     {/if}

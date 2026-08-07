@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { userLookupUrl } from '$lib/entity-url';
+  import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -68,7 +70,7 @@
                     </div>
                     <div class="mt-0.5 flex flex-wrap gap-x-2 text-xs">
                       {#each cluster.accounts as acct (acct.userId)}
-                        <a href="/retool/user-lookup?q={acct.userId}" class={LINK_CLASS}>
+                        <a href={userLookupUrl(acct.userId)} class={LINK_CLASS}>
                           {acct.username ?? `#${acct.userId}`}{acct.bannedAt ? ' (banned)' : ''}
                         </a>
                       {/each}
@@ -108,15 +110,13 @@
                 </li>
               {/each}
             </ul>
-            {#if events.length > SHOWN}
-              <button
-                type="button"
-                class="mt-3 text-sm {LINK_CLASS}"
-                onclick={() => (expandedEvents = !expandedEvents)}
-              >
-                {expandedEvents ? 'Show less' : `Show all ${events.length}`}
-              </button>
-            {/if}
+            <ShowMoreButton
+              total={events.length}
+              shown={SHOWN}
+              expanded={expandedEvents}
+              capped={result.events.truncated}
+              onToggle={() => (expandedEvents = !expandedEvents)}
+            />
             {#if result.events.truncated}
               <!-- ORDER BY time DESC keeps the newest, so what falls off is the OLDEST — on a
                    re-deleted image that is the original removal, which is the thing being looked for. -->

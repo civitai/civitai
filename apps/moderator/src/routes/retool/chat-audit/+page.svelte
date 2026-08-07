@@ -1,8 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import LookupSearch from '$lib/components/LookupSearch.svelte';
   import type { PageData } from './$types';
   import ChatListPanel from './ChatListPanel.svelte';
   import InsightsPanel from './InsightsPanel.svelte';
@@ -11,48 +8,58 @@
 
   let { data }: { data: PageData } = $props();
 
-  // Local copy so typing doesn't navigate; re-synced whenever a search lands (incl. back/forward).
-  let term = $state(untrack(() => data.q));
-  $effect(() => {
-    term = data.q;
-  });
-
-  // A new search drops the opened transcript — it belongs to the previous result set.
-  const search = (e: SubmitEvent) => {
-    e.preventDefault();
-    const value = term.trim();
-    goto(value ? `?q=${encodeURIComponent(value)}` : '?', { keepFocus: true });
-  };
+  // The report queue is the entry point when a moderator arrives without a name; once they are
+  // investigating something specific it steps aside to the bottom.
+  const investigating = $derived(!!data.q || !!data.chatId);
 </script>
 
 <header class="page-header">
   <h1>Chat Audit</h1>
   <p>
-    Search direct messages by chat id, username or message text. These are private conversations —
-    read them because an investigation needs it.
+    Search direct messages by chat id, username or message text. These are private conversations — read
+    them because an investigation needs it.
   </p>
 </header>
 
-<form onsubmit={search} class="mb-6 flex max-w-xl gap-2">
-  <Input bind:value={term} placeholder="chat id, username, or message text" class="flex-1" />
-  <Button type="submit">Search</Button>
-</form>
+<LookupSearch q={data.q} placeholder="chat id, username, or message text" />
+
+{#snippet reports()}
+  <ReportsPanel
+    reports={data.reports}
+    total={data.reportsTotal}
+    page={data.reportsPage}
+    perPage={data.reportsPerPage}
+    chatId={data.chatId}
+    q={data.q}
+  />
+{/snippet}
+
+{#if !investigating}
+  {@render reports()}
+{/if}
 
 {#if data.search}
   {#if data.search.slow}
     <p class="mb-3 text-xs text-amber-300">
-      Message-text search reads every message — it takes a few seconds and is not indexed.
+      Message-text search reads every message — it is not indexed and takes a few seconds.
     </p>
   {/if}
   <ChatListPanel search={data.search} chatId={data.chatId} />
 {/if}
 
-<!-- Keyed on the chat: the transcript and member list are wholly per-conversation. -->
-{#if data.chatId && data.transcript && data.members}
-  {#key data.chatId}
-    <TranscriptPanel chatId={data.chatId} transcript={data.transcript} members={data.members} />
-  {/key}
+{#if data.chatMissing}
+  <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <p class="text-sm text-dark-2">
+      No chat <code>{data.chatId}</code> exists. A real conversation with no messages would still list
+      its members — this id was never a chat.
+    </p>
+  </section>
+{:else if data.chatId && data.transcript && data.members}
+  <TranscriptPanel chatId={data.chatId} transcript={data.transcript} members={data.members} />
 {/if}
 
-<ReportsPanel reports={data.reports} chatId={data.chatId} />
+{#if investigating}
+  {@render reports()}
+{/if}
+
 <InsightsPanel />

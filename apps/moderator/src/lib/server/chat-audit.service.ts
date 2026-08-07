@@ -1,20 +1,17 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
-import { usersByIds } from './users.service';
+import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
 
 // The PAGE LOAD half of Chat Audit (Retool's "Chat Audit" app) — search, the chat list, a transcript and
-// the chat-report queue. The expensive aggregate half lives in chat-insights.service.ts behind
-// `/api/chat-insights`. One file per endpoint, same rule as the other lookup pages.
+// the member panel. The expensive aggregates live in chat-insights.service.ts behind
+// `/api/chat-insights`, and the report queue comes from reports.service.ts. One file per endpoint, same
+// rule as the other lookup pages.
 //
 // READS PRIVATE DIRECT MESSAGES. Access is grant-based, so the page is admin-only until someone grants
-// it explicitly on /admin — that default is the right one here and should stay deliberate.
+// it on /admin — the right default here, and it should stay deliberate.
 //
-// `ChatMessage` is 4.2M rows indexed only on (id) and (chatId, userId): there is no index on `content`,
-// `createdAt` or `userId` alone, so anything that is not chat-scoped is a sequential scan. Measured, and
-// the numbers drive where each query runs.
-
-/** System messages ("<name> joined") are written by account -1 and are never what a moderator wants. */
-const SYSTEM_USER_ID = -1;
+// `ChatMessage` is 4.2M rows indexed only on (id) and (chatId, userId): nothing on `content`,
+// `createdAt` or `userId` alone, so anything not chat-scoped is a sequential scan.
 
 export type ChatSummary = {
   chatId: number;
@@ -46,99 +43,136 @@ export type ChatMemberRow = {
   kickedAt: Date | null;
 };
 
-export type ChatReportRow = {
-  reportId: number;
-  chatId: number;
-  reason: string;
-  status: string;
-  createdAt: Date;
-  comment: string | null;
-  reportedById: number;
-  reportedBy: string | null;
-};
-
 export type SearchMode = 'chat' | 'user' | 'content';
 
-/** What the one search box did with the term, so the page can say so rather than leaving it a guess. */
-export type ChatSearch = { mode: SearchMode; term: string; chats: ChatSummary[]; slow: boolean };
+export type ChatSearch = {
+  mode: SearchMode;
+  term: string;
+  chats: ChatSummary[];
+  truncated: boolean;
+  slow: boolean;
+  /** The term is all digits AND a real username, so the moderator may have meant the person rather than
+   *  the chat. Set so the page can offer the other reading instead of silently showing strangers' DMs. */
+  ambiguousUsername: boolean;
+};
 
-// Retool had three separate inputs — a chat-id box, a username box and a content box — each driving its
-// own query. One box instead, matching the other lookup pages: digits are a chat id, a leading @ or a
-// bare username is a user, anything else is message content.
+// Retool had three inputs (chat id / username / message content), each with its own query. One box, with
+// the mode inferred — but the inference is the dangerous part, so the rules are explicit:
+//
+//   leading @              -> username, always. The escape hatch for a numeric username.
+//   all digits within int4 -> chat id.
+//   all digits above int4  -> username. It cannot be a chat id, and feeding it to a chatId comparison
+//                             ERRORS the query and 500s the page rather than missing — 978 users with a
+//                             10+ digit numeric username have chat messages.
+//   short simple word      -> username
+//   anything else          -> message content
+const USERNAME_SHAPE = /^[\w.-]{3,50}$/;
+
 export function classifySearch(term: string): SearchMode {
-  if (/^\d+$/.test(term)) return 'chat';
-  if (/^@/.test(term)) return 'user';
-  return /^[\w.-]{3,50}$/.test(term) ? 'user' : 'content';
+  if (term.startsWith('@')) return 'user';
+  if (/^\d+$/.test(term)) return isInt4Id(Number(term)) ? 'chat' : 'user';
+  return USERNAME_SHAPE.test(term) ? 'user' : 'content';
 }
 
-export async function searchChats(rawTerm: string, limit = 50): Promise<ChatSearch | null> {
+/** `%` and `_` are LIKE metacharacters. Kysely binds the value, so this is not injection — but an
+ *  unescaped `100%` matches "1000 buzz", and a bare `%` matches every message on the site. */
+const escapeLike = (term: string) => term.replace(/[\\%_]/g, (c) => '\\' + c);
+
+const SEARCH_LIMIT = 50;
+
+export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
   const term = rawTerm.trim();
   if (!term) return null;
 
   const mode = classifySearch(term);
-  const chatIds = await findChatIds(mode, term, limit);
+  const { ids, truncated } = await findChatIds(mode, term);
+
   return {
     mode,
     term,
-    // Content search has no index to use — 4.2M rows, ~3s. It only runs when a moderator asks for it,
-    // but the page says so rather than looking hung.
+    truncated,
+    // Content search has no index to use — 4.2M rows, ~3s. Only runs when a moderator asks for it.
     slow: mode === 'content',
-    chats: chatIds.length ? await summariseChats(chatIds) : [],
+    ambiguousUsername: mode === 'chat' && (await usernameExists(term)),
+    chats: ids.length ? await summariseChats(ids) : [],
   };
 }
 
-async function findChatIds(mode: SearchMode, term: string, limit: number): Promise<number[]> {
+// Every branch orders before it limits. Without an ORDER BY, `SELECT DISTINCT chatId ... LIMIT 50` is
+// satisfied by a sort/unique on chatId, so it returned the 50 LOWEST ids — the 50 OLDEST chats — and
+// summariseChats then re-sorted them by recency, so the list READ as "newest first". A search for
+// `discord.gg` matches 4,774 chats; the moderator saw 50 ancient ones and no sign there were more.
+async function findChatIds(
+  mode: SearchMode,
+  term: string
+): Promise<{ ids: number[]; truncated: boolean }> {
   if (mode === 'chat') {
     const id = Number(term);
-    return Number.isInteger(id) && id > 0 ? [id] : [];
+    return { ids: isInt4Id(id) ? [id] : [], truncated: false };
   }
+
+  const take = (rows: { chatId: number }[]) => ({
+    ids: rows.slice(0, SEARCH_LIMIT).map((r) => r.chatId),
+    truncated: rows.length > SEARCH_LIMIT,
+  });
 
   if (mode === 'user') {
-    const username = term.replace(/^@/, '');
-    const rows = await dbRead
-      .selectFrom('ChatMessage as cm')
-      .innerJoin('User as u', 'u.id', 'cm.userId')
-      .select('cm.chatId')
-      .distinct()
-      .where('u.username', '=', username)
-      .limit(limit)
-      .execute();
-    return rows.map((r) => r.chatId);
+    return take(
+      await dbRead
+        .selectFrom('ChatMessage as cm')
+        .innerJoin('User as u', 'u.id', 'cm.userId')
+        .select('cm.chatId')
+        .distinct()
+        .where('u.username', '=', term.replace(/^@/, ''))
+        .orderBy('cm.chatId', 'desc')
+        .limit(SEARCH_LIMIT + 1)
+        .execute()
+    );
   }
 
-  const rows = await dbRead
-    .selectFrom('ChatMessage')
-    .select('chatId')
-    .distinct()
-    // Kysely escapes the parameter; the wildcards are ours. A term of only wildcards would match
-    // everything, so it is rejected before we get here by the length check in classifySearch.
-    .where('content', 'ilike', `%${term}%`)
-    .where('userId', '!=', SYSTEM_USER_ID)
-    .limit(limit)
-    .execute();
-  return rows.map((r) => r.chatId);
+  return take(
+    await dbRead
+      .selectFrom('ChatMessage')
+      .select('chatId')
+      .distinct()
+      .where('content', 'ilike', '%' + escapeLike(term) + '%')
+      .where('userId', '!=', SYSTEM_USER_ID)
+      .orderBy('chatId', 'desc')
+      .limit(SEARCH_LIMIT + 1)
+      .execute()
+  );
 }
 
-// Retool's FindChats built the member list with string_agg + string_to_array, which breaks on any
-// username containing a comma. Aggregating into a real array avoids inventing a delimiter.
+// Retool's FindChats joined member names with string_agg and split on ',', which corrupts any username
+// containing a comma. A real array avoids inventing a delimiter.
 async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
   const rows = await dbRead
     .selectFrom('ChatMember as cm')
-    .innerJoin('User as u', 'u.id', 'cm.userId')
-    .select((eb) => [
+    .leftJoin('User as u', 'u.id', 'cm.userId')
+    .select([
       'cm.chatId',
-      sql<number | null>`max(case when cm."isOwner" then u.id end)`.as('ownerId'),
+      sql<number | null>`max(case when cm."isOwner" then cm."userId" end)`.as('ownerId'),
       sql<string | null>`max(case when cm."isOwner" then u.username end)`.as('owner'),
       sql<Date | null>`max(case when cm."isOwner" then u."bannedAt" end)`.as('ownerBannedAt'),
-      sql<string[]>`array_remove(array_agg(u.username::text) filter (where not cm."isOwner"), null)`.as(
-        'members'
-      ),
-      eb.fn.countAll<string>().as('memberCount'),
+      // Two things are load-bearing here.
+      //
+      // `::text` — username is citext, and node-pg has no parser for citext[], so the driver returns
+      // the raw Postgres literal as a STRING and the panel's .join() throws on it.
+      //
+      // `coalesce` — 8,589 users with a NULL username hold 34,147 membership rows. Dropping them made
+      // the chat list and the member panel disagree about who was in a conversation: a chat with a
+      // purged counterparty rendered with no "with ..." clause at all.
+      sql<string[]>`coalesce(
+        array_agg(coalesce(u.username::text, '#' || cm."userId")) filter (where not cm."isOwner"),
+        '{}'
+      )`.as('members'),
     ])
     .where('cm.chatId', 'in', chatIds)
     .groupBy('cm.chatId')
     .execute();
 
+  // System rows are 14% of the table, and 51,245 chats contain nothing else — counting them made an
+  // empty conversation read as "1 messages".
   const counts = await dbRead
     .selectFrom('ChatMessage')
     .select((eb) => [
@@ -147,6 +181,7 @@ async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
       eb.fn.max('createdAt').as('lastAt'),
     ])
     .where('chatId', 'in', chatIds)
+    .where('userId', '!=', SYSTEM_USER_ID)
     .groupBy('chatId')
     .execute();
   const byChat = new Map(counts.map((c) => [c.chatId, c]));
@@ -164,18 +199,23 @@ async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
     .sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0));
 }
 
-// The transcript. Chat-scoped, so it rides the (chatId, userId) index — 4.2M rows is irrelevant here.
-// Capped: a long-running chat can carry thousands, and the cap is disclosed rather than silent.
+// The transcript. Chat-scoped, so it rides the (chatId, userId) index.
+//
+// System rows are excluded: 274,106 of them are `contentType = 'Embed'` whose content is a raw JSON
+// blob, which rendered verbatim attributed to "civitai" and ate slots in the cap.
 export async function getTranscript(
   chatId: number,
   limit = 300
 ): Promise<{ rows: ChatMessageRow[]; truncated: boolean }> {
+  if (!isInt4Id(chatId)) return { rows: [], truncated: false };
+
   const rows = await dbRead
     .selectFrom('ChatMessage as cm')
     .leftJoin('User as u', 'u.id', 'cm.userId')
     .select(['cm.id', 'cm.createdAt', 'cm.userId', 'cm.content', 'u.username', 'u.bannedAt'])
     .where('cm.chatId', '=', chatId)
-    // Newest first so the cap drops the OLDEST; the page reverses for reading order.
+    .where('cm.userId', '!=', SYSTEM_USER_ID)
+    // Newest first so the cap drops the OLDEST; reversed here for reading order.
     .orderBy('cm.createdAt', 'desc')
     .limit(limit + 1)
     .execute();
@@ -185,6 +225,8 @@ export async function getTranscript(
 }
 
 export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
+  if (!isInt4Id(chatId)) return [];
+
   const rows = await dbRead
     .selectFrom('ChatMember as cm')
     .leftJoin('User as u', 'u.id', 'cm.userId')
@@ -203,31 +245,14 @@ export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
   return rows.map((r) => ({ ...r, status: String(r.status) }));
 }
 
-// Retool's ChatReport pulled every non-Automated chat report with no bound and no pagination. Kept as a
-// queue: newest first, capped, with the reporter resolved.
-export async function getChatReports(limit = 50): Promise<ChatReportRow[]> {
-  const rows = await dbRead
-    .selectFrom('ChatReport as cr')
-    .innerJoin('Report as r', 'r.id', 'cr.reportId')
-    .select([
-      'cr.chatId',
-      'r.id as reportId',
-      'r.reason',
-      'r.status',
-      'r.createdAt',
-      'r.userId as reportedById',
-      sql<string | null>`r.details ->> 'comment'`.as('comment'),
-    ])
-    .where('r.reason', '!=', 'Automated')
-    .orderBy('r.createdAt', 'desc')
-    .limit(limit)
-    .execute();
-
-  const byId = await usersByIds(rows.map((r) => r.reportedById));
-  return rows.map((r) => ({
-    ...r,
-    reason: String(r.reason),
-    status: String(r.status),
-    reportedBy: byId.get(r.reportedById)?.username ?? null,
-  }));
+/** Does this chat exist at all? Separates "empty conversation" from "no such chat" — a shared link with
+ *  a typo'd id otherwise rendered as a real but silent conversation. */
+export async function chatExists(chatId: number): Promise<boolean> {
+  if (!isInt4Id(chatId)) return false;
+  const row = await dbRead
+    .selectFrom('Chat')
+    .select('id')
+    .where('id', '=', chatId)
+    .executeTakeFirst();
+  return !!row;
 }

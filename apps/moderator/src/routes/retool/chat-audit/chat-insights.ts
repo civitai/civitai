@@ -14,7 +14,7 @@ export type ChatStats = {
   messages: number;
   messages24h: number;
   topChatters: TopChatter[];
-  topChats: { chatId: number; messages: number }[];
+  chattersCapped: boolean;
 };
 
 export type SpamGroup = {

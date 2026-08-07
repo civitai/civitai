@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { userLookupUrl } from '$lib/entity-url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { PageData } from './$types';
@@ -34,7 +35,7 @@
             <Badge variant={r.status === 'Actioned' ? 'destructive' : 'secondary'}>{r.status}</Badge>
             <span class="text-dark-0">{r.reason}</span>
             {#if r.reportedBy}
-              <a href="/retool/user-lookup?q={r.reportedById}" class="text-xs {LINK_CLASS}">
+              <a href={userLookupUrl(r.reportedById)} class="text-xs {LINK_CLASS}">
                 {r.reportedBy}
               </a>
             {/if}
@@ -85,7 +86,7 @@
         {#each visibleReactions as r (r.key)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <Badge variant="secondary">{r.reaction}</Badge>
-            <a href="/retool/user-lookup?q={r.userId}" class={LINK_CLASS}>
+            <a href={userLookupUrl(r.userId)} class={LINK_CLASS}>
               {r.username ?? `#${r.userId}`}
             </a>
             {#if r.bannedAt}<Badge variant="destructive">banned</Badge>{/if}

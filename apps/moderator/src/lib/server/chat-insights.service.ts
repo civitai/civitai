@@ -1,5 +1,5 @@
 import { dbRead } from './db';
-import { usersByIds } from './users.service';
+import { SYSTEM_USER_ID, usersByIds } from './users.service';
 
 // Everything behind `/api/chat-insights` — the platform-wide aggregates Retool showed as a stats strip,
 // plus its spam detector. Every query here scans `ChatMessage` (4.2M rows, no index on `createdAt` or
@@ -7,10 +7,12 @@ import { usersByIds } from './users.service';
 //
 // One file per endpoint, same rule as the other pages' services.
 
-const SYSTEM_USER_ID = -1;
-
-export type TopChatter = { userId: number; username: string | null; bannedAt: Date | null; messages: number };
-export type TopChat = { chatId: number; messages: number };
+export type TopChatter = {
+  userId: number;
+  username: string | null;
+  bannedAt: Date | null;
+  messages: number;
+};
 
 export type ChatStats = {
   chats: number;
@@ -18,7 +20,7 @@ export type ChatStats = {
   messages: number;
   messages24h: number;
   topChatters: TopChatter[];
-  topChats: TopChat[];
+  chattersCapped: boolean;
 };
 
 export type SpamGroup = {
@@ -30,10 +32,14 @@ export type SpamGroup = {
   chats: number;
 };
 
+const TOP_CHATTERS = 25;
+
 export async function getChatStats(): Promise<ChatStats> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [chats, chats24h, messages, messages24h, chatters, topChats] = await Promise.all([
+  // Retool also had TopChats (messages grouped by chatId). Not ported: nothing rendered it, and it is
+  // another full-table GROUP BY — a busiest-conversations list answers no question this page asks.
+  const [chats, chats24h, messages, messages24h, chatters] = await Promise.all([
     dbRead
       .selectFrom('Chat')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -54,39 +60,34 @@ export async function getChatStats(): Promise<ChatStats> {
       .where('userId', '!=', SYSTEM_USER_ID)
       .where('createdAt', '>', since)
       .executeTakeFirst(),
-    // Grouping by userId alone and resolving names afterwards, rather than Retool's GROUP BY username,
-    // id — a rename mid-window would otherwise split one person into two rows.
+    // Grouping by userId alone and resolving names afterwards, rather than Retool's GROUP BY (username,
+    // id) — a rename mid-window would otherwise split one person into two rows.
     dbRead
       .selectFrom('ChatMessage')
       .select((eb) => ['userId', eb.fn.countAll<string>().as('n')])
       .where('userId', '!=', SYSTEM_USER_ID)
       .groupBy('userId')
       .orderBy('n', 'desc')
-      .limit(25)
-      .execute(),
-    dbRead
-      .selectFrom('ChatMessage')
-      .select((eb) => ['chatId', eb.fn.countAll<string>().as('n')])
-      .where('userId', '!=', SYSTEM_USER_ID)
-      .groupBy('chatId')
-      .orderBy('n', 'desc')
-      .limit(20)
+      .limit(TOP_CHATTERS + 1)
       .execute(),
   ]);
 
-  const byId = await usersByIds(chatters.map((c) => c.userId));
+  const chattersCapped = chatters.length > TOP_CHATTERS;
+  const page = chatters.slice(0, TOP_CHATTERS);
+  const byId = await usersByIds(page.map((c) => c.userId));
+
   return {
     chats: Number(chats?.n ?? 0),
     chats24h: Number(chats24h?.n ?? 0),
     messages: Number(messages?.n ?? 0),
     messages24h: Number(messages24h?.n ?? 0),
-    topChatters: chatters.map((c) => ({
+    chattersCapped,
+    topChatters: page.map((c) => ({
       userId: c.userId,
       username: byId.get(c.userId)?.username ?? null,
       bannedAt: byId.get(c.userId)?.bannedAt ?? null,
       messages: Number(c.n),
     })),
-    topChats: topChats.map((c) => ({ chatId: c.chatId, messages: Number(c.n) })),
   };
 }
 
@@ -126,10 +127,10 @@ export async function getSpamGroups(
   return {
     days,
     truncated,
-    groups: page.map((r, i) => ({
-      // (userId, content) is the group, but content can be long — an ordinal keeps the list key short
-      // and stable without hashing message text.
-      key: `${i}:${r.userId}`,
+    groups: page.map((r) => ({
+      // The group IS (userId, content); an index would be position-derived and no better than an
+      // unkeyed each. Content can be long, so it is hashed rather than embedded whole.
+      key: `${r.userId}:${hash(r.content)}`,
       userId: r.userId,
       username: byId.get(r.userId)?.username ?? null,
       bannedAt: byId.get(r.userId)?.bannedAt ?? null,
@@ -137,4 +138,11 @@ export async function getSpamGroups(
       chats: Number(r.chats),
     })),
   };
+}
+
+/** Short stable digest of a message body, for list keys only — never for identity or storage. */
+function hash(value: string): string {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) h = (Math.imul(31, h) + value.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
 }

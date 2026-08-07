@@ -23,3 +23,8 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
   const base = `${civitaiUrl}/user/${encodeURIComponent(username)}`;
   return section ? `${base}/${section}` : base;
 }
+
+/** `/retool/*` is documented as a transitional namespace, and this path was hardcoded at nine sites
+ *  across three pages. When it moves, those become silent dead links. */
+export const userLookupUrl = (idOrUsername: number | string) =>
+  `/retool/user-lookup?q=${encodeURIComponent(String(idOrUsername))}`;

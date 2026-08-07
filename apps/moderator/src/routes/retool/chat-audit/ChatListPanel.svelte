@@ -16,12 +16,31 @@
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="mb-1 text-sm font-semibold text-white">
-    Chats ({search.chats.length}) — matched on {MODE_LABEL[search.mode]}
+    Chats ({num(search.chats.length)}{search.truncated ? '+' : ''}) — matched on {MODE_LABEL[
+      search.mode
+    ]}
   </h3>
   <p class="mb-3 text-xs text-dark-2">
-    Searching <code>{search.term}</code> as {MODE_LABEL[search.mode]}. A number is read as a chat id, a
-    name as a username, anything else as message text.
+    A number is read as a chat id, a name as a username, anything else as message text. Prefix with
+    <code>@</code> to force a username.
   </p>
+
+  <!-- A numeric term is a valid chat id AND a valid username, and guessing wrong means showing two
+       unrelated people's private conversation. Offer the other reading rather than deciding silently. -->
+  {#if search.ambiguousUsername}
+    <p class="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200">
+      <strong>{search.term}</strong> is also a username. This is showing chat {search.term} —
+      <a href="?q=%40{encodeURIComponent(search.term)}" class={LINK_CLASS}>
+        search for the user instead
+      </a>.
+    </p>
+  {/if}
+
+  {#if search.truncated}
+    <p class="mb-2 text-xs text-amber-300">
+      More than {num(search.chats.length)} chats match — only the most recent are shown.
+    </p>
+  {/if}
 
   {#if search.chats.length === 0}
     <p class="text-sm text-dark-2">No chats matched.</p>
@@ -36,12 +55,12 @@
           <a href="?q={encodeURIComponent(search.term)}&chat={chat.chatId}" class={LINK_CLASS}>
             chat {chat.chatId}
           </a>
-          <span class="text-dark-0">{chat.owner ?? `#${chat.ownerId}`}</span>
+          <span class="text-dark-0">{chat.owner ?? (chat.ownerId ? `#${chat.ownerId}` : 'no owner')}</span>
           {#if chat.ownerBannedAt}
             <Badge variant="destructive">owner banned</Badge>
           {/if}
           {#if chat.members.length}
-            <span class="text-xs text-dark-2">with {chat.members.join(', ')}</span>
+            <span class="line-clamp-1 text-xs text-dark-2">with {chat.members.join(', ')}</span>
           {/if}
           <span class="text-xs text-dark-2">
             {num(chat.messages)} messages · last {dateTime(chat.lastAt)}
