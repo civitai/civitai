@@ -10,7 +10,7 @@ left worth porting) · `dropped` (agreed not to port)
 
 | App | Subtask | Queries | Components | Route | Status |
 | --- | --- | --- | --- | --- | --- |
-| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — every export-derived slice built (unverified in a browser); 4 of 8 ticket-wishlist items now built, 4 left |
+| User Lookup v2 | `868kn6x1b` | 170 | 433 | `/retool/user-lookup` | **partial** — everything unblocked is built (unverified in a browser); what is left is blocked, not pending: see below |
 | Moderation Status | `868kn5zg1` | 77 | 197 | `/retool/moderation-status` | not started |
 | Bulk Image Manager | `868kn76au` | 40 | 60 | `/retool/bulk-image-manager` | not started |
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
@@ -68,9 +68,14 @@ port them independently rather than as one page.
 Resources: `Replicated_Read_Prod`, `Prod`, `Clickhouse`, `retool_db`, `BuzzTemp`, `Notifications DB`,
 `MongoDB`, REST.
 
-The big one, and the moderation team's primary console. **Do not attempt as a single page.** Slices below
-follow the ClickUp design doc (868kkxqpn §1.2) — see
+The big one, and the moderation team's primary console. The checklist below tracks coverage against the
+ClickUp design doc (868kkxqpn §1.2) — see
 [`docs/moderator-app/retool-migration-tasks.md`](../../../docs/moderator-app/retool-migration-tasks.md).
+
+**The checklist is a coverage list, not a delivery schedule.** An app is ONE slice: build the whole page,
+then review it. Earlier guidance here said the opposite and it was wrong — delivering a panel at a time
+meant the page was reviewed six times, defects were found in already-shipped panels months after they
+landed, and every pass paid the cost of re-reading the same service. Ship a page when it is whole.
 
 - [x] **Shell + resolver + counts + stats** — `/retool/user-lookup`. Covers `UserIDByUsername`,
       `UserIDByEmail`, `UserContent`, `AllCountsUnion`, `UserStats`, and folds in the per-type counts
@@ -154,18 +159,37 @@ follow the ClickUp design doc (868kkxqpn §1.2) — see
       rather than erroring, so a missing key never blocks a lookup. Documented in `.env.example`; this
       is the one piece that has not been exercised against the real service.
 
+### What is left, and what blocks it
+
+Everything unblocked on this page is now built. The remainder needs a decision or infrastructure, not
+more porting — none of it is "next up":
+
+- **Editing bio and socials**, **`ToggleMod`**, **`UpdateUserDeets`** — all go through
+  `/api/mod/retool/user`, which needs a user API key the spoke should not hold.
+- **Bulk delete / ToS of comments**, **purge all content**, **image removal** — destructive, with
+  search-index and cache side effects the spoke does not own. Same decision as account actions.
+- **Issuing a strike**, **notifying a user** — need the notification system.
+- **Add / subtract Buzz**, **rewards eligibility** — the ticket itself suggests a separate app.
+- **Notification history** — needs a Notifications DB connection the spoke does not have.
+
 ### Asked for in the ticket
 
 The slices above were scoped from the Retool export. `868kn6x1b`'s description is a **wishlist**, and it
 asked for eight things the export-driven slices never covered. Four are now built (profile & reputation
 slice); the four left are unbuilt rather than blocked.
 
-- [ ] **LoRA trainings** — `ModelVersionsAllTraining` etc. The largest omission: training status, base
-      model, epoch progress, workflow/job id and the Buzz transaction per training run. Roughly a panel
-      of its own; the SQL digs through `ModelFile.metadata->trainingResults`.
-- [ ] **Buzz history** — `Receipts` / `Payments` (ClickHouse) plus `ReceiptsUsers` / `PaymentsUsers` to
-      name the counterparties. Only the *balance* is shipped. "Add / subtract buzz" the ticket itself
-      flags as probably a separate app — leave it there.
+- [x] **LoRA trainings** — `NewSubmittedTrainsBrett`, in `/api/user-account` (0.5ms). Retool selected
+      `ModelFile.*` plus ~20 hyperparameters (batch size, LR schedule, network dim); those debug a failed
+      train rather than moderate an account, so what is ported is what a moderator acts on — what was
+      trained, base model, status, epoch progress, image count, Buzz cost, dataset-shared.
+      Retool filtered `type = Training Data OR type IS NULL` in the WHERE, which drops a version whose
+      only files are of another type; moved into the JOIN so the run stays visible.
+- [x] **Buzz history** — `Receipts` + `Payments` merged into one timeline (they differ only in which
+      side of the transaction the account is on), plus `ReceiptsUsers`/`PaymentsUsers` for counterparty
+      names. Its own endpoint: `buzzTransactions` is **1.5B rows sorted by date ASC**, so even bounded to
+      90 days a descending read measures ~2.5s. The window bound is mandatory, not tuning — Retool bounded
+      it too. Account id 0 is Civitai itself (generation spend, purchases, rewards).
+      Not ported: "add / subtract buzz", which the ticket itself flags as probably a separate app.
 - [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", in
       `/api/user-account`. The concentration is the signal; a normal account spreads reactions over
       hundreds of creators.
@@ -204,12 +228,18 @@ slice); the four left are unbuilt rather than blocked.
       Matching normalises scheme, `www.` and trailing slash: one domain is held by 35 accounts with a
       trailing slash and 25 without, **disjoint sets** — exact matching reported 24 alts on a 60-account
       ring.
-- [ ] **Blocked prompts** — `GetBlockedPrompts` (ClickHouse). Also `GeneratorCount` / `GenRateLimited`;
-      generation abuse is a signal group we have none of.
-- [ ] **"Has this user talked to a mod before?"** — `FindChats` / `FindChatsWithMods` / `UserChats`.
-      The ticket wants a *warning* on lookup, not a chat browser. Overlaps the **Chat Audit** app
-      (`868kn7m9r`) — decide there whether the flag lives here and the transcript lives there.
-      The ticket's "DMs sent" is the same data.
+- [x] **Blocked prompts + generation abuse** — `GetBlockedPrompts` and `GenRateLimited`, in the security
+      signals panel where they belong. `prohibitedRequests` is small (777K); `textToImageJobs` is 1.08B
+      sorted by createdAt, so the 24h bound keeps it on the sort key.
+      **`GeneratorCount` deliberately not ported** — an all-time COUNT would scan 1.08B rows, and
+      `UserStat.generationCountAllTime` already carries the same number for free on the Reputation panel.
+- [x] **"Has this user talked to a mod before?"** — `FindChats` + `FindChatsWithMods`, as a banner on the
+      signals panel: the ticket asks for a warning on lookup, not a chat browser.
+      **Retool hardcoded sixteen moderator user ids inline**; derived from `User.isModerator` instead. The
+      hardcoded list was already stale (there are 24) and would silently under-report as the team changes
+      — a failure a moderator could never notice. 60ms.
+      Not ported: the transcript (`UserChats`, `WarrantChatLog`) — that is the **Chat Audit** app
+      (`868kn7m9r`), and the ticket's "DMs sent" is the same data.
 - [ ] **Notification history** — `GetNotifications` / `ViewNotifications` against the Notifications DB,
       which the spoke has no connection to. Not in the ticket text; noting it so the export's use of a
       seventh datasource is not rediscovered later.

@@ -42,7 +42,9 @@
   {#await activity}
     <p class="text-sm text-dark-2">Loading moderator activity…</p>
   {:then rows}
-    {#if !rows || rows.length === 0}
+    {#if !rows}
+      <p class="text-sm text-dark-2">Loading moderator activity…</p>
+    {:else if rows.length === 0}
       <p class="text-sm text-dark-2">No recorded moderator activity.</p>
     {:else}
       <ul class="space-y-1.5 text-sm">

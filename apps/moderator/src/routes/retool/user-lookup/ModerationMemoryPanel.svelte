@@ -79,7 +79,9 @@
     {#await memory}
       <p class="text-sm text-dark-2">Loading notes…</p>
     {:then result}
-      {#if !result || result.notes.length === 0}
+      {#if !result}
+        <p class="text-sm text-dark-2">Loading notes…</p>
+      {:else if result.notes.length === 0}
         <p class="text-sm text-dark-2">No notes on this account.</p>
       {:else}
         <ul class="space-y-3">
@@ -134,7 +136,9 @@
     {#await memory}
       <p class="text-sm text-dark-2">Loading strikes…</p>
     {:then result}
-      {#if !result || result.strikes.length === 0}
+      {#if !result}
+        <p class="text-sm text-dark-2">Loading strikes…</p>
+      {:else if result.strikes.length === 0}
         <p class="text-sm text-dark-2">No strikes on this account.</p>
       {:else}
         <ul class="space-y-2">

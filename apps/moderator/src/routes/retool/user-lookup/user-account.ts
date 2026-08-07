@@ -39,12 +39,29 @@ export type Reactions = {
   targets: { userId: number; username: string | null; count: number }[];
 };
 
+export type TrainingRun = {
+  modelVersionId: number;
+  modelId: number;
+  name: string | null;
+  baseModel: string | null;
+  trainingType: string | null;
+  status: string | null;
+  numImages: number | null;
+  sharedDataset: boolean;
+  currentEpoch: number | null;
+  maxEpochs: number | null;
+  buzzCost: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
 export type Account = {
   buzz: { balance: number; lifetimeBalance: number } | null;
   reviews: Review[];
   comments: Comment[];
   cosmetics: Cosmetic[];
   reactions: Reactions;
+  trainings: { runs: TrainingRun[]; truncated: boolean };
 };
 
 export async function fetchAccount(userId: number): Promise<Account> {

@@ -45,7 +45,9 @@
       {#await account}
         <p class="text-sm text-dark-2">Loading balance…</p>
       {:then result}
-        {#if !result?.buzz}
+        {#if !result}
+          <p class="text-sm text-dark-2">Loading balance…</p>
+        {:else if !result.buzz}
           <p class="text-sm text-dark-2">Balance unavailable.</p>
         {:else}
           <div class="flex gap-6">

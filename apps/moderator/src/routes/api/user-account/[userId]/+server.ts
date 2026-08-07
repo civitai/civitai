@@ -7,20 +7,22 @@ import {
   getCosmetics,
   getReactionTargets,
   getReviews,
-} from '$lib/server/user-lookup.service';
+  getTrainingRuns,
+} from '$lib/server/user-account.service';
 
-// Client-fetched: the Buzz balance is an external HTTP call and the three lists are only wanted once an
+// Client-fetched: the Buzz balance is an external HTTP call and the lists are only wanted once an
 // investigation is already underway. Keeping them off the load means identity still renders immediately.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
-  const [buzz, reviews, comments, cosmetics, reactions] = await Promise.all([
+  const [buzz, reviews, comments, cosmetics, reactions, trainings] = await Promise.all([
     getBuzzBalance(userId),
     getReviews(userId),
     getComments(userId),
     getCosmetics(userId),
     getReactionTargets(userId),
+    getTrainingRuns(userId),
   ]);
 
-  return json({ buzz, reviews, comments, cosmetics, reactions });
+  return json({ buzz, reviews, comments, cosmetics, reactions, trainings });
 };

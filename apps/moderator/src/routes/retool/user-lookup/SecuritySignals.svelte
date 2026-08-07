@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, num } from './format';
+  import { LINK_CLASS, dateTime, num } from './format';
 
   type Account = { userId: number; username: string | null; bannedAt: string | null };
 
@@ -17,11 +17,24 @@
       accounts: (Account & { url: string })[];
       truncated: boolean;
     };
+    generation: {
+      blocked: {
+        key: string;
+        time: string;
+        prompt: string;
+        negativePrompt: string | null;
+        source: string;
+      }[];
+      blockedTotal: number;
+      last24h: number;
+    };
+    modContact: { chats: number; lastAt: string | null };
   };
 
   let { userId }: { userId: number } = $props();
 
   const SHOWN = 12;
+  let showPrompts = $state(false);
 
   // Fetched here rather than in the page load: ~500ms of ClickHouse work that must not hold up identity.
   // Derived promise + {#await} means there is no state to reassign — a new userId produces a new promise
@@ -67,6 +80,18 @@
         </div>
       {/if}
 
+      <!-- The ticket asks for a warning on lookup, not a chat browser: the transcript lives in Chat Audit. -->
+      {#if result.modContact.chats > 0}
+        <div
+          class="mb-3 rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-sm text-blue-200"
+        >
+          This account has spoken with a moderator in {num(result.modContact.chats)}
+          {result.modContact.chats === 1 ? 'chat' : 'chats'} — most recently {dateTime(
+            result.modContact.lastAt
+          )}. Check for prior context before acting.
+        </div>
+      {/if}
+
       <div class="grid gap-5 lg:grid-cols-2">
         <div>
           <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
@@ -80,7 +105,7 @@
                 <li class="flex flex-wrap items-baseline gap-x-2">
                   <code class="text-dark-0">{row.ip}</code>
                   <Badge variant="secondary">{row.type}</Badge>
-                  <span class="text-xs text-dark-2">{row.events}× · last {row.last}</span>
+                  <span class="text-xs text-dark-2">{row.events}× · last {dateTime(row.last)}</span>
                 </li>
               {/each}
             </ul>
@@ -170,6 +195,49 @@
             {/if}
           {/if}
         </div>
+      </div>
+
+      <div class="mt-5 border-t border-dark-4 pt-4">
+        <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+          Generation ({num(result.generation.blockedTotal)} blocked prompts · {num(
+            result.generation.last24h
+          )} jobs in 24h)
+        </h4>
+        {#if result.generation.blocked.length === 0}
+          <p class="text-sm text-dark-2">No blocked prompts on this account.</p>
+        {:else if !showPrompts}
+          <!-- Collapsed by default: these are prohibited prompts, so they are explicit by definition.
+               The count above is the part a moderator needs at a glance; reading the text is a
+               deliberate act, not something the page does to whoever is looking at the screen. -->
+          <button type="button" class="text-sm {LINK_CLASS}" onclick={() => (showPrompts = true)}>
+            Show {Math.min(SHOWN, result.generation.blocked.length)} blocked prompts
+          </button>
+        {:else}
+          <ul class="space-y-1.5 text-sm">
+            {#each result.generation.blocked.slice(0, SHOWN) as p (p.key)}
+              <li>
+                <div class="flex flex-wrap items-baseline gap-x-2">
+                  <Badge variant="destructive">{p.source === 'External' ? 'OpenAI' : p.source}</Badge>
+                  <span class="text-xs text-dark-2">{dateTime(p.time)}</span>
+                </div>
+                <p class="wrap-break-word text-dark-0">{p.prompt}</p>
+                {#if p.negativePrompt}
+                  <p class="wrap-break-word text-xs text-dark-2">negative: {p.negativePrompt}</p>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+          <button type="button" class="mt-2 block text-sm {LINK_CLASS}" onclick={() => (showPrompts = false)}>
+            Hide prompts
+          </button>
+          {#if result.generation.blockedTotal > Math.min(SHOWN, result.generation.blocked.length)}
+            <p class="mt-2 text-xs text-dark-2">
+              Showing {Math.min(SHOWN, result.generation.blocked.length)} of {num(
+                result.generation.blockedTotal
+              )}.
+            </p>
+          {/if}
+        {/if}
       </div>
     {/if}
   {:catch}

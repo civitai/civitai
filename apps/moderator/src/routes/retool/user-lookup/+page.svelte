@@ -8,6 +8,7 @@
   import type { FormResult } from './format';
   import { fetchAccount } from './user-account';
   import AccountActionsPanel from './AccountActionsPanel.svelte';
+  import BuzzHistoryPanel from './BuzzHistoryPanel.svelte';
   import ContentCounts from './ContentCounts.svelte';
   import IdentityPanel from './IdentityPanel.svelte';
   import ModActivityPanel from './ModActivityPanel.svelte';
@@ -16,6 +17,7 @@
   import ReputationPanel from './ReputationPanel.svelte';
   import SecuritySignals from './SecuritySignals.svelte';
   import SubscriptionPanel from './SubscriptionPanel.svelte';
+  import TrainingsPanel from './TrainingsPanel.svelte';
   import UserContentPanel from './UserContentPanel.svelte';
 
   let { data, form }: { data: PageData; form: FormResult } = $props();
@@ -65,16 +67,29 @@
     civitaiUrl={data.civitaiUrl}
     username={result.identity.username}
   />
-  <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
-  <!-- Inside the key block: a `?q=` navigation does not remount by default, so an open ban
-       confirmation would otherwise survive and end up pointed at a different account. -->
-  {#key result.identity.id}
-    <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />
-    <ModerationMemoryPanel userId={result.identity.id} {form} />
-    <SubscriptionPanel subscription={result.subscription} {account} />
-    <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
-    <SecuritySignals userId={result.identity.id} />
-    <UserContentPanel {account} civitaiUrl={data.civitaiUrl} />
-  {/key}
   <ReputationPanel stats={result.stats} scores={result.scores} />
+
+  <!-- Order is deliberate, and reads top-down as an investigation: who they are, what they did, what we
+       already know about them, and only then what to do about it. Account actions sits LAST because a
+       moderator reads down the page — with it near the top, the ban button came before the blocked
+       prompts, shared-IP accounts, strikes and mod history that justify pressing it.
+
+       Inside the key block: a `?q=` navigation does not remount by default, so an open ban confirmation
+       would otherwise survive and end up pointed at a different account. -->
+  {#key result.identity.id}
+    <!-- what they did -->
+    <UserContentPanel {account} civitaiUrl={data.civitaiUrl} />
+    <TrainingsPanel {account} civitaiUrl={data.civitaiUrl} />
+    <SubscriptionPanel subscription={result.subscription} {account} />
+    <BuzzHistoryPanel userId={result.identity.id} />
+
+    <!-- what we already know -->
+    <ReportsPanel reportsFiled={result.reportsFiled} reportedContent={result.reportedContent} />
+    <SecuritySignals userId={result.identity.id} />
+    <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+    <ModerationMemoryPanel userId={result.identity.id} {form} />
+
+    <!-- what to do -->
+    <AccountActionsPanel identity={result.identity} canAct={data.canAct} {form} />
+  {/key}
 {/if}
