@@ -234,10 +234,14 @@ function CollectionListForm({
       enabled: features.collaborativeCollections,
     });
   // While permission data for a collection is unknown, treat it as closed rather than open —
-  // it must never be briefly selectable before flipping to disabled once data arrives.
+  // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
+  // keeps write for the owner and for elevated collaborators, so it only closes the picker for
+  // people who actually lost it — otherwise a lapsed owner finds their OWN collection greyed
+  // out with the visitor copy.
   const getCollaborationState = (collectionId: number) => {
+    const permissions = permissionsByCollectionId.get(collectionId);
     const collaborationDisabled =
-      !!permissionsByCollectionId.get(collectionId)?.collaborationDisabled;
+      !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
     return {
       disabled: loadingPermissions || collaborationDisabled,
       disabledReason: !loadingPermissions && collaborationDisabled,

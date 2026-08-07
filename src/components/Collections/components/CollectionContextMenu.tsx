@@ -223,6 +223,9 @@ export function CollectionContextMenu({
   };
 
   const isBookmarkCollection = mode === CollectionMode.Bookmark;
+  // Matches what `getCollaborators` will answer for: curated (any mode) and system-owned
+  // collections carry staff rows that are an internal roster, not a collaboration.
+  const supportsCollaborators = !mode && ownerId > 0;
 
   return (
     <Menu {...menuProps} withArrow>
@@ -326,7 +329,7 @@ export function CollectionContextMenu({
             </Menu.Item>
           </Link>
         )}
-        {!isBookmarkCollection && features.collaborativeCollections && permissions?.read && (
+        {supportsCollaborators && features.collaborativeCollections && permissions?.read && (
           <Menu.Item
             leftSection={<IconUsers size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {

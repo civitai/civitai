@@ -62,6 +62,11 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
   const isModerator = currentUser?.isModerator ?? false;
   const canManage = permissions?.manage ?? false;
   const canGrantManager = isOwner || isModerator;
+  const ownerId = collection?.user?.id;
+  // Mirrors what the server will answer for: curated (any mode) and system-owned collections
+  // carry staff rows that are an internal roster, not a collaboration, so both the roster and
+  // the invite form are refused there.
+  const supportsCollaborators = !collection?.mode && (ownerId ?? 0) > 0;
 
   const collaborators = data?.collaborators ?? [];
   const invites = data?.invites ?? [];
@@ -89,6 +94,7 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
   });
 
   const canRemove = (targetUserId: number, targetRole: CollectionCollaboratorRole) => {
+    if (targetUserId === ownerId) return false;
     if (targetUserId === currentUser?.id) return true;
     if (!canManage) return false;
     if (isOwner || isModerator) return true;
@@ -113,6 +119,14 @@ function CollectionCollaboratorsPanel({ collectionId }: { collectionId: number }
     ...collaborators.map((c) => c.userId),
     ...invites.map((i) => i.userId),
   ].filter((id): id is number => typeof id === 'number');
+
+  if (collection && !supportsCollaborators) {
+    return (
+      <Alert color="gray" variant="light">
+        This collection doesn&apos;t support collaborators.
+      </Alert>
+    );
+  }
 
   return (
     <Stack gap="md">

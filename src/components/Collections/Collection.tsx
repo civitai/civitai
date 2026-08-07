@@ -544,8 +544,14 @@ export function Collection({
     (permissions?.write || permissions?.writeReview) &&
     (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
+  // The lapse stops growth, not operation: the server keeps write for the owner and for
+  // elevated collaborators, so anyone who still holds it keeps their add control. The owner
+  // still gets the notice — it carries their renew CTA — while a collaborator whose access is
+  // untouched gets nothing rather than a "not accepting entries" line next to a live button.
   const submissionsClosed =
-    collectionType === CollectionType.Image && !!permissions?.collaborationDisabled;
+    !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
+  const showSubmissionsClosedNotice =
+    !!permissions?.collaborationDisabled && (submissionsClosed || !!permissions?.isOwner);
 
   const submissionPeriod =
     metadata.submissionStartDate ||
@@ -796,7 +802,7 @@ export function Collection({
                           </LegacyActionIcon>
                         </CollectionContextMenu>
                       </Group>
-                      {submissionsClosed && (
+                      {showSubmissionsClosedNotice && (
                         <CollectionSubmissionsClosedNotice isOwner={!!permissions?.isOwner} />
                       )}
                       {entryCountDetails?.max &&
