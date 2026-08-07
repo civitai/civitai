@@ -308,22 +308,28 @@ export const listOffsiteRequestsSchema = listMySubmissionsSchema;
 export type ListOffsiteRequestsInput = z.infer<typeof listOffsiteRequestsSchema>;
 
 /**
- * AUTHOR: persist a Cloudflare-uploaded image into an `Image` row and return its
- * numeric id, so the submit form's asset step can then attach it to the draft
- * listing via the P1 asset-CRUD procs (`setIcon`/`setCover`/`addScreenshot`,
- * which take a numeric `imageId`). The `url` is the CF upload key (a uuid); the
- * width/height/mime/size come from the client media-preprocess pass and are
- * re-validated for the target asset kind by the P1 attach proc — this proc only
- * MATERIALISES the row (and kicks off ingestion/scan). No listing binding here;
- * ownership is bound to the caller (`userId` from ctx), and the attach proc's
- * owner check gates which listing it can be attached to.
+ * AUTHOR: persist an uploaded image into an `Image` row and return its numeric
+ * id, so the submit form's asset step can then attach it to the draft listing via
+ * the P1 asset-CRUD procs (`setIcon`/`setCover`/`addScreenshot`, which take a
+ * numeric `imageId`). The `url` is the upload key (a uuid) minted by
+ * `/api/v1/image-upload`. This proc only MATERIALISES the row (and kicks off
+ * ingestion/scan); the per-kind rules are applied by the P1 attach proc. No
+ * listing binding here; ownership is bound to the caller (`userId` from ctx), and
+ * the attach proc's owner check gates which listing it can be attached to.
+ *
+ * 🔴 `width` / `height` / `mimeType` / `sizeBytes` are NOT persisted. The server
+ * reads the uploaded object back and derives all four from the bytes, because the
+ * attach proc's geometry/size/MIME bounds are expressed over exactly those columns
+ * — trusting the uploader for them would make every one of those bounds
+ * self-reported. They stay in the contract as optional so released clients that
+ * still send them keep working.
  */
 export const persistListingAssetImageSchema = z.object({
-  // The CF upload key returned by `useCFImageUpload` — imageSchema requires a uuid.
+  // The upload key returned by `/api/v1/image-upload` — imageSchema requires a uuid.
   url: z.string().uuid(),
   name: z.string().max(255).nullish(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
   mimeType: z.string().max(120).optional(),
   sizeBytes: z.number().int().nonnegative().optional(),
 });
