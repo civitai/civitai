@@ -30,6 +30,7 @@
 
   let editing = $state<number | null>(null);
   let adding = $state(false);
+  let striking = $state(false);
   let submitting = $state(false);
 
   // applyAction populates `form` — without it "You can only edit your own notes." never reaches the UI
@@ -44,6 +45,13 @@
       if (result.type === 'success') {
         editing = null;
         adding = false;
+        striking = false;
+        version += 1;
+      }
+      // A strike that recorded but could not notify comes back as a failure carrying the message.
+      // The row exists, so the list has to refetch even though this is not a success.
+      if (result.type === 'failure' && result.status === 200) {
+        striking = false;
         version += 1;
       }
       submitting = false;
@@ -163,10 +171,34 @@
   </div>
 
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <h3 class="mb-1 text-sm font-semibold text-white">Strikes</h3>
-    <p class="mb-3 text-xs text-dark-2">
-      Read-only — issuing a strike also notifies the user, which is not ported yet.
-    </p>
+    <div class="mb-1 flex items-baseline justify-between gap-3">
+      <h3 class="text-sm font-semibold text-white">Strikes</h3>
+      {#if canAct && !striking}
+        <Button size="sm" variant="outline" onclick={() => (striking = true)}>Issue strike</Button>
+      {/if}
+    </div>
+    <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>
+
+    {#if striking}
+      <form method="POST" action="?/addStrike" use:enhance={onSubmit} class="mb-4">
+        <input type="hidden" name="userId" value={userId} />
+        <Textarea
+          name="reason"
+          rows={2}
+          placeholder="Reason — this text is sent to the user."
+          required
+        />
+        <div class="mt-2 flex gap-2">
+          <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
+            {submitting ? 'Working…' : 'Issue strike'}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onclick={() => (striking = false)}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    {/if}
+
     {#await memory}
       <p class="text-sm text-dark-2">Loading strikes…</p>
     {:then result}

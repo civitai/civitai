@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseQuery } from '$lib/server/query';
-import { addUserNote, updateUserNote } from '$lib/server/moderation-memory.service';
+import { addUserNote, addUserStrike, updateUserNote } from '$lib/server/moderation-memory.service';
 import {
   BAN_REASON_CODES,
   addSocial,
@@ -180,6 +180,34 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return socialsFail(result.error);
+    return { success: true };
+  },
+
+  // Issuing a strike NOTIFIES the user, so it is gated on the enforcement permission rather than the
+  // note permission it sits beside.
+  addStrike: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return noteFail(403, 'Not permitted.');
+    const author = locals.user.username;
+    if (!author) return noteFail(400, 'Your account has no username to attribute the strike to.');
+
+    const input = parseForm(
+      userIdSchema.extend({ reason: z.string().trim().min(1).max(1000) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return noteFail(400, input);
+
+    const result = await addUserStrike({
+      userId: input.userId,
+      reason: input.reason,
+      author,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return noteFail(400, result.error);
+
+    // The strike landed either way; say so plainly rather than reporting a clean success, so nobody
+    // assumes the user was told when they were not.
+    if (!result.notified)
+      return noteFail(200, 'Strike recorded, but the user could not be notified.');
     return { success: true };
   },
 
