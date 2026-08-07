@@ -300,6 +300,11 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
+  // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
+  // `stickers` it does not gate what a buyer already owns: turning it off must
+  // not strip cosmetics people paid for, only stop new packs being listed,
+  // discovered or sold.
+  cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

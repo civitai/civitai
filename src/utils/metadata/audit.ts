@@ -2,6 +2,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
+import blockedNSFWOverridable from './lists/blocklist-nsfw-overridable.json';
 import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
@@ -56,6 +57,45 @@ export interface PromptTrigger {
   category: PromptTriggerCategory;
   message: string;
   matchedWord?: string;
+}
+
+/**
+ * Categories a user may click through with a warning ("I know what I'm doing").
+ * Everything not listed here is a hard block and has no override path.
+ *
+ * Do NOT add anything minor- or real-person-related. `minor_age` is the near
+ * miss: it fires on innocent text ("an 8 year old oak tree") but also on
+ * suggestive-minor prompts carrying no explicit term, which `inappropriate_minor`
+ * cannot catch because it requires an NSFW word.
+ *
+ * Do NOT add `external`. Its trigger message is whatever a deployment configured
+ * — `extModeration.moderatePrompt` relabels provider categories through the
+ * `EXTERNAL_MODERATION_CATEGORIES` env var — so severity would hinge on an env
+ * string no invariant covers.
+ */
+const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>(['nsfw_blocklist', 'profanity']);
+
+/**
+ * `nsfw_blocklist` is NOT one severity — the same flat list holds `rape` and
+ * `daughter`. Severity is per matched WORD and defaults to hard, so adding a term
+ * to the main blocklist can never accidentally make it overridable.
+ *
+ * Distinct from `nsfwWordsSoft` above, which is mild-NSFW *matching* vocabulary.
+ * This file changes nothing about what matches.
+ */
+const overridableNsfwWords = new Set(blockedNSFWOverridable);
+
+function isSoftBlockTrigger(trigger: PromptTrigger) {
+  if (!SOFT_BLOCK_CATEGORIES.has(trigger.category)) return false;
+  if (trigger.category === 'nsfw_blocklist') {
+    return trigger.matchedWord != null && overridableNsfwWords.has(trigger.matchedWord);
+  }
+  return true;
+}
+
+/** A block is soft only when EVERY trigger is soft — one hard trigger poisons the set. */
+export function isSoftBlock(triggers: PromptTrigger[]) {
+  return triggers.length > 0 && triggers.every(isSoftBlockTrigger);
 }
 
 export interface EnrichedAuditResult {
@@ -189,11 +229,21 @@ export const auditPromptEnriched = (
   }
 
   // 4. NSFW blocklist check
+  // A HARD term anywhere in the prompt wins over a soft term that happens to sit
+  // earlier in the list. Returning the first match outright would let any soft
+  // word act as a universal override key: `daughter` is entry 23 of 191, so
+  // "daughter, <any hard term below it>" would report the soft `daughter` and
+  // offer a click-through. Only a prompt whose every blocklist match is soft may
+  // be soft. Cost is bounded — the full scan already runs on every clean prompt,
+  // and a hard match still exits immediately.
   const nsfwBlock = timer.time('nsfw_blocklist', () => {
+    let softMatch: string | undefined;
     for (const { word, regex } of blockedNSFWRegexLazy()) {
-      if (regex.test(prompt)) return word;
+      if (!regex.test(prompt)) continue;
+      if (!overridableNsfwWords.has(word)) return word;
+      softMatch ??= word;
     }
-    return undefined;
+    return softMatch;
   });
   if (nsfwBlock != null) {
     timer.finish(prompt, negativePrompt);

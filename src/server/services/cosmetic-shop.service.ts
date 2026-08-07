@@ -21,7 +21,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
+import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -38,6 +38,8 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
+import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -181,11 +183,15 @@ export const upsertCosmeticShopItem = async ({
   videoUrl,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
+  // Read on the writer: this row gates a write (the pack refusal and the
+  // quantity check below), and a lagging replica returning nothing would skip
+  // both while the update still ran against the primary.
   const existingItem = id
-    ? await dbRead.cosmeticShopItem.findUnique({
+    ? await dbWrite.cosmeticShopItem.findUnique({
         where: { id },
         select: {
           id: true,
+          cosmeticId: true,
           _count: {
             select: {
               purchases: true,
@@ -207,6 +213,14 @@ export const upsertCosmeticShopItem = async ({
   ) {
     throw new Error('Cannot set available quantity to less than the amount of purchases');
   }
+
+  // A pack has no cosmetic and none of this form's economics — no price floor
+  // over its members, no snapshot to re-take. Today a required `cosmeticId`
+  // happens to reject it; that is an accident of the schema, and the moment
+  // anyone widens that field this becomes a floor-bypassing pack price editor.
+  if (id && !existingItem) throw new Error('Shop item not found');
+  if (id && existingItem?.cosmeticId == null)
+    throw new Error('Packs are edited through the pack editor');
 
   const data = {
     ...cosmeticShopItem,
@@ -234,7 +248,13 @@ export const upsertCosmeticShopItem = async ({
         select: cosmeticShopItemSelect,
       });
 
-  if (videoUrl) {
+  // D14's fourth entry point. Archiving here stamps `archivedAt` without moving
+  // `status`, and pack member resolution now excludes archived listings — so
+  // without this a pack keeps its storefront slot until someone opens it and
+  // finds it unbuyable.
+  if (archived && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+
+  if (videoUrl && item.cosmeticId != null) {
     await upsertCosmetic({
       id: item.cosmeticId,
       videoUrl,
@@ -495,6 +515,8 @@ export const getShopSectionsWithItems = async ({
   stickersEnabled?: boolean;
   userId?: number;
 } & GetShopInput = {}) => {
+  // 'Pack' rides in the same filter but is not a CosmeticType.
+  const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
   // Creator items are only visible to flagged viewers, so blocks only matter
   // there; official items (createdById null) are never block-filtered.
   const blockedPairIds =
@@ -523,42 +545,65 @@ export const getShopSectionsWithItems = async ({
         },
         where: {
           shopItem: {
-            cosmetic: {
-              // Merged into ONE `type` filter. A second `type` key would silently
-              // overwrite the caller's requested types — with the flag off (the
-              // default for everyone), /shop?cosmeticTypes=Badge would return
-              // every non-sticker type instead of badges.
-              ...((cosmeticTypes?.length ?? 0) > 0 || !stickersEnabled
-                ? {
-                    type: {
-                      ...((cosmeticTypes?.length ?? 0) > 0 ? { in: cosmeticTypes } : {}),
-                      // Stickers stay out of the official shop until the flag is
-                      // on. Rendering is unaffected — this hides the storefront
-                      // entry only.
-                      ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+            // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so
+            // any condition under it drops every pack — a pack placed in a
+            // section simply never rendered. The pack branch keeps them; their
+            // members' types are enforced at purchase.
+            OR: [
+              // Packs show unless a type filter is on that doesn't include them.
+              ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
+                ? [
+                    {
+                      cosmeticId: null,
+                      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
-                  }
-                : {}),
-              // Creator-made cosmetics (createdById set — official items also
-              // have an addedById, the mod who listed them) are gated behind
-              // the creatorShop feature flag; a section of only creator items
-              // disappears entirely for unflagged viewers via the
-              // empty-section filter below.
-              ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
-              // A block between viewer and creator (either direction) hides
-              // that creator's items even when featured in official sections.
-              ...(blockedPairIds.length
-                ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
-                : {}),
-            },
+                  ]
+                : []),
+              {
+                cosmetic: {
+                  // Merged into ONE `type` filter. A second `type` key would silently
+                  // overwrite the caller's requested types — with the flag off (the
+                  // default for everyone), /shop?cosmeticTypes=Badge would return
+                  // every non-sticker type instead of badges.
+                  ...(realTypes.length > 0 || !stickersEnabled
+                    ? {
+                        type: {
+                          ...(realTypes.length > 0 ? { in: realTypes } : {}),
+                          // Stickers stay out of the official shop until the flag is
+                          // on. Rendering is unaffected — this hides the storefront
+                          // entry only.
+                          ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                        },
+                      }
+                    : {}),
+                  // Creator-made cosmetics (createdById set — official items also
+                  // have an addedById, the mod who listed them) are gated behind
+                  // the creatorShop feature flag; a section of only creator items
+                  // disappears entirely for unflagged viewers via the
+                  // empty-section filter below.
+                  ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+                  // A block between viewer and creator (either direction) hides
+                  // that creator's items even when featured in official sections.
+                  ...(blockedPairIds.length
+                    ? { OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }] }
+                    : {}),
+                },
+              },
+            ],
             archivedAt: null,
             // Creator items in official sections can lose their Published
             // status after being featured (revert/reject), or be delisted by
             // their creator while staying Published — hide both.
-            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published, listed: true }),
-            OR: isModerator
-              ? undefined
-              : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
+            ...(isModerator
+              ? {}
+              : {
+                  status: CosmeticShopItemStatus.Published,
+                  listed: true,
+                  // Under AND rather than a second `OR` key, which would
+                  // overwrite the pack branch above and take the block filter
+                  // with it.
+                  AND: [{ OR: [{ availableTo: { gte: new Date() } }, { availableTo: null }] }],
+                }),
           },
         },
         orderBy: { index: 'asc' },
@@ -650,10 +695,12 @@ export const purchaseCosmeticShopItem = async ({
   payWith = 'default',
   buzzType = 'yellow',
   stickersEnabled,
+  packsEnabled,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
+  packsEnabled?: boolean;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -679,12 +726,15 @@ export const purchaseCosmeticShopItem = async ({
       _count: {
         select: {
           purchases: true,
+          members: true,
         },
       },
     },
   });
 
   const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
+  // These guards run before the pack branch, so their copy has to work for both.
+  const noun = shopItem && shopItem.cosmeticId == null ? 'pack' : 'cosmetic';
 
   if (!shopItem) {
     throw new Error('Cosmetic not found');
@@ -693,38 +743,42 @@ export const purchaseCosmeticShopItem = async ({
   // Creator-submitted items share this table; only Published items are sellable.
   // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
   if (shopItem.status !== CosmeticShopItemStatus.Published) {
-    throw new Error('Cosmetic is not available');
+    throw new Error(`This ${noun} is not available`);
   }
 
   // Delisted: still Published so it stays bundlable, but off individual sale.
   if (!shopItem.listed) {
-    throw new Error('Cosmetic is not available');
+    throw new Error(`This ${noun} is not available`);
   }
 
-  // Every listing path filters stickers out when the flag is off, but filtered
-  // from a list is not the same as refused: with an item id in hand a buyer
-  // could otherwise pay for a sticker they can't place, since the picker is
-  // gated too. Refuse at the mutation, where the cosmetic is already loaded.
-  if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
-    throw new Error('Cosmetic is not available');
-  }
+  // A pack carries no cosmetic of its own; the guards below are answered per
+  // member instead, in assertPackPurchasable.
+  if (shopItem.cosmetic) {
+    // Every listing path filters stickers out when the flag is off, but filtered
+    // from a list is not the same as refused: with an item id in hand a buyer
+    // could otherwise pay for a sticker they can't place, since the picker is
+    // gated too. Refuse at the mutation, where the cosmetic is already loaded.
+    if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
+      throw new Error(`This ${noun} is not available`);
+    }
 
-  // Creators can't buy their own cosmetic — they're granted it on approval.
-  if (shopItem.cosmetic.createdById === userId) {
-    throw new Error('You already own this cosmetic');
-  }
+    // Creators can't buy their own cosmetic — they're granted it on approval.
+    if (shopItem.cosmetic.createdById === userId) {
+      throw new Error('You already own this cosmetic');
+    }
 
-  // A block between the buyer and the item's creator or lister (either
-  // direction) makes the item unpurchasable no matter where it surfaced — the
-  // generic error keeps the block from being revealed. Official items (no
-  // creator) are unaffected.
-  if (shopItem.cosmetic.createdById) {
-    const blockedPairIds = await getBlockedPairIds(userId);
-    const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
-      (id): id is number => id != null
-    );
-    if (sellerIds.some((id) => blockedPairIds.includes(id))) {
-      throw new Error('Cosmetic is not available');
+    // A block between the buyer and the item's creator or lister (either
+    // direction) makes the item unpurchasable no matter where it surfaced — the
+    // generic error keeps the block from being revealed. Official items (no
+    // creator) are unaffected.
+    if (shopItem.cosmetic.createdById) {
+      const blockedPairIds = await getBlockedPairIds(userId);
+      const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
+        (id): id is number => id != null
+      );
+      if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+        throw new Error(`This ${noun} is not available`);
+      }
     }
   }
 
@@ -744,17 +798,46 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
-    throw new Error('Cosmetic is out of stock');
+    throw new Error(`This ${noun} is out of stock`);
   }
 
   if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
-    throw new Error('Cosmetic is not available yet');
+    throw new Error(`This ${noun} is not available yet`);
   }
 
   if (shopItem.availableTo && shopItem.availableTo < new Date()) {
-    throw new Error('Cosmetic is no longer available');
+    throw new Error(`This ${noun} is no longer available`);
   }
 
+  // Packs diverge here: the money path, the grant and the payout are all
+  // per-member. Everything above is a property of the listing itself and applies
+  // to both.
+  if (shopItem.cosmeticId == null || !shopItem.cosmetic) {
+    // Filtering a pack out of a list is not refusing it — with an id in hand a
+    // buyer could otherwise purchase one while the flag is off.
+    if (!packsEnabled) throw new Error('This pack is not available');
+    const members = await getPackMembers(shopItemId);
+    return purchaseCosmeticPack({
+      userId,
+      shopItem: {
+        id: shopItem.id,
+        title: shopItem.title,
+        unitAmount: shopItem.unitAmount,
+        addedById: shopItem.addedById,
+        meta: shopItemMeta,
+        // The build-time snapshot, which the join rows cannot contradict without
+        // being noticed — deleting a member Cosmetic cascades its row away.
+        memberCount: shopItemMeta.packMemberCount ?? shopItem._count.members,
+      },
+      members,
+      payWith,
+      buzzType,
+      stickersEnabled,
+    });
+  }
+
+  const singleCosmeticId = shopItem.cosmeticId;
+  const singleCosmetic = shopItem.cosmetic;
   const onlySupportsSinglePurchase =
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
@@ -767,7 +850,7 @@ export const purchaseCosmeticShopItem = async ({
     const userCosmetic = await dbWrite.userCosmetic.findFirst({
       where: {
         userId,
-        cosmeticId: shopItem.cosmeticId,
+        cosmeticId: singleCosmeticId,
       },
     });
 
@@ -826,11 +909,11 @@ export const purchaseCosmeticShopItem = async ({
       const userCosmetic = await tx.userCosmetic.create({
         data: {
           userId,
-          cosmeticId: shopItem.cosmeticId,
+          cosmeticId: singleCosmeticId,
           claimKey: transactionId,
           // Consumables grant a finite balance; everything else stays NULL,
           // which reads as unlimited.
-          remaining: stickerUsesFromCosmeticData(shopItem.cosmetic.data),
+          remaining: stickerUsesFromCosmeticData(singleCosmetic.data),
         },
       });
 
@@ -860,7 +943,7 @@ export const purchaseCosmeticShopItem = async ({
         // cosmetic's sellerShare (% of price the seller keeps; creator gets the
         // rest). Official items keep the legacy meta.paidToUserIds distribution.
         const price = shopItem.unitAmount;
-        const creatorId = shopItem.cosmetic.createdById;
+        const creatorId = singleCosmetic.createdById;
         const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
           price,
           meta?.sellerShare ?? 0

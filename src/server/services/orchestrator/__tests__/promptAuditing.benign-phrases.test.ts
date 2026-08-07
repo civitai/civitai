@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AuditModule from '~/utils/metadata/audit';
 
 /**
  * The moderator-managed benign-phrase lists (PromptBenignPhrase /
@@ -22,7 +23,10 @@ const { mockStripBenignPhrases, mockAuditPromptEnriched, mockModeratePrompt, moc
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: mockStripBenignPhrases,
 }));
-vi.mock('~/utils/metadata/audit', () => ({ auditPromptEnriched: mockAuditPromptEnriched }));
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuditModule>()),
+  auditPromptEnriched: mockAuditPromptEnriched,
+}));
 vi.mock('~/server/integrations/moderation', () => ({
   extModeration: { moderatePrompt: mockModeratePrompt },
 }));

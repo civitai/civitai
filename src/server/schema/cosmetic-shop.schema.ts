@@ -74,6 +74,15 @@ export const cosmeticShopItemMeta = z.object({
     .optional(),
   // sha256 of the submitted artwork bytes — used to block duplicate submissions.
   imageHash: z.string().optional(),
+  // Packs only. A pack has no Cosmetic of its own, so its cover art and size
+  // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
+  // convenience; the join table stays authoritative for what's in the pack.
+  coverUrl: z.string().optional(),
+  // Artwork of the first few members, for packs with no cover of their own.
+  // Snapshotted rather than joined so a storefront card can render it from meta
+  // alone; re-taken whenever the contents change.
+  coverTiles: z.array(z.string()).optional(),
+  packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
   sellableByOthers: z.boolean().optional(),
@@ -234,6 +243,8 @@ export const getPreviewImagesInput = z.object({
 
 export type GetShopInput = z.infer<typeof getShopInput>;
 export const getShopInput = z.object({
-  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+  // 'Pack' rides alongside the cosmetic types: a pack has no type of its own,
+  // but a shopper filtering the shelf thinks of it as one more kind of thing.
+  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
 });

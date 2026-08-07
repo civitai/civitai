@@ -288,8 +288,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
+  // Drafts hide the action, except for owners/mods on ExternalGeneration versions: those carry no
+  // weights, so generating is the only way to check the wiring before publishing.
   const couldGenerate =
-    !isDraft && // We don't wanna show the action for drafts.
+    (!isDraft || (isExternalGeneration && isOwnerOrMod)) &&
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&

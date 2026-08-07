@@ -405,6 +405,7 @@ async function createEcosystemStep(
     // Qwen family
     case 'Qwen':
     case 'Qwen2':
+    case 'Qwen3':
       return createQwenInput(normalizedData, handlerCtx);
 
     // Seedream

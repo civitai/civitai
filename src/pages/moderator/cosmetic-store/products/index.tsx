@@ -164,13 +164,13 @@ export default function CosmeticStoreProducts() {
                       </Table.Td>
                       <Table.Td>
                         <Stack gap={0} maw={350} align="flex-start">
-                          <Text>{shopItem.cosmetic.name}</Text>
+                          <Text>{shopItem.cosmetic?.name ?? '—'}</Text>
                         </Stack>
                       </Table.Td>
-                      <Table.Td>{getDisplayName(shopItem.cosmetic.type)}</Table.Td>
+                      <Table.Td>{shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}</Table.Td>
                       <Table.Td>
                         <Center>
-                          <CosmeticSample cosmetic={shopItem.cosmetic} />
+                          {shopItem.cosmetic && <CosmeticSample cosmetic={shopItem.cosmetic} />}
                         </Center>
                       </Table.Td>
                       <Table.Td>
@@ -196,12 +196,17 @@ export default function CosmeticStoreProducts() {
                       </Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="nowrap">
-                          <LegacyActionIcon
-                            component={Link}
-                            href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
-                          >
-                            <IconEdit />
-                          </LegacyActionIcon>
+                          {/* A pack is edited in the pack editor; this form
+                              always fails on save for one, losing whatever the
+                              moderator typed. */}
+                          {shopItem.cosmetic && (
+                            <LegacyActionIcon
+                              component={Link}
+                              href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
+                            >
+                              <IconEdit />
+                            </LegacyActionIcon>
+                          )}
                           <LegacyActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
                             <IconTrash />
                           </LegacyActionIcon>

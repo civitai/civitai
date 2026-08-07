@@ -131,7 +131,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
   it('a block between buyer and creator rejects the purchase before any charge', async () => {
     mocks.getBlockedPairIds.mockResolvedValue([CREATOR_ID]);
 
-    await expect(purchase()).rejects.toThrow('Cosmetic is not available');
+    await expect(purchase()).rejects.toThrow('is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -487,7 +487,7 @@ describe('purchaseCosmeticShopItem sticker gate', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
     await expect(
       purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
-    ).rejects.toThrow('Cosmetic is not available');
+    ).rejects.toThrow('is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 

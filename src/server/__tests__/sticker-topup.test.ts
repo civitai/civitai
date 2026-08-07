@@ -100,7 +100,12 @@ describe('purchaseStickerUses', () => {
     });
     // Listed by a reseller rather than by its creator: the interesting shape,
     // not the degenerate one where both ids are the same person.
-    findListing.mockResolvedValue({ id: 3, meta: {}, addedById: RESELLER });
+    findListing.mockResolvedValue({
+      id: 3,
+      cosmeticId: COSMETIC_ID,
+      meta: {},
+      addedById: RESELLER,
+    });
     // Plain, not a `Once` chain: tests that care about the difference between
     // the pre-charge read and the post-grant one queue their own, and a default
     // chain here would be consumed before theirs ever ran.
@@ -113,6 +118,62 @@ describe('purchaseStickerUses', () => {
     });
     createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
     refreshOwnedStickerCache.mockResolvedValue(undefined);
+  });
+
+  // A sticker sold only inside packs has no listing of its own. Without this the
+  // top-up refuses and "packs inherit per-use pricing" is decorative.
+  describe('authorised by a pack rather than its own listing', () => {
+    // Distinct from COSMETIC_ID so the code can tell which listing it found; a
+    // fixture that reused the id could not fail this test.
+    const PACK_COSMETIC_ID = null;
+    const PACK_BUILDER = 4242;
+    const asPackListing = () =>
+      findListing.mockResolvedValue({
+        id: 77,
+        cosmeticId: PACK_COSMETIC_ID,
+        meta: { acceptsBlueBuzz: true },
+        addedById: PACK_BUILDER,
+      });
+
+    it('tops up a holding that only a pack sells', async () => {
+      asPackListing();
+      await call();
+      expect(createMultiAccountBuzzTransaction).toHaveBeenCalled();
+      expect(queryRaw).toHaveBeenCalled();
+    });
+
+    // Asserted on the query itself, not just on what follows: every other test
+    // here mocks the lookup's result, so narrowing it back to the sticker's own
+    // listing would leave them all green while pack-only stickers stopped
+    // resolving in production.
+    it('looks for a pack containing the sticker, not only its own listing', async () => {
+      asPackListing();
+      await call();
+      expect(findListing.mock.calls[0][0].where.OR).toEqual([
+        { cosmeticId: COSMETIC_ID },
+        { members: { some: { cosmeticId: COSMETIC_ID } } },
+      ]);
+    });
+
+    it('refuses Blue Buzz, since the opt-in belongs to the pack builder not the creator', async () => {
+      asPackListing();
+      await expect(call({ payWith: 'blue-first' })).rejects.toThrow(/Blue Buzz/i);
+      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('does not refuse on a block against the pack builder, who is not part of this sale', async () => {
+      asPackListing();
+      getBlockedPairIds.mockResolvedValue([PACK_BUILDER]);
+      await call();
+      expect(createMultiAccountBuzzTransaction).toHaveBeenCalled();
+    });
+
+    it('still refuses on a block against the sticker creator, who is paid', async () => {
+      asPackListing();
+      getBlockedPairIds.mockResolvedValue([CREATOR]);
+      await expect(call()).rejects.toThrow(/no longer available/i);
+      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    });
   });
 
   // Filtering is a list operation and refusing is not. This mutation takes a
@@ -208,7 +269,12 @@ describe('purchaseStickerUses', () => {
   });
 
   it('accepts Blue Buzz when the listing opted in, draining blue first', async () => {
-    findListing.mockResolvedValue({ id: 3, meta: { acceptsBlueBuzz: true }, addedById: CREATOR });
+    findListing.mockResolvedValue({
+      id: 3,
+      cosmeticId: COSMETIC_ID,
+      meta: { acceptsBlueBuzz: true },
+      addedById: CREATOR,
+    });
     await call({ payWith: 'blue-first' });
     expect(createMultiAccountBuzzTransaction.mock.calls[0][0].fromAccountTypes).toEqual([
       'blue',
@@ -268,7 +334,12 @@ describe('purchaseStickerUses', () => {
   // pays a creator play money for what they earned — silently, per sale, in
   // proportion to how much blue the buyer happened to spend.
   it('pays each colour its own share of a blue-funded purchase', async () => {
-    findListing.mockResolvedValue({ id: 3, meta: { acceptsBlueBuzz: true }, addedById: RESELLER });
+    findListing.mockResolvedValue({
+      id: 3,
+      cosmeticId: COSMETIC_ID,
+      meta: { acceptsBlueBuzz: true },
+      addedById: RESELLER,
+    });
     createMultiAccountBuzzTransaction.mockResolvedValue({
       transactionCount: 2,
       transactionIds: [
