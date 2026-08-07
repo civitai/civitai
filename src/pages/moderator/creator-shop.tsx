@@ -80,6 +80,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
@@ -503,7 +504,13 @@ function CreatorShopReviewPage() {
                       }}
                     >
                       <Group gap={10} wrap="nowrap" align="center">
-                        <CosmeticThumb data={item.cosmetic?.data} name={item.title} bare />
+                        {item.cosmetic ? (
+                          <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+                        ) : (
+                          <ThemeIcon variant="light" color="gray" size={44} radius="md">
+                            <IconPackage size={22} />
+                          </ThemeIcon>
+                        )}
                         <Stack gap={2} className="min-w-0" style={{ flex: 1 }}>
                           <Text size="sm" fw={600} lineClamp={1}>
                             {item.title}
@@ -612,9 +619,11 @@ function CreatorShopReviewPage() {
                           className="max-h-[300px] max-w-[85%] object-contain"
                         />
                       ) : isPack ? (
-                        <ThemeIcon variant="light" color="gray" size={96} radius="md">
-                          <IconPackage size={48} />
-                        </ThemeIcon>
+                        <PackCoverTiles
+                          tiles={selectedMeta.coverTiles ?? []}
+                          size={240}
+                          fallbackIcon
+                        />
                       ) : (
                         <Text size="sm" c="dimmed">
                           No artwork

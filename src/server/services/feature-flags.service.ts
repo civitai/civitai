@@ -294,6 +294,11 @@ const featureFlags = createFeatureFlags({
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
   stickers: { availability: ['mod'], fliptKey: 'stickers' },
+  // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
+  // `stickers` it does not gate what a buyer already owns: turning it off must
+  // not strip cosmetics people paid for, only stop new packs being listed,
+  // discovered or sold.
+  cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

@@ -106,10 +106,17 @@ import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-acc
 // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so ANY
 // condition nested under it silently excludes every pack. The pack branch keeps
 // them visible; a pack containing stickers is refused at purchase either way.
-const hideStickers = (stickersEnabled?: boolean) =>
+const hideStickers = (stickersEnabled?: boolean, packsEnabled?: boolean) =>
   stickersEnabled
-    ? {}
-    : { OR: [{ cosmeticId: null }, { cosmetic: { type: { not: CosmeticType.Sticker } } }] };
+    ? packsEnabled
+      ? {}
+      : { cosmeticId: { not: null } }
+    : {
+        OR: [
+          ...(packsEnabled ? [{ cosmeticId: null }] : []),
+          { cosmetic: { type: { not: CosmeticType.Sticker } } },
+        ],
+      };
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -797,12 +804,14 @@ export const getCreatorShop = async ({
   userId,
   viewerId,
   stickersEnabled,
+  packsEnabled,
   isModerator,
   preview,
 }: {
   userId: number;
   viewerId?: number;
   stickersEnabled?: boolean;
+  packsEnabled?: boolean;
   isModerator?: boolean;
   // Moderator-only design aid: ignore this creator's own inventory/config and
   // fill every section with real site-wide sample data (see the router — only
@@ -837,7 +846,7 @@ export const getCreatorShop = async ({
       where: {
         status: CosmeticShopItemStatus.Published,
         listed: true,
-        ...hideStickers(stickersEnabled),
+        ...hideStickers(stickersEnabled, packsEnabled),
         // Preview draws cosmetics from every creator so the section is populated
         // regardless of whose (possibly empty) shop is being viewed.
         ...(preview ? {} : { addedById: userId }),
@@ -862,7 +871,7 @@ export const getCreatorShop = async ({
         // Delisted items stay Published (still bundlable) but are off sale, so
         // no individual-sale surface may show them — resale included.
         listed: true,
-        ...hideStickers(stickersEnabled),
+        ...hideStickers(stickersEnabled, packsEnabled),
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
@@ -950,7 +959,12 @@ export const getCommunityCosmetics = async ({
   cursor,
   cosmeticTypes,
   stickersEnabled,
-}: GetCommunityCosmeticsInput & { viewerId?: number; stickersEnabled?: boolean }) => {
+  packsEnabled,
+}: GetCommunityCosmeticsInput & {
+  viewerId?: number;
+  stickersEnabled?: boolean;
+  packsEnabled?: boolean;
+}) => {
   const now = new Date();
   // A block between viewer and a cosmetic's creator (either direction) hides
   // that creator's items from the feed.
@@ -973,7 +987,7 @@ export const getCommunityCosmetics = async ({
       // filter still excludes them: a pack has no type to match.
       OR: [
         // Packs show when nothing is filtered, or when the Pack chip is on.
-        ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
+        ...(packsEnabled && (!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE))
           ? [{ cosmeticId: null }]
           : []),
         ...(cosmeticTypes?.length && !realTypes.length

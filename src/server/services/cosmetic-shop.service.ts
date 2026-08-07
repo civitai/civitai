@@ -695,10 +695,12 @@ export const purchaseCosmeticShopItem = async ({
   payWith = 'default',
   buzzType = 'yellow',
   stickersEnabled,
+  packsEnabled,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
+  packsEnabled?: boolean;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -811,6 +813,9 @@ export const purchaseCosmeticShopItem = async ({
   // per-member. Everything above is a property of the listing itself and applies
   // to both.
   if (shopItem.cosmeticId == null || !shopItem.cosmetic) {
+    // Filtering a pack out of a list is not refusing it — with an id in hand a
+    // buyer could otherwise purchase one while the flag is off.
+    if (!packsEnabled) throw new Error('This pack is not available');
     const members = await getPackMembers(shopItemId);
     return purchaseCosmeticPack({
       userId,

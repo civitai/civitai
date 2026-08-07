@@ -68,6 +68,12 @@ const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop
 
 // Creating stickers is flag-gated; rendering and owning them are not, so this
 // guards the write paths only.
+// Packs are flag-gated at the mutation, not just hidden from lists: an id in
+// hand would otherwise be enough to build or edit one.
+const assertPacksEnabled = (features: FeatureAccess) => {
+  if (!features.cosmeticPacks) throw throwAuthorizationError('Packs are not available yet');
+};
+
 const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => {
   if (type === CosmeticType.Sticker && !features.stickers)
     throw throwAuthorizationError('Stickers are not available yet');
@@ -80,21 +86,23 @@ export const creatorShopRouter = router({
     return submitCreatorShopItem({ ...input, userId: ctx.user.id });
   }),
   // #region [Packs]
-  submitPack: creatorShopProcedure.input(submitCreatorShopPackSchema).mutation(({ input, ctx }) =>
-    submitCreatorShopPack({
+  submitPack: creatorShopProcedure.input(submitCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return submitCreatorShopPack({
       ...input,
       userId: ctx.user.id,
       stickersEnabled: ctx.features.stickers,
-    })
-  ),
-  updatePack: creatorShopProcedure.input(updateCreatorShopPackSchema).mutation(({ input, ctx }) =>
-    updateCreatorShopPack({
+    });
+  }),
+  updatePack: creatorShopProcedure.input(updateCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return updateCreatorShopPack({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       stickersEnabled: ctx.features.stickers,
-    })
-  ),
+    });
+  }),
   getPack: publicProcedure.input(getByIdSchema).query(({ input, ctx }) =>
     getPackDetail({
       shopItemId: input.id,
@@ -194,6 +202,7 @@ export const creatorShopRouter = router({
         ...input,
         viewerId: ctx.user?.id,
         stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
         isModerator: ctx.user?.isModerator,
         preview: input.preview && !!ctx.user?.isModerator,
       })
@@ -211,6 +220,7 @@ export const creatorShopRouter = router({
         ...input,
         viewerId: ctx.user?.id,
         stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
       })
     ),
   // #endregion
