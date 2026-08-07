@@ -16,7 +16,7 @@ left worth porting) · `dropped` (agreed not to port)
 | User Reports | `868kn78hc` | 34 | 57 | `/retool/user-reports` | not started |
 | Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | not started |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | not started |
-| Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | not started |
+| Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |
 | Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | not started |
 | Workflows (2) | `868kn80u9` | — | — | cron, not a page | not started |
 
@@ -243,6 +243,48 @@ slice); the four left are unbuilt rather than blocked.
 - [ ] **Notification history** — `GetNotifications` / `ViewNotifications` against the Notifications DB,
       which the spoke has no connection to. Not in the ticket text; noting it so the export's use of a
       seventh datasource is not rediscovered later.
+
+## Image Lookup
+
+Resources: `Replicated_Read_Prod`, `Clickhouse`. Read-only — every action Retool's version could take
+lived in the other apps. All 10 queries ported in one slice.
+
+- [x] **Image detail** — `GetImageData` (Retool's `SELECT *`), narrowed to the moderation-relevant
+      columns, and the image itself rendered with `EdgeMedia` (`Image.url` IS the Cloudflare key).
+- [x] **Resolver** — `GetIdFromUrl` folded into one input. Retool had an id box and a separate URL box.
+      **The UUID is the SECOND path segment of a CDN URL, not the last** (the last is a filename) —
+      taking the last segment made every pasted CDN link, the case the feature exists for, return "no
+      image matches". Site URLs (`/images/<id>`) resolve too. Ids are bounded to int32, or an over-long
+      paste errors the query instead of missing.
+- [x] **Tags + shadow tags** — `Tags` (the `TagsOnImageDetails` view) and `ShadowTags`. Shadow tags are
+      why an image can be flagged without visibly carrying the tag.
+- [x] **Reports** — `query9`. **Note the divergence from `image-review.service.ts`**, which answers the
+      same question for Appeals with an INNER join to `User`, silently dropping reports whose reporter
+      was deleted. Two pages, same image, different lists.
+- [x] **Moderator activity** — Retool ran `SELECT * FROM "ModActivity" WHERE "entityId" = <id>` with
+      **no entityType**. Entity ids are per-type, so it showed actions taken on unrelated reports and
+      models. Filtering `entityType = 'image'` is also what puts it on the
+      `(entityType, entityId, createdAt)` index.
+- [x] **Vote-ring detection** — `ReactionsIP` + `ReactionsIP2`, which Retool rendered as two tables for
+      the moderator to join by eye. Grouped by IP, returning only addresses carrying more than one
+      account. **This is the reason the page is worth having.**
+      **`default.reactions` is 825M rows sorted by TIME, not entityId** — filtering on the image id
+      alone scans the table (2.0s, 5.3s cold). A reaction cannot predate its image, so the image's
+      `createdAt` is passed as a lower bound: 203ms.
+      **That bound must be read with `to_char`, never as a JS Date.** `Image.createdAt` is `timestamp
+      without time zone` with no pg parser registered, so node-pg reads it as local time and
+      `toISOString()` adds the offset. On a UTC-6 host the bound landed six hours into the image's life
+      and hid 60% of a live ring — 25 accounts and 37 reactions rendered as 13 and 16, and any ring
+      firing in the hour after upload disappeared entirely under "nothing suggesting a ring".
+      `Image_Create` only: `Image_Delete` is a reaction being *removed*.
+- [x] **Lifecycle log** — `ImageTOs` (`default.images`), the only place a removal's `tosReason` and
+      `violationType` are kept.
+      **A ToS deletion removes the Postgres row and leaves this log**, so the page has a deleted-image
+      path that renders the log alone. Gated on the log actually having events: an id is just digits,
+      and a transposed one would otherwise be reported as a confirmed ToS removal. Reaction clustering
+      is skipped there — no `createdAt` means no bound.
+
+Not ported: `Reactions` listed every row (capped at 100 with the cap disclosed).
 
 ## User Reports
 
