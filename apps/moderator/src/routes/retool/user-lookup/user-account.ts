@@ -107,6 +107,18 @@ export type ResourceGeneration = {
   count: number;
 };
 
+export type ShopPurchase = {
+  /** The purchase PK, and also the claimKey on the granted cosmetic row. */
+  buzzTransactionId: string;
+  cosmeticId: number;
+  title: string;
+  unitAmount: number;
+  purchasedAt: string;
+  refunded: boolean;
+};
+
+export type AvailableCosmetic = { id: number; name: string };
+
 export type Account = {
   buzz: {
     balance: number;
@@ -127,6 +139,8 @@ export type Account = {
   /** Null when the notifications service is unreachable — distinct from "none sent". */
   notifications: Notification[] | null;
   resourceGenerations: ResourceGeneration[];
+  shopPurchases: ShopPurchase[];
+  availableBadges: AvailableCosmetic[];
 };
 
 export async function fetchAccount(userId: number): Promise<Account> {

@@ -346,6 +346,82 @@ export async function setRewardsEligibility(input: {
   return { ok: true };
 }
 
+// SHOP REFUND (Retool's DeleteUserCosmetic + UpdateShopTransaction + LogShopRefund).
+//
+// Two writes that must not half-apply: flagging the purchase refunded while the cosmetic stays
+// equipped leaves the user holding something they were paid back for, and deleting the cosmetic
+// without the flag makes the purchase eligible to be refunded twice. Hence one transaction.
+//
+// Retool deleted by `claimKey` ALONE. `UserCosmetic.claimKey` defaults to the literal 'claimed' for
+// anything not bought from the shop, so that statement was one mistyped key away from deleting every
+// claimed cosmetic on the site. Scoped by userId here, and to the specific purchase.
+//
+// The Buzz is NOT returned automatically — Retool did not do it either, and a refund whose amount is
+// decided here rather than by the moderator is the wrong default for a money path. Use the Buzz panel.
+export async function refundShopPurchase(input: {
+  userId: number;
+  buzzTransactionId: string;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const purchase = await dbWrite
+    .selectFrom('UserCosmeticShopPurchases')
+    .select(['cosmeticId', 'refunded'])
+    .where('buzzTransactionId', '=', input.buzzTransactionId)
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+
+  if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
+  if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
+
+  await dbWrite.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('UserCosmeticShopPurchases')
+      .set({ refunded: true })
+      .where('buzzTransactionId', '=', input.buzzTransactionId)
+      .where('userId', '=', input.userId)
+      .execute();
+
+    // The purchase id is the claimKey on the granted row — that is how a shop grant is distinguished
+    // from every other way of holding the same cosmetic.
+    await trx
+      .deleteFrom('UserCosmetic')
+      .where('userId', '=', input.userId)
+      .where('cosmeticId', '=', purchase.cosmeticId)
+      .where('claimKey', '=', input.buzzTransactionId)
+      .execute();
+  });
+
+  await logAction('shopRefund', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+// GRANT A COSMETIC (Retool's UnlockCosmetics).
+export async function grantCosmetic(input: {
+  userId: number;
+  cosmeticId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const exists = await dbWrite
+    .selectFrom('Cosmetic')
+    .select('id')
+    .where('id', '=', input.cosmeticId)
+    .executeTakeFirst();
+  if (!exists) return { ok: false, error: 'No such cosmetic.' };
+
+  // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
+  const result = await dbWrite
+    .insertInto('UserCosmetic')
+    .values({ userId: input.userId, cosmeticId: input.cosmeticId, obtainedAt: new Date() })
+    .onConflict((oc) => oc.columns(['userId', 'cosmeticId', 'claimKey']).doNothing())
+    .executeTakeFirst();
+
+  if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0)
+    return { ok: false, error: 'This account already holds that cosmetic.' };
+
+  await logAction(`grantCosmetic:${input.cosmeticId}`, input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
 // act on an id that does not resolve, so a mistyped id cannot reach the endpoint.

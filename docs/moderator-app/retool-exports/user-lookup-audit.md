@@ -81,20 +81,45 @@ They want their own tool; track them there.
 **Not portable as written:** the `CreatorClub` group reads `UserStripeConnect`, which is not in the
 Prisma schema this app types against.
 
+### Closed since, and two deliberate refusals
+
+**Cosmetic Shop** is now a section: `GetPurchases`, the refund flow
+(`DeleteUserCosmetic` + `UpdateShopTransaction`), and `UnlockCosmetics` +
+`AvailableCosmeticList` as a badge grant. Two corrections to Retool's versions, both load-bearing:
+
+- Retool deleted the cosmetic by `claimKey` **alone**. `UserCosmetic.claimKey` defaults to the literal
+  `'claimed'` for anything not bought from the shop, so that statement was one mistyped key away from
+  deleting every claimed cosmetic on the site. Ours is scoped by `userId` and cosmetic.
+- Retool's `GetPurchases` joined `UserCosmetic` → `CosmeticShopItem`, which matches any owned cosmetic
+  that merely has a shop listing — including granted ones — and cannot see `refunded`. Reading
+  `UserCosmeticShopPurchases` instead means an already-refunded purchase is visibly refunded, which is
+  the one fact a refund flow needs to avoid doing it twice.
+
+The refund does **not** return the Buzz. Retool's did not either, and an amount decided by the tool
+rather than the moderator is the wrong default on a money path — the Buzz section does it explicitly.
+
+**`transactionTypes` — deliberately not ported.** It populated a picker whose value fed the buzz
+transaction's `type`. Ours does not send one, so the service assigns it. Offering a moderator a free
+choice of `type` from `SELECT DISTINCT` would let a grant be filed as any category in the ledger,
+which is worse than a consistent default.
+
+**The Paddle account-linking workflow (`tabbedContainer14`) — not ported.** Three tabs, no queries
+behind them, and Civitai no longer uses Paddle (confirmed 2026-08-07). Recorded here so the next
+audit does not rediscover it as a gap.
+
 ### What is actually left
 
-- **A — buzz and commerce.** Unchanged, and still the cluster moderators ask for. **Blocked** on the
-  open question at the bottom of this file: `ReToolActions` vs `ModActivity`. Decide it before writing
-  the first transaction, because that is where the audit trail matters most.
-- **B — destructive content actions.** `DeleteComments`, `ToSComments`, `DeleteReview`,
-  `ExcludeOrIncludeReview`, `CommentsWithLinks`, `PURGEAPI`. Needs a decision on side effects the
-  spoke does not own: search-index sync and cache busting. Route through the main app's endpoints, or
-  accept stale index entries — not a choice to make casually.
-- **C — strikes and notifications.** `InsertStrike`, `InsertStrikeNotif`, `SendNotification`. The
-  notifications client is now wired for reads (E3), so the producer path is a smaller step than it was.
 - **Report detail lists.** `ReportsReceived`, `ReportsSubmitted`, `ReportOnUser`, `ActionReport` — the
-  panel still shows only counts where Retool showed rows with status and who set it.
+  panel still shows only counts where Retool showed rows with status and who set it. **This is the
+  largest remaining gap.**
+- **`SendNotification`** — an arbitrary moderator-authored notification, separate from the strike
+  notification that now fires. `CommentsWithLinks` (a spam-detection read over comment bodies).
 - **`SubmittedReviewImageCount`**, and `GetSuccesfulPromptsUpdated` (MongoDB, no connection).
+- **Bulk Image Manager** — ticket 1.3, absent from the section nav until it has a panel.
+
+Clusters A, B and C are otherwise done. The `ReToolActions` vs `ModActivity` question below is **not**
+a blocker for them and was not treated as one: this is a 1:1 port, and reconciling two audit tables is
+a separate decision. Everything written here logs to `ModActivity`.
 
 ## Classification of all 170
 

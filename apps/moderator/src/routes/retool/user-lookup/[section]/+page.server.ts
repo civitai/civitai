@@ -11,6 +11,8 @@ import {
   BUZZ_TYPES,
   bulkCommentAction,
   bulkReviewAction,
+  grantCosmetic,
+  refundShopPurchase,
   sendBuzz,
   setRewardsEligibility,
   clearProfileText,
@@ -45,6 +47,7 @@ const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, 
 const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
+const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 
 const userIdSchema = z.object({ userId: z.coerce.number().int().positive() });
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
@@ -262,6 +265,40 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  },
+
+  refundPurchase: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return shopFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ buzzTransactionId: z.string().trim().min(1).max(200) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    const result = await refundShopPurchase({
+      userId: input.userId,
+      buzzTransactionId: input.buzzTransactionId,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return shopFail(result.error);
+    return { success: true };
+  },
+
+  grantCosmetic: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/users')) return shopFail('Not permitted.');
+    const input = parseForm(
+      userIdSchema.extend({ cosmeticId: z.coerce.number().int().positive() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    const result = await grantCosmetic({
+      userId: input.userId,
+      cosmeticId: input.cosmeticId,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return shopFail(result.error);
     return { success: true };
   },
 

@@ -1,9 +1,8 @@
 // Retool's `navigation1` / `navigation3` widgets, which are the app's real table of contents: User
 // Lookup was navigated sections, not one scrolling page.
 //
-// Order is Retool's. Two of its entries are absent because nothing is ported behind them yet —
-// "Bulk Image Manager" (ticket 1.3) and "Cosmetic Shop" (the GetPurchases/refund cluster) — and an
-// empty section is worse than none. Add them here when their panels land.
+// Order is Retool's. "Bulk Image Manager" is absent because nothing is ported behind it yet (ticket
+// 1.3) and an empty section is worse than none. Add it here when its panel lands.
 
 export type Section = { slug: string; label: string };
 
@@ -13,6 +12,7 @@ export const SECTIONS: Section[] = [
   { slug: 'content', label: 'Content Overview' },
   { slug: 'buzz', label: 'Buzz' },
   { slug: 'prompts', label: 'Prompt Audit' },
+  { slug: 'shop', label: 'Cosmetic Shop' },
   { slug: 'generation', label: 'Image Generation' },
   { slug: 'training', label: 'LoRA Training' },
   { slug: 'bounties', label: 'Bounties' },

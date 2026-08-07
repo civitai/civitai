@@ -25,6 +25,7 @@
   import ReportsPanel from '../ReportsPanel.svelte';
   import ReputationPanel from '../ReputationPanel.svelte';
   import ReviewsPanel from '../ReviewsPanel.svelte';
+  import ShopPanel from '../ShopPanel.svelte';
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -92,6 +93,14 @@
       <BuzzHistoryPanel userId={result.identity.id} />
     {:else if section === 'prompts'}
       <PromptAuditPanel {signals} />
+    {:else if section === 'shop'}
+      <ShopPanel
+        {account}
+        userId={result.identity.id}
+        canAct={data.canAct}
+        {form}
+        {onSubmit}
+      />
     {:else if section === 'generation'}
       <GenerationPanel {signals} {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'training'}

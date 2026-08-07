@@ -2,8 +2,10 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import {
+  getAvailableBadges,
   getBounties,
   getBountyEntries,
+  getShopPurchases,
   getBuzzBalance,
   getComments,
   getCommentsV2,
@@ -34,6 +36,8 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bountyEntries,
     notifications,
     resourceGenerations,
+    shopPurchases,
+    availableBadges,
   ] = await Promise.all([
     getBuzzBalance(userId),
     getReviews(userId),
@@ -47,6 +51,8 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getBountyEntries(userId),
     getUserNotifications(userId),
     getResourceGenerations(userId),
+    getShopPurchases(userId),
+    getAvailableBadges(userId),
   ]);
 
   return json({
@@ -62,5 +68,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bountyEntries,
     notifications,
     resourceGenerations,
+    shopPurchases,
+    availableBadges,
   });
 };

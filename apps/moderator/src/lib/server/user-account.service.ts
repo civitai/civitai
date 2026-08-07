@@ -288,6 +288,63 @@ export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
   }
 }
 
+// COSMETIC SHOP PURCHASES (Retool's GetPurchases). Read from `UserCosmeticShopPurchases` rather than
+// Retool's UserCosmetic→CosmeticShopItem join: that join matches any owned cosmetic that happens to
+// have a shop listing, including ones granted rather than bought, and it cannot see `refunded` — so an
+// already-refunded purchase looked identical to a live one, which is the one fact the refund flow
+// needs.
+export type ShopPurchase = {
+  /** The purchase PK, and also the `claimKey` on the granted UserCosmetic row. */
+  buzzTransactionId: string;
+  cosmeticId: number;
+  title: string;
+  unitAmount: number;
+  purchasedAt: Date;
+  refunded: boolean;
+};
+
+export async function getShopPurchases(userId: number, limit = 50): Promise<ShopPurchase[]> {
+  return dbRead
+    .selectFrom('UserCosmeticShopPurchases as p')
+    .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
+    .select([
+      'p.buzzTransactionId',
+      'p.cosmeticId',
+      'csi.title',
+      'p.unitAmount',
+      'p.purchasedAt',
+      'p.refunded',
+    ])
+    .where('p.userId', '=', userId)
+    .orderBy('p.purchasedAt', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+// Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
+export type AvailableCosmetic = { id: number; name: string };
+
+export async function getAvailableBadges(userId: number, limit = 200): Promise<AvailableCosmetic[]> {
+  return dbRead
+    .selectFrom('Cosmetic as c')
+    .select(['c.id', 'c.name'])
+    .where('c.type', '=', 'Badge')
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('UserCosmetic as uc')
+            .select('uc.cosmeticId')
+            .whereRef('uc.cosmeticId', '=', 'c.id')
+            .where('uc.userId', '=', userId)
+        )
+      )
+    )
+    .orderBy('c.id')
+    .limit(limit)
+    .execute();
+}
+
 // NOTIFICATIONS the user has been sent (Retool's GetNotifications / ViewNotifications, which read the
 // notifications database directly). This app has no connection to it, so it goes through the same
 // service client the rest of the monorepo uses.
