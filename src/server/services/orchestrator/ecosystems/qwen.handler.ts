@@ -1,10 +1,11 @@
 /**
  * Qwen Family Handler
  *
- * Handles Qwen and Qwen 2 workflows using imageGen step type.
+ * Handles Qwen, Qwen 2 and Qwen 3 workflows using imageGen step type.
  * Discriminates between ecosystems:
  * - Qwen: sdcpp engine, model version-based routing, LoRA support
  * - Qwen 2: fal engine, aspect ratio mapped to imageSize enum
+ * - Qwen 3: qwen engine (Alibaba DashScope), explicit width/height
  */
 
 import type {
@@ -12,6 +13,8 @@ import type {
   Qwen20bEditImageGenInput,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
+  QwenApiCreateImageGenInput,
+  QwenApiEditImageGenInput,
   ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -21,7 +24,7 @@ import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' };
+type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' | 'Qwen3' };
 
 // =============================================================================
 // Qwen version mapping
@@ -53,16 +56,61 @@ const imageSizeMap: Record<string, Qwen2CreateFalImageGenInput['imageSize']> = {
 };
 
 // =============================================================================
+// Qwen 3 model identifiers
+// =============================================================================
+
+const QWEN3_CREATE_MODEL: QwenApiCreateImageGenInput['model'] = '3.0-pro';
+const QWEN3_EDIT_MODEL: QwenApiEditImageGenInput['model'] = '3.0-pro';
+
+// =============================================================================
 // Unified handler
 // =============================================================================
 
 /**
  * Creates imageGen input for Qwen family ecosystems.
- * Routes to Qwen (sdcpp) or Qwen 2 (fal) based on ecosystem.
+ * Routes to Qwen (sdcpp), Qwen 2 (fal) or Qwen 3 (qwen) based on ecosystem.
  */
 export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const isTxt2Img = data.workflow.startsWith('txt');
   const quantity = data.quantity ?? 1;
+
+  // Qwen 3 — qwen engine (Alibaba DashScope)
+  if (data.ecosystem === 'Qwen3') {
+    const baseInput = {
+      engine: 'qwen' as const,
+      prompt: data.prompt,
+      negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+      width: data.aspectRatio?.width,
+      height: data.aspectRatio?.height,
+      promptExtend: 'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
+      quantity,
+      seed: data.seed,
+    };
+
+    if (isTxt2Img) {
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            ...baseInput,
+            model: QWEN3_CREATE_MODEL,
+            operation: 'createImage',
+          }) as QwenApiCreateImageGenInput,
+        },
+      ];
+    }
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseInput,
+          model: QWEN3_EDIT_MODEL,
+          operation: 'editImage',
+          images: data.images?.map((x) => x.url) ?? [],
+        }) as QwenApiEditImageGenInput,
+      },
+    ];
+  }
 
   // Qwen 2 — fal engine
   if (data.ecosystem === 'Qwen2') {
