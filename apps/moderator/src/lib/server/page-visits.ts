@@ -1,5 +1,6 @@
 import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
+import { usersByIds } from './users.service';
 
 const TABLE = 'moderator_page_views';
 
@@ -69,20 +70,11 @@ export async function getRouteUserBreakdown(
   const rows = await resultSet.json<{ userId: number; visits: number; lastVisit: string }[]>();
   if (!rows.length) return [];
 
-  const users = await dbRead
-    .selectFrom('User')
-    .select(['id', 'username'])
-    .where(
-      'id',
-      'in',
-      rows.map((r) => r.userId)
-    )
-    .execute();
-  const nameById = new Map(users.map((u) => [u.id, u.username]));
+  const nameById = await usersByIds(rows.map((r) => r.userId));
 
   return rows.map((r) => ({
     userId: r.userId,
-    username: nameById.get(r.userId) ?? null,
+    username: nameById.get(r.userId)?.username ?? null,
     visits: r.visits,
     lastVisit: r.lastVisit,
   }));
