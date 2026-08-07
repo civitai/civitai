@@ -314,7 +314,7 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux3Video,
     key: 'Flux3Video',
-    displayName: 'Flux.3 Video',
+    displayName: 'Flux 3 Video',
     familyId: 1,
     sortOrder: 8,
   },
@@ -2586,7 +2586,7 @@ export const baseModelRecords: BaseModelRecord[] = [
   {
     id: BM.Flux3Video,
     name: 'Flux 3 Video',
-    description: "Black Forest Labs' FLUX.3 video generation model with native audio",
+    description: "Black Forest Labs' FLUX 3 video generation model with native audio",
     type: 'video',
     ecosystemId: ECO.Flux3Video,
     licenseId: 39,
