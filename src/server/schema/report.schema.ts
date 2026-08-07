@@ -113,6 +113,11 @@ export const reportAutomatedSchema = baseSchema.extend({
   details: reportAutomatedDetailsSchema,
 });
 
+export const reportStickerPlacementSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.StickerPlacement),
+  details: reportStickerPlacementDetailsSchema,
+});
+
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
@@ -125,6 +130,7 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportCsamSchema,
   reportAutomatedSchema,
   reportSpamSchema,
+  reportStickerPlacementSchema,
 ]);
 
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;

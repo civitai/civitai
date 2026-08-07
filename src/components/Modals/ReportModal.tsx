@@ -127,13 +127,12 @@ const reports = [
     availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
   },
   {
-    // Reuses TOSViolation rather than adding a `ReportReason` value: the enum is
-    // a Prisma enum, so a new member is a migration and a new bucket in every
-    // moderator queue, for something that is a TOS violation carried out through
-    // a sticker. What makes it actionable is the placement id in the details,
-    // not a separate reason.
+    // Its own reason, not TOSViolation. Reports dedupe on (reason, entityId), so
+    // sharing one folds every sticker report into whatever TOS report the image
+    // already had and discards its details — including the placement id the
+    // report exists to carry.
     key: 'sticker-placement',
-    reason: ReportReason.TOSViolation,
+    reason: ReportReason.StickerPlacement,
     label: 'Bad sticker placement',
     Element: StickerPlacementForm,
     availableFor: [ReportEntity.Image],

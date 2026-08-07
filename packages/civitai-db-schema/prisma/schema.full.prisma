@@ -1405,6 +1405,7 @@ enum ReportReason {
   CSAM
   Automated
   Spam
+  StickerPlacement
 }
 
 enum ReportStatus {
