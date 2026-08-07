@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCollectionSections,
   getMembership,
   roleLabelFor,
   sortCollections,
 } from '~/components/Collections/collection-list.utils';
-
-type Perm = { isCollaborator?: boolean; manage?: boolean };
 
 describe('getMembership', () => {
   it('classifies an owned collection as owned regardless of permissions', () => {
@@ -37,6 +36,67 @@ describe('roleLabelFor', () => {
 
   it('returns null for a follower so no role renders', () => {
     expect(roleLabelFor({ isCollaborator: false, manage: false })).toBeNull();
+  });
+});
+
+describe('buildCollectionSections', () => {
+  const owned = { id: 1, isOwner: true };
+  const elevated = { id: 2, isOwner: false };
+  const followed = { id: 3, isOwner: false };
+  const rows = [owned, elevated, followed];
+
+  const flatten = (sections: ReturnType<typeof buildCollectionSections>) =>
+    sections.flatMap((s) => s.rows.map((r) => r.id));
+
+  it('groups an elevated row under shared', () => {
+    const sections = buildCollectionSections(
+      rows,
+      new Map([[elevated.id, { isCollaborator: true }]])
+    );
+    expect(sections.find((s) => s.key === 'shared')?.rows.map((r) => r.id)).toEqual([elevated.id]);
+  });
+
+  // The feature flag payload is sparse, so an off flag reads as `undefined` and the permissions
+  // query can still be skipped without any flag check reaching here. A non-owned row must stay
+  // reachable in that window rather than being dropped from every section.
+  it('keeps every row reachable when no permissions are available', () => {
+    const sections = buildCollectionSections(rows, new Map());
+    expect(flatten(sections).sort()).toEqual([owned.id, elevated.id, followed.id].sort());
+    expect(sections.find((s) => s.key === 'following')?.rows.map((r) => r.id)).toEqual([
+      elevated.id,
+      followed.id,
+    ]);
+  });
+
+  it('always emits all three sections so none can be filtered away', () => {
+    expect(buildCollectionSections([], new Map()).map((s) => s.key)).toEqual([
+      'owned',
+      'shared',
+      'following',
+    ]);
+  });
+
+  it('places each row in exactly one section', () => {
+    const sections = buildCollectionSections(
+      rows,
+      new Map([
+        [elevated.id, { isCollaborator: true }],
+        [followed.id, { isCollaborator: false }],
+      ])
+    );
+    expect(flatten(sections)).toHaveLength(rows.length);
+  });
+
+  it('preserves the incoming order within a section', () => {
+    const sorted = sortCollections(
+      [
+        { id: 4, isOwner: false, name: 'Zeta' },
+        { id: 5, isOwner: false, name: 'alpha' },
+      ],
+      'name-asc'
+    );
+    const sections = buildCollectionSections(sorted, new Map());
+    expect(sections.find((s) => s.key === 'following')?.rows.map((r) => r.id)).toEqual([5, 4]);
   });
 });
 

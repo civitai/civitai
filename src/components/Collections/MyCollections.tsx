@@ -18,7 +18,7 @@ import { CollectionInviteList } from '~/components/Collections/CollectionCollabo
 import { CollectionListMenu } from '~/components/Collections/CollectionListMenu';
 import { CollectionListRow } from '~/components/Collections/CollectionListRow';
 import {
-  getMembership,
+  buildCollectionSections,
   roleLabelFor,
   sortCollections,
 } from '~/components/Collections/collection-list.utils';
@@ -67,12 +67,12 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   );
   const { map: permissionsMap, isLoading: permissionsLoading } = useCollectionsPermissionsMap(
     nonOwnedIds,
-    { enabled: features.collaborativeCollections }
+    { enabled: !!features.collaborativeCollections }
   );
 
   const { view, setView, sort, setSort } = useCollectionListPreferences();
 
-  const grouped = useMemo(() => {
+  const sections = useMemo(() => {
     const filtered = collections.filter((c) => {
       if (debouncedQuery && !c.name.toLowerCase().includes(debouncedQuery.toLowerCase()))
         return false;
@@ -84,26 +84,12 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       return true;
     });
 
-    const sorted = sortCollections(filtered, sort);
-    return {
-      owned: sorted.filter((c) => getMembership(c, permissionsMap.get(c.id)) === 'owned'),
-      shared: sorted.filter((c) => getMembership(c, permissionsMap.get(c.id)) === 'shared'),
-      following: sorted.filter((c) => getMembership(c, permissionsMap.get(c.id)) === 'following'),
-    };
+    return buildCollectionSections(sortCollections(filtered, sort), permissionsMap);
   }, [collections, debouncedQuery, typeFilter, roleFilter, permissionsMap, sort]);
 
-  const visibleCollections = useMemo(
-    () => [...grouped.owned, ...grouped.shared, ...grouped.following],
-    [grouped]
-  );
+  const visibleCollections = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
 
   const noCollections = !isLoading && visibleCollections.length === 0;
-
-  const sections = [
-    { key: 'owned', label: 'Owned', rows: grouped.owned },
-    { key: 'shared', label: 'Shared with me', rows: grouped.shared },
-    { key: 'following', label: 'Following', rows: grouped.following },
-  ].filter((section) => section.key !== 'shared' || features.collaborativeCollections);
 
   const FilterBox = (
     <TextInput
@@ -208,7 +194,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       Collections,
       InviteList,
       collections: visibleCollections,
-      isLoading,
+      isLoading: isLoading || permissionsLoading,
       noCollections,
     });
   }

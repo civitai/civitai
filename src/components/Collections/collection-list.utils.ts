@@ -23,6 +23,31 @@ export function getMembership(
   return permissions?.isCollaborator ? 'shared' : 'following';
 }
 
+const SECTION_LABELS: Record<CollectionMembership, string> = {
+  owned: 'Owned',
+  shared: 'Shared with me',
+  following: 'Following',
+};
+
+// Every row lands in exactly one section, so nothing can be filtered out of the rendered set.
+// `permissions` is empty whenever the collaborative flag is off or its query hasn't resolved,
+// which classifies non-owned rows as following rather than dropping them.
+export function buildCollectionSections<T extends { id: number; isOwner: boolean }>(
+  collections: T[],
+  permissions: ReadonlyMap<number, PermissionFlags>
+): { key: CollectionMembership; label: string; rows: T[] }[] {
+  const rows: Record<CollectionMembership, T[]> = { owned: [], shared: [], following: [] };
+  for (const collection of collections) {
+    rows[getMembership(collection, permissions.get(collection.id))].push(collection);
+  }
+
+  return (['owned', 'shared', 'following'] as const).map((key) => ({
+    key,
+    label: SECTION_LABELS[key],
+    rows: rows[key],
+  }));
+}
+
 export function roleLabelFor(permissions: PermissionFlags): string | null {
   if (!permissions?.isCollaborator) return null;
   return permissions.manage ? 'Manager' : 'Contributor';
