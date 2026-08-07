@@ -28,6 +28,31 @@
  * 🔴 Callers pass FLAGS AND IDENTIFIERS ONLY — never a token, a secret, or PII.
  */
 
+/** A value JSON can represent directly, with no conversion and no failure mode. */
+type JsonScalar = string | number | boolean | null;
+
+/**
+ * The payload an audit event may carry: flat, scalar-valued, optionally a scalar array.
+ *
+ * 🔴 THIS NARROWNESS IS THE NON-THROWING GUARANTEE — do NOT widen it back to
+ * `Record<string, unknown>` for convenience. `JSON.stringify` has exactly two throwing
+ * inputs, a **BigInt** and a **circular structure**, and this type makes both
+ * unrepresentable: a BigInt is not a `JsonScalar`, and a cycle needs a nested object or
+ * array reference, which `readonly JsonScalar[]` cannot hold. A nested object is
+ * excluded for the same reason, which also rules out a throwing custom `toJSON`.
+ *
+ * So the emitter below cannot throw, and it achieves that WITHOUT a try/catch. That
+ * distinction is the point: a `catch` would trade a crash for a silently missing audit
+ * line — the exact blind spot this module exists to close — whereas an unrepresentable
+ * value is a COMPILE error at the call site, where someone can still fix it. An audit
+ * log must never be able to break the operation it audits, and must never quietly skip
+ * a record either.
+ *
+ * `undefined` is permitted so a caller can OMIT a key (see the three-valued signal
+ * below); `JSON.stringify` drops undefined-valued keys rather than emitting `null`.
+ */
+export type MintAuditFields = Record<string, JsonScalar | readonly JsonScalar[] | undefined>;
+
 /**
  * Write one mint-audit event to stdout as a single JSON line: `{"event":…, …fields}`.
  *
@@ -41,7 +66,7 @@
  * becoming an invented `false` or `null`. A caller that wants a key absent omits it
  * from `fields`; this function will not put it back.
  */
-export function emitMintAuditToStdout(event: string, fields: Record<string, unknown>): void {
+export function emitMintAuditToStdout(event: string, fields: MintAuditFields): void {
   // eslint-disable-next-line no-console
   console.log(JSON.stringify({ event, ...fields }));
 }
