@@ -52,6 +52,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 const EDIT_IMG_IDS = [
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen3,
   ECO.Seedream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -95,6 +96,7 @@ const TXT2IMG_IDS = [
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen3,
   ECO.HiDream,
   ECO.HiDreamO1,
   ECO.NanoBanana,
