@@ -17,7 +17,10 @@
 
 <header class="page-header">
   <h1>Labels</h1>
-  <p>What exists, how much of it is confirmed, and what the last evaluation said.</p>
+  <p>
+    What exists, how much of it is confirmed, and what the last evaluation said.
+    <a href="/xguard/docs" class="text-blue-4 hover:text-blue-3">Operator guide &amp; API &rarr;</a>
+  </p>
 </header>
 
 {#if data.labels.length === 0}

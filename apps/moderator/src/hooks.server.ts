@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
+import { bearerKey, userFromApiKey } from '$lib/server/api-auth';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -24,9 +25,36 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 // guard entirely — each `/api/mod/*` endpoint self-authenticates via the token.
 const INTERNAL_API_PREFIX = '/api/mod/';
 
+// A bearer token is READ ONLY under `/api/`. Page routes stay cookie-only, which is what keeps
+// `human_judgement` a human-only table: reviewing is a form action on a page, so it is unreachable with
+// an API key without every future endpoint author having to remember the rule.
+const API_PREFIX = '/api/';
+
+function unauthorized(message: string): Response {
+  return new Response(JSON.stringify({ message }), {
+    status: 401,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
   if (event.url.pathname.startsWith(INTERNAL_API_PREFIX)) return resolve(event);
+
+  const bearer = event.url.pathname.startsWith(API_PREFIX)
+    ? bearerKey(event.request.headers.get('authorization'))
+    : null;
+
+  // A bad key is answered here rather than passed through as anonymous, so `locals.user` is set for
+  // everything that reaches a handler — the same invariant the redirect below gives page routes.
+  if (bearer) {
+    const user = await userFromApiKey(bearer);
+    if (!user) return unauthorized('That API key is not valid, or its account cannot use this app.');
+    event.locals.user = user;
+    event.locals.viaApiKey = true;
+    applyGrants(await loadPageAccessGrants());
+    return resolve(event);
+  }
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
 
