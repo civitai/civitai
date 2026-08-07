@@ -64,9 +64,10 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     () => collections.filter((c) => !c.isOwner).map((c) => c.id),
     [collections]
   );
-  const { map: permissionsMap } = useCollectionsPermissionsMap(nonOwnedIds, {
-    enabled: features.collaborativeCollections,
-  });
+  const { map: permissionsMap, isLoading: permissionsLoading } = useCollectionsPermissionsMap(
+    nonOwnedIds,
+    { enabled: features.collaborativeCollections }
+  );
 
   const { view, sort } = useCollectionListPreferences();
 
@@ -152,7 +153,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   ) : null;
 
   const Collections = (
-    <Skeleton visible={isLoading} animate>
+    <Skeleton visible={isLoading || permissionsLoading} animate>
       {sections.map(
         ({ key, label, rows }) =>
           rows.length > 0 && (
