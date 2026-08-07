@@ -144,7 +144,7 @@ export const collectionMetadataSchema = z
     // submission's review status. Lets a collection's content be filtered out of
     // feeds (the Beggars Board leaking into New & Upcoming is what prompted it)
     // without hardcoding either the collection or the tag.
-    autoTagId: z.coerce.number().optional(),
+    autoTagId: z.coerce.number().int().positive().optional(),
     // Empty/absent means every base model is allowed. Values must match ModelVersion.baseModel
     // exactly — an unrecognized one matches no version and locks the contest to zero entries.
     baseModels: z

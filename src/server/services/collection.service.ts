@@ -54,8 +54,8 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
-import { TagType } from '~/shared/utils/prisma/enums';
+import { getModeratedTags } from '~/server/services/system-cache';
+import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
@@ -594,16 +594,30 @@ async function applyCollectionAutoTag(
     // Defense in depth. `upsertCollection` already restricts `autoTagId` to moderators,
     // because nothing in the save path validates that the submitter OWNS the images —
     // so a self-owned collection plus someone else's imageIds would otherwise write tags
-    // onto a stranger's content. A MODERATED tag is the sharp end of that: it drives
-    // `updateImageNsfwLevels` and could push another user's image out of view. Refuse
-    // those here too, so a value set outside `upsertCollection` still can't reach it.
-    const tag = await dbRead.tag.findUnique({ where: { id: tagId }, select: { type: true } });
-    if (!tag || tag.type === TagType.Moderation) {
+    // onto a stranger's content. A moderated tag is the sharp end of that: it drives
+    // `updateImageNsfwLevels` and could push another user's image out of view.
+    //
+    // Tested against `getModeratedTags()` — what `updateImageNsfwLevels` itself gates on.
+    // `Tag.type === 'Moderation'` is NOT the same set: it misses ~37 prod tags that are
+    // moderated via `nsfwLevel > PG` or by inheriting a Parent edge, so checking type
+    // would look like a guard while letting all of them through.
+    //
+    // Resolved through `applyTagRules` FIRST, because a TagsOnTags rule can rewrite a
+    // permitted tag into a moderated one (~36 such rules in prod) — checking the raw
+    // `autoTagId` would pass while a moderated row still lands. Test what actually gets
+    // written, not what was configured. Both lookups are in-proc memoized.
+    const resolved = await applyTagRules(
+      imageIds.map((imageId) => ({ imageId, tagId, source: 'User' as const }))
+    );
+    const moderatedTagIds = await getModeratedTags().then((tags) => tags.map((t) => t.id));
+    const offending = resolved.find((t) => moderatedTagIds.includes(t.tagId));
+    if (offending) {
       logToAxiom({
         type: 'warning',
         name: 'collection-auto-tag-refused',
-        message: !tag ? 'autoTagId does not exist' : 'autoTagId is a moderation tag',
+        message: 'autoTagId resolves to a moderated tag',
         tagId,
+        resolvedTagId: offending.tagId,
       }).catch();
       return;
     }
@@ -952,8 +966,25 @@ export const upsertCollection = async ({
   // stamp an arbitrary tag onto a stranger's image — and a MODERATED tag additionally
   // drives `updateImageNsfwLevels`, so it could raise someone else's image out of view.
   // Moderator-only. Every other field here only affects the collection itself.
-  if (metadata && 'autoTagId' in metadata && !isModerator)
-    throw throwAuthorizationError('Only moderators can set a collection auto-tag');
+  // Non-moderators can't set or change it, but the edit modal round-trips the whole
+  // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
+  // hit Save without touching (or knowing about) the field. Pin it to the stored value
+  // instead: their save becomes a no-op on this field rather than a wall.
+  if (!isModerator && metadata) {
+    const storedAutoTagId = id
+      ? (
+          (
+            await dbRead.collection.findUnique({
+              where: { id },
+              select: { metadata: true },
+            })
+          )?.metadata as CollectionMetadataSchema | null
+        )?.autoTagId
+      : undefined;
+
+    if (storedAutoTagId === undefined) delete metadata.autoTagId;
+    else metadata.autoTagId = storedAutoTagId;
+  }
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
