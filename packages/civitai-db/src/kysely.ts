@@ -117,12 +117,21 @@ export function createKyselyClients<DB>(
 
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(poolConfig));
+  // node-postgres emits 'error' on the POOL when an IDLE client dies — a managed database dropping idle
+  // connections, a network blip, a laptop sleeping. `error` is a special event in Node: with no listener
+  // it is rethrown, so an idle-connection drop takes down the process or fails the next request rather
+  // than being retired quietly. The pool already discards the bad client; this only stops the throw.
+  const guard = (p: Pool) => {
+    p.on('error', (err) => console.error('[db] idle client error (pool will recycle it)', err));
+    return p;
+  };
+
+  const primary = make(pool ?? guard(new Pool(poolConfig)));
   if (singleClient) return { db: primary };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? guard(new Pool({ ...poolConfig, connectionString: replicaString })))
       : primary;
   return { dbRead, dbWrite: primary };
 }
