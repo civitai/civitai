@@ -12,10 +12,10 @@
   </div>
 {:then result}
   {#if result}
-    <ListCard title="Cosmetics" total={result.cosmetics.length} shown={10}>
+    <ListCard title="Cosmetics" total={result.cosmetics.items.length} capped={result.cosmetics.truncated} shown={10}>
       {#snippet children(limit)}
         <ul class="space-y-1 text-sm">
-          {#each result.cosmetics.slice(0, limit) as c (c.key)}
+          {#each result.cosmetics.items.slice(0, limit) as c (c.key)}
             <li class="flex flex-wrap items-baseline gap-x-2">
               <span class="text-dark-0">{c.name}</span>
               <Badge variant="secondary">{c.type}</Badge>

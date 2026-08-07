@@ -82,13 +82,13 @@
     {@const notifications = result.notifications}
     <ListCard
       title="Notifications sent"
-      total={notifications.length}
+      total={notifications.items.length} capped={notifications.truncated}
       shown={15}
       hint="What the site has told this user — context for “I was never warned”."
     >
       {#snippet children(limit)}
         <ul class="space-y-1 text-sm">
-          {#each notifications.slice(0, limit) as n (n.id)}
+          {#each notifications.items.slice(0, limit) as n (n.id)}
             <li class="flex flex-wrap items-baseline gap-x-2">
               <span class="text-dark-0">{n.type}</span>
               <Badge variant="secondary">{n.category}</Badge>

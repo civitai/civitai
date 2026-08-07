@@ -14,6 +14,19 @@ import { INTERNAL_IP_RANGE, IP_PATTERN } from './clickhouse-filters';
 // The ClickHouse helper interpolates values with NO escaping, so only numbers we control and IPs matched
 // against IP_PATTERN are ever put into a query.
 
+// ClickHouse and Postgres reads share these endpoints, and a rejected promise in a Promise.all takes
+// the whole payload with it — so a ClickHouse blip blanked Socials & Bio, whose links come from
+// Postgres and whose remove-link button is a live enforcement tool. Each ClickHouse read degrades to a
+// stated fallback instead, matching what getBuzzBalance already did for its HTTP call.
+export async function softly<T>(label: string, run: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    console.error(`[user-signals] ${label} unavailable`, e);
+    return fallback;
+  }
+}
+
 // SECURITY SIGNALS
 //
 // `userActivities` is ClickHouse. Use `targetUserId`, NOT `userId`: for Login and Registration rows

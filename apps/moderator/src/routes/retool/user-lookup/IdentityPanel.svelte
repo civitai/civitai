@@ -8,6 +8,7 @@
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
+  import { PROFILE_FIELDS } from './enforcement-options';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
   type Profile = NonNullable<LayoutData['result']>['profile'];
@@ -175,7 +176,7 @@
         <form method="POST" action="?/clearProfileText" use:enhance={onSubmit} class="mt-3">
           <input type="hidden" name="userId" value={identity.id} />
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {#each [['bio', 'Bio'], ['message', 'Profile message'], ['location', 'Location']] as [field, label] (field)}
+            {#each PROFILE_FIELDS as [field, label] (field)}
               <label class="flex items-center gap-1.5 text-xs text-dark-2">
                 <input type="checkbox" name="fields" value={field} class="accent-blue-500" />
                 {label}

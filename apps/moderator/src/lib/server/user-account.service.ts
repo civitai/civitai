@@ -12,6 +12,16 @@ import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-histo
 //
 // One file per endpoint is the rule for this page's services — see user-signals.service.ts.
 
+// Every list here is server-limited, and a limit rendered as a total is a lie the UI cannot detect:
+// "Model comments (25)" on an account with 4,000. Fetching one more row than asked for is how a caller
+// learns the difference — `getTrainingRuns` already did this and the rest did not.
+export type Capped<T> = { items: T[]; truncated: boolean };
+
+const capped = <T>(rows: T[], limit: number): Capped<T> => ({
+  items: rows.slice(0, limit),
+  truncated: rows.length > limit,
+});
+
 // REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
 //
 // Retool paired these lists with bulk delete / ToS actions. Those are NOT ported: they are destructive,
@@ -29,7 +39,7 @@ export type UserReview = {
   imageCount: number | null;
 };
 
-export async function getReviews(userId: number, limit = 25): Promise<UserReview[]> {
+export async function getReviews(userId: number, limit = 25): Promise<Capped<UserReview>> {
   return dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
@@ -49,8 +59,9 @@ export async function getReviews(userId: number, limit = 25): Promise<UserReview
     ])
     .where('rr.userId', '=', userId)
     .orderBy('rr.createdAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -68,7 +79,7 @@ export type ReceivedReview = {
   reviewer: string | null;
 };
 
-export async function getReceivedReviews(userId: number, limit = 25): Promise<ReceivedReview[]> {
+export async function getReceivedReviews(userId: number, limit = 25): Promise<Capped<ReceivedReview>> {
   return dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
@@ -89,8 +100,9 @@ export async function getReceivedReviews(userId: number, limit = 25): Promise<Re
     // are self-authored and carry no signal about how the model was received.
     .where('rr.userId', '!=', userId)
     .orderBy('rr.createdAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 // BOUNTIES (Retool's BountyList / BountyEntryList — a whole tab pair that was never ported). Both
@@ -106,7 +118,7 @@ export type UserBounty = {
   unitAmount: number;
 };
 
-export async function getBounties(userId: number, limit = 25): Promise<UserBounty[]> {
+export async function getBounties(userId: number, limit = 25): Promise<Capped<UserBounty>> {
   const rows = await dbRead
     .selectFrom('Bounty as b')
     .leftJoin('BountyBenefactor as bb', 'bb.bountyId', 'b.id')
@@ -121,9 +133,12 @@ export async function getBounties(userId: number, limit = 25): Promise<UserBount
     .where('b.userId', '=', userId)
     .groupBy(['b.id', 'b.name', 'b.createdAt', 'b.expiresAt', 'b.complete'])
     .orderBy('b.createdAt', 'desc')
-    .limit(limit)
+    .limit(limit + 1)
     .execute();
-  return rows.map((r) => ({ ...r, unitAmount: Number(r.unitAmount) }));
+  return capped(
+    rows.map((r) => ({ ...r, unitAmount: Number(r.unitAmount) })),
+    limit
+  );
 }
 
 export type UserBountyEntry = {
@@ -134,15 +149,16 @@ export type UserBountyEntry = {
   description: string | null;
 };
 
-export async function getBountyEntries(userId: number, limit = 25): Promise<UserBountyEntry[]> {
+export async function getBountyEntries(userId: number, limit = 25): Promise<Capped<UserBountyEntry>> {
   return dbRead
     .selectFrom('BountyEntry as be')
     .innerJoin('Bounty as b', 'b.id', 'be.bountyId')
     .select(['be.id', 'be.bountyId', 'b.name as bountyName', 'be.createdAt', 'be.description'])
     .where('be.userId', '=', userId)
     .orderBy('be.createdAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 export type UserComment = {
@@ -154,14 +170,15 @@ export type UserComment = {
   modelId: number | null;
 };
 
-export async function getComments(userId: number, limit = 25): Promise<UserComment[]> {
+export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
     .selectFrom('Comment')
     .select(['id', 'createdAt', 'content', 'nsfw', 'tosViolation', 'modelId'])
     .where('userId', '=', userId)
     .orderBy('createdAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 // Retool's segmentedControl1 split comments into "Model Comments" (`Comment`) and "Other Comments"
@@ -211,7 +228,7 @@ const threadEntityType = sql<string | null>`case ${sql.join(
   sql` `
 )} end`;
 
-export async function getCommentsV2(userId: number, limit = 25): Promise<UserCommentV2[]> {
+export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
     .selectFrom('CommentV2 as c')
     .leftJoin('Thread as t', 't.id', 'c.threadId')
@@ -227,8 +244,9 @@ export async function getCommentsV2(userId: number, limit = 25): Promise<UserCom
     ])
     .where('c.userId', '=', userId)
     .orderBy('c.createdAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 // REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).
@@ -283,7 +301,7 @@ export type UserCosmeticRow = {
   obtainedAt: Date | null;
 };
 
-export async function getCosmetics(userId: number, limit = 50): Promise<UserCosmeticRow[]> {
+export async function getCosmetics(userId: number, limit = 50): Promise<Capped<UserCosmeticRow>> {
   const rows = await dbRead
     .selectFrom('UserCosmetic as uc')
     .innerJoin('Cosmetic as c', 'c.id', 'uc.cosmeticId')
@@ -292,15 +310,18 @@ export async function getCosmetics(userId: number, limit = 50): Promise<UserCosm
     .select(['uc.cosmeticId', 'uc.claimKey', 'c.name', 'c.type', 'uc.equippedAt', 'uc.obtainedAt'])
     .where('uc.userId', '=', userId)
     .orderBy('uc.obtainedAt', 'desc')
-    .limit(limit)
+    .limit(limit + 1)
     .execute();
-  return rows.map((r) => ({
-    key: `${r.cosmeticId}:${r.claimKey}`,
-    name: r.name,
-    type: String(r.type),
-    equipped: r.equippedAt !== null,
-    obtainedAt: r.obtainedAt,
-  }));
+  return capped(
+    rows.map((r) => ({
+      key: `${r.cosmeticId}:${r.claimKey}`,
+      name: r.name,
+      type: String(r.type),
+      equipped: r.equippedAt !== null,
+      obtainedAt: r.obtainedAt,
+    })),
+    limit
+  );
 }
 
 // BUZZ balances (Retool's GetAccountBuzz + GetGenBuzz + GetGreenBuzz — three queries, three colours;
@@ -355,7 +376,7 @@ export type ShopPurchase = {
   refunded: boolean;
 };
 
-export async function getShopPurchases(userId: number, limit = 50): Promise<ShopPurchase[]> {
+export async function getShopPurchases(userId: number, limit = 50): Promise<Capped<ShopPurchase>> {
   return dbRead
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
@@ -369,8 +390,9 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Shop
     ])
     .where('p.userId', '=', userId)
     .orderBy('p.purchasedAt', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(limit + 1)
+    .execute()
+    .then((rows) => capped(rows, limit));
 }
 
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
@@ -417,16 +439,19 @@ export type UserNotification = {
 export async function getUserNotifications(
   userId: number,
   limit = 25
-): Promise<UserNotification[] | null> {
+): Promise<Capped<UserNotification> | null> {
   try {
-    const rows = await getNotifications().queryNotifications({ userId, limit });
-    return rows.map((r) => ({
-      id: r.id,
-      type: r.type,
-      category: r.category,
-      createdAt: r.createdAt,
-      read: r.read,
-    }));
+    const rows = await getNotifications().queryNotifications({ userId, limit: limit + 1 });
+    return capped(
+      rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        category: r.category,
+        createdAt: r.createdAt,
+        read: r.read,
+      })),
+      limit
+    );
   } catch (e) {
     console.error('[user-lookup] notifications unavailable', e);
     return null;

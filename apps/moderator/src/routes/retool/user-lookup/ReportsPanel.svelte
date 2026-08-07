@@ -4,6 +4,7 @@
   import type { LayoutData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { entityUrl } from '$lib/entity-url';
+  import { reportStatusVariant } from '$lib/reports';
   import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
 
@@ -25,8 +26,6 @@
   // them up.
   const reports = $derived(browser ? fetchUserReports(userId) : null);
 
-  const statusVariant = (status: string) =>
-    status === 'Actioned' ? 'destructive' : status === 'Unactioned' ? 'secondary' : 'default';
 
   const filed = $derived<[string, string][]>([
     ['Total', num(reportsFiled.total)],
@@ -88,7 +87,7 @@
       {@const url = entityUrl(civitaiUrl, r.entityType, r.entityId)}
       <li>
         <div class="flex flex-wrap items-baseline gap-x-2">
-          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+          <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
           <span class="text-dark-0">{r.reason}</span>
           {#if url}
             <a href={url} target="_blank" rel="noreferrer" class={LINK_CLASS}>

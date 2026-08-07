@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportStatusVariant } from '$lib/reports';
   import { goto } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -48,7 +49,7 @@
             ? 'bg-dark-5'
             : ''}"
         >
-          <Badge variant={r.status === 'Actioned' ? 'destructive' : 'secondary'}>{r.status}</Badge>
+          <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
           {#if r.entityId}
             <a href={chatUrl(r.entityId)} class={LINK_CLASS}>chat {r.entityId}</a>
           {/if}

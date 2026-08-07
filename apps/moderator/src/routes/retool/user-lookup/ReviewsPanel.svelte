@@ -47,13 +47,13 @@
     </div>
   {:then result}
     {#if result}
-      <ListCard title="Reviews written" total={result.reviews.length}>
+      <ListCard title="Reviews written" total={result.reviews.items.length} capped={result.reviews.truncated}>
         {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="reviews" />
             <ul class="space-y-1 text-sm">
-              {#each result.reviews.slice(0, limit) as r (r.id)}
+              {#each result.reviews.items.slice(0, limit) as r (r.id)}
                 <li class="flex flex-wrap items-baseline gap-x-2">
                   {#if canAct}
                     <input type="checkbox" name="reviewIds" value={r.id} class={CHECKBOX} />
@@ -92,12 +92,12 @@
 
       <ListCard
         title="Reviews received"
-        total={result.receivedReviews.length}
+        total={result.receivedReviews.items.length} capped={result.receivedReviews.truncated}
         hint="On this user's models, by others. A burst of 1★ from few accounts is the signal."
       >
         {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
-            {#each result.receivedReviews.slice(0, limit) as r (r.id)}
+            {#each result.receivedReviews.items.slice(0, limit) as r (r.id)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <a href="?q={r.reviewerId}" class={LINK_CLASS}>
                   {r.reviewer ?? `#${r.reviewerId}`}

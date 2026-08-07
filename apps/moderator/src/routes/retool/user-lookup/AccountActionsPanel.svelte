@@ -12,25 +12,10 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
+  import { BAN_REASONS } from './enforcement-options';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
-  // Mirrors the main app's BanReasonCode enum, which `/api/mod/ban-user` parses strictly — free text is a
-  // 500 and no ban, so this is a closed list rather than an input.
-  const BAN_REASONS = [
-    'SexualMinor',
-    'SexualMinorGenerator',
-    'SexualMinorTraining',
-    'SexualPOI',
-    'Bestiality',
-    'Scat',
-    'Nudify',
-    'Harassment',
-    'LeaderboardCheating',
-    'BuzzCheating',
-    'RRDViolation',
-    'Other',
-  ];
 
   let { identity, canAct, form }: { identity: Identity; canAct: boolean; form: FormResult } =
     $props();

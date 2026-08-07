@@ -1,23 +1,14 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import LookupSearch from '$lib/components/LookupSearch.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
-  import { ADMIN_SECTIONS, SECTIONS } from './sections';
+  import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS } from './sections';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
-
-  // Local copy so typing doesn't navigate; re-synced whenever a search lands (incl. back/forward).
-  let term = $state(untrack(() => data.q));
-  $effect(() => {
-    term = data.q;
-  });
 
   const current = $derived(page.params.section);
 
@@ -25,17 +16,6 @@
   // a section change would land the moderator on an empty lookup.
   const href = (slug: string) =>
     data.q ? `/retool/user-lookup/${slug}?q=${encodeURIComponent(data.q)}` : `/retool/user-lookup/${slug}`;
-
-  const search = (e: SubmitEvent) => {
-    e.preventDefault();
-    const value = term.trim();
-    // Stay on the section being viewed: searching a second account while looking at Reports should
-    // show that account's reports, not send you back to the top.
-    const section = current ?? SECTIONS[0].slug;
-    goto(value ? `/retool/user-lookup/${section}?q=${encodeURIComponent(value)}` : `/retool/user-lookup/${section}`, {
-      keepFocus: true,
-    });
-  };
 
   const identity = $derived(data.result?.identity ?? null);
   const profileUrl = $derived(
@@ -48,10 +28,13 @@
   <p>Find a user by ID, username or email.</p>
 </header>
 
-<form onsubmit={search} class="mb-6 flex max-w-xl gap-2">
-  <Input bind:value={term} placeholder="296765, username, or name@example.com" class="flex-1" />
-  <Button type="submit">Search</Button>
-</form>
+<!-- `path` keeps the moderator on the section they are reading: searching a second account while
+     looking at Reports should show that account's reports, not send them back to the top. -->
+<LookupSearch
+  q={data.q}
+  placeholder="296765, username, or name@example.com"
+  path="/retool/user-lookup/{current ?? DEFAULT_SECTION}"
+/>
 
 {#if data.notFound}
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">

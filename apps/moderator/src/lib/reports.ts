@@ -104,6 +104,16 @@ export const reportStatusBadgeClass: Record<ReportStatus, string> = {
   Unactioned: 'bg-green-500/15 text-green-300',
 };
 
+// The `Badge` equivalent of the classes above, for the pages that render a primitive rather than a
+// styled span. Three routes had inline ternaries that already disagreed — a Pending report was a filled
+// badge in User Lookup and a muted one in Chat Audit and Image Lookup.
+export function reportStatusVariant(status: string): 'default' | 'secondary' | 'destructive' {
+  if (status === 'Actioned') return 'destructive';
+  if (status === 'Unactioned') return 'secondary';
+  // Pending and Processing are the OPEN states — the ones still wanting a decision.
+  return 'default';
+}
+
 // Only id-URL-clean types are linkable; the rest return null until their richer URL shapes are ported.
 const entityPath: Partial<Record<ReportEntity, (id: number) => string>> = {
   model: (id) => `/models/${id}`,

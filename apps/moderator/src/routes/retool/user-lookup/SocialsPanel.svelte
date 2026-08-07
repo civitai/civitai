@@ -8,6 +8,7 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
   import { safeHref, type Signals } from './signals';
+  import { LINK_TYPES } from './enforcement-options';
 
   let {
     signals,
@@ -56,7 +57,7 @@
         <Select.Root type="single" name="type" bind:value={linkType}>
           <Select.Trigger class="w-36">{linkType}</Select.Trigger>
           <Select.Content>
-            {#each ['Social', 'Sponsorship', 'Other'] as t (t)}
+            {#each LINK_TYPES as t (t)}
               <Select.Item value={t}>{t}</Select.Item>
             {/each}
           </Select.Content>

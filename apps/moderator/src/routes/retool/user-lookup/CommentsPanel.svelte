@@ -48,13 +48,13 @@
     </div>
   {:then result}
     {#if result}
-      <ListCard title="Model comments" total={result.comments.length}>
+      <ListCard title="Model comments" total={result.comments.items.length} capped={result.comments.truncated}>
         {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="comments" />
             <ul class="space-y-2 text-sm">
-              {#each result.comments.slice(0, limit) as c (c.id)}
+              {#each result.comments.items.slice(0, limit) as c (c.id)}
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}
@@ -88,13 +88,13 @@
       </ListCard>
 
       <!-- Retool's "Other Comments" half: image, article, bounty and post threads. -->
-      <ListCard title="Other comments" total={result.commentsV2.length}>
+      <ListCard title="Other comments" total={result.commentsV2.items.length} capped={result.commentsV2.truncated}>
         {#snippet children(limit)}
           <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="comments" />
             <ul class="space-y-2 text-sm">
-              {#each result.commentsV2.slice(0, limit) as c (c.id)}
+              {#each result.commentsV2.items.slice(0, limit) as c (c.id)}
                 <li>
                   <div class="flex flex-wrap items-baseline gap-x-2">
                     {#if canAct}

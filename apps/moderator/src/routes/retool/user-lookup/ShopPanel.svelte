@@ -47,13 +47,13 @@
     <section class="mb-4 grid gap-4 lg:grid-cols-2">
       <ListCard
         title="Shop purchases"
-        total={result.shopPurchases.length}
+        total={result.shopPurchases.items.length} capped={result.shopPurchases.truncated}
         shown={10}
         hint="Refunding flags the purchase and removes the cosmetic. The Buzz is not returned automatically — use the Buzz section."
       >
         {#snippet children(limit)}
           <ul class="space-y-1 text-sm">
-            {#each result.shopPurchases.slice(0, limit) as p (p.buzzTransactionId)}
+            {#each result.shopPurchases.items.slice(0, limit) as p (p.buzzTransactionId)}
               <li class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-dark-0">{p.title}</span>
                 <span class="tabular-nums text-dark-2">{num(p.unitAmount)} buzz</span>

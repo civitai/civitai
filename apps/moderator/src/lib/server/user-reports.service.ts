@@ -1,5 +1,8 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+// Shared with user-lookup.service.ts's counts — two copies meant adding an entity type to the counts
+// and not the rows, so the section states a count it cannot show rows for.
+import { REPORT_SOURCES } from './report-sources';
 
 // Everything behind `/api/user-reports` — the ROWS behind the Reports section, where the page load
 // carries only counts. Retool showed status, the reason, who set the status and a link to the content;
@@ -11,14 +14,6 @@ import { dbRead } from './db';
 // entity type is a line in a list rather than a string edit, and so one slow table cannot stall the
 // rest — the same shape `getReportedContent` already uses for the counts.
 
-const REPORT_SOURCES = [
-  ['Image', 'Image', 'ImageReport', 'imageId'],
-  ['Model', 'Model', 'ModelReport', 'modelId'],
-  ['Post', 'Post', 'PostReport', 'postId'],
-  ['Article', 'Article', 'ArticleReport', 'articleId'],
-  ['Comment', 'Comment', 'CommentReport', 'commentId'],
-  ['CommentV2', 'CommentV2', 'CommentV2Report', 'commentV2Id'],
-] as const;
 
 export type UserReportRow = {
   /** Report ids are unique across entity types, so the id alone keys the merged list. */

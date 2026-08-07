@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -32,7 +33,7 @@
       <ul class="space-y-1.5 text-sm">
         {#each reports as r (r.id)}
           <li class="flex flex-wrap items-baseline gap-x-2">
-            <Badge variant={r.status === 'Actioned' ? 'destructive' : 'secondary'}>{r.status}</Badge>
+            <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
             <span class="text-dark-0">{r.reason}</span>
             {#if r.reportedBy}
               <a href={userLookupUrl(r.reportedById)} class="text-xs {LINK_CLASS}">

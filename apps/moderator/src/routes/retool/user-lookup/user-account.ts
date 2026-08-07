@@ -122,6 +122,8 @@ export type ShopPurchase = {
 
 export type AvailableCosmetic = { id: number; name: string };
 
+export type Capped<T> = { items: T[]; truncated: boolean };
+
 export type Account = {
   buzz: {
     balance: number;
@@ -130,19 +132,19 @@ export type Account = {
     blue: number | null;
     green: number | null;
   } | null;
-  reviews: Review[];
-  receivedReviews: ReceivedReview[];
-  comments: Comment[];
-  commentsV2: CommentV2[];
-  cosmetics: Cosmetic[];
+  reviews: Capped<Review>;
+  receivedReviews: Capped<ReceivedReview>;
+  comments: Capped<Comment>;
+  commentsV2: Capped<CommentV2>;
+  cosmetics: Capped<Cosmetic>;
   reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean };
-  bounties: Bounty[];
-  bountyEntries: BountyEntry[];
+  bounties: Capped<Bounty>;
+  bountyEntries: Capped<BountyEntry>;
   /** Null when the notifications service is unreachable — distinct from "none sent". */
-  notifications: Notification[] | null;
+  notifications: Capped<Notification> | null;
   resourceGenerations: ResourceGeneration[];
-  shopPurchases: ShopPurchase[];
+  shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
 };
 

@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { REPORT_SOURCES } from './report-sources';
 
 // The PAGE LOAD half of User Lookup — identity, profile, score, counts, stats, reports, subscription.
 // One file per endpoint is the rule for this page's services; the sibling files are
@@ -356,14 +357,8 @@ export async function getReportsFiled(userId: number): Promise<ReportsFiled> {
 // Content OF THIS USER that others reported. Counts distinct pieces of content, not report rows —
 // Retool counted rows, so ten reports on one image read as ten. "How much of their content drew
 // complaints" is the question a moderator is actually asking.
-const REPORTED_SOURCES = [
-  ['Images', 'Image', 'ImageReport', 'imageId'],
-  ['Models', 'Model', 'ModelReport', 'modelId'],
-  ['Posts', 'Post', 'PostReport', 'postId'],
-  ['Articles', 'Article', 'ArticleReport', 'articleId'],
-  ['Model comments', 'Comment', 'CommentReport', 'commentId'],
-  ['Image comments', 'CommentV2', 'CommentV2Report', 'commentV2Id'],
-] as const;
+// Shared with the report ROWS in user-reports.service.ts — see report-sources.ts.
+const REPORTED_SOURCES = REPORT_SOURCES;
 
 export type ReportedContent = { label: string; count: number };
 

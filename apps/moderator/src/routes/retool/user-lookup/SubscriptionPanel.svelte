@@ -11,6 +11,7 @@
   import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
   import type { FormResult } from './form-result';
+  import { BUZZ_TRANSACTION_TYPES } from './enforcement-options';
 
   type Subscription = NonNullable<LayoutData['result']>['subscription'];
 
@@ -232,7 +233,7 @@
               <Select.Root type="single" name="transactionType" bind:value={transactionType}>
                 <Select.Trigger class="w-36">{transactionType}</Select.Trigger>
                 <Select.Content>
-                  {#each ['compensation', 'reward', 'refund', 'chargeback'] as t (t)}
+                  {#each BUZZ_TRANSACTION_TYPES as t (t)}
                     <Select.Item value={t}>{t}</Select.Item>
                   {/each}
                 </Select.Content>
