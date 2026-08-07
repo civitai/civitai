@@ -3067,6 +3067,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   return { ...result, source: 'meili' as const };
 }
 
+// No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
+// upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
+// `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
+// schemas would hand the REST API an unfiltered feed — apply the exclusion here first.
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
