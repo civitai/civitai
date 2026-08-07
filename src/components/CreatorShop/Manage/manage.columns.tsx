@@ -17,7 +17,7 @@ import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopP
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
-import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import type { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
