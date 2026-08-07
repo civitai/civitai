@@ -80,6 +80,7 @@
     accessPrice: undefined,
     generationPrice: undefined,
     freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
+    acceptsBlueBuzz: false,
     donationGoalEnabled: false,
     donationGoal: undefined,
   });
@@ -142,6 +143,7 @@
         accessPrice: MIN_ACCESS_PRICE,
         generationPrice: undefined,
         freePreviewGenerations: DEFAULT_GENERATION_TRIAL_LIMIT,
+        acceptsBlueBuzz: false,
         donationGoalEnabled: false,
         donationGoal: undefined,
       };

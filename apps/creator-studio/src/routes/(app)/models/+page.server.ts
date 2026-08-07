@@ -74,6 +74,7 @@ const bulkPaidAccessSchema = z
     // Without this the shared form's "Free for everyone" choice is silently dropped and the version
     // gets a PRICED generation tier with a zero trial limit — the opposite of what was picked.
     freeGeneration: checkbox,
+    acceptsBlueBuzz: checkbox,
   })
   .refine((v) => v.generationPrice == null || v.generationPrice <= v.accessPrice, {
     message: 'Generation-only price cannot be greater than the access price.',
@@ -241,6 +242,7 @@ export const actions: Actions = {
       generationPrice: form.get('generationPrice'),
       freePreviewGenerations: form.get('freePreviewGenerations'),
       freeGeneration: form.get('freeGeneration'),
+      acceptsBlueBuzz: form.get('acceptsBlueBuzz'),
     });
     if (!pricing.success) return fail(400, { paidAccess: true, error: firstError(pricing.error) });
 

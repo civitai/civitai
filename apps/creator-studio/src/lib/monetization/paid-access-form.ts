@@ -8,6 +8,7 @@ export type PaidAccessFormValue = {
   accessPrice?: number;
   generationPrice?: number;
   freePreviewGenerations?: number;
+  acceptsBlueBuzz: boolean;
   donationGoalEnabled: boolean;
   donationGoal?: number;
 };

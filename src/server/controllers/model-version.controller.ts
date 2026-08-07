@@ -961,11 +961,12 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
   input: ModelVersionEarlyAccessPurchase;
   ctx: ProtectedContext;
 }) => {
+  const { payWithBlue, ...rest } = input;
   try {
     return earlyAccessPurchase({
-      ...input,
+      ...rest,
       userId: ctx.user.id,
-      buzzType: getAllowedAccountTypes(ctx.features)[0],
+      buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

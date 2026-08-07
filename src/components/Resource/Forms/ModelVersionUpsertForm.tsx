@@ -78,9 +78,11 @@ import {
 } from '~/server/schema/model-version.schema';
 import {
   type ModelVersionTerms,
+  ACCEPTS_BLUE_BUZZ_HINT,
   DEFAULT_GENERATION_TRIAL_LIMIT,
   DEFAULT_FEE_IMAGES,
   MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT,
+  acceptsBlueBuzz,
   buildModelVersionTerms,
   feeMaxFor,
   hasCurrentRightsAffirmation,
@@ -122,6 +124,8 @@ const formPaidAccessConfigSchema = z.object({
   generationPrice: z.number().optional(),
   // Gate the download but leave generation free for everyone (no price, no trial limit).
   freeGeneration: z.boolean().default(false),
+  // Accept Blue Buzz as payment at the same price — and be paid in it.
+  acceptsBlueBuzz: z.boolean().default(false),
   // Free preview generations before purchase is required (the trial limit). Cleared/empty = 0 (no trial),
   // matching Creator Studio; a new gate seeds the default via the enable switch.
   freePreviewGenerations: z.preprocess(
@@ -163,6 +167,7 @@ function toPaidAccessInput(
     freePreviewGenerations: config.freePreviewGenerations,
     genOnly: usageControl === ModelUsageControl.Generation,
     freeGeneration: config.freeGeneration,
+    acceptsBlueBuzz: config.acceptsBlueBuzz,
   });
   return toGate(config, terms);
 }
@@ -193,6 +198,7 @@ function toFormPaidAccessConfig(
     accessPrice: terms.download?.price ?? paidGen?.price,
     generationPrice: terms.download ? paidGen?.price : undefined,
     freeGeneration: !!terms.generation && `free` in terms.generation,
+    acceptsBlueBuzz: acceptsBlueBuzz(terms),
     freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
     donationGoalEnabled: !!donationGoal,
     donationGoal: donationGoal?.goalAmount,
@@ -1424,6 +1430,12 @@ export function ModelVersionUpsertForm({
                                     withAsterisk
                                   />
                                 )}
+                                <InputSwitch
+                                  name="paidAccessConfig.acceptsBlueBuzz"
+                                  label="Also accept Blue Buzz"
+                                  description={ACCEPTS_BLUE_BUZZ_HINT}
+                                  disabled={isEarlyAccessOver}
+                                />
                               </Stack>
                             </Card.Section>
                           </Card>

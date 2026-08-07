@@ -43,6 +43,7 @@ export const paidAccessFormSchema = z
     accessPrice: optionalBuzz,
     generationPrice: optionalBuzz,
     freeGeneration: checkbox,
+    acceptsBlueBuzz: checkbox,
     freePreviewGenerations: freePreviewsField(),
     donationGoalEnabled: checkbox,
     donationGoal: optionalBuzz,
@@ -80,6 +81,7 @@ export async function setPaidAccessConfig(
             freePreviewGenerations: config.freePreviewGenerations ?? 0,
             genOnly,
             freeGeneration: config.freeGeneration,
+            acceptsBlueBuzz: config.acceptsBlueBuzz,
           })
         : {};
     const paidAccess = !config
@@ -179,6 +181,7 @@ export async function bulkSetPaidAccess(
     permanent: boolean;
     timeframe: number;
     freeGeneration?: boolean;
+    acceptsBlueBuzz?: boolean;
     donationGoalEnabled?: boolean;
     donationGoal?: number;
   },
@@ -243,6 +246,7 @@ export async function bulkSetPaidAccess(
       // Only meaningful for downloadable versions — a gen-only version charging via generation can't also
       // give generation away, and buildModelVersionTerms ignores it there.
       freeGeneration: !genOnly && pricing.freeGeneration,
+      acceptsBlueBuzz: pricing.acceptsBlueBuzz,
       freePreviewGenerations: pricing.freePreviewGenerations,
       donationGoalEnabled: wantsGoal && !alreadyHasGoal.has(id),
       donationGoal: wantsGoal && !alreadyHasGoal.has(id) ? pricing.donationGoal : undefined,

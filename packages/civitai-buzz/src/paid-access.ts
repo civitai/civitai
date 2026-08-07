@@ -34,7 +34,19 @@ export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
 export type ModelVersionTerms = {
   download?: Grant;
   generation?: GenerationGrant;
+  /** Owner opt-in to ALSO accepting Blue Buzz, at the same price — and to being paid in it. */
+  acceptsBlueBuzz?: boolean;
 };
+
+export const acceptsBlueBuzz = (terms: ModelVersionTerms | undefined | null): boolean =>
+  !!terms?.acceptsBlueBuzz;
+
+/**
+ * Shared so the onsite form and Creator Studio can't drift on what a creator was told they're
+ * agreeing to — the opt-in trades bankable income for credit that can never be withdrawn.
+ */
+export const ACCEPTS_BLUE_BUZZ_HINT =
+  'Buyers can pay the same price with Blue Buzz. You are paid in Blue Buzz for those purchases — it can be spent on generation but cannot be withdrawn or converted to cash.';
 
 /** True if generation is free/ungated (the `{ free: true }` grant). */
 export const isFreeGeneration = (terms: ModelVersionTerms): boolean =>
@@ -69,11 +81,13 @@ export function buildModelVersionTerms({
   freePreviewGenerations,
   genOnly = false,
   freeGeneration = false,
+  acceptsBlueBuzz = false,
 }: {
   accessPrice: number;
   generationPrice?: number;
   freePreviewGenerations?: number;
   genOnly?: boolean;
+  acceptsBlueBuzz?: boolean;
   /**
    * Gate the download but leave generation open to everyone — for creators who earn per generation
    * through a licensing fee and don't want to charge on top. Ignored when `genOnly`, where generation
@@ -82,9 +96,12 @@ export function buildModelVersionTerms({
   freeGeneration?: boolean;
 }): ModelVersionTerms {
   const trial = freePreviewGenerations != null ? { trialLimit: freePreviewGenerations } : {};
-  if (genOnly) return { generation: { price: accessPrice, ...trial } };
-  if (freeGeneration) return { download: { price: accessPrice }, generation: { free: true } };
+  const blue = acceptsBlueBuzz ? { acceptsBlueBuzz: true } : {};
+  if (genOnly) return { ...blue, generation: { price: accessPrice, ...trial } };
+  if (freeGeneration)
+    return { ...blue, download: { price: accessPrice }, generation: { free: true } };
   return {
+    ...blue,
     download: { price: accessPrice },
     generation: { ...(generationPrice != null ? { price: generationPrice } : {}), ...trial },
   };
