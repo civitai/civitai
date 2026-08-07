@@ -20,21 +20,26 @@ const trigger = (category: PromptTriggerCategory, message = 'x'): PromptTrigger 
   matchedWord: message,
 });
 
-describe('isSoftBlock — the overridable boundary', () => {
-  it('profanity is soft', () => {
-    expect(isSoftBlock([trigger('profanity', 'damn')])).toBe(true);
-  });
+// Exhaustive by construction: a new PromptTriggerCategory fails to compile here
+// until someone decides its severity.
+const EXPECTED: Record<PromptTriggerCategory, boolean> = {
+  nsfw_blocklist: true, // per-word — see the suite below
+  profanity: true,
+  minor_age: false,
+  poi: false,
+  inappropriate_minor: false,
+  inappropriate_poi: false,
+  harmful_combo: false,
+  external: false,
+};
 
-  it.each<PromptTriggerCategory>([
-    'minor_age',
-    'poi',
-    'inappropriate_minor',
-    'inappropriate_poi',
-    'harmful_combo',
-    'external',
-  ])('%s is hard', (category) => {
-    expect(isSoftBlock([trigger(category)])).toBe(false);
-  });
+describe('isSoftBlock — the overridable boundary', () => {
+  it.each(Object.entries(EXPECTED).filter(([c]) => c !== 'nsfw_blocklist'))(
+    '%s overridable=%s',
+    (category, overridable) => {
+      expect(isSoftBlock([trigger(category as PromptTriggerCategory, 'damn')])).toBe(overridable);
+    }
+  );
 
   it('one hard trigger poisons an otherwise soft set', () => {
     expect(isSoftBlock([trigger('nsfw_blocklist', 'daughter'), trigger('poi')])).toBe(false);

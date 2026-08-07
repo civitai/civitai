@@ -46,6 +46,9 @@ export interface BlockedPromptEntry {
 // have had in steady state. Keeping these in lockstep prevents the previous behavior
 // where many users effectively accumulated forever in Redis but only recovered the
 // last 24h after a wipe.
+const GREEN_SFW_REDIRECT =
+  'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
+
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const RESET_MARKER = '__RESET__';
@@ -397,13 +400,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
 
     if (softBlock) {
       // Not counted, so no escalating "sent for review" tail — that would be a
-      // threat we have decided not to carry out.
+      // threat we have decided not to carry out. Green keeps its redirect: the
+      // user may proceed, but the reason they were stopped is still the domain.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+      if (isGreen) message += `.\n\n${GREEN_SFW_REDIRECT}`;
     } else if (isGreen) {
-      // SFW-only domain (civitai.com) - stricter message
-      message = `Your prompt was flagged: ${error.blockedFor.join(
-        ', '
-      )}.\n\nCivitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.`;
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 

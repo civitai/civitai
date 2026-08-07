@@ -135,9 +135,6 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     await auditPromptServer({ ...options, acknowledgedSoftBlock: true });
     // addBlockedPrompt is the only writer of the violation counter.
     expect(mockSysRedis.lPush).not.toHaveBeenCalled();
-    // …and the `count: 0` handed to reportProhibitedRequest must stay below the
-    // mute threshold. Asserted via the consequence — `count` is not forwarded to
-    // the tracker, so asserting on the tracker call would not pin this.
     expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
@@ -223,6 +220,11 @@ describe('auditPromptServer — proceeding past a soft block', () => {
   // The override applies on every domain, green included. `profanity` only ever
   // fires on green (checkProfanity = isGreen), so this is the ONLY path that
   // makes that category reachable at all.
+  it('a green soft block keeps the SFW redirect', async () => {
+    flagWith(trigger('profanity', 'damn'));
+    await expect(auditPromptServer({ ...options, isGreen: true })).rejects.toThrow(/civitai\.red/);
+  });
+
   it('civitai.green can override a profanity block', async () => {
     flagWith(trigger('profanity', 'damn'));
     await expect(
