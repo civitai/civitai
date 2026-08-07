@@ -85,6 +85,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/retool/user-lookup', label: 'User Lookup' },
       { path: '/retool/image-lookup', label: 'Image Lookup' },
+      { path: '/retool/chat-audit', label: 'Chat Audit' },
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
