@@ -30,6 +30,7 @@ const V2_TYPES = [
   'new-post-comment',
   'new-article-comment',
   'new-bounty-comment',
+  'new-bounty-entry-comment',
   'new-challenge-comment',
   'new-3d-model-comment',
   'new-3d-model-comment-response',
@@ -84,6 +85,14 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sql).toContain(`when details->>'mentionedIn' <> 'comment' then null`);
     // Comment mentions share the source event with the comment.notifications types.
     expect(sql).toContain(commentDedupeKeyByVersion);
+  });
+
+  it.each(V2_TYPES)('%s stamps details.version, which routes the detail fetch', (type) => {
+    // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and sends
+    // anything with `version !== 2` to the legacy `Comment` table. Comment and CommentV2 ids
+    // overlap, so a V2 processor that forgets this doesn't fail — it silently attaches a DIFFERENT
+    // comment's body, avatar and username to the notification. Nothing else guards it.
+    expect(sqlFor(type)).toContain(`'version', 2`);
   });
 
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
@@ -260,6 +269,8 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':
         return [{ ...base, version: 2, bountyId: 4, bountyTitle: 'B' }];
+      case 'new-bounty-entry-comment':
+        return [{ ...base, version: 2, bountyEntryId: 9, bountyId: 4, bountyTitle: 'B' }];
       case 'new-challenge-comment':
         return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
       case 'new-comment':
