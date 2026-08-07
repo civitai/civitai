@@ -203,7 +203,10 @@ export default defineNextConfig(
       // Trade: ~72% fewer emitted server chunks and roughly half the server chunk bytes,
       // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
       // in the PR rather than here, so they don't rot when Next's chunker changes.
-      turbopackServerSideNestedAsyncChunking: true,
+      //
+      // Build only. It buys nothing in dev — chunk size is irrelevant to a dev server — and
+      // the walk over dynamic-import paths is paid on a graph that `_app` already makes large.
+      turbopackServerSideNestedAsyncChunking: isProd,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
