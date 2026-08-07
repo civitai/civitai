@@ -5,6 +5,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
+import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
@@ -100,7 +101,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    synthetic appId and recordScopeInvocation FK-fails on the synthetic
  *    appBlockId, so the ONLY durable trail is the structured
  *    `blocks.dev-token.pending-mint` log event (userId/slug/publishRequestId/
- *    scopes/spendGranted) emitted at mint time (queryable in Axiom/Loki). GATE:
+ *    scopes/spendGranted) emitted at mint time, DUAL-SINKED to Axiom and to stdout
+ *    (`src/server/logging/mint-audit-stdout.ts` — the Axiom sink alone is invisible
+ *    to a stdout-scraping log store). GATE:
  *    durable, per-spend audit rows for pending apps (e.g. a nullable-appBlockId
  *    schema change so recordScopeInvocation can persist) is a GA-gate item before
  *    pending-app dev spend is widened past the mod-only pre-GA posture.
@@ -155,7 +158,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    AUDIT TRAIL: as with the pending path, the no-row path has NO durable
  *    AppBlock-backed audit rows (the synthetic appId/appBlockId don't resolve),
  *    so the ONLY forensic trail is the structured `blocks.dev-token.local-mint`
- *    log event (userId/slug/scopes/spendGranted), queryable in Axiom/Loki.
+ *    log event (userId/slug/scopes/spendGranted), DUAL-SINKED to Axiom and to
+ *    stdout (`src/server/logging/mint-audit-stdout.ts` — the Axiom sink alone is
+ *    invisible to a stdout-scraping log store).
  *    Same GA-gate as the pending path: durable per-spend audit rows are required
  *    before no-row dev spend is widened past the mod-only pre-GA posture.
  *
@@ -571,9 +576,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         .json({ message: 'dev-token mints page tokens; this app declares no page block' });
       return;
     }
-    const approvedRaw: unknown[] = Array.isArray(block.approvedScopes)
-      ? block.approvedScopes
-      : [];
+    const approvedRaw: unknown[] = Array.isArray(block.approvedScopes) ? block.approvedScopes : [];
     approvedAppBlockId = block.id;
     resolved = {
       scopeSource: approvedRaw.filter((s): s is string => typeof s === 'string'),
@@ -812,8 +815,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // throws+swallows on the synthetic `pending-<id>` appId, and recordScopeInvocation
   // FK-fails on the synthetic `appBlockId` (no AppBlock row). Without this, a dev
   // minting a spend-capable token against an UN-REVIEWED app leaves no forensic
-  // trail. Emit a structured event (Axiom/Loki-queryable) with the mint metadata —
-  // NEVER the token/secret. Placed AFTER the final scope clamp + budget resolution
+  // trail. Emit a structured event with the mint metadata — NEVER the token/secret.
+  // DUAL SINK: `req.log?.info` (Axiom) plus `emitMintAuditToStdout`, because the
+  // next-axiom logger writes nothing to stdout once AXIOM_* is set and the stdout-
+  // scraped log store therefore cannot see the Axiom copy at all — see
+  // `src/server/logging/mint-audit-stdout.ts` for the mechanism and why both are
+  // required. Placed AFTER the final scope clamp + budget resolution
   // so `scopes`/`spendGranted` reflect the actual minted outcome (7f clamp included).
   // The `mode` field distinguishes the three mint paths, which since #3703 step 1
   // ALL emit an event (the approved path emitted none until then — see its branch
@@ -845,8 +852,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const spendGrantBasis: 'explicit' | 'inferred' | 'none' = !spendGranted
     ? 'none'
     : requestBudgetedSpend === true
-      ? 'explicit'
-      : 'inferred';
+    ? 'explicit'
+    : 'inferred';
   // `requestBudgetedSpend` is spread so an ABSENT field stays ABSENT in the emitted
   // event (rather than becoming an invented `false`/`null`), preserving the
   // three-valued signal the gate reads.
@@ -857,28 +864,32 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   };
 
   if (pendingPublishRequestId) {
-    req.log?.info('blocks.dev-token.pending-mint', {
+    const fields = {
       mode: 'pending',
       userId: user.id,
       slug: resolved.signBlockId,
       publishRequestId: pendingPublishRequestId,
       scopes: granted,
       ...spendAudit,
-    });
+    };
+    req.log?.info('blocks.dev-token.pending-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.pending-mint', fields);
   } else if (localManifestSlug) {
     // NO-ROW (local-manifest) MINT AUDIT. Same rationale as the pending path:
     // the synthetic `local-<slug>` appId / `page_local_<slug>` appBlockId don't
     // resolve, so there are NO durable AppBlock-backed audit rows — this
-    // structured event (Axiom/Loki-queryable, NEVER the token/secret) is the only
-    // forensic trail for a no-row mint. Placed after the final clamp + budget so
+    // structured event (dual-sinked to Axiom AND stdout, NEVER the token/secret) is
+    // the only forensic trail for a no-row mint. Placed after the final clamp + budget so
     // `scopes`/`spendGranted` reflect the actual minted outcome (7f included).
-    req.log?.info('blocks.dev-token.local-mint', {
+    const fields = {
       mode: 'local',
       userId: user.id,
       slug: localManifestSlug,
       scopes: granted,
       ...spendAudit,
-    });
+    };
+    req.log?.info('blocks.dev-token.local-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.local-mint', fields);
   } else if (approvedAppBlockId) {
     // APPROVED-PATH MINT AUDIT (#3703 step 1) — NEW. This path previously emitted
     // NOTHING. Unlike the two synthetic-id paths above it DOES write durable rows,
@@ -890,14 +901,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     //
     // Same shape as its siblings (a future consumer can read all three uniformly) —
     // identifiers already handled by this request only, never the token or a secret.
-    req.log?.info('blocks.dev-token.approved-mint', {
+    const fields = {
       mode: 'approved',
       userId: user.id,
       slug: resolved.signBlockId,
       appBlockId: approvedAppBlockId,
       scopes: granted,
       ...spendAudit,
-    });
+    };
+    req.log?.info('blocks.dev-token.approved-mint', fields);
+    emitMintAuditToStdout('blocks.dev-token.approved-mint', fields);
   }
 
   // 9. The synthetic, revocable PAGE instance id was resolved in step 6:
