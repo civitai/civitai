@@ -52,6 +52,8 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import type { Collaborator } from '~/server/services/collection-collaborator.service';
+import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
@@ -200,12 +202,22 @@ export const getCollectionByIdHandler = async ({
       return {
         collection: null,
         permissions,
+        collaborators: [] as Collaborator[],
       };
     }
 
     const collection = await getCollectionById({ input });
 
-    return { collection, permissions };
+    // The roster no longer arrives via the flag-protected getCollaborators procedure, so the flag
+    // has to be re-applied here; skipping the derivation also keeps getById's query count unchanged
+    // wherever the feature is off. getCollectionRoster returns [] for the collections that must
+    // never publish one, and never returns pending invites.
+    const collaborators =
+      ctx.features.collaborativeCollections && permissions.read
+        ? await getCollectionRoster(collection)
+        : [];
+
+    return { collection, permissions, collaborators };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

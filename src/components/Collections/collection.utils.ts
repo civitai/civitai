@@ -329,19 +329,21 @@ export const useCollection = (
     enabled?: boolean;
   }
 ) => {
-  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery(
-    {
-      id: collectionId,
-    },
-    {
-      enabled: true,
-      ...opts,
-    }
-  );
+  const { data: { collection, permissions, collaborators } = {}, ...rest } =
+    trpc.collection.getById.useQuery(
+      {
+        id: collectionId,
+      },
+      {
+        enabled: true,
+        ...opts,
+      }
+    );
 
   return {
     collection,
     permissions,
+    collaborators,
     ...rest,
   };
 };

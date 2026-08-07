@@ -2,6 +2,7 @@ import { Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@man
 import clsx from 'clsx';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -41,22 +42,18 @@ function CollaboratorAvatar({
 }
 
 export function CollectionCollaboratorsSummary({
-  collectionId,
   owner,
+  collaborators,
   supportsCollaborators,
 }: {
-  collectionId: number;
   owner: { id: number; username?: string | null; image?: string | null };
+  collaborators: Collaborator[];
   supportsCollaborators: boolean;
 }) {
   const features = useFeatureFlags();
-  // getCollaborators rejects curated (mode !== null) and system-owned collections outright, so
-  // the query must never be issued for them rather than swallowing the error after the fact.
+  // The server already withholds a roster for curated and system-owned collections; re-checking
+  // here keeps the rule enforced on the render path too, not only on the wire.
   const enabled = features.collaborativeCollections && supportsCollaborators && owner.id > 0;
-
-  const { data } = trpc.collection.getCollaborators.useQuery({ id: collectionId }, { enabled });
-
-  const collaborators = data?.collaborators ?? [];
 
   if (!enabled || !collaborators.length) {
     return <UserAvatar user={owner} withUsername linkToProfile />;

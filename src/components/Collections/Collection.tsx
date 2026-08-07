@@ -505,7 +505,7 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { collection, permissions, isLoading } = useCollection(collectionId);
+  const { collection, permissions, collaborators, isLoading } = useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
     enabled:
       !!currentUser?.id &&
@@ -688,8 +688,8 @@ export function Collection({
                     {collection && (
                       <Group gap={4} wrap="nowrap">
                         <CollectionCollaboratorsSummary
-                          collectionId={collection.id}
                           owner={collection.user}
+                          collaborators={collaborators ?? []}
                           supportsCollaborators={collection.mode === null}
                         />
                         {/* TODO.collections: We need some metrics to actually display these badges */}

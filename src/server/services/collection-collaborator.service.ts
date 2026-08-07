@@ -382,6 +382,69 @@ export async function removeCollaborator({
   }
 }
 
+// Curated collections (Contest/Bookmark) and the system-owned curation set carry staff
+// ADD/MANAGE rows that are an internal roster, not a collaboration — publishing them would
+// hand every reader of e.g. Featured Models the list of who curates it.
+function collectionSupportsCollaborators(collection: {
+  userId: number;
+  mode: CollectionMode | null;
+}): boolean {
+  return collection.mode === null && collection.userId > 0;
+}
+
+/**
+ * The roster derivation shared by `getCollaborators` and `collection.getById`. It returns an empty
+ * roster for collections that don't support collaborators rather than throwing, so a caller that
+ * also serves curated and system-owned collections can call it unconditionally. Never returns
+ * pending invites — those are `getCollaborators`' business and are gated on `manage` there.
+ */
+export async function getCollectionRoster(collection: {
+  id: number;
+  userId: number;
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+  mode: CollectionMode | null;
+}): Promise<Collaborator[]> {
+  if (!collectionSupportsCollaborators(collection)) return [];
+
+  const freeBaseline = freeGrantBaseline(collection);
+
+  // CollectionContributor also holds follow rows — on a write:Public collection a plain
+  // Follow carries ADD too, so this must never return every row for the collection. A row
+  // qualifies as a roster entry when its permissions are elevated beyond the free baseline,
+  // or (to catch a Contributor invite accepted on a write:Public collection, whose granted
+  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user holds an
+  // invite that occupies a seat — a signal only the invite/accept flow produces.
+  const [rows, seatedInvites] = await Promise.all([
+    dbRead.collectionContributor.findMany({
+      where: {
+        collectionId: collection.id,
+        userId: { not: collection.userId },
+        permissions: {
+          hasSome: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+        },
+      },
+      select: { userId: true, permissions: true },
+    }),
+    dbRead.collectionInvite.findMany({
+      where: liveInviteWhere(collection.id),
+      select: { userId: true },
+    }),
+  ]);
+
+  const seatedInviteUserIds = new Set(seatedInvites.map((invite) => invite.userId));
+
+  return rows
+    .filter(
+      (row) =>
+        hasElevatedPermission(row.permissions, freeBaseline) || seatedInviteUserIds.has(row.userId)
+    )
+    .map((row) => ({
+      userId: row.userId,
+      role: roleFromPermissions(row.permissions),
+    }));
+}
+
 export async function getCollaborators({
   collectionId,
   userId,
@@ -403,50 +466,14 @@ export async function getCollaborators({
 
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { userId: true, read: true, write: true, mode: true },
+    select: { id: true, userId: true, read: true, write: true, mode: true },
   });
 
-  // Curated collections (Contest/Bookmark) and the system-owned curation set carry staff
-  // ADD/MANAGE rows that are an internal roster, not a collaboration — publishing them would
-  // hand every reader of e.g. Featured Models the list of who curates it.
-  if (!collection || collection.mode !== null || collection.userId <= 0) {
+  if (!collection || !collectionSupportsCollaborators(collection)) {
     throw throwBadRequestError('This collection does not support collaborators.');
   }
 
-  const freeBaseline = freeGrantBaseline(collection);
-
-  // CollectionContributor also holds follow rows — on a write:Public collection a plain
-  // Follow carries ADD too, so this must never return every row for the collection. A row
-  // qualifies as a roster entry when its permissions are elevated beyond the free baseline,
-  // or (to catch a Contributor invite accepted on a write:Public collection, whose granted
-  // {VIEW, ADD} is otherwise indistinguishable from a follower's) when the user holds an
-  // invite that occupies a seat — a signal only the invite/accept flow produces.
-  const rows = await dbRead.collectionContributor.findMany({
-    where: {
-      collectionId,
-      userId: { not: collection.userId },
-      permissions: {
-        hasSome: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
-      },
-    },
-    select: { userId: true, permissions: true },
-  });
-
-  const seatedInvites = await dbRead.collectionInvite.findMany({
-    where: liveInviteWhere(collectionId),
-    select: { userId: true },
-  });
-  const seatedInviteUserIds = new Set(seatedInvites.map((invite) => invite.userId));
-
-  const collaborators = rows
-    .filter(
-      (row) =>
-        hasElevatedPermission(row.permissions, freeBaseline) || seatedInviteUserIds.has(row.userId)
-    )
-    .map((row) => ({
-      userId: row.userId,
-      role: roleFromPermissions(row.permissions),
-    }));
+  const collaborators = await getCollectionRoster(collection);
 
   if (!permission.manage) return { collaborators, invites: [] };
 
