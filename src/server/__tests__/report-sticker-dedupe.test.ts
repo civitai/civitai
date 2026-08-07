@@ -37,9 +37,6 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
-vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/utils/errorHandling')>()),
-}));
 
 const { createReport } = await import('~/server/services/report.service');
 
@@ -77,7 +74,12 @@ describe('a sticker report is deduped by placement, not by image', () => {
     // about PLACEMENT_ONE and return it instead.
     const [query] = reportFindFirst.mock.calls[0] as [{ where: MixedObject }];
     expect(query.where.details).toEqual({ path: ['placementId'], equals: PLACEMENT_TWO });
-    expect(reportCreate).toHaveBeenCalled();
+
+    // The row that gets written has to carry the NEW placement. Asserting only
+    // that create ran proves nothing here — `findFirst` is mocked to null, so it
+    // would run whatever the predicate said.
+    const [created] = reportCreate.mock.calls[0] as [{ data: MixedObject }];
+    expect(created.data.details).toMatchObject({ placementId: PLACEMENT_TWO });
   });
 
   it('still folds a second report about the same placement', async () => {

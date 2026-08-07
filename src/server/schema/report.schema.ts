@@ -47,7 +47,14 @@ export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
   // the form path that converts it. `z.number()` typechecks clean here — `Radio`
   // takes `string | number` — and then rejects at submit, so the report can be
   // filled in and never sent.
-  placementId: z.coerce.number().int().positive(),
+  // The message matters: with no placements on the image the field renders with
+  // no options, and `z.coerce.number()` on an absent value is `Number(undefined)`
+  // — NaN — so the default text reads "expected number, received NaN" at the one
+  // moment a reporter needs to be told what to do.
+  placementId: z.coerce
+    .number({ error: 'Choose which sticker you are reporting.' })
+    .int()
+    .positive(),
 });
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({

@@ -11,6 +11,16 @@ const SELLER = 63;
 const IMAGE = 74;
 const COSMETIC = 85;
 const PLACEMENT = 96;
+
+/**
+ * `setPrice` is what the owner asks; `price` is `min(setPrice, cap)` — what a
+ * placer is actually charged. They diverge exactly when the cap bites, which is
+ * the only case the cap exists for, so a fixture where they are equal lets every
+ * charge site read the wrong one and still pass. Kept apart deliberately.
+ */
+const STRANGER = 159;
+const ASKED = 900;
+const CAP = 700;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
@@ -74,7 +84,7 @@ const {
   getStickerPlacementDetail,
 } = await import('~/server/services/sticker-placement.service');
 
-const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: PRICE, price: PRICE, cap: 5000 };
+const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
 
 /**
  * The two raw reads the mutation makes, in the order it makes them: the sticker
@@ -272,6 +282,17 @@ describe('the order money and uses move in', () => {
     // ledger rows carry a foreign key to it. The use is spent last so a failed
     // charge cannot consume one.
     expect(calls).toEqual(['create', 'hold', 'spend']);
+  });
+
+  it('holds escrow for the capped price, not the price the owner asked for', async () => {
+    givenStickerAndBalance();
+
+    await createStickerPlacement(placeInput);
+
+    // The only assertion on what the escrow is actually told to charge. The row
+    // is asserted separately; both read `space.price`, and nothing else in the
+    // service reads `setPrice` or `cap` at all.
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(expect.objectContaining({ amount: PRICE }));
   });
 
   it('expires the placement when the escrow cannot be taken, and rethrows', async () => {
@@ -510,7 +531,9 @@ describe('the hover-card detail', () => {
     });
 
     expect(detail.sticker).toMatchObject({ id: COSMETIC, name: 'Gumdong' });
-    expect(detail.sticker?.creator).toMatchObject({ id: CREATOR, username: 'maker' });
+    expect(detail.sticker?.creatorName).toBe('maker');
+    // The href, built once here rather than by every consumer.
+    expect(detail.sticker?.shopHref).toBe('/user/maker/shop');
   });
 
   /**
@@ -531,10 +554,13 @@ describe('the hover-card detail', () => {
       viewerId: PLACER,
     });
 
-    expect(detail.sticker?.creator?.username).toBeNull();
+    // Both, not just one: a null name with a live href would still produce the
+    // broken link, and an href with no name would render an empty anchor.
+    expect(detail.sticker?.creatorName).toBeNull();
+    expect(detail.sticker?.shopHref).toBeNull();
   });
 
-  it('scopes pending to the placer and the owner, and refuses a stranger', async () => {
+  it('scopes pending to the placer and the owner', async () => {
     givenPlacement();
     cosmeticFindUnique.mockResolvedValue(null);
 
@@ -546,6 +572,17 @@ describe('the hover-card detail', () => {
       { status: 'pending', placerId: PLACER },
       { status: 'pending', ownerId: PLACER },
     ]);
+  });
+
+  // The title above used to say this test refused a stranger. It never drove one
+  // — a title claiming a refusal is covered is how an uncovered refusal stays
+  // uncovered, so the refusal now has its own case.
+  it('refuses a stranger, rather than returning what the scope excluded', async () => {
+    placementFindFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      getStickerPlacementDetail({ placementId: DETAIL_PLACEMENT, viewerId: STRANGER })
+    ).rejects.toThrow(/not available/);
   });
 
   it('asks for approved only when nobody is signed in', async () => {

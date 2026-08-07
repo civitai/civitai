@@ -318,7 +318,13 @@ export async function getStickerPlacementDetail({
       ? {
           id: cosmetic.id,
           name: cosmetic.name,
-          creator: cosmetic.creator,
+          // The link, not the ingredients. `username` is nullable — `deleteUser`
+          // soft-deletes and nulls it — and a template literal accepts null
+          // silently, which is how `/user/null/shop` shipped past a typecheck.
+          // Emitting the href means no consumer can build the wrong one, because
+          // none of them build one.
+          creatorName: cosmetic.creator?.username ?? null,
+          shopHref: cosmetic.creator?.username ? `/user/${cosmetic.creator.username}/shop` : null,
         }
       : null,
   };
