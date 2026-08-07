@@ -2,7 +2,14 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { rewardReportReporters } from './rewards';
-import { ReportStatus, type ReportEntity, type ReportReason } from '$lib/reports';
+import {
+  DEFAULT_REPORT_REASONS,
+  DEFAULT_REPORT_STATUSES,
+  ReportStatus,
+  reportCountKey,
+  type ReportEntity,
+  type ReportReason,
+} from '$lib/reports';
 
 const reportEntityJoin: Record<ReportEntity, { table: string; fk: string }> = {
   model: { table: 'ModelReport', fk: 'modelId' },
@@ -102,6 +109,28 @@ export async function getReports({
     .execute()) as ModeratorReportRow[];
 
   return { items, totalItems, page, limit };
+}
+
+// Counted with the same filters the report pages land on, so a sub-nav badge matches the rows you get when
+// you click it.
+export async function getReportCounts(): Promise<Record<string, number>> {
+  const statuses = sql.join(DEFAULT_REPORT_STATUSES.map((s) => sql.lit(s)));
+  const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
+  // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
+  // per-branch joins back to Report seq-scanned it once per entity type.
+  const open = sql`select "id" from "Report"
+    where "status" in (${statuses}) and "reason" in (${reasons})`;
+  const branches = Object.entries(reportEntityJoin).map(
+    ([type, join]) => sql`select ${sql.lit(type)} as type, count(*)::int as count
+      from ${sql.table(join.table)} er
+      join open_reports o on o."id" = er."reportId"`
+  );
+  const { rows } = await sql<{ type: string; count: number }>`with open_reports as materialized (${open})
+    ${sql.join(branches, sql` union all `)}`.execute(dbRead);
+
+  return Object.fromEntries(
+    rows.map((row) => [reportCountKey(row.type as ReportEntity), Number(row.count)])
+  );
 }
 
 export async function setReportStatus({

@@ -56,51 +56,44 @@
   // rather than removed, so you can see what you just did. Cleared on reload.
   let outcome = $state<Record<number, 'Actioned' | 'Unactioned' | 'failed'>>({});
 
-  type Entry = {
-    path: string;
-    label: string;
-    section: string | null;
-    countKey?: string;
-    informational?: boolean;
-  };
-
-  // Leaves only — a section header is not somewhere you work. `data.nav` is already pruned to this user.
-  const entries = $derived.by(() => {
-    const out: Entry[] = [];
-    const walk = (links: typeof data.nav, section: string | null) => {
-      for (const link of links) {
-        if (link.children) {
-          walk(link.children, link.label);
-          continue;
-        }
-        if (link.path && link.path !== '/')
-          out.push({
-            path: link.path,
-            label: link.label,
-            section,
-            countKey: link.countKey,
-            informational: link.informational,
-          });
-      }
-    };
-    walk(data.nav, null);
-    return out;
-  });
+  // `count: null` = nothing to count (no countKey), which is not the same as an empty queue — the
+  // empty-row collapsing below keys off that difference.
+  type Item = { path: string; label: string; informational?: boolean; count: number | null };
+  type Section = { label: string; items: Item[]; total: number };
 
   const loading = $derived(counts.value === null);
 
-  const queues = $derived(
-    entries
-      .filter((e) => e.countKey && !e.informational)
-      .map((e) => ({ ...e, count: counts.value?.[e.countKey as string] ?? 0 }))
-      .sort((a, b) => b.count - a.count)
-  );
+  const sections = $derived.by(() => {
+    const toItem = (link: (typeof data.nav)[number]): Item => ({
+      path: link.path as string,
+      label: link.label,
+      informational: link.informational,
+      count: link.countKey ? (counts.value?.[link.countKey] ?? 0) : null,
+    });
+    const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);
 
-  const pending = $derived(queues.filter((q) => q.count > 0));
-  const quiet = $derived([
-    ...queues.filter((q) => q.count === 0),
-    ...entries.filter((e) => !e.countKey || e.informational),
-  ]);
+    const grouped: Section[] = [];
+    const loose: Item[] = [];
+    for (const link of data.nav) {
+      if (link.children) {
+        const items = link.children.filter((c) => c.path && !c.external).map(toItem).sort(byCount);
+        grouped.push({
+          label: link.label,
+          items,
+          total: items.reduce((sum, i) => sum + (i.informational ? 0 : (i.count ?? 0)), 0),
+        });
+      } else if (link.path && link.path !== '/') {
+        loose.push(toItem(link));
+      }
+    }
+    if (loose.length) grouped.push({ label: 'Pages', items: loose, total: 0 });
+    return grouped;
+  });
+
+  let expanded = $state<Record<string, boolean>>({});
+  const quietCount = (section: Section) => section.items.filter((i) => i.count === 0).length;
+  const visibleItems = (section: Section) =>
+    expanded[section.label] ? section.items : section.items.filter((i) => i.count !== 0);
 
   const format = (n: number) => n.toLocaleString();
 </script>
@@ -117,31 +110,59 @@
 
 {#if loading}
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {#each { length: 6 } as _, i (i)}
-      <div class="h-24 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
-    {/each}
-  </div>
-{:else if pending.length > 0}
-  <h2 class="mb-3 text-base font-semibold text-white">Needs attention</h2>
-  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {#each pending as queue (queue.path)}
-      <a
-        href={queue.path}
-        class="rounded-xl border border-dark-4 bg-dark-6 p-5 transition-colors hover:border-blue-8 hover:bg-dark-5"
-      >
-        <div class="text-2xl font-semibold tabular-nums text-white">{format(queue.count)}</div>
-        <div class="mt-1 text-sm text-dark-0">{queue.label}</div>
-        {#if queue.section}
-          <div class="text-xs text-dark-2">{queue.section}</div>
-        {/if}
-      </a>
+    {#each { length: 4 } as _, i (i)}
+      <div class="h-40 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
     {/each}
   </div>
 {:else}
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <h2 class="text-base font-semibold text-white">All clear</h2>
-    <p class="mt-1 text-sm text-dark-2">Nothing is waiting in the queues you can reach.</p>
-  </section>
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    {#each sections as section (section.label)}
+      {@const items = visibleItems(section)}
+      {@const quiet = quietCount(section)}
+      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+        <header class="mb-1 flex items-baseline justify-between gap-2">
+          <h2 class="text-sm font-semibold text-white">{section.label}</h2>
+          {#if section.total > 0}
+            <span class="text-sm font-semibold tabular-nums text-blue-4">
+              {format(section.total)}
+            </span>
+          {/if}
+        </header>
+
+        {#if items.length === 0}
+          <p class="py-1 text-sm text-dark-2">All clear</p>
+        {:else}
+          <ul>
+            {#each items as item (item.path)}
+              <li>
+                <a
+                  href={item.path}
+                  class="-mx-1 flex items-center justify-between gap-3 rounded px-1 py-1 text-sm hover:bg-dark-5"
+                >
+                  <span class={item.count ? 'text-dark-0' : 'text-dark-2'}>{item.label}</span>
+                  {#if item.count !== null}
+                    <span class="tabular-nums {item.count ? 'text-white' : 'text-dark-2'}">
+                      {format(item.count)}
+                    </span>
+                  {/if}
+                </a>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        {#if quiet > 0}
+          <button
+            type="button"
+            class="mt-1 text-xs text-dark-2 hover:text-dark-0"
+            onclick={() => (expanded[section.label] = !expanded[section.label])}
+          >
+            {expanded[section.label] ? 'Hide empty' : `${quiet} empty`}
+          </button>
+        {/if}
+      </section>
+    {/each}
+  </div>
 {/if}
 
 <h2 class="mt-8 mb-1 text-base font-semibold text-white">Most reported</h2>
@@ -234,16 +255,5 @@
         {/each}
       </TableBody>
     </Table>
-  </div>
-{/if}
-
-{#if !loading && quiet.length > 0}
-  <h2 class="mt-8 mb-3 text-base font-semibold text-white">Everything else</h2>
-  <div class="flex flex-wrap gap-1.5">
-    {#each quiet as entry (entry.path)}
-      <a href={entry.path} class="rounded bg-dark-7 px-2 py-1 text-xs text-dark-1 hover:text-dark-0">
-        {entry.label}
-      </a>
-    {/each}
   </div>
 {/if}

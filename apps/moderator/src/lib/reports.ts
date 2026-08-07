@@ -44,9 +44,14 @@ export const DEFAULT_REPORT_REASONS: ReportReason[] = [
   ReportReason.Spam,
 ];
 
+export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
+  ReportStatus.Pending,
+  ReportStatus.Processing,
+];
+
 export const reportEntityLabels: Record<ReportEntity, string> = {
   model: 'Model',
-  comment: 'Comment',
+  comment: 'Model Comment',
   commentV2: 'Comment',
   image: 'Image',
   resourceReview: 'Review',
@@ -61,6 +66,36 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   model3d: '3D Model',
   model3dReview: '3D Review',
 };
+
+// URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
+// against — renaming one breaks saved links, so extend rather than reshuffle.
+export const reportEntitySlugs: Record<ReportEntity, string> = {
+  model: 'model',
+  comment: 'model-comment',
+  commentV2: 'comment',
+  image: 'image',
+  resourceReview: 'review',
+  article: 'article',
+  post: 'post',
+  reportedUser: 'user',
+  collection: 'collection',
+  bounty: 'bounty',
+  bountyEntry: 'bounty-entry',
+  chat: 'chat',
+  comicProject: 'comic',
+  model3d: '3d-model',
+  model3dReview: '3d-review',
+};
+
+const entityBySlug = new Map(
+  Object.entries(reportEntitySlugs).map(([entity, slug]) => [slug, entity as ReportEntity])
+);
+
+export const reportEntityForSlug = (slug: string): ReportEntity | undefined => entityBySlug.get(slug);
+
+export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlugs[entity]}`;
+
+export const reportCountKey = (entity: ReportEntity) => `report:${entity}`;
 
 export const reportStatusBadgeClass: Record<ReportStatus, string> = {
   Pending: 'bg-yellow-500/15 text-yellow-300',

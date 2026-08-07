@@ -1,4 +1,4 @@
-# Image Lookup.json
+# image-lookup.json
 
 queries: 10   components: 21
 resources: Replicated_Read_Prod, Clickhouse
@@ -11,6 +11,21 @@ resources: Replicated_Read_Prod, Clickhouse
   Frame: 1
   ButtonWidget2: 1
   TabsWidget2: 1
+
+## tabs & option sets — READ THESE, they are functionality
+  Tab labels are the app's table of contents; dropdown options are canned workflows that
+  exist in no query. A tab you did not port is a capability you did not port.
+
+### tabbedContainer1   [ContainerWidget2]
+    - ModActivity
+    - Reactions
+    - Tags
+    - ShadowTags
+
+### tabs1   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
 
 ## queries
 

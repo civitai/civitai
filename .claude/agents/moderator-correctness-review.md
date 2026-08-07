@@ -70,3 +70,8 @@ skills exist and a single `SELECT` settles most "is this column ever populated" 
 Rank most severe first. For each: file:line, one sentence on the defect, the concrete failure
 scenario, and whether you confirmed it or it remains plausible. Say plainly if you found nothing —
 a clean segment is a real outcome and padding the list wastes the fix.
+
+**Findings only.** Do not inventory what you checked and found correct — it is the bulk of a long
+report and none of it is actionable. Two exceptions, one line each: a divergence from the Retool
+original that you decided was deliberate, and a hazard you confirmed is *not* a bug but that the next
+edit could turn into one.

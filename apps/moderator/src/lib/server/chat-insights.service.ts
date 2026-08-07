@@ -1,4 +1,5 @@
 import { dbRead } from './db';
+import type { ChatMessageWithChat } from './chat-audit.service';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 
 // Everything behind `/api/chat-insights` — the platform-wide aggregates Retool showed as a stats strip,
@@ -14,14 +15,24 @@ export type TopChatter = {
   messages: number;
 };
 
+export type TopChat = { chatId: number; messages: number };
+
 export type ChatStats = {
   chats: number;
   chats24h: number;
   messages: number;
   messages24h: number;
+  /** All-time and last-24h are different questions: all-time finds the heaviest accounts, 24h finds who
+   *  is spamming RIGHT NOW. Retool showed both and only one was ported. */
   topChatters: TopChatter[];
+  topChatters24h: TopChatter[];
   chattersCapped: boolean;
+  chattersCapped24h: boolean;
+  topChats: TopChat[];
+  topChats24h: TopChat[];
 };
+
+export type NewestMessage = ChatMessageWithChat;
 
 export type SpamGroup = {
   key: string;
@@ -33,62 +44,110 @@ export type SpamGroup = {
 };
 
 const TOP_CHATTERS = 25;
+const TOP_CHATS = 20;
 
 export async function getChatStats(): Promise<ChatStats> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  // Retool also had TopChats (messages grouped by chatId). Not ported: nothing rendered it, and it is
-  // another full-table GROUP BY — a busiest-conversations list answers no question this page asks.
-  const [chats, chats24h, messages, messages24h, chatters] = await Promise.all([
-    dbRead
-      .selectFrom('Chat')
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .executeTakeFirst(),
-    dbRead
-      .selectFrom('Chat')
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .where('createdAt', '>', since)
-      .executeTakeFirst(),
-    dbRead
-      .selectFrom('ChatMessage')
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .where('userId', '!=', SYSTEM_USER_ID)
-      .executeTakeFirst(),
-    dbRead
-      .selectFrom('ChatMessage')
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .where('userId', '!=', SYSTEM_USER_ID)
-      .where('createdAt', '>', since)
-      .executeTakeFirst(),
-    // Grouping by userId alone and resolving names afterwards, rather than Retool's GROUP BY (username,
-    // id) — a rename mid-window would otherwise split one person into two rows.
+  const topChatters = (bounded: boolean) =>
     dbRead
       .selectFrom('ChatMessage')
       .select((eb) => ['userId', eb.fn.countAll<string>().as('n')])
       .where('userId', '!=', SYSTEM_USER_ID)
+      .$if(bounded, (qb) => qb.where('createdAt', '>', since))
+      // Grouping by userId alone and resolving names afterwards, rather than Retool's GROUP BY
+      // (username, id) — a rename mid-window would otherwise split one person into two rows.
       .groupBy('userId')
       .orderBy('n', 'desc')
       .limit(TOP_CHATTERS + 1)
-      .execute(),
-  ]);
+      .execute();
 
-  const chattersCapped = chatters.length > TOP_CHATTERS;
+  const topChats = (bounded: boolean) =>
+    dbRead
+      .selectFrom('ChatMessage')
+      .select((eb) => ['chatId', eb.fn.countAll<string>().as('n')])
+      .where('userId', '!=', SYSTEM_USER_ID)
+      .$if(bounded, (qb) => qb.where('createdAt', '>', since))
+      .groupBy('chatId')
+      .orderBy('n', 'desc')
+      .limit(TOP_CHATS)
+      .execute();
+
+  const [chats, chats24h, messages, messages24h, chatters, chatters24, chatRows, chatRows24] =
+    await Promise.all([
+      dbRead
+        .selectFrom('Chat')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .executeTakeFirst(),
+      dbRead
+        .selectFrom('Chat')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .where('createdAt', '>', since)
+        .executeTakeFirst(),
+      dbRead
+        .selectFrom('ChatMessage')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .where('userId', '!=', SYSTEM_USER_ID)
+        .executeTakeFirst(),
+      dbRead
+        .selectFrom('ChatMessage')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .where('userId', '!=', SYSTEM_USER_ID)
+        .where('createdAt', '>', since)
+        .executeTakeFirst(),
+      topChatters(false),
+      topChatters(true),
+      topChats(false),
+      topChats(true),
+    ]);
+
   const page = chatters.slice(0, TOP_CHATTERS);
-  const byId = await usersByIds(page.map((c) => c.userId));
+  const page24 = chatters24.slice(0, TOP_CHATTERS);
+
+  const byId = await usersByIds([...page, ...page24].map((c) => c.userId));
+  const hydrate = (rows: { userId: number; n: string }[]) =>
+    rows.map((c) => ({
+      userId: c.userId,
+      username: byId.get(c.userId)?.username ?? null,
+      bannedAt: byId.get(c.userId)?.bannedAt ?? null,
+      messages: Number(c.n),
+    }));
 
   return {
     chats: Number(chats?.n ?? 0),
     chats24h: Number(chats24h?.n ?? 0),
     messages: Number(messages?.n ?? 0),
     messages24h: Number(messages24h?.n ?? 0),
-    chattersCapped,
-    topChatters: page.map((c) => ({
-      userId: c.userId,
-      username: byId.get(c.userId)?.username ?? null,
-      bannedAt: byId.get(c.userId)?.bannedAt ?? null,
-      messages: Number(c.n),
-    })),
+    chattersCapped: chatters.length > TOP_CHATTERS,
+    chattersCapped24h: chatters24.length > TOP_CHATTERS,
+    topChatters: hydrate(page),
+    topChatters24h: hydrate(page24),
+    topChats: chatRows.map((c) => ({ chatId: c.chatId, messages: Number(c.n) })),
+    topChats24h: chatRows24.map((c) => ({ chatId: c.chatId, messages: Number(c.n) })),
   };
+}
+
+// The "Newest" tab: a live feed of the most recent messages platform-wide. Retool let a moderator set the
+// row count; this is a fixed cap because the query has no index to use — `createdAt` is unindexed, so it
+// is a full scan plus a top-N sort (~700ms) regardless of how many rows come back.
+export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
+  const rows = await dbRead
+    .selectFrom('ChatMessage as cm')
+    .leftJoin('User as u', 'u.id', 'cm.userId')
+    .select([
+      'cm.id',
+      'cm.chatId',
+      'cm.userId',
+      'cm.content',
+      'cm.createdAt',
+      'u.username',
+      'u.bannedAt',
+    ])
+    .where('cm.userId', '!=', SYSTEM_USER_ID)
+    .orderBy('cm.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+  return rows;
 }
 
 // SPAM DETECTION (Retool's SPAMDetect), and the most useful thing on the page: the same message text

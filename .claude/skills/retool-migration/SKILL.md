@@ -239,6 +239,11 @@ npx eslint "<changed .ts files>"
 Typecheck and build are the real gates. If you touched anything under `src/` or `packages/`, run
 the root `pnpm run typecheck` too.
 
+**One slice, one session.** A slice is a whole Retool app — 10 to 170 queries, a dozen files, an audit
+and three review reports. Commit at the end of it and start the next slice fresh rather than carrying
+one conversation across several apps: the §2 classification and the coverage gate are written down in
+the repo precisely so the next session doesn't need the previous one's context.
+
 ## 7. Feedback loop
 
 Moderators report bugs and request features in the **Mod Studio Feedback** Discord group chat —

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { chatUrl, urlWith } from './url';
   import type { PageData } from './$types';
 
   type Search = NonNullable<PageData['search']>;
@@ -30,7 +31,7 @@
   {#if search.ambiguousUsername}
     <p class="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200">
       <strong>{search.term}</strong> is also a username. This is showing chat {search.term} —
-      <a href="?q=%40{encodeURIComponent(search.term)}" class={LINK_CLASS}>
+      <a href={urlWith({ q: `@${search.term}`, chat: null, rpage: null })} class={LINK_CLASS}>
         search for the user instead
       </a>.
     </p>
@@ -52,7 +53,7 @@
             ? 'bg-dark-5'
             : ''}"
         >
-          <a href="?q={encodeURIComponent(search.term)}&chat={chat.chatId}" class={LINK_CLASS}>
+          <a href={chatUrl(chat.chatId)} class={LINK_CLASS}>
             chat {chat.chatId}
           </a>
           <span class="text-dark-0">{chat.owner ?? (chat.ownerId ? `#${chat.ownerId}` : 'no owner')}</span>

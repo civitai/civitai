@@ -12,6 +12,7 @@
   } from '@civitai/ui/components/ui/pagination/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
+  import { chatUrl, urlWith } from './url';
   import type { PageData } from './$types';
 
   let {
@@ -20,31 +21,13 @@
     page,
     perPage,
     chatId,
-    q,
   }: {
     reports: PageData['reports'];
     total: number;
     page: number;
     perPage: number;
     chatId: number | null;
-    q: string;
   } = $props();
-
-  // Preserving `q` is not cosmetic: navigating to a bare `?chat=` clears `data.q`, which resets the
-  // search box and unmounts the chat list — the moderator loses both their results and their term
-  // mid-investigation, with only the Back button to recover. Same for the report page.
-  const urlWith = (params: Record<string, string | number | null>) => {
-    const next = new URLSearchParams();
-    if (q) next.set('q', q);
-    if (chatId) next.set('chat', String(chatId));
-    if (page > 1) next.set('rpage', String(page));
-    for (const [k, v] of Object.entries(params)) {
-      if (v === null || v === '' || v === 1) next.delete(k);
-      else next.set(k, String(v));
-    }
-    const s = next.toString();
-    return s ? `?${s}` : '?';
-  };
 
   const totalPages = $derived(Math.max(1, Math.ceil(total / perPage)));
 </script>
@@ -67,7 +50,7 @@
         >
           <Badge variant={r.status === 'Actioned' ? 'destructive' : 'secondary'}>{r.status}</Badge>
           {#if r.entityId}
-            <a href={urlWith({ chat: r.entityId })} class={LINK_CLASS}>chat {r.entityId}</a>
+            <a href={chatUrl(r.entityId)} class={LINK_CLASS}>chat {r.entityId}</a>
           {/if}
           <span class="text-dark-0">{r.reason}</span>
           {#if r.reportedByUsername}

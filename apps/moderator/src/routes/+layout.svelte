@@ -71,11 +71,16 @@
   const rollupFor = (item: NavLink) =>
     item.children ? (item.children.reduce((sum, c) => sum + (countFor(c.countKey) ?? 0), 0) || null) : null;
 
-  let openGroups = $state<Record<string, boolean>>({});
-  const isOpen = (label: string) => openGroups[label] ?? true;
-
   const isActive = (href: string, path: string) =>
     href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
+
+  // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
+  let openGroups = $state<Record<string, boolean>>({});
+  const holdsCurrentPage = (item: NavLink) =>
+    !!item.children?.some(
+      (child) => !child.external && !!child.path && isActive(child.path, page.url.pathname)
+    );
+  const isOpen = (item: NavLink) => openGroups[item.label] ?? holdsCurrentPage(item);
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
 </script>
@@ -115,7 +120,7 @@
                 {#if item.children}
                   {@const rollup = rollupFor(item)}
                   <Collapsible
-                    open={isOpen(item.label)}
+                    open={isOpen(item)}
                     onOpenChange={(o) => (openGroups[item.label] = o)}
                   >
                     <SidebarMenuItem>
@@ -136,7 +141,7 @@
                               class="{rollup !== null
                                 ? 'ml-1'
                                 : 'ml-auto'} shrink-0 text-sidebar-foreground/50 transition-transform {isOpen(
-                                item.label
+                                item
                               )
                                 ? 'rotate-90'
                                 : ''}"

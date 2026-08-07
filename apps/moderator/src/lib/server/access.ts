@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
 export const APP = 'moderator';
 
@@ -30,12 +31,24 @@ export type NavLink = {
   // Count is informational only — the dashboard keeps it out of "needs attention". For backlogs nobody
   // works through, like articles unpublished for spam.
   informational?: boolean;
+  // The section is granted as one page and its children are neither granted nor checked individually. Making
+  // these children grantable would drop the grants already stored against the parent path.
+  sharedAccess?: boolean;
   children?: NavLink[];
 };
 
 export const NAVIGATION: NavLink[] = [
   { path: '/', label: 'Dashboard' },
-  { path: '/reports', label: 'Reports' },
+  {
+    label: 'Reports',
+    path: '/reports',
+    sharedAccess: true,
+    children: reportEntities.map((entity) => ({
+      path: reportPath(entity),
+      label: reportEntityLabels[entity],
+      countKey: reportCountKey(entity),
+    })),
+  },
   {
     label: 'Images',
     path: '/images',
@@ -126,6 +139,10 @@ function collectGrants(
 ): { path: string; roles: Set<Role> }[] {
   for (const link of links) {
     const own = link.path ? stored[link.path] ?? [] : [];
+    if (link.sharedAccess) {
+      if (link.path) acc.push({ path: link.path, roles: new Set(own) });
+      continue;
+    }
     const before = acc.length;
     if (link.children) collectGrants(link.children, acc);
     const fromChildren = acc.slice(before).flatMap((entry) => [...entry.roles]);
@@ -152,6 +169,10 @@ function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
     if (link.path && !allows(link.path, user)) continue;
+    if (link.sharedAccess) {
+      out.push({ ...link });
+      continue;
+    }
     const children = link.children ? pruneNav(link.children, user) : undefined;
     if (link.children && (!children || children.length === 0)) continue;
     out.push({ ...link, children });
@@ -200,7 +221,7 @@ export function navLabel(pathname: string): string | undefined {
 export function childLinks(groupPath: string, user: RoleUser): NavLink[] {
   const group = findNavItem(groupPath);
   if (!group?.children) return [];
-  return pruneNav(group.children, user);
+  return group.sharedAccess ? group.children : pruneNav(group.children, user);
 }
 
 // `group` rows are section headers, not pages — they carry no checkbox because their reachability is the
@@ -222,12 +243,12 @@ export function pageAccessState(source?: Record<string, string[]>): {
   const granted: Record<string, Role[]> = {};
   const walk = (links: NavLink[], depth: number) => {
     for (const link of links) {
-      const group = !!link.children;
+      const group = !!link.children && !link.sharedAccess;
       if (link.path && !link.external && (group || isGrantable(link.path))) {
         pages.push({ path: link.path, label: link.label, depth, group });
         if (!group) granted[link.path] = from[link.path] ?? [];
       }
-      if (link.children) walk(link.children, depth + 1);
+      if (link.children && !link.sharedAccess) walk(link.children, depth + 1);
     }
   };
   walk([...NAVIGATION].sort(byNavOrder), 0);
@@ -239,7 +260,7 @@ export function pageAccessState(source?: Record<string, string[]>): {
 export function isGrantable(path: string): boolean {
   if (UNRESTRICTED_PATHS.has(path) || SUPER_ONLY_PATHS.has(path)) return false;
   const item = findNavItem(path);
-  return !!item && !item.children;
+  return !!item && (!item.children || !!item.sharedAccess);
 }
 
 export function isNavPath(path: string): boolean {

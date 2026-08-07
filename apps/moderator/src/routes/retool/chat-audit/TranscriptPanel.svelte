@@ -2,6 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
+  import MessageMeta from './MessageMeta.svelte';
   import type { PageData } from './$types';
 
   type Result = NonNullable<PageData['transcript']>;
@@ -35,14 +36,8 @@
       <ul class="space-y-2 text-sm">
         {#each transcript.rows as m (m.id)}
           <li>
-            <div class="flex flex-wrap items-baseline gap-x-2">
-              <a href={userLookupUrl(m.userId)} class={LINK_CLASS}>
-                {m.username ?? `#${m.userId}`}
-              </a>
-              {#if m.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
-              <span class="text-xs text-dark-2">{dateTime(m.createdAt)}</span>
-            </div>
-            <p class="min-w-0 break-all whitespace-pre-wrap text-dark-0">{m.content}</p>
+            <MessageMeta {...m} />
+            <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
           </li>
         {/each}
       </ul>

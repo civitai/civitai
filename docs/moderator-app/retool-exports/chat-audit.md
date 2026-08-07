@@ -1,4 +1,4 @@
-# Chat Audit.json
+# chat-audit.json
 
 queries: 20   components: 50
 resources: Replicated_Read_Prod, REST-WithoutResource, retool_db
@@ -17,6 +17,21 @@ resources: Replicated_Read_Prod, REST-WithoutResource, retool_db
   DividerWidget: 1
   ButtonWidget2: 1
   SwitchWidget2: 1
+
+## tabs & option sets — READ THESE, they are functionality
+  Tab labels are the app's table of contents; dropdown options are canned workflows that
+  exist in no query. A tab you did not port is a capability you did not port.
+
+### tabbedContainer1   [ContainerWidget2]
+    - Chats
+    - Chat Reports
+    - Stats
+    - Newest
+
+### tabs1   [TabsWidget2]
+    - Tab 1
+    - Tab 2
+    - Tab 3
 
 ## queries
 

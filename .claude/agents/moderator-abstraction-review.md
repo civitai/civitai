@@ -66,3 +66,6 @@ For each finding: what is duplicated or oversized, where the existing version li
 where the new one should go, and the concrete cost of leaving it. Rank by how likely the copies are to
 diverge — logic duplication first, markup last. Distinguish "do this now" from "watch this; extract on
 the next consumer".
+
+"Leave this alone" is a finding and worth stating — but one line each, and only where the segment looks
+like it invites an extraction that would be wrong. Do not inventory the code you read and found fine.

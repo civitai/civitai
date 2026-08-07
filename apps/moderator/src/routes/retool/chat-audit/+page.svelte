@@ -1,16 +1,24 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import LookupSearch from '$lib/components/LookupSearch.svelte';
   import type { PageData } from './$types';
   import ChatListPanel from './ChatListPanel.svelte';
-  import InsightsPanel from './InsightsPanel.svelte';
+  import NewestPanel from './NewestPanel.svelte';
   import ReportsPanel from './ReportsPanel.svelte';
+  import SpamGroupsPanel from './SpamGroupsPanel.svelte';
+  import TopActivityPanel from './TopActivityPanel.svelte';
   import TranscriptPanel from './TranscriptPanel.svelte';
+  import UserMessagesPanel from './UserMessagesPanel.svelte';
+  import { fetchChatInsights } from './chat-insights';
 
   let { data }: { data: PageData } = $props();
 
   // The report queue is the entry point when a moderator arrives without a name; once they are
   // investigating something specific it steps aside to the bottom.
   const investigating = $derived(!!data.q || !!data.chatId);
+
+  // Off the page load: every query behind this scans the 4.2M-row ChatMessage table.
+  const insights = $derived(browser ? fetchChatInsights() : null);
 </script>
 
 <header class="page-header">
@@ -30,7 +38,6 @@
     page={data.reportsPage}
     perPage={data.reportsPerPage}
     chatId={data.chatId}
-    q={data.q}
   />
 {/snippet}
 
@@ -45,6 +52,12 @@
     </p>
   {/if}
   <ChatListPanel search={data.search} chatId={data.chatId} />
+{/if}
+
+{#if data.userMessages}
+  {#key data.q}
+    <UserMessagesPanel messages={data.userMessages} />
+  {/key}
 {/if}
 
 {#if data.chatMissing}
@@ -62,4 +75,18 @@
   {@render reports()}
 {/if}
 
-<InsightsPanel />
+{#await insights}
+  <p class="text-sm text-dark-2">Counting chats and looking for repeated messages…</p>
+{:then result}
+  {#if result}
+    <TopActivityPanel stats={result.stats} />
+    <SpamGroupsPanel spam={result.spam} />
+    {#if result.newest}
+      <NewestPanel messages={result.newest} />
+    {:else}
+      <p class="text-sm text-red-300">Could not load recent messages.</p>
+    {/if}
+  {/if}
+{:catch}
+  <p class="text-sm text-red-300">Could not load chat activity.</p>
+{/await}

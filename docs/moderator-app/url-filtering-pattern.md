@@ -3,8 +3,8 @@
 Established in the **reports** page and meant to be reused on the other filter-heavy moderator queues
 (images, models, image-tags, downleveled-review, etc.). Reference implementation:
 
-- Load + canonical redirect + actions → [`apps/moderator/src/routes/reports/+page.server.ts`](../../apps/moderator/src/routes/reports/+page.server.ts)
-- UI (Tabs / MultiCombobox / Pagination / Input) → [`apps/moderator/src/routes/reports/+page.svelte`](../../apps/moderator/src/routes/reports/+page.svelte)
+- Load + canonical redirect + actions → [`apps/moderator/src/routes/reports/[slug]/+page.server.ts`](../../apps/moderator/src/routes/reports/[slug]/+page.server.ts)
+- UI (MultiCombobox / Pagination / Input) → [`apps/moderator/src/routes/reports/[slug]/+page.svelte`](../../apps/moderator/src/routes/reports/[slug]/+page.svelte)
 - Tag multi-select → [`packages/civitai-ui/…/multi-combobox`](../../packages/civitai-ui/src/lib/components/ui/multi-combobox/)
 
 ## Principles
@@ -53,6 +53,11 @@ filter" (articles, cosmetics, …) don't need the sentinel and use the zod schem
 | Text | `Input` in a `<form>` | submit handler reads `FormData` → `goto(urlWith({ key: value \|\| null, page: 1 }))` |
 
 Pagination uses the `Pagination` component with `onPageChange={(p) => goto(urlWith({ page: p }))}`.
+
+**A single-select that names the queue belongs in the path, not the query string.** Reports used to select
+its entity type with `Tabs` and `?type=`; each type is now `/reports/<slug>` (a `[slug]` page), which is
+what lets the sidebar list them as sub-items with their own counts. Reach for `Tabs` + a param when the
+dimension is a *view* of one queue; reach for a route segment when it is a queue of its own.
 
 ## Multi-value filter semantics (the important part)
 

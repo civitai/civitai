@@ -4,6 +4,7 @@ import { getImageReviewCounts } from './image-review.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
+import { getReportCounts } from './reports.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -22,7 +23,7 @@ export function getSidebarCounts(now = Date.now()): Promise<SidebarCounts> {
 }
 
 async function fetchCounts(): Promise<SidebarCounts> {
-  const [modes, imageTags, imageRatings, appeals, reported, articles, articleRatings] =
+  const [modes, imageTags, imageRatings, appeals, reported, articles, articleRatings, reports] =
     await Promise.all([
       getImageReviewCounts(),
       // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -47,9 +48,11 @@ async function fetchCounts(): Promise<SidebarCounts> {
         .executeTakeFirst(),
       countModeratorArticles(),
       getArticleRatingReviewCounts(),
+      getReportCounts(),
     ]);
   return {
     ...modes,
+    ...reports,
     imageTags: Number(imageTags?.count ?? 0),
     imageRatings,
     appeals: Number(appeals?.count ?? 0),

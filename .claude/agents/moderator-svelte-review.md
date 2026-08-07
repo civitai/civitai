@@ -73,4 +73,6 @@ tell "nothing here" from "didn't load". Loading text should say what is loading.
 
 Rank by what would actually break or mislead — a duplicate `{#each}` key outranks a missing snippet.
 For each: file:line, the rule, and what goes wrong. Separate the two categories so the fixes can be
-batched. Note explicitly that a category was clean rather than omitting it.
+batched. Note explicitly that a category was clean rather than omitting it — but in one short line
+per category. Do not list the rules you checked or the places that follow them; that inventory is the
+bulk of a long report and none of it is actionable.

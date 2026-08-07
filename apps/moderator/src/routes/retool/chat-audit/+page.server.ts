@@ -6,7 +6,9 @@ import { ReportEntity } from '$lib/reports';
 import { getReports } from '$lib/server/reports.service';
 import {
   chatExists,
+  classifySearch,
   getChatMembers,
+  getUserMessages,
   getTranscript,
   searchChats,
 } from '$lib/server/chat-audit.service';
@@ -32,7 +34,7 @@ const querySchema = z.object({
 export const load: PageServerLoad = async ({ url }) => {
   const { q, chat, rpage } = parseQuery(url, querySchema);
 
-  const [search, exists, transcript, members, reports] = await Promise.all([
+  const [search, exists, transcript, members, reports, userMessages] = await Promise.all([
     searchChats(q),
     chat ? chatExists(chat) : false,
     chat ? getTranscript(chat) : null,
@@ -41,6 +43,9 @@ export const load: PageServerLoad = async ({ url }) => {
     // ChatReport/Report join. That also means this page and /reports agree on what "open" means — they
     // previously disagreed, so a report actioned on /reports stayed in this queue forever.
     getReports({ type: ReportEntity.Chat, page: rpage, limit: REPORTS_PER_PAGE }),
+    // Retool's UserDetails: what the account actually SAID, across every chat. The chat list answers
+    // who they talked to; this answers what they said, which is the question when the term was a name.
+    q && classifySearch(q.trim()) === 'user' ? getUserMessages(q.trim()) : null,
   ]);
 
   return {
@@ -54,5 +59,6 @@ export const load: PageServerLoad = async ({ url }) => {
     reportsTotal: reports.totalItems,
     reportsPage: reports.page,
     reportsPerPage: reports.limit,
+    userMessages,
   };
 };

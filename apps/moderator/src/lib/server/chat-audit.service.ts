@@ -32,6 +32,8 @@ export type ChatMessageRow = {
   content: string;
 };
 
+export type ChatMessageWithChat = ChatMessageRow & { chatId: number };
+
 export type ChatMemberRow = {
   userId: number;
   username: string | null;
@@ -243,6 +245,54 @@ export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
     .where('cm.chatId', '=', chatId)
     .execute();
   return rows.map((r) => ({ ...r, status: String(r.status) }));
+}
+
+export async function getUserMessages(
+  username: string,
+  limit = 100
+): Promise<{ rows: ChatMessageWithChat[]; chats: number; truncated: boolean } | null> {
+  const name = username.replace(/^@/, '');
+
+  // Null for an unresolved term, not an empty result. `USERNAME_SHAPE` matches things that are not
+  // usernames — `discord.gg` is the commonest DM-spam string on the site — and rendering those as an
+  // account with no messages tells a moderator the opposite of the truth.
+  if (!(await usernameExists(name))) return null;
+
+  // `chats` counts over the whole account, not over the page. Deriving it from the newest 100 rows
+  // understated a 458-chat DM blast as 12 — and breadth is the number that separates a chatty user
+  // from a spammer.
+  const [rows, distinct] = await Promise.all([
+    dbRead
+      .selectFrom('ChatMessage as cm')
+      .innerJoin('User as u', 'u.id', 'cm.userId')
+      .select([
+        'cm.id',
+        'cm.createdAt',
+        'cm.userId',
+        'cm.content',
+        'cm.chatId',
+        'u.username',
+        'u.bannedAt',
+      ])
+      .where('u.username', '=', name)
+      .where('cm.userId', '!=', SYSTEM_USER_ID)
+      .orderBy('cm.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('ChatMessage as cm')
+      .innerJoin('User as u', 'u.id', 'cm.userId')
+      .select((eb) => eb.fn.count<string>('cm.chatId').distinct().as('n'))
+      .where('u.username', '=', name)
+      .where('cm.userId', '!=', SYSTEM_USER_ID)
+      .executeTakeFirst(),
+  ]);
+
+  return {
+    truncated: rows.length > limit,
+    chats: Number(distinct?.n ?? 0),
+    rows: rows.slice(0, limit),
+  };
 }
 
 /** Does this chat exist at all? Separates "empty conversation" from "no such chat" — a shared link with

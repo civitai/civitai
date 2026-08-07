@@ -13,11 +13,11 @@ Status column reflects what is in `apps/moderator` today, cross-checked against 
 |---|---|---|
 | Conventions | Permissions gated by mod role | **done** — per-role grants, `/admin` |
 | 1.1 | Overview page, per-queue counts | **partial** — dashboard lists reachable queues by count; anti-overlap not started |
-| 1.2 | User Lookup | **stub** — `/users` is 10 lines |
+| 1.2 | User Lookup | **partial** — `/retool/user-lookup` ships; 97 of 170 export queries unported, see [user-lookup-audit.md](retool-exports/user-lookup-audit.md) |
 | 1.3 | Bulk Image Manager | not started (`ImageQueueGrid` + cosmetics multi-select are reusable) |
 | 1.5 | User / Post Reports | **partial** — `/reports` exists; no per-report image grid, no prior-mod-activity panel |
-| 1.6 | Chat Audit | not started |
-| 1.7 | Image Lookup | not started |
+| 1.6 | Chat Audit | **done** — `/retool/chat-audit`, read-only; all 4 tabs + every export query ported or classified |
+| 1.7 | Image Lookup | **done** — `/retool/image-lookup`, 10/10 queries, 4/4 tabs |
 | 1.8 | Article Lookup | not started (`/articles/*` covers queues, not lookup) |
 | 1.9 | Front Page Audit | not started — **blocked on an open question** |
 | 1.12 | Buzz add/subtract | not started — **blocked on an open question** |
@@ -93,11 +93,14 @@ bulk ToS with reason + optional strike; filters for nsfwLevel (incl. Blocked) an
 **1.5 Reports upgrade.** Per-report image grid inline, plus prior mod activity and prior reports on the
 same screen (ticket's "everything on one screen"). Depends on 0.2.
 
-**1.6 Chat Audit.** Blocked on open questions — read-only? which conversations are visible? privacy and
-retention limits? Resolve before scoping.
+**1.6 Chat Audit.** Shipped read-only at `/retool/chat-audit`. The open questions resolved as: read-only
+(Retool's BANAPI/SetNote deliberately not ported — enforcement stays in User Lookup, which has the context
+and the audit trail); visible to admin-tier grants only by default; no retention change. All four Retool
+tabs are ported — search/transcript, reports queue, insights (top chatters/chats, all-time and 24h, repeated
+messages), and Newest. Message bodies outside an opened transcript sit behind a "Show message text" toggle.
 
-**1.7 Image Lookup.** By image ID: rating-change history, delete / delete-ToS / review history, full Image
-row.
+**1.7 Image Lookup.** Shipped at `/retool/image-lookup`. Audited complete against the export: 10/10 queries,
+4/4 tabs.
 
 **1.8 Article Lookup.** Full Article row by ID.
 
@@ -131,7 +134,6 @@ Carried from the ticket; each blocks the item next to it.
 | Front Page Audit — drop, or keep a video-only slim version? | 1.9 |
 | Buzz — standalone app or inside User Lookup? | 1.12 |
 | Anti-overlap — check-in, action-logging warnings, or both? | 1.1a |
-| Chat Audit — read-only? visibility scope? retention? | 1.6 |
 | Permissions — which role tier gets which tool/action? | grant config for every new page |
 
 ## Note on the ticket itself

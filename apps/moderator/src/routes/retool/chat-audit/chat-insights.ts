@@ -1,5 +1,4 @@
-// The `/api/chat-insights` payload, declared once for the endpoint and the panel. Page-local because it
-// crosses a JSON boundary — `Date` arrives as `string`.
+// Crosses a JSON boundary, so `Date` arrives as `string`.
 
 export type TopChatter = {
   userId: number;
@@ -8,13 +7,19 @@ export type TopChatter = {
   messages: number;
 };
 
+export type TopChat = { chatId: number; messages: number };
+
 export type ChatStats = {
   chats: number;
   chats24h: number;
   messages: number;
   messages24h: number;
   topChatters: TopChatter[];
+  topChatters24h: TopChatter[];
   chattersCapped: boolean;
+  chattersCapped24h: boolean;
+  topChats: TopChat[];
+  topChats24h: TopChat[];
 };
 
 export type SpamGroup = {
@@ -26,9 +31,21 @@ export type SpamGroup = {
   chats: number;
 };
 
+export type NewestMessage = {
+  id: number;
+  chatId: number;
+  userId: number;
+  username: string | null;
+  bannedAt: string | null;
+  content: string;
+  createdAt: string;
+};
+
+// Each section is null when its own query failed — one slow scan must not blank the other two.
 export type ChatInsights = {
-  stats: ChatStats;
-  spam: { groups: SpamGroup[]; days: number; truncated: boolean };
+  stats: ChatStats | null;
+  spam: { groups: SpamGroup[]; days: number; truncated: boolean } | null;
+  newest: NewestMessage[] | null;
 };
 
 export async function fetchChatInsights(): Promise<ChatInsights> {
