@@ -4038,6 +4038,9 @@ export async function getImagesFromBitdexPreFilter(
 
   // --- Hidden images ---
   if (hidden) {
+    // Plain null, not unsatisfiable: safe only because skipOwnExcluded's `!currentUserId`
+    // term means an anonymous caller never starts the own-excluded pass. If that pass ever
+    // covers anonymous callers, this site must return unsatisfiable() or it becomes a leak.
     if (!currentUserId) return null;
     const hiddenImages = await dbRead.imageEngagement.findMany({
       where: { userId: currentUserId, type: 'Hide' },
@@ -4050,8 +4053,14 @@ export async function getImagesFromBitdexPreFilter(
 
   // --- Username → userId ---
   if (username && !userId) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) return unsatisfiable();
+    // Fall through to the primary on a replica miss — a freshly created user's profile
+    // would otherwise 404 on replica lag. Matches getAllImages and
+    // getImagesFromSearchPreFilter, including the 404: an unknown username is an error,
+    // not a legitimately empty gallery.
+    const targetUser =
+      (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+      (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
   }
 

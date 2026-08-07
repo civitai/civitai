@@ -20,9 +20,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Minimal-seam mocking follows image-feed-clickhouse-failsoft.test.ts: stub the infra
 // clients and env so importing image.service doesn't boot anything real.
 
-const { queryBitdexOutcomeMock, queryBitdexMock } = vi.hoisted(() => ({
+const { queryBitdexOutcomeMock, queryBitdexMock, readUserMock, writeUserMock } = vi.hoisted(() => ({
   queryBitdexOutcomeMock: vi.fn(),
   queryBitdexMock: vi.fn(),
+  readUserMock: vi.fn(),
+  writeUserMock: vi.fn(),
 }));
 
 vi.mock('~/server/bitdex/client', () => ({
@@ -48,10 +50,14 @@ vi.mock('~/env/server', () => ({
 }));
 
 // userEngagement backs the `followed` short-circuit; an empty follow set is the
-// unsatisfiable case exercised below.
+// unsatisfiable case exercised below. user.findUnique backs the username lookup, which
+// reads the replica and falls through to the primary.
 vi.mock('~/server/db/client', () => ({
-  dbRead: { userEngagement: { findMany: vi.fn(async () => [] as unknown[]) } },
-  dbWrite: {},
+  dbRead: {
+    userEngagement: { findMany: vi.fn(async () => [] as unknown[]) },
+    user: { findUnique: readUserMock },
+  },
+  dbWrite: { user: { findUnique: writeUserMock } },
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
@@ -72,7 +78,7 @@ vi.mock('~/server/redis/client', () => {
 // NB: do NOT mock '~/server/flipt/client' — a catch-all Proxy mock wedges image.service's
 // module-load import. The real module loads fine and getFliptBoolean fail-opens to false.
 
-import { getImagesFromSearch } from '../image.service';
+import { getImagesFromBitdexPreFilter, getImagesFromSearch } from '../image.service';
 
 // currentUserId with no userId filter and no cursor is exactly the shape that starts the
 // own-excluded second pass — the condition under which the blank feed reproduced.
@@ -167,5 +173,43 @@ describe('BitDex primary fallback', () => {
 
     expect(result.source).toBe('bitdex');
     expect(result.data.map((d: { id: number }) => d.id)).toEqual([1]);
+  });
+});
+
+// The username lookup is the one short-circuit that is NOT an unsatisfiable query: an
+// unknown username is an error everywhere else in the service (getAllImages,
+// getImagesFromSearchPreFilter), and classifying it as "legitimately empty" here would
+// have turned a dead profile into a silent empty gallery. It also has to survive replica
+// lag, or a freshly created user's own profile 404s.
+describe('BitDex primary username lookup', () => {
+  const withUsername = { ...baseInput, username: 'someone' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryBitdexOutcomeMock.mockResolvedValue(emptyOk);
+  });
+
+  it('throws NotFound for an unknown username rather than serving an empty page', async () => {
+    readUserMock.mockResolvedValue(null);
+    writeUserMock.mockResolvedValue(null);
+
+    await expect(getImagesFromBitdexPreFilter(withUsername)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('falls through to the primary when the replica has not caught up', async () => {
+    readUserMock.mockResolvedValue(null);
+    writeUserMock.mockResolvedValue({ id: 77 });
+
+    await expect(getImagesFromBitdexPreFilter(withUsername)).resolves.toBeTruthy();
+    expect(writeUserMock).toHaveBeenCalled();
+  });
+
+  it('does not touch the primary when the replica has the user', async () => {
+    readUserMock.mockResolvedValue({ id: 77 });
+
+    await expect(getImagesFromBitdexPreFilter(withUsername)).resolves.toBeTruthy();
+    expect(writeUserMock).not.toHaveBeenCalled();
   });
 });
