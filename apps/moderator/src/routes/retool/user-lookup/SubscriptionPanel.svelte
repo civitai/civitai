@@ -7,12 +7,12 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import type { PageData } from './$types';
+  import type { LayoutData } from './$types';
   import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
   import type { FormResult } from './form-result';
 
-  type Subscription = NonNullable<PageData['result']>['subscription'];
+  type Subscription = NonNullable<LayoutData['result']>['subscription'];
 
   let {
     subscription,

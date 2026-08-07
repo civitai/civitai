@@ -8,12 +8,12 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import type { PageData } from './$types';
+  import type { LayoutData } from './$types';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
 
-  type Identity = NonNullable<PageData['result']>['identity'];
+  type Identity = NonNullable<LayoutData['result']>['identity'];
 
   // Mirrors the main app's BanReasonCode enum, which `/api/mod/ban-user` parses strictly — free text is a
   // 500 and no ban, so this is a closed list rather than an input.

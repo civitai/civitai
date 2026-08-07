@@ -4,14 +4,14 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import type { PageData } from './$types';
+  import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { FormResult } from './form-result';
 
-  type Identity = NonNullable<PageData['result']>['identity'];
-  type Profile = NonNullable<PageData['result']>['profile'];
-  type Curator = NonNullable<PageData['result']>['curator'];
+  type Identity = NonNullable<LayoutData['result']>['identity'];
+  type Profile = NonNullable<LayoutData['result']>['profile'];
+  type Curator = NonNullable<LayoutData['result']>['curator'];
 
   let {
     identity,

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { PageData } from './$types';
+  import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, num } from '$lib/format';
 
-  type Counts = NonNullable<PageData['result']>['counts'];
+  type Counts = NonNullable<LayoutData['result']>['counts'];
 
   let {
     counts,

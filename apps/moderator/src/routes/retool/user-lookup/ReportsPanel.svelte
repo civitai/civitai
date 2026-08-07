@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { PageData } from './$types';
+  import type { LayoutData } from './$types';
   import { num } from '$lib/format';
 
-  type Result = NonNullable<PageData['result']>;
+  type Result = NonNullable<LayoutData['result']>;
 
   let {
     reportsFiled,
