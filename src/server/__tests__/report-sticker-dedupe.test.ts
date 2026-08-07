@@ -151,4 +151,27 @@ describe('a report can only name a placement that is on the image it reports', (
       targetId: IMAGE,
     });
   });
+
+  /**
+   * The number is guaranteed by `z.coerce.number()` in the report schema — which
+   * lives in another file and is connected to this one by nothing. If that ever
+   * loosens, degrading to an image-wide match would fold every sticker report on
+   * the image into the first one again, and a moderator would act on the wrong
+   * person's sticker. Refusing is the failure worth having.
+   */
+  it('refuses a sticker report whose placement id is not a number', async () => {
+    reportFindFirst.mockResolvedValue(null);
+
+    await expect(
+      createReport({
+        userId: REPORTER_A,
+        type: ReportEntity.Image,
+        id: IMAGE,
+        reason: ReportReason.StickerPlacement,
+        details: { placementId: 'not-a-number' } as never,
+      })
+    ).rejects.toThrow(/must name a placement/);
+
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
 });

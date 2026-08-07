@@ -84,9 +84,21 @@ const reportedPlacementFilter = ({
   reason: ReportReason;
   details?: MixedObject;
 }) => {
+  // No predicate applies to any other reason. This early-out is the honest kind.
   if (reason !== ReportReason.StickerPlacement) return {};
+
   const placementId = (details as { placementId?: number } | undefined)?.placementId;
-  if (typeof placementId !== 'number') return {};
+
+  // Refuses rather than degrading. Returning `{}` here would silently fold every
+  // sticker report on an image back into the first one — the exact defect this
+  // predicate exists to fix, wearing the fix's clothes. The number is guaranteed
+  // by `z.coerce.number()` in the report schema, which lives in another file and
+  // is connected to this one by nothing: loosen it, add a second reason carrying
+  // a placementId, or reach this from outside the router, and a silent fold is
+  // what a moderator acts on. A 500 is the better failure.
+  if (typeof placementId !== 'number' || !Number.isFinite(placementId))
+    throw throwBadRequestError('report: a sticker placement report must name a placement');
+
   return { details: { path: ['placementId'], equals: placementId } };
 };
 
