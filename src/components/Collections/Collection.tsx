@@ -47,6 +47,7 @@ import {
   useCollection,
   useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
+import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
@@ -75,7 +76,6 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
@@ -687,9 +687,11 @@ export function Collection({
                     </Stack>
                     {collection && (
                       <Group gap={4} wrap="nowrap">
-                        {collection.user.id !== -1 && (
-                          <UserAvatar user={collection.user} withUsername linkToProfile />
-                        )}
+                        <CollectionCollaboratorsSummary
+                          collectionId={collection.id}
+                          owner={collection.user}
+                          supportsCollaborators={collection.mode === null}
+                        />
                         {/* TODO.collections: We need some metrics to actually display these badges */}
                         {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
