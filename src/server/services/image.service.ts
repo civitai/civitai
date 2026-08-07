@@ -230,7 +230,7 @@ import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
-import { queryBitdex } from '~/server/bitdex/client';
+import { queryBitdex, queryBitdexOutcome } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
 import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
 
@@ -2856,11 +2856,12 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   // is fetched in the parallel second pass above and merged after.
   const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
   let lastCursor: any = undefined;
+  const queryStatus: BitdexQueryStatus = { failed: false };
 
   for (let pass = 0; pass < MAX_PASSES && accumulated.length < limit; pass++) {
     const result = await (pass === 0
-      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
-      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, queryStatus)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor, queryStatus));
 
     if (!result?.documents?.length) break;
 
@@ -2877,6 +2878,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (!result.cursor) break; // no more pages
   }
 
+  // A failed BitDex round-trip is not an empty feed. The own-excluded pass would
+  // otherwise carry an empty accumulation past the guard below and serve a blank
+  // page, so the caller never gets the chance to try Meilisearch.
+  if (queryStatus.failed && !accumulated.length) return null;
   if (!accumulated.length && !ownExcludedPromise) return null;
 
   let data = accumulated;
@@ -3927,10 +3932,18 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
  *
  * @param includeDocs - true to return all doc fields, or an array of field names
  */
+/**
+ * Records whether the BitDex round-trip itself failed. `getImagesFromBitdexPreFilter`
+ * also returns null for queries that cannot match anything (unknown username, empty
+ * follow list) — those short-circuit before any request and leave this untouched.
+ */
+export type BitdexQueryStatus = { failed: boolean };
+
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
   includeDocs?: boolean | string[],
-  cursor?: any
+  cursor?: any,
+  queryStatus?: BitdexQueryStatus
 ) {
   let { postIds = [] } = input;
   const {
@@ -4156,7 +4169,7 @@ export async function getImagesFromBitdexPreFilter(
   }
 
   // Use keyset cursor when available, fall back to offset
-  const result = await queryBitdex(
+  const outcome = await queryBitdexOutcome(
     'civitai',
     filters,
     bitdexSort,
@@ -4165,7 +4178,11 @@ export async function getImagesFromBitdexPreFilter(
     cursor ? undefined : offset,
     includeDocs
   );
-  return result;
+  if (outcome.status === 'failed') {
+    if (queryStatus) queryStatus.failed = true;
+    return null;
+  }
+  return outcome.result;
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {

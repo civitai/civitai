@@ -93,6 +93,14 @@ export interface BitdexQueryResult {
 }
 
 /**
+ * A failed round-trip and a query that legitimately matched nothing are the same
+ * `null` through `queryBitdex`, which is why callers that must choose between
+ * serving an empty feed and falling back to another backend use
+ * `queryBitdexOutcome` instead.
+ */
+export type BitdexQueryOutcome = { status: 'ok'; result: BitdexQueryResult } | { status: 'failed' };
+
+/**
  * Query BitDex with pre-built filter clauses and sort.
  * Returns null on any error (never throws).
  *
@@ -105,9 +113,31 @@ export async function queryBitdex(
   limit = 100,
   cursor?: any,
   offset?: number,
-  includeDocs?: boolean | string[],
+  includeDocs?: boolean | string[]
 ): Promise<BitdexQueryResult | null> {
-  if (!BITDEX_URL) return null;
+  const outcome = await queryBitdexOutcome(
+    indexName,
+    filters,
+    sort,
+    limit,
+    cursor,
+    offset,
+    includeDocs
+  );
+  return outcome.status === 'ok' ? outcome.result : null;
+}
+
+/** Same query as {@link queryBitdex}, with failure distinguishable from an empty match. */
+export async function queryBitdexOutcome(
+  indexName: string,
+  filters: FilterClause[],
+  sort?: SortClause,
+  limit = 100,
+  cursor?: any,
+  offset?: number,
+  includeDocs?: boolean | string[]
+): Promise<BitdexQueryOutcome> {
+  if (!BITDEX_URL) return { status: 'failed' };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), BITDEX_TIMEOUT_MS);
@@ -139,8 +169,10 @@ export async function queryBitdex(
     clearTimeout(timeout);
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`);
-      return null;
+      console.error(
+        `[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`
+      );
+      return { status: 'failed' };
     }
     const result = await withSpan(
       'bitdex:http:parse',
@@ -151,16 +183,19 @@ export async function queryBitdex(
       },
       () => res.json()
     );
-    console.log('[BitDex] result:', JSON.stringify({
-      ms: Date.now() - start,
-      matched: result.total_matched,
-      ids: result.ids?.length ?? 0,
-      docs: result.documents?.length ?? 0,
-      elapsed_us: result.elapsed_us,
-    }));
-    return result;
+    console.log(
+      '[BitDex] result:',
+      JSON.stringify({
+        ms: Date.now() - start,
+        matched: result.total_matched,
+        ids: result.ids?.length ?? 0,
+        docs: result.documents?.length ?? 0,
+        elapsed_us: result.elapsed_us,
+      })
+    );
+    return { status: 'ok', result };
   } catch (err) {
     console.error(`[BitDex] Query error:`, err);
-    return null;
+    return { status: 'failed' };
   }
 }
