@@ -88,3 +88,12 @@ export const getPlacementSpaceRowSchema = z.object({
   entityType: z.enum(['image', 'post', 'user']),
   entityId: z.number().int().positive(),
 });
+
+export const suspendPlacerSchema = z.object({
+  userId: z.number().int().positive(),
+  reason: z.string().max(500).optional(),
+  /** Also take down everything they have already placed. */
+  removeExisting: z.boolean().default(false),
+});
+
+export const placerSchema = z.object({ userId: z.number().int().positive() });

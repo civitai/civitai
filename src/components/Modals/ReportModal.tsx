@@ -32,6 +32,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { getDisplayName } from '~/utils/string-helpers';
+import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
+import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
 const reports = [
   {
@@ -116,6 +118,17 @@ const reports = [
     label: 'This uses my art',
     Element: OwnershipForm,
     availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
+  },
+  {
+    // Reuses TOSViolation rather than adding a `ReportReason` value: the enum is
+    // a Prisma enum, so a new member is a migration and a new bucket in every
+    // moderator queue, for something that is a TOS violation carried out through
+    // a sticker. What makes it actionable is the placement id in the details,
+    // not a separate reason.
+    reason: ReportReason.TOSViolation,
+    label: 'Bad sticker placement',
+    Element: StickerPlacementForm,
+    availableFor: [ReportEntity.Image],
   },
   {
     reason: ReportReason.Spam,
@@ -349,16 +362,18 @@ export default function ReportModal({
           )
         )}
         {ReportForm && (
-          <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
-            <Group grow>
-              <Button variant="default" onClick={dialog.onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={isLoading} disabled={uploading}>
-                Submit
-              </Button>
-            </Group>
-          </ReportForm>
+          <ReportTargetProvider value={{ entityType, entityId }}>
+            <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
+              <Group grow>
+                <Button variant="default" onClick={dialog.onClose}>
+                  Cancel
+                </Button>
+                <Button type="submit" loading={isLoading} disabled={uploading}>
+                  Submit
+                </Button>
+              </Group>
+            </ReportForm>
+          </ReportTargetProvider>
         )}
       </Stack>
     </Modal>

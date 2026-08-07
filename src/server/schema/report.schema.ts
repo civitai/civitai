@@ -35,6 +35,17 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 
 export const reportSpamDetailsSchema = baseDetailSchema;
 
+/**
+ * A sticker someone paid to place on this image.
+ *
+ * `placementId` is required, not optional. An image can carry several
+ * placements, and a report that does not say which one leaves a moderator
+ * guessing — or removing the wrong person's sticker, which costs them money.
+ */
+export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
+  placementId: z.number().int().positive(),
+});
+
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
   externalId: z.string(),
   externalType: z.enum(ExternalModerationType),

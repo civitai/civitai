@@ -10,6 +10,8 @@ import {
   getStickerPlacementsSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
+  placerSchema,
+  suspendPlacerSchema,
 } from '~/server/schema/placement.schema';
 import { placementPriceRange } from '~/server/services/placement.service';
 import {
@@ -19,7 +21,13 @@ import {
   resolvePlacementSpaceFor,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
-import { countPendingPlacementsFrom } from '~/server/services/placement-moderation.service';
+import {
+  countPendingPlacementsFrom,
+  isPlacementSuspended,
+  removePlacementsByUser,
+  restorePlacementPrivileges,
+  suspendPlacementPrivileges,
+} from '~/server/services/placement-moderation.service';
 import {
   actOnStickerPlacement,
   actOnStickerPlacements,
@@ -30,7 +38,7 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
 } from '~/server/services/sticker-placement.service';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import type { Context } from '~/server/createContext';
 
@@ -131,6 +139,34 @@ export const placementRouter = router({
     .mutation(({ input, ctx }) =>
       actOnStickerPlacements({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+
+  isSuspended: moderatorProcedure
+    .input(placerSchema)
+    .query(({ input }) => isPlacementSuspended(input.userId)),
+
+  /**
+   * Suspend first, then remove. `removePlacementsByUser` asserts the suspension
+   * is already committed, because its correctness argument is that the placer
+   * cannot create new placements behind the sweep — and that only holds once the
+   * suspension is real.
+   */
+  suspendPlacer: moderatorProcedure.input(suspendPlacerSchema).mutation(async ({ input, ctx }) => {
+    await suspendPlacementPrivileges({
+      userId: input.userId,
+      actorId: ctx.user.id,
+      reason: input.reason,
+    });
+
+    if (!input.removeExisting) return { removed: null };
+
+    return {
+      removed: await removePlacementsByUser({ placerId: input.userId, actorId: ctx.user.id }),
+    };
+  }),
+
+  restorePlacer: moderatorProcedure
+    .input(placerSchema)
+    .mutation(({ input }) => restorePlacementPrivileges(input.userId)),
 
   getPending: protectedProcedure.query(({ ctx }) =>
     getPendingStickerPlacements({ ownerId: ctx.user.id })
