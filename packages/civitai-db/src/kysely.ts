@@ -3,7 +3,7 @@ import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
-export type { RawBuilder } from 'kysely';
+export type { Generated, RawBuilder } from 'kysely';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.

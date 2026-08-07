@@ -89,6 +89,10 @@ export const NAVIGATION: NavLink[] = [
   },
   { path: '/comics-review', label: 'Comics Review' },
   { path: '/blocklists', label: 'Blocklists' },
+  // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
+  // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history
+  // would hide the numbers their review produces.
+  { path: '/xguard', label: 'XGuard Lab' },
   { path: '/users', label: 'Users' },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
