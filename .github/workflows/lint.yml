@@ -2,20 +2,30 @@ name: Lint
 
 # Regression guard for code quality.
 #
-# Typecheck is full-repo and BLOCKING, and is the only full-repo gate here. It
-# runs on fork PRs TOO — no job in this file carries a top-level `if:`, so none
-# of them are gated on the PR's origin. That is deliberate and load-bearing, not
-# an oversight: the job needs no secret (event-engine-common is public and
-# fetched over HTTPS), which is why the ssh-agent step was REMOVED rather than
-# left unused. See the job comment for why leaving it in would have broken the
-# fork path AND masked the HTTPS one.
+# Typecheck is full-repo, and as of talos-infra #855 it is now a NARROW job: it
+# runs only where the in-cluster Tekton `pr-check` pipeline does not reach. For
+# an internal PR targeting `main` — every PR merged here in living memory — the
+# authoritative typecheck is the `tekton / typecheck` commit status, and this job
+# skips. See the `typecheck` job comment for the two cases it still covers and
+# how each was measured.
 #
-# An earlier version of this comment claimed the opposite — that typecheck "is
-# skipped on fork PRs, so a fork gets no gating from this workflow at all". That
-# was wrong, and wrong in a costly direction: this is currently the only
-# typechecking a fork PR gets, so a maintainer acting on that sentence could
-# reasonably delete the job as dead weight for forks and silently remove the one
-# place untrusted code is type-checked in a sandbox we do not have to build.
+# 🔴 Read this before treating the fork case as covered. The job carries no
+# secret and is not gated by us on the PR's origin — but GitHub gates it for us,
+# and the practical outcome is that FORK PRs GET NO TYPECHECK AT ALL TODAY.
+# Measured 2026-08-07 over all 16 fork-originated PRs among the ~500 most recent
+# PRs: 11 have a retained `Lint` run and ALL ELEVEN sit at
+# `conclusion=action_required` (awaiting maintainer approval, zero repository
+# code executed); the other 5 are closed PRs whose runs have aged out. `gh pr
+# checks` on the open ones reports "no checks reported". Not one fork PR has ever
+# produced a Typecheck result.
+#
+# Two earlier revisions of this comment got this wrong in opposite directions —
+# first "typecheck is skipped on fork PRs", then (correcting that) "it runs on
+# fork PRs TOO". Both were reasoning from the workflow's CONFIGURATION, which
+# says nothing about whether the job RUNS. The configuration genuinely does not
+# gate on origin; the approval policy does. Keep the job — it is where fork
+# coverage will land the moment a maintainer approves a run, and the sandbox is
+# GitHub's rather than ours — but do not cite it as active fork protection.
 #
 # ESLint and Prettier are split by how the PR touched the file:
 #
@@ -160,12 +170,46 @@ jobs:
           echo "all modified files formatted"
 
   typecheck:
-    name: Typecheck
+    name: Typecheck (fork PRs / non-main base)
     runs-on: ubuntu-latest
-    # Runs on forks now. event-engine-common is public and fetched over HTTPS, so
-    # this needs no secret — which is why the ssh-agent step is gone rather than
-    # merely unused. Leaving it in would have kept the fork case broken AND masked
-    # the HTTPS path: webfactory/ssh-agent rewrites
+    # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
+    # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
+    # the `tekton / typecheck` commit status. Running this job as well typechecks
+    # the same tree a second time on every internal PR. Tekton is the one that
+    # kept reporting through the 2026-08-06 Actions `major_outage` — it POLLS the
+    # PR API on a 1m interval rather than taking a webhook, and the incident
+    # degraded webhook delivery.
+    #
+    # This `if:` is the complement of what Tekton covers. Both disjuncts were
+    # measured on 2026-08-07, not assumed:
+    #
+    #   fork PR  — the Tekton side gates fork-authored PRs away by author
+    #     association, deliberately: it executes PR code on our own
+    #     infrastructure, and GitHub's untrusted-code sandbox is doing work we
+    #     would otherwise have to build. So this job is the only typecheck a fork
+    #     PR can get. ⚠️ In practice this arm is DORMANT — see the header.
+    #
+    #   base != main — the Tekton side only watches PRs targeting `main`, so a
+    #     PR targeting `release` gets no check from it at all. Rare but real: 4
+    #     PRs have ever targeted `release` (0 of the last 200 merged) — most
+    #     recent #2582, closed 2026-06-16; last merged #2248, 2026-05-09. Rare is
+    #     what makes this cheap, not a reason to drop it.
+    #
+    # Deleting either disjunct silently removes the only typecheck on that path.
+    # The honest way to retire this job entirely is to widen Tekton's coverage
+    # first and prove it on a real PR of each shape.
+    #
+    # The name changed with the gate so the checks list explains its own absence.
+    # Safe: neither `main` nor `release` has any required_status_checks (verified
+    # 2026-08-07 via the branch-protection API), so no merge gate keys on the old
+    # name.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
+    # event-engine-common is public and fetched over HTTPS, so this needs no
+    # secret — which is why the ssh-agent step is gone rather than merely unused.
+    # Leaving it in would have kept the fork case broken AND masked the HTTPS
+    # path: webfactory/ssh-agent rewrites
     # url."git@key-<sha>.github.com:<owner>/<repo>".insteadOf "https://github.com/<owner>/<repo>"
     # for any loaded key whose comment names a github.com repo, silently sending
     # the new HTTPS URL back over SSH.
