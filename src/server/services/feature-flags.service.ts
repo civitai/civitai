@@ -674,7 +674,9 @@ const hasFeature = (
       fliptContext
     );
     if (fliptResult !== null) {
-      if (isDev) {
+      // Opt-in: this fires once per Flipt-backed flag per evaluation, which is
+      // hundreds of lines per page load and buries everything else in the dev log.
+      if (isDev && process.env.FLIPT_DEBUG === 'true') {
         console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
       }
       return fliptResult;
