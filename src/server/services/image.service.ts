@@ -3070,7 +3070,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 // No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
 // upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
 // `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
-// schemas would hand the REST API an unfiltered feed — apply the exclusion here first.
+// schemas would hand the REST API an unfiltered feed — apply the exclusion here first. Note
+// image-search.service.ts spreads the same `data` into all three branches
+// (getAllImages / getAllImagesIndex / here), so the result wouldn't be uniformly unfiltered:
+// two branches would filter and this one wouldn't, which reads as a caching bug, not a gap.
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
