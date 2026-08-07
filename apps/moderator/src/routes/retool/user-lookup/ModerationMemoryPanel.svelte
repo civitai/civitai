@@ -68,7 +68,7 @@
     <div class="mb-3 flex items-baseline justify-between gap-3">
       <h3 class="text-sm font-semibold text-white">Moderator notes</h3>
       {#if !adding}
-        <Button size="sm" variant="outline" onclick={() => (adding = true)}>Add note</Button>
+        <Button size="sm" onclick={() => (adding = true)}>Add note</Button>
       {/if}
     </div>
 
@@ -174,7 +174,7 @@
     <div class="mb-1 flex items-baseline justify-between gap-3">
       <h3 class="text-sm font-semibold text-white">Strikes</h3>
       {#if canAct && !striking}
-        <Button size="sm" variant="outline" onclick={() => (striking = true)}>Issue strike</Button>
+        <Button size="sm" onclick={() => (striking = true)}>Issue strike</Button>
       {/if}
     </div>
     <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>

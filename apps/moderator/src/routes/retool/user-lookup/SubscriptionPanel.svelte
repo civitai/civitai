@@ -5,6 +5,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { PageData } from './$types';
   import { dateTime, num } from '$lib/format';
@@ -154,25 +155,26 @@
         {/if}
 
         {#if !sending}
-          <Button size="sm" variant="outline" class="mt-3" onclick={() => (sending = true)}>
-            Send / deduct Buzz
-          </Button>
+          <Button size="sm" class="mt-3" onclick={() => (sending = true)}>Send / deduct Buzz</Button>
         {:else}
           <form method="POST" action="?/sendBuzz" use:enhance={onSubmit} class="mt-3">
             <input type="hidden" name="userId" value={userId} />
 
-            <div class="mb-2 flex flex-wrap gap-1">
-              {#each PRESETS as p (p.label)}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  onclick={() => applyPreset(p)}
-                >
-                  {p.label}
-                </Button>
-              {/each}
-            </div>
+            <!-- Retool drove these from splitButton1 — one control, not five buttons. -->
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>
+                {#snippet child({ props })}
+                  <Button {...props} type="button" size="sm" variant="outline" class="mb-2">
+                    Presets
+                  </Button>
+                {/snippet}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="start">
+                {#each PRESETS as p (p.label)}
+                  <DropdownMenu.Item onSelect={() => applyPreset(p)}>{p.label}</DropdownMenu.Item>
+                {/each}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
 
             <div class="flex flex-wrap items-end gap-2">
               <Select.Root type="single" name="action" bind:value={action}>

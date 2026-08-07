@@ -104,36 +104,30 @@
       <form method="POST" action="?/setMuted" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="muted" value={identity.muted ? 'false' : 'true'} />
-        <Button type="submit" size="sm" disabled={submitting} variant={identity.muted ? 'default' : 'outline'}>
+        <Button type="submit" size="sm" disabled={submitting}>
           {identity.muted ? 'Unmute' : 'Mute'}
         </Button>
       </form>
 
       <form method="POST" action="?/forceLogout" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting} variant="outline">Force logout</Button>
+        <Button type="submit" size="sm" disabled={submitting}>Force logout</Button>
       </form>
 
-      <Button size="sm" variant="outline" onclick={() => (showTimedMute = !showTimedMute)}>
-        Timed mute
-      </Button>
+      <Button size="sm" onclick={() => (showTimedMute = !showTimedMute)}>Timed mute</Button>
 
       <form method="POST" action="?/resetCaches" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting} variant="outline">
-          Reset subscription caches
-        </Button>
+        <Button type="submit" size="sm" disabled={submitting}>Reset subscription caches</Button>
       </form>
 
       <form method="POST" action="?/refreshSession" use:enhance={onSubmit}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting} variant="outline">
-          Refresh session
-        </Button>
+        <Button type="submit" size="sm" disabled={submitting}>Refresh session</Button>
       </form>
 
       {#if identity.bannedAt}
-        <Button size="sm" variant="outline" onclick={() => (confirming = 'unban')}>Unban</Button>
+        <Button size="sm" onclick={() => (confirming = 'unban')}>Unban</Button>
       {:else}
         <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
       {/if}

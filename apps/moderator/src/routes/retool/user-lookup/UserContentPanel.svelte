@@ -88,7 +88,7 @@
             {/each}
           </ul>
           {#if canAct}
-            <div class="mt-3 flex flex-wrap gap-2">
+            <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
               <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
                 Delete selected
               </Button>
@@ -161,7 +161,7 @@
             {/each}
           </ul>
           {#if canAct}
-            <div class="mt-3 flex flex-wrap gap-2">
+            <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
               <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
                 Delete selected
               </Button>
@@ -196,7 +196,7 @@
               {/each}
             </ul>
             {#if canAct}
-              <div class="mt-3 flex flex-wrap gap-2">
+              <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
                 <Button type="submit" name="op" value="delete" size="sm" variant="destructive" disabled={submitting}>
                   Delete selected
                 </Button>

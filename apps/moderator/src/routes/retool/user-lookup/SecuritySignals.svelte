@@ -231,7 +231,7 @@
                     {/each}
                   </Select.Content>
                 </Select.Root>
-                <Button type="submit" size="sm" disabled={submitting}>Add</Button>
+                <Button type="submit" size="sm" disabled={submitting}>Add link</Button>
                 <Button
                   type="button"
                   size="sm"
