@@ -73,6 +73,22 @@ export function getScheduledSweepEnabled(): boolean {
   return true;
 }
 
+// The sweep's own cadence, decoupled from the job's 5-min fire. BitDex suppresses
+// identical sortAt re-sets, but the publish REMOVE ops have no no-op suppression:
+// each of the ~94K rows costs a real bitmap remove + exists_boolean shadow writes +
+// cache invalidation on isPublished/publishedAt — fields nearly every cached feed
+// entry filters on. At 5-min cadence that is standing cache-maintenance churn for
+// a corruption class that needs an ops-loss window to occur at all. Hourly keeps
+// the heal SLA (stale scheduled state visible for at most ~1h) at 1/12th the churn.
+const SCHEDULED_SWEEP_LAST_RUN_KEY = 'reemit-bitdex-ops:scheduled-sweep-last-run';
+const DEFAULT_SCHEDULED_SWEEP_INTERVAL_SECS = 60 * 60;
+export function getScheduledSweepIntervalSecs(): number {
+  return parsePositiveSecs(
+    process.env.REEMIT_SCHEDULED_SWEEP_INTERVAL_SECS,
+    DEFAULT_SCHEDULED_SWEEP_INTERVAL_SECS
+  );
+}
+
 export type ReemitResult = {
   postsScanned: number;
   imagesEmitted: number;
@@ -169,12 +185,18 @@ export function buildScheduledReemitQuery({
 // scheduled sweep can be switched off without touching the published-window SQL.
 // They run sequentially — the published window is the latency-sensitive one, so it
 // goes first and is never delayed by the larger scheduled scan.
-export async function runReemit(config: ReemitConfig): Promise<ReemitResult> {
+export async function runReemit(
+  config: ReemitConfig,
+  // The job passes false when the sweep's own interval hasn't elapsed; the
+  // published-window scan runs regardless. Defaults true so direct callers
+  // (tests, manual heals) get the full behavior.
+  runScheduledSweep = true
+): Promise<ReemitResult> {
   const rows = await dbWrite.$queryRaw<ScanCounts[]>(buildReemitQuery(config));
   const row = rows[0];
 
   let scheduled: ScanCounts = { postsScanned: 0, imagesEmitted: 0 };
-  if (getScheduledSweepEnabled()) {
+  if (runScheduledSweep && getScheduledSweepEnabled()) {
     const scheduledRows = await dbWrite.$queryRaw<ScanCounts[]>(
       buildScheduledReemitQuery({ settleSecs: config.settleSecs })
     );
@@ -216,6 +238,11 @@ export const reemitBitdexOps = createJob(
     // runs_total stays success-only (attempts - runs = the error count).
     reemitAttemptsCounter?.inc();
 
+    // The sweep runs on its own, longer clock (see getScheduledSweepIntervalSecs).
+    const [sweepLastRun, setSweepLastRun] = await getJobDate(SCHEDULED_SWEEP_LAST_RUN_KEY);
+    const sweepDue =
+      (Date.now() - sweepLastRun.getTime()) / 1000 >= getScheduledSweepIntervalSecs();
+
     const config = getReemitConfig();
     const start = Date.now();
     let postsScanned: number;
@@ -224,7 +251,7 @@ export const reemitBitdexOps = createJob(
     let scheduledImagesEmitted: number;
     try {
       ({ postsScanned, imagesEmitted, scheduledPostsScanned, scheduledImagesEmitted } =
-        await runReemit(config));
+        await runReemit(config, sweepDue));
     } catch (e) {
       reemitErrorsCounter?.inc();
       throw e; // createJob logs job-error to Axiom and marks the run failed
@@ -234,6 +261,9 @@ export const reemitBitdexOps = createJob(
     // Only a successful emit advances the rate-limit window: a failed run leaves
     // lastRun untouched so the next fire can retry immediately instead of waiting.
     await setLastRun();
+    // Same success-only rule for the sweep clock. scheduledPostsScanned stays 0 when
+    // the sweep was skipped (due or not), so only an actually-executed sweep counts.
+    if (sweepDue && getScheduledSweepEnabled()) await setSweepLastRun();
 
     reemitRunsCounter?.inc();
     // The scheduled scan gets its own counters rather than being folded into the

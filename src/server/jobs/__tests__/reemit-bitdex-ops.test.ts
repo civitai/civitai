@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram, mockGetJobDate, mockSetLastRun } =
+const {
+  mockDbWrite,
+  mockIsFlipt,
+  mockCounters,
+  mockHistogram,
+  mockGetJobDate,
+  mockSetLastRun,
+  mockSetSweepLastRun,
+} =
   vi.hoisted(() => ({
     mockDbWrite: { $queryRaw: vi.fn() },
     mockIsFlipt: vi.fn(),
@@ -16,6 +24,7 @@ const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram, mockGetJobDate, m
     },
     mockHistogram: { observe: vi.fn() },
     mockSetLastRun: vi.fn(() => Promise.resolve()),
+    mockSetSweepLastRun: vi.fn(() => Promise.resolve()),
     mockGetJobDate: vi.fn(),
   }));
 
@@ -60,9 +69,16 @@ beforeEach(() => {
   delete process.env.REEMIT_SETTLE_SECS;
   delete process.env.REEMIT_MIN_INTERVAL_SECS;
   delete process.env.REEMIT_SCHEDULED_SWEEP_ENABLED;
-  // Default: last emit was long ago (epoch) so the rate-limit never trips unless a
-  // test explicitly pins a recent last-run time.
-  mockGetJobDate.mockResolvedValue([new Date(0), mockSetLastRun]);
+  // Default: both clocks read epoch, so the rate-limit never trips and the sweep is
+  // due, unless a test pins a specific clock. getJobDate is keyed: the job reads two
+  // markers (reemit last-run, scheduled-sweep last-run) with distinct setters.
+  mockGetJobDate.mockImplementation((key: string) =>
+    Promise.resolve(
+      key.includes('scheduled-sweep')
+        ? [new Date(0), mockSetSweepLastRun]
+        : [new Date(0), mockSetLastRun]
+    )
+  );
 });
 
 afterEach(() => {
@@ -217,7 +233,13 @@ describe('reemitBitdexOps job body', () => {
 
   it('skips (rate-limited) when the last emit is inside the min interval', async () => {
     // Last successful emit was 60s ago — well inside the 270s default interval.
-    mockGetJobDate.mockResolvedValue([new Date(Date.now() - 60_000), mockSetLastRun]);
+    mockGetJobDate.mockImplementation((key: string) =>
+      Promise.resolve(
+        key.includes('scheduled-sweep')
+          ? [new Date(0), mockSetSweepLastRun]
+          : [new Date(Date.now() - 60_000), mockSetLastRun]
+      )
+    );
     mockIsFlipt.mockResolvedValue(true);
 
     await runJob();
@@ -231,8 +253,14 @@ describe('reemitBitdexOps job body', () => {
   });
 
   it('runs once the min interval has elapsed and advances the last-run marker', async () => {
-    // Last emit was 5 minutes ago — past the 270s interval.
-    mockGetJobDate.mockResolvedValue([new Date(Date.now() - 300_000), mockSetLastRun]);
+    // Last emit was 5 minutes ago — past the 270s interval. Sweep clock at epoch = due.
+    mockGetJobDate.mockImplementation((key: string) =>
+      Promise.resolve(
+        key.includes('scheduled-sweep')
+          ? [new Date(0), mockSetSweepLastRun]
+          : [new Date(Date.now() - 300_000), mockSetLastRun]
+      )
+    );
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw.mockResolvedValue([{ postsScanned: 3, imagesEmitted: 12 }]);
 
@@ -241,8 +269,9 @@ describe('reemitBitdexOps job body', () => {
     expect(mockCounters.skipped.inc).not.toHaveBeenCalled();
     // Both scans ran (the scheduled sweep is on by default).
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(2);
-    // The window advances only after a successful emit.
+    // Each window advances only after a successful emit — one call per clock.
     expect(mockSetLastRun).toHaveBeenCalledTimes(1);
+    expect(mockSetSweepLastRun).toHaveBeenCalledTimes(1);
   });
 
   it('runs BOTH scans and records per-scope metrics when ON', async () => {
@@ -289,6 +318,30 @@ describe('reemitBitdexOps job body', () => {
     expect(mockDbWrite.$queryRaw.mock.calls[0][0].sql).toContain('"publishedAt" <= now()');
     expect(mockCounters.scheduledPosts.inc).toHaveBeenCalledWith(0);
     expect(mockCounters.scheduledImages.inc).toHaveBeenCalledWith(0);
+    expect(result).toMatchObject({ scheduledPostsScanned: 0, scheduledImagesEmitted: 0 });
+  });
+
+  it('skips the sweep (published scan only) when the sweep interval has not elapsed', async () => {
+    // Sweep ran 5 minutes ago — inside the 1h default sweep interval. Reemit clock
+    // stays at epoch so the published-window scan is not rate-limited.
+    mockGetJobDate.mockImplementation((key: string) =>
+      Promise.resolve(
+        key.includes('scheduled-sweep')
+          ? [new Date(Date.now() - 300_000), mockSetSweepLastRun]
+          : [new Date(0), mockSetLastRun]
+      )
+    );
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ postsScanned: 3, imagesEmitted: 12 }]);
+
+    const result = await runJob();
+
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw.mock.calls[0][0].sql).toContain('"publishedAt" <= now()');
+    // The sweep clock must NOT advance on a skipped sweep — otherwise a sweep that
+    // never runs keeps pushing its own next run into the future.
+    expect(mockSetSweepLastRun).not.toHaveBeenCalled();
+    expect(mockSetLastRun).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ scheduledPostsScanned: 0, scheduledImagesEmitted: 0 });
   });
 

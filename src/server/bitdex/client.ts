@@ -20,8 +20,10 @@ export type FilterClause =
 export type SortClause = { field: string; direction: 'Asc' | 'Desc' };
 
 const BITDEX_URL = process.env.BITDEX_URL || '';
-// The batch documents endpoint sits behind BitDex's admin bearer token (unlike
-// /query, which is open). Only fetchBitdexDocuments needs this.
+// The batch documents endpoint sits in BitDex's admin route group (unlike
+// /query, which is open). require_admin waives auth for no-X-Forwarded-For
+// (in-cluster) traffic, so the token is only required when BITDEX_URL routes
+// through a proxy that adds XFF. Only fetchBitdexDocuments uses this.
 const BITDEX_ADMIN_TOKEN = process.env.BITDEX_ADMIN_TOKEN || '';
 const BITDEX_TIMEOUT_MS = 30000;
 
@@ -44,9 +46,6 @@ export async function fetchBitdexDocuments(
   fields?: string[]
 ): Promise<BitdexDocument[]> {
   if (!BITDEX_URL) throw new Error('BITDEX_URL is not configured');
-  // Fail loudly up front: without the token the endpoint returns 401 on every
-  // call, and the audit must surface "cannot audit" rather than degrade.
-  if (!BITDEX_ADMIN_TOKEN) throw new Error('BITDEX_ADMIN_TOKEN is not configured');
   if (!slotIds.length) return [];
 
   const controller = new AbortController();
@@ -60,9 +59,13 @@ export async function fetchBitdexDocuments(
       () =>
         fetch(url, {
           method: 'POST',
+          // BitDex's require_admin waives auth for traffic without an
+          // X-Forwarded-For header (in-cluster calls); routed-through-proxy
+          // calls need the bearer. Send it when configured; if it's needed
+          // and absent, the 401 fails the fetch loudly — never a silent pass.
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${BITDEX_ADMIN_TOKEN}`,
+            ...(BITDEX_ADMIN_TOKEN ? { Authorization: `Bearer ${BITDEX_ADMIN_TOKEN}` } : {}),
           },
           body: JSON.stringify({ slot_ids: slotIds, ...(fields ? { fields } : {}) }),
           signal: controller.signal,
