@@ -78,6 +78,7 @@ export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
 export type CollectionByIdModel = CollectionRouter['getById']['collection'];
 export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
 export type CollectionGetAllItems = CollectionRouter['getAllCollectionItems'];
+export type CollectionMyInvite = CollectionRouter['getMyInvites'][number];
 
 type TrainingRouter = RouterOutput['training'];
 export type TrainingModelData = TrainingRouter['getModelBasic'];

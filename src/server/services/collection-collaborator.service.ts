@@ -501,7 +501,23 @@ export async function getMyInvites({ userId }: { userId: number }) {
       role: true,
       createdAt: true,
       invitedById: true,
-      collection: { select: { id: true, name: true } },
+      collection: {
+        select: {
+          id: true,
+          name: true,
+          image: {
+            select: {
+              id: true,
+              url: true,
+              nsfwLevel: true,
+              hash: true,
+              width: true,
+              height: true,
+              type: true,
+            },
+          },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
