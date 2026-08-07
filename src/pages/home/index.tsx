@@ -162,9 +162,6 @@ export function Home() {
 
                       <ImagesInfinite
                         showAds
-                        // Fixed "highest rated this week" section with no filter UI of
-                        // its own, so it must not inherit the /images store. Matches the
-                        // Models section below.
                         disableStoreFilters
                         filters={{
                           period: MetricTimeframe.Week,

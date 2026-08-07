@@ -145,10 +145,8 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
             ) : (
               <ImagesInfinite
                 filterType={isVideo ? 'videos' : 'images'}
-                // Every filter this tab honors comes from the URL, and the tab is
-                // already scoped to one user. Merging the global /images store on
-                // top would AND that user against whatever audience or toggle the
-                // main feed was left on. Matches the Models tab.
+                // The store merge keeps any key these overrides don't mention, and
+                // every one of them ANDs against this tab's single user.
                 disableStoreFilters
                 filters={{
                   ...query,
