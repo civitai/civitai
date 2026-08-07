@@ -158,15 +158,39 @@ const AXIOM_MINTS = emits(AXIOM_RE).filter(([name]) => /mint/i.test(name));
 
 const LEDGER_NAMES = Object.keys(MINT_AUDIT_LEDGER).sort();
 
+/** The files the ledger claims own every mint-audit emit site. */
+const OWNING_FILES = [...new Set(Object.values(MINT_AUDIT_LEDGER).map((e) => e.file))].sort();
+
+/**
+ * `…log?.info(<name>)` with ANY quote style — single, double, or a backtick template
+ * with no interpolation. The name-matching regexes above are single-quote-only, and that
+ * is a real hole: `"blocks.dev-token.extra-mint"` and the backtick form both survived as
+ * Axiom-only events with the suite green. Prettier's `singleQuote: true` discourages
+ * double quotes but nothing rewrites a template literal.
+ */
+const AXIOM_ANY_QUOTE_RE = /\blog\??\.info\(\s*(['"`])([^'"`]+)\1/g;
+
+/** Every `[event, file]` an Axiom sink emits in `OWNING_FILES`, any quote style. */
+const AXIOM_IN_OWNING_FILES: [string, string][] = OWNING_FILES.flatMap((file) => {
+  const src = CODE.get(file);
+  if (src === undefined) return [];
+  return [...src.matchAll(AXIOM_ANY_QUOTE_RE)].map((m) => [m[2], file] as [string, string]);
+}).sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+
 describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
   it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
     // A broken walk / a regex that matches nothing would make every assertion below
     // vacuously true. Prove the instrument works before reading its verdict.
     //
-    // The bound is >3000 against a measured 3,563 non-test .ts/.tsx files under src/
+    // The bound is >3000 against a measured 3,564 non-test .ts/.tsx files under src/
     // (2026-08). It was >500, which would have passed having silently lost 85% of the
-    // tree — a threshold that cannot fail is not a control. Kept well below the real
-    // count so ordinary file churn does not make this flap; raise it if it ever does.
+    // tree — a threshold that cannot fail is not a control.
+    //
+    // If this ever goes red the count has FALLEN BELOW 3000, so the fix is to INVESTIGATE
+    // why the walk is seeing less of the tree — a broken filter, a moved directory, a
+    // wrong cwd — and only lower the bound once that is understood and the smaller number
+    // is genuinely correct. Raising it would be backwards; it cannot fix a red here and
+    // would only make the control stricter against a tree that just shrank.
     expect(FILES.length).toBeGreaterThan(3000);
     expect(FILES).toContain('src/pages/api/v1/blocks/dev-token.ts');
     expect(FILES).toContain('src/pages/api/v1/block-tokens/index.ts');
@@ -223,6 +247,49 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
         axiomByName.get(name)
       );
     }
+  });
+
+  it('CLOSED POPULATION: every log?.info in the owning files is a known ledger name, ANY quote style', () => {
+    // The name-matching regexes elsewhere in this file are single-quote-only AND keyed
+    // on the substring "mint". Three spellings were demonstrated to slip past them as
+    // Axiom-only events with the whole suite green:
+    //   - blocks.dev-token.extra-issue    (no "mint" substring at all)
+    //   - "blocks.dev-token.extra-mint"   (double quotes)
+    //   - `blocks.dev-token.extra-mint`   (backticks)
+    //
+    // Widening the NAME regex again would only chase the first of those. This closes the
+    // class instead: the ledger already asserts which files own the emit sites, so every
+    // log?.info in those files must be an event the ledger knows about — whatever it is
+    // called and however it is quoted. A new event in an owning file is now a ledger
+    // update, not a naming puzzle.
+    //
+    // Scope is deliberately the OWNING FILES only, not all of src/: elsewhere a log?.info
+    // is ordinary logging and none of this ledger's business.
+    const found = AXIOM_IN_OWNING_FILES.map(([name]) => name).sort();
+
+    // Positive control: this must actually be looking at something. If the owning files
+    // stopped matching, `found` would be empty and the assertions below would pass
+    // vacuously for the worst possible reason. Deliberately NOT an exact count here —
+    // an exact count would fire FIRST on a new event and report a bare "expected 6 to
+    // be 5", burying the named message below.
+    expect(OWNING_FILES.length).toBe(2);
+    expect(found.length, 'the scan found no log?.info at all in the owning files').toBeGreaterThan(
+      0
+    );
+
+    // GROWTH — names the offending events, which is the whole point of this guard.
+    const unknown = found.filter((n) => !LEDGER_NAMES.includes(n));
+    expect(
+      unknown,
+      `these log?.info events live in a mint-audit owning file but are NOT in MINT_AUDIT_LEDGER — add them (with a stdout mirror) or move them out of ${OWNING_FILES.join(
+        ', '
+      )}`
+    ).toEqual([]);
+    // SHRINK (and duplicates) — enumerated equality catches a deleted or renamed event.
+    expect(
+      found,
+      'the set of log?.info events in the owning files no longer matches MINT_AUDIT_LEDGER'
+    ).toEqual(LEDGER_NAMES);
   });
 
   it('the gate-bearing / audit-only split matches the SOURCE, not just the prose', () => {

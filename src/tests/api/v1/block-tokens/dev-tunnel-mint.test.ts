@@ -356,9 +356,17 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
    * THE STDOUT MIRROR (#3715). The `req.log?.info` sink above is Axiom-only in
    * production: next-axiom's `Logger.sendLogs()` prints to the console ONLY when the
    * AXIOM_* env vars are unset (dist/logger.js:198-202), so with them set nothing
-   * reaches stdout and a stdout-scraping log store cannot see this event at all. The
-   * mint-audit events are the signal for the #3703 step-3 adoption gate, so they are
-   * DUAL-SINKED — both halves are asserted, and losing either re-opens the blind spot.
+   * reaches stdout and a stdout-scraping log store cannot see this event at all.
+   *
+   * 🔴 WHY THIS EVENT IS DUAL-SINKED — and it is NOT because it feeds a gate.
+   * `app-blocks.dev-tunnel.mint` is classified `kind: 'audit-only'` in the call-site
+   * ledger: it carries `spendGranted` only, with no `spendGrantBasis` and no
+   * `requestBudgetedSpend`, because the dev-tunnel path has no per-mint request
+   * mechanism to record. #3715 puts this path out of the adoption gate's scope
+   * entirely. The mirror exists for the reason that applies to every mint audit,
+   * gate-bearing or not: a SHORT-WINDOW (~72h measured) forensic copy readable at
+   * incident time, and a second sink that does not depend on one vendor being
+   * reachable. Both halves are asserted; losing either loses a distinct capability.
    */
   describe('the app-blocks.dev-tunnel.mint audit event is ALSO mirrored to stdout (#3715)', () => {
     let logSpy: ReturnType<typeof vi.spyOn>;

@@ -1681,16 +1681,22 @@ describe('POST /api/v1/blocks/dev-token', () => {
     /**
      * 7b. THE STDOUT MIRROR (#3715) — the events above are DUAL-SINKED.
      *
-     * `req.log?.info` alone is not observable in production: next-axiom's
+     * `req.log?.info` alone writes nothing to stdout in production: next-axiom's
      * `Logger.sendLogs()` prints to the console ONLY when the AXIOM_* env vars are
      * unset (dist/logger.js:198-202), so with them set the batch is POSTed to Axiom
      * and NOTHING reaches stdout. A log store that scrapes container stdout therefore
-     * cannot see these events at all, and the step-3 adoption gate — which flips a
-     * spend default once `spendGrantBasis === 'inferred'` hits zero — would be reading
-     * a structurally guaranteed zero.
+     * cannot see these events at all.
+     *
+     * 🔴 WHAT THE MIRROR IS FOR — it is a SHORT-WINDOW (~72h measured) forensic copy,
+     * for incident-time reads, plus a second sink that does not depend on one vendor
+     * being reachable. It is NOT the surface the #3715 adoption gate is read from: that
+     * gate asks a ROLLING 30-DAY question and is answered from Axiom (~96d retention).
+     * At ~0.8 bearer mints/day a 72h window holds ~2.4 mints, so a "30-day" query
+     * against stdout returns a near-unconditional 0. Full reasoning and the measured
+     * numbers live in `src/server/logging/mint-audit-stdout.ts`.
      *
      * These tests assert the stdout half. The `req.log` assertions above stay green:
-     * both sinks are required, and losing either re-opens the blind spot.
+     * both sinks are required, and losing either loses a distinct capability.
      */
     describe('mint-audit events are ALSO mirrored to stdout (#3715)', () => {
       // Re-declared locally (the sibling describe's copy is not in scope). The three

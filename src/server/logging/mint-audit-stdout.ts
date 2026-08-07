@@ -69,9 +69,22 @@
  *       {namespace="<app-namespace>"} |= "blocks.dev-token." | json
  *         | event =~ "blocks.dev-token..*-mint"
  *
- *     POSITIVE CONTROL before believing any zero from it: drop the `event` filter and
- *     confirm the `|= "app-blocks.dev-tunnel."` form returns rows for the tunnel path
- *     (the busier one). A zero on both is a query/horizon problem, not evidence.
+ *     POSITIVE CONTROL — run it in TWO STEPS on the SAME line filter, changing ONE thing
+ *     between them, or the result cannot tell you which variable was responsible:
+ *
+ *       step 1 (transport + horizon):  {namespace="<app-namespace>"} |= "blocks.dev-token."
+ *       step 2 (add the parser only):  … | json | event =~ "blocks.dev-token..*-mint"
+ *
+ *     Rows in step 1 but not step 2 ⇒ the parser/`event` filter is wrong. Zero in BOTH
+ *     ⇒ either nothing was emitted in the window or the mirror is broken — and at ~0.8
+ *     bearer mints/day, "there simply were none in 72h" is the LIKELIER explanation, so
+ *     a zero here is not evidence of a defect.
+ *
+ *     🔴 Do NOT use the tunnel family as the control for this. Swapping to
+ *     `|= "app-blocks.dev-tunnel."` changes the line filter AND the event family at
+ *     once, and it also matches the far busier pre-existing `.start`/`.stop` mirrors in
+ *     `src/server/services/blocks/dev-tunnel.service.ts` — so it proves the transport
+ *     works while saying nothing about whether the bearer-mint query is correct.
  *
  * 🔴 Callers pass FLAGS AND IDENTIFIERS ONLY — never a token, a secret, or PII.
  */
