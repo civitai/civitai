@@ -7,9 +7,7 @@ export { getVideoData } from './video.preprocessor';
 
 type SharedProps = { name: string; mimeType: string };
 type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;
-type ProcessedVideo = { type: 'video'; meta?: Record<string, unknown> } & AsyncReturnType<
-  typeof preprocessVideo
->;
+type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo>;
 
 export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
