@@ -79,6 +79,7 @@ export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as 
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
@@ -113,6 +114,7 @@ const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsWan,
   ...trainingDetailsBaseModelsLtx2,
   ...trainingDetailsBaseModelsLtx23,
+  ...trainingDetailsBaseModelsMiniMaxH3,
 ] as const;
 const trainingDetailsBaseModelsAudio = [
   ...trainingDetailsBaseModelsAcestep15,
