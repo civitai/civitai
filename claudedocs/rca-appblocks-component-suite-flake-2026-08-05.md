@@ -227,13 +227,43 @@ components), with a positive control proving the instrument could see a known me
 answer is the strongest form this claim can take — but note it is a claim about *current*
 members, not that the class is closed.
 
-### Same shape, but NOT at risk — and the discriminator is the MARGIN, not the shape
+### ~~Same shape, but NOT at risk — and the discriminator is the MARGIN, not the shape~~ — 🔴 RETRACTED 2026-08-06, THE WRONG CONSTANT
 
-`PageBlockHost.browser.test.tsx:616,641,773` and `PageBlockHostAutoRetry.browser.test.tsx:728`
-all do `click Retry` → assert a loading state. Their state is also technically self-deleting,
-but the window is `BLOCK_READY_TIMEOUT_MS = 10s` (`pageBlockHostLogic.ts:571`) — a **~128×
-margin** over the measured 40–78ms poll, against the **~2.6×** that actually lost.
-**Deliberately not changed**: no evidence of failure, and touching them is speculative churn.
+> **Original claim, preserved:** `PageBlockHost.browser.test.tsx:616,641,773` and
+> `PageBlockHostAutoRetry.browser.test.tsx:728` all do `click Retry` → assert a loading state.
+> Their state is also technically self-deleting, but the window is `BLOCK_READY_TIMEOUT_MS = 10s`
+> (`pageBlockHostLogic.ts:571`) — a **~128× margin** over the measured 40–78ms poll, against the
+> **~2.6×** that actually lost. **Deliberately not changed**: no evidence of failure, and touching
+> them is speculative churn.
+
+**That is the wrong window, and this paragraph is why the flake survived three more fixes.**
+
+After `driveToFatal()` the host is in a **terminal** state, not `loading`. The timer armed there
+is the auto-retry backoff — `AUTO_RETRY_BACKOFF_MS[0] = 2000ms` (`pageBlockHostLogic.ts:577`) —
+not `BLOCK_READY_TIMEOUT_MS`. The margin is therefore **~26×**, not ~128×, and it is measured
+against a **Playwright driver round-trip**, which this same RCA measured at 40–78ms *on an idle
+box* and elsewhere describes as erased under CI load.
+
+`PageBlockHostAutoRetry.browser.test.tsx:728` subsequently failed in CI on
+`pr-preview-3679-lt4xt` (PR #3679) with:
+
+```
+AssertionError: expected 'Retrying automatically… (attempt 2 of…' to contain 'attempt 1 of 2'
+```
+
+and was reproduced deterministically by inserting a 2.1s sleep before the click — the
+byte-identical message, at a comparable runtime (12632ms local vs 13230ms in CI). Fixed by
+moving it to the virtual clock + a DOM click.
+
+🔴 **The four `PageBlockHost.browser.test.tsx` sites cleared above are still live members** and
+are NOT fixed by that change. The cleanest of them is `error (mint failure): Retry calls
+onRetryToken AND returns to loading` — an AUTH terminal, so the automatic attempt *re-mints*,
+flipping `expect(onRetryToken).not.toHaveBeenCalled()` to 1 and
+`toHaveBeenCalledTimes(1)` to 2.
+
+**Lesson for this document's own method:** the margin argument was sound; the constant fed into
+it was not. When clearing a test by margin, name the state the component is actually IN at the
+assertion and the timer armed by THAT state — not the most prominent timeout in the file.
 
 ---
 
