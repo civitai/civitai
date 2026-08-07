@@ -58,6 +58,51 @@ export interface PromptTrigger {
   matchedWord?: string;
 }
 
+/**
+ * Categories a user may click through with a warning ("I know what I'm doing").
+ * Everything not listed here is a hard block and has no override path.
+ *
+ * These are the over-eager checks — plain word/substring matching that fires
+ * inside innocent words. `minor_age` is here because on its own it is only an
+ * age mention with no sexual context ("an 8 year old oak tree"); a sexual minor
+ * prompt is caught by `inappropriate_minor`, which stays hard. That distinction
+ * only holds because `auditPromptEnriched` evaluates the hard checks first —
+ * see the ordering note there before changing either.
+ */
+const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>([
+  'minor_age',
+  'nsfw_blocklist',
+  'profanity',
+  'external',
+]);
+
+/**
+ * External moderation returns provider category names (e.g. `sexual/minors`) as
+ * the trigger message. Those naming a minor are hard regardless of the category
+ * bucket they arrive in.
+ */
+const EXTERNAL_HARD_PATTERN = /minor/i;
+
+export function isSoftBlockTrigger(trigger: PromptTrigger) {
+  if (!SOFT_BLOCK_CATEGORIES.has(trigger.category)) return false;
+  if (trigger.category === 'external') {
+    return !EXTERNAL_HARD_PATTERN.test(`${trigger.message} ${trigger.matchedWord ?? ''}`);
+  }
+  return true;
+}
+
+/**
+ * Marks a generation-gate rejection the user is allowed to override. The client
+ * keys the "Generate anyway" affordance off this and strips it before display,
+ * so it must stay in lockstep between `auditPromptServer` and the generation form.
+ */
+export const SOFT_BLOCK_ERROR_PREFIX = '[soft-block] ';
+
+/** A block is soft only when EVERY trigger is soft — one hard trigger poisons the set. */
+export function isSoftBlock(triggers: PromptTrigger[]) {
+  return triggers.length > 0 && triggers.every(isSoftBlockTrigger);
+}
+
 export interface EnrichedAuditResult {
   blockedFor: string[];
   triggers: PromptTrigger[];
@@ -123,19 +168,31 @@ export const auditPromptEnriched = (
   prompt = timer.time('normalize', () => normalizeText(prompt));
   negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
 
-  // 1. Minor age check
-  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
-  if (found && age != null) {
-    const message = `${age} year old`;
+  // ORDER IS LOAD-BEARING. Every check below returns on first match, so whichever
+  // runs first decides the reported category — and the generation gate now derives
+  // its soft/hard severity from that category (see SOFT_BLOCK_CATEGORIES). The hard
+  // categories must therefore be evaluated BEFORE the soft ones. Moving `minor_age`
+  // back above `inappropriate` would make "17 year old, nude" report the SOFT
+  // minor_age instead of the HARD inappropriate_minor, letting a user click through
+  // it. Same for `poi` vs the soft categories.
+  const inappropriateResult = timer.time('inappropriate', () =>
+    includesInappropriateEnriched({ prompt, negativePrompt })
+  );
+  if (inappropriateResult) {
+    const message =
+      inappropriateResult.type === 'minor'
+        ? 'Inappropriate minor content'
+        : 'Inappropriate real person content';
+    const category: PromptTriggerCategory =
+      inappropriateResult.type === 'minor' ? 'inappropriate_minor' : 'inappropriate_poi';
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
-      triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
+      triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
       success: false,
     };
   }
 
-  // 2. POI check
   const poiMatch = timer.time('poi', () => includesPoi(prompt));
   if (poiMatch) {
     const message = 'Prompt cannot include celebrity names';
@@ -169,21 +226,13 @@ export const auditPromptEnriched = (
     };
   }
 
-  // 3. Inappropriate content check (with matched word capture)
-  const inappropriateResult = timer.time('inappropriate', () =>
-    includesInappropriateEnriched({ prompt, negativePrompt })
-  );
-  if (inappropriateResult) {
-    const message =
-      inappropriateResult.type === 'minor'
-        ? 'Inappropriate minor content'
-        : 'Inappropriate real person content';
-    const category: PromptTriggerCategory =
-      inappropriateResult.type === 'minor' ? 'inappropriate_minor' : 'inappropriate_poi';
+  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
+  if (found && age != null) {
+    const message = `${age} year old`;
     timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
-      triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
+      triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
       success: false,
     };
   }

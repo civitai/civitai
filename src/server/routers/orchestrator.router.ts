@@ -342,6 +342,7 @@ export const orchestratorRouter = router({
         remixOfId,
         buzzType,
         externalId,
+        acknowledgedSoftBlock,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -408,6 +409,9 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         externalId,
+        // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
+        // from a hand-rolled client can't stand in for the acknowledgement.
+        acknowledgedSoftBlock: acknowledgedSoftBlock === true,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an

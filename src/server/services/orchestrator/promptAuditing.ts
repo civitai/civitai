@@ -12,6 +12,8 @@ import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-h
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   auditPromptEnriched,
+  isSoftBlock,
+  SOFT_BLOCK_ERROR_PREFIX,
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
@@ -240,6 +242,9 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
+  // The user saw a soft-block warning and chose to proceed. Only ever honored for
+  // a block whose every trigger is soft — see `isSoftBlock`.
+  acknowledgedSoftBlock?: boolean;
 }
 
 /**
@@ -265,6 +270,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     remixOfId,
     inputImages,
     inputVideo,
+    acknowledgedSoftBlock,
   } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
@@ -339,6 +345,32 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
 
+    // Overridable only on civitai.com/red. civitai.green's whole purpose is the
+    // SFW guarantee — profanity checking is enabled there precisely so it holds,
+    // so a click-through would defeat the domain rather than un-stick a user.
+    const softBlock = !isGreen && isSoftBlock(error.triggers ?? []);
+
+    if (softBlock && acknowledgedSoftBlock) {
+      // The user was warned and proceeded. Record it so moderators can review
+      // what the loosened gate is letting through, but deliberately do NOT run it
+      // through addBlockedPrompt — an override must not march the user toward an
+      // auto-mute for a category we have decided is unreliable. `count: 0` keeps
+      // reportProhibitedRequest below its mute threshold.
+      await reportProhibitedRequest({
+        prompt,
+        negativePrompt,
+        userId,
+        isModerator,
+        track,
+        source: error.type === 'external' ? 'External (acknowledged)' : 'Regex (acknowledged)',
+        count: 0,
+        remixOfId,
+        inputImages,
+        inputVideo,
+      });
+      return;
+    }
+
     // Build error message based on domain
     let message: string;
 
@@ -395,7 +427,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       }
     }
 
-    throw throwBadRequestError(message);
+    throw throwBadRequestError(softBlock ? `${SOFT_BLOCK_ERROR_PREFIX}${message}` : message);
   }
 }
 

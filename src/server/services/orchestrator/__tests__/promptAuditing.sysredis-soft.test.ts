@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AuditModule from '~/utils/metadata/audit';
 
 /**
  * STEP-6 sysRedis soft-dependency (Group C) — promptAuditing.
@@ -69,7 +70,8 @@ vi.mock('~/server/services/blocklist.service', () => ({
 
 // Force the regex audit to flag the prompt so auditPromptServer enters its catch
 // and reaches addBlockedPrompt (the reads under test).
-vi.mock('~/utils/metadata/audit', () => ({
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuditModule>()),
   auditPromptEnriched: mockAuditPromptEnriched,
 }));
 vi.mock('~/server/integrations/moderation', () => ({
