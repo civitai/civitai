@@ -240,6 +240,7 @@ export function ImageDetailByProps({
                     canAdd
                     collapsible
                     px="sm"
+                    mediaType={image.type}
                   />
                   {image.postId && (
                     <Box px="sm">

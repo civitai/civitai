@@ -1099,6 +1099,7 @@ function EditDetail() {
               entityType="image"
               tags={!!image.tags.length ? image.tags : undefined}
               nsfwLevel={image.nsfwLevel}
+              mediaType={image.type}
               collapsible
               canAdd
               onTagsLoaded={(tags) => {
