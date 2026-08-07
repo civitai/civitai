@@ -26,6 +26,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { getCommunityCosmetics } from '../creator-shop.service';
 
+const cosmeticBranch = (where: { OR: { cosmetic?: Record<string, never> }[] }) =>
+  where.OR.find((b) => b.cosmetic)?.cosmetic as Record<string, never>;
+const packBranch = (where: { OR: { cosmeticId?: null }[] }) =>
+  where.OR.find((b) => 'cosmeticId' in b);
+
 const itemRow = (id: number, meta: Record<string, unknown> = {}) => ({
   id,
   cosmeticId: id * 10,
@@ -69,8 +74,11 @@ describe('getCommunityCosmetics', () => {
     });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     expect(where.status).toBe('Published');
-    expect(where.cosmetic.createdById).toEqual({ not: null });
-    expect(where.cosmetic.type).toEqual({ in: ['Badge'] });
+    // Packs have no cosmetic, so the creator gating sits in an OR branch now.
+    expect(cosmeticBranch(where).createdById).toEqual({ not: null });
+    expect(cosmeticBranch(where).type).toEqual({ in: ['Badge'] });
+    // A type filter names cosmetic types, so it excludes packs.
+    expect(packBranch(where)).toBeUndefined();
     expect(where.addedBy).toEqual({
       settings: { path: ['creatorShop', 'enabled'], equals: true },
     });
@@ -88,6 +96,6 @@ describe('getCommunityCosmetics', () => {
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     // Both the lister and the original creator — they differ on cross-listings.
     expect(where.addedById.notIn).toEqual(expect.arrayContaining([5, 6]));
-    expect(where.cosmetic.createdById).toEqual({ not: null, notIn: [5, 6] });
+    expect(cosmeticBranch(where).createdById).toEqual({ not: null, notIn: [5, 6] });
   });
 });

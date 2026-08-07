@@ -848,10 +848,7 @@ function CreatorShopReviewPage() {
                       </ChecksCard>
                     )}
 
-                    <HistoryCard
-                      history={selectedMeta.history}
-                      creator={selected.cosmetic.creator}
-                    />
+                    <HistoryCard history={selectedMeta.history} creator={submitter} />
 
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
