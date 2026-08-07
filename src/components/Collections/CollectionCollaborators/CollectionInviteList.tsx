@@ -62,7 +62,6 @@ export function CollectionInviteList() {
       <Text size="sm" fw="bold">
         Invitations
       </Text>
-      {/* Expiry is display-only; never filter rows the server returned. */}
       {invites.map((invite) => {
         const isResponding = respondMutation.variables?.inviteId === invite.id;
         const expiresAt = new Date(

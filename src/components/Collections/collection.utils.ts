@@ -32,7 +32,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import type { CollectionByIdModel } from '~/types/router';
+import type { CollectionByIdModel, RouterOutput } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -348,6 +348,10 @@ export const useCollection = (
   };
 };
 
+// Module scope so the default doesn't mint a new array — and through `useMemo` a new Map — on
+// every render of a subscribed component.
+const EMPTY_PERMISSION_DETAILS: RouterOutput['collection']['getPermissionDetails'] = [];
+
 // `getAllUser` rows carry no permission flags, so callers needing isCollaborator/collaborationDisabled
 // batch-fetch them here via getPermissionDetails, keyed by collection id.
 export const useCollectionsPermissionsMap = (
@@ -355,10 +359,8 @@ export const useCollectionsPermissionsMap = (
   opts?: { enabled?: boolean }
 ) => {
   const enabled = (opts?.enabled ?? true) && collectionIds.length > 0;
-  const { data = [], isLoading } = trpc.collection.getPermissionDetails.useQuery(
-    { ids: collectionIds },
-    { enabled }
-  );
+  const { data = EMPTY_PERMISSION_DETAILS, isLoading } =
+    trpc.collection.getPermissionDetails.useQuery({ ids: collectionIds }, { enabled });
 
   const map = useMemo(() => new Map(data.map((c) => [c.id, c.permissions])), [data]);
 

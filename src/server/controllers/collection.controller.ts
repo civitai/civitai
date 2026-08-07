@@ -208,10 +208,8 @@ export const getCollectionByIdHandler = async ({
 
     const collection = await getCollectionById({ input });
 
-    // The roster no longer arrives via the flag-protected getCollaborators procedure, so the flag
-    // has to be re-applied here. The catch covers the roster read alone — the reads above still
-    // 500 — because getById backs the whole detail page and every other useCollection consumer.
-    // Logged because an empty roster is indistinguishable from a collection that simply has none.
+    // The catch covers the roster read alone — the reads above must still surface — because
+    // getById backs the whole detail page and every other useCollection consumer.
     const collaborators =
       ctx.features.collaborativeCollections && permissions.read
         ? await getCollectionRoster(collection).catch((error) => {
